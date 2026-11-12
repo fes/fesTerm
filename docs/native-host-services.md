@@ -47,13 +47,70 @@ passes did not cover this product availability bug. See
 the [source-specific progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery).
 This is not native/provider qualification.
 
-Keep native registration versions and rendered bytes/restart flags unchanged.
+That in-process slice kept native registration versions and rendered
+bytes/restart flags unchanged.
 RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
 or cached permission is introduced. Older receipt-only registrations remain
 removable, not executable authority. This source slice does **not** implement
 #729 process-crash recovery or manager-policy/older-helper migration, nor
 establish native Windows/macOS/Linux, vault/cloud or daemon-survival acceptance.
 The existing Linux login-only exit75 retry is a separate policy.
+
+## Native HOST-process recovery
+
+The separately approved [#730](https://github.com/fes/fesTerm/issues/730)
+recovers the **single HOST**, not a per-profile worker. Shared setup uses
+`Services::install_with_recovery`: only a fresh registration with current
+authenticated helpers receives policy version 4. Stopped replacement preserves
+that policy as version 5. Existing versions 2/3 retain their exact policy,
+including on ordinary reinstall, missing-file restoration and helper update;
+there is no automatic migration or grant of restart authority. Older helpers
+reject versions 4/5 and unknown managed entrypoints rather than interpreting
+them as ordinary foreground runs.
+
+The new native policies are:
+
+| Manager / startup | Unexpected process failure | Explicit startup / stop |
+| --- | --- | --- |
+| systemd Manual | `Restart=on-failure`, 60-second delay; at most 3 starts in 300 seconds before native rate-limit refusal | Not enabled at login; existing exact-owned Start/Stop |
+| systemd UserSignIn | 60-second restart delay; no attempt-count limit, retaining typed exit75's eventual fresh current-login proof | Existing eligible-login fence and revoke-before-stop; no linger or login-policy changes |
+| launchd Manual | `SuccessfulExit=false`, 60-second launch throttle; rate-bound, not finite attempts | Protected `STATE/native-manual-services/*.plist`, outside login discovery; only explicit Start bootstraps, Stop boots out |
+| launchd UserSignIn | Same launch throttle and unsuccessful-exit policy | User LaunchAgents discovery; never pre-login |
+| Task Scheduler Manual / UserSignIn | Native `RestartOnFailure`: 1-minute interval, 3 retries | Manual has no trigger; sign-in retains exact SID logon trigger, InteractiveToken and LeastPrivilege |
+
+Any launchd KeepAlive implies RunAtLoad. The Manual policy therefore relies on
+**not being registered in a login-discovery directory**, not on a false
+RunAtLoad override. Exact path/argv/receipt verification and cleanup use that
+protected location. Linux still kills only the HOST process, never its process
+group; Windows does not gain a launcher loop, Scheduler Stop or TaskKill.
+
+`run-managed` / `run-desktop-managed` require a recovery registration and enter
+the ordinary fresh runtime admission path. Each attempt reopens signed bytes,
+current native owner authority, original account/resource and scoped token,
+and the same host identity. Stop, revocation, permanent refusal or returned
+operational/cleanup uncertainty do **not** authorize a new hosting attempt.
+They retain an explicit typed protected `host-managed-result.json` before any
+native stop-status translation, under the exact run lease when one was acquired.
+The operation still returns `Err`, records `Refused` or `Failed` with
+`product_success=false`, and emits a failure diagnostic; only this recorded
+managed-stop error maps to OS exit0 to suppress an unsafe native retry.
+Task Scheduler/launchd success status is therefore **not product success**.
+Ordinary foreground `run` errors retain their failure exit codes.
+
+`run-status` (headless) and `run-desktop-status` expose managed history beside
+unchanged RunRecord v1, explicitly not liveness, Ready or retry authority.
+Typed Linux login unavailability remains exit75 / `WaitingForLogin`; failure
+to durably record history remains an ordinary operational error/nonzero.
+Panic, signal and other unexpected process failure bypass managed-stop
+translation and remain eligible for the native policy. Restart never signs in,
+provisions, creates identity, acquires a frontend, kills sessiond/shells or
+replays input. Stale history cannot restore revoked authority.
+
+Deterministic policy, protected-history, actual admission-refusal and controlled
+CLI tests are not positive signed-release/native-manager acceptance. Genuine
+current bundle availability, native launch/crash/stop/login behavior and
+persistent sessiond/shell survival remain separately unqualified under #730.
+See [manual scenarios](manual-validation.md#native-host-process-recovery-730).
 
 ## Headless management and recovery
 

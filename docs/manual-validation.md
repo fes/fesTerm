@@ -11,8 +11,9 @@ unrelated live clients or new admission; once retiring, its earlier drain
 uncertainty must still refuse replacement and a repeated close. Revoke/disable,
 changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
-control. Existing manager definitions/receipt bytes stay unchanged; process
-crash restart, manager migration/older-helper compatibility and actual
+control. That in-process slice kept manager definitions/receipt bytes unchanged;
+the separate #730 source slice below adds new-registration crash policy.
+Actual process crash recovery, manager/older-helper compatibility and
 vault/cloud/service/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.
 
@@ -28,6 +29,42 @@ new protocol capability is added. The platform/provider/vault/service
 scenarios above remain open. The
 [progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery)
 separates source-specific execution from acceptance.
+
+## Native HOST-process recovery (#730)
+
+Separate the new native-process policy from the in-process relay evidence
+above. Source tests cover versioned policy, exact retained 2/3 definitions,
+missing-file restoration, 4→5 replacement, private Manual launchd paths,
+typed durable refusal/failure, lease ownership and fail-closed CLI entries.
+They do **not** qualify native restart or independent shell survival.
+
+On each separately authorized ordinary-user platform with genuine current
+signed helpers, test Manual and UserSignIn, Desktop and Headless:
+
+1. A fresh registration uses version 4 / managed argv; retained versions 2/3
+   and their missing definitions do not silently acquire restart authority.
+   An older helper must reject the new policy, not reinterpret it.
+2. Observe one HOST and a separately owned persistent sessiond/shell. Induce
+   failure of **only that HOST**, then observe native recovery bounds and
+   fresh bundle/native-owner/account/receipt/scoped-token admission, unchanged
+   host identity and daemon PID/generation, and no frontend/input replay.
+3. Stop/Disable/revoke while running and during pending recovery. No new
+   hosting may outlive revocation. Returned permanent refusal and operational
+   uncertainty must remain `Refused`/`Failed`, `product_success=false`, visible
+   in origin-correct history even when native exit0 suppresses retries.
+   Report-write failure must not translate to a successful managed stop.
+4. Prove Manual macOS installation is outside LaunchAgents discovery, inert
+   across login until explicit Start, and booted out by Stop. KeepAlive's
+   implied RunAtLoad must not become an automatic-login loophole.
+5. Prove Linux eligible-login loss/return and native restart limits; Windows
+   one-minute/three-retry exhaustion and exact task XML/ACL; macOS 60-second
+   throttle (not a finite attempt count). Restart exhaustion and native
+   running state are not Ready or product success.
+
+These scenarios are **UNRUN** for #730. Current signed/native release
+prerequisites block positive execution qualification, not source implementation.
+No native manager, provider, vault, device or VM acceptance is inferred from
+portable tests; see `native-host-services.md#native-host-process-recovery`.
 
 **Status:** Active registry
 

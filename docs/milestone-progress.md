@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Adding native single-HOST process recovery under #730
+
+The user separately approved native recovery of the single HOST after
+unexpected failure. This does not revive rejected legacy #729 or its per-profile
+launcher loop. Fresh registrations use policy4, retained recovery replacements5;
+old2/3, older helpers and missing legacy definitions retain exact policy.
+Native systemd/launchd/Scheduler bounds and an explicit protected managed-stop
+protocol avoid retrying permanent refusal without hiding product failure.
+Manual macOS definitions live outside login discovery; every recovered process
+reenters existing fresh authorization with the same identity and independent
+sessiond/shells. RunRecord/session authority and ordinary foreground errors
+are unchanged.
+
+Focused compilation preceded acceptance review. Initial `c9ead21d` selected
+10 policy/history tests, one actual CLI refusal test and 12 compatibility/
+admission tests, all passing. The owned-lease correction at `f7809612` selected
+11/1/12 passes; first strict exit101 was solely Clippy's equivalent
+`2 | 3 | 4 | 5` range spelling. At `c5f30bfd`, the same accepted set written
+`2..=5` passes all11 policy/history tests, affected setup/CLI all-target strict
+and app fmt. The unchanged CLI and compatibility evidence stays source-specific
+to `f7809612`, not relabelled as fresh execution. No warnings were suppressed,
+dependencies changed or prior evidence erased.
+
+Borrowed #729's refusal-versus-crash distinction and exact older-helper/missing-
+definition preservation patterns, not its silent refusal-as-success mapping,
+automatic legacy migration, Windows GUI respawn loop or blind Manual KeepAlive.
+The new durable typed error/status makes native exit translation explicit.
+Source/model tests and controlled refusal are not positive native recovery.
+Genuine current release/publisher admission, native crash/startup/stop/login,
+provider/vault and persistent daemon survival remain open under #730; no native,
+helper-rebuild, VM or provider campaign ran for this feature.
+
 ## Keeping framed creation replays exact across native contention
 
 The consolidated `fef6eb09` macOS job observed a correlated `Busy`, not a

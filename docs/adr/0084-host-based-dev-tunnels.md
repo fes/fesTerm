@@ -831,17 +831,25 @@ typed, protected, observable history before native exit translation; a manager
 stop code must never be reported as product success or Ready. Failure to record
 that disposition is an operational error, not a successful managed stop.
 Panic, signal or another unexpected process exit remains native failure.
-RunRecord v1 and all session/lease authority remain unchanged.
+RunRecord v1 and all session/lease authority remain unchanged. The managed
+report is written from the owned RunRecord before releasing that run lease;
+an invocation that cannot acquire it never adopts another invocation's history.
 
-Linux uses rate/attempt-limited systemd restart; Windows uses finite native
-Scheduler retries at its supported one-minute interval. macOS uses throttled
+Linux Manual uses a 60-second delay and 3-start/300-second systemd limit;
+UserSignIn retains eventual typed exit75 eligibility with a 60-second delay
+without an attempt-count limit. Windows uses three finite native Scheduler
+retries at its supported one-minute interval. macOS uses 60-second throttled
 unsuccessful-exit recovery. Since any launchd KeepAlive implies RunAtLoad,
 new Manual definitions live under protected state outside login discovery and
 are bootstrapped only by explicit Start; sign-in definitions remain in
 LaunchAgents. Stop/Disable/revocation must retire or suppress hosting without
 ending independent sessiond/shells, replaying input, interactive sign-in,
 provisioning or reconstructing consent. Native release/OS/provider qualification
-remains separate from deterministic policy and controlled process tests.
+remains separate from deterministic policy and controlled CLI/refusal tests.
+The [native policy contract](../native-host-services.md#native-host-process-recovery)
+specifies OS stop-code translation, observable product failure and legacy
+receipt/helper compatibility. #730 remains open for genuine native execution
+and daemon-survival qualification; no supervisor or old worker loop is added.
 
 ### Composed Desktop lifetime qualification
 

@@ -15,8 +15,20 @@ peer/vendor extension is removed. Earlier accepting-peer passes did not cover
 production-client availability. No new HOST authority or native acceptance is
 implied; affected source still requires delta review.
 No terminal input replay or daemon operation is introduced. See
-`native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
+`native-host-services.md#in-process-host-relay-recovery`. Native crash-policy qualification
 and native/cloud/vault acceptance remain open.
+
+HOST-02/03/04/05 additionally have the separately approved #730 native
+**single-HOST process** recovery source slice. Fresh policy4 and retained-policy
+replacement5 use native restart; existing2/3 keep exact policy, never automatic
+migration. Managed-only typed protected failure remains product failure before
+native restart-suppression exit translation. Same identity, fresh authorization,
+no daemon/input operation, revoke-before-stop and Manual versus sign-in remain
+mandatory. Manual launchd definitions stay outside login discovery because
+KeepAlive implies RunAtLoad. Deterministic models/CLI refusal are not native
+crash/login/daemon-survival acceptance; #730 qualification remains open. See
+`native-host-services.md#native-host-process-recovery` and the origin-specific
+history commands, neither of which grants liveness or Ready.
 
 ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
 epochs and exact old/new reservations through replacement/recovery. The shared
