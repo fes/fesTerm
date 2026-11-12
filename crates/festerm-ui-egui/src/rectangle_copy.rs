@@ -275,7 +275,8 @@ impl RectangleCopy {
         }
         let mut text = String::new();
         let mut clicked_range = None;
-        for row in first.row..=last.row {
+        for (offset, frozen_row) in self.rows[first.row..=last.row].iter().enumerate() {
+            let row = first.row + offset;
             let cells = cache.row(row)?;
             let start = first.column.saturating_sub(usize::from(
                 cells[first.column].width() == CellWidth::Continuation,
@@ -283,7 +284,7 @@ impl RectangleCopy {
             let end = if rectangle {
                 last.column + 1
             } else {
-                self.rows[row].occupied_columns
+                frozen_row.occupied_columns
             };
             for (column, cell) in cells.iter().enumerate().take(end).skip(start) {
                 if cell.width() == CellWidth::Continuation {
@@ -421,6 +422,23 @@ mod tests {
         assert_eq!(&capture.text[capture.clicked_range], "j");
         assert_eq!(copy.context_copy_text(&cache), "abcdefgh\nijk\nseparate");
         assert_eq!(terminal.screen().row_soft_wrapped(0), Some(true));
+    }
+
+    #[test]
+    fn rectangle_context_capture_nonzero_start_preserves_absolute_row_index() {
+        let (_, cache, mut copy) = fixture(8, 4, b"ignored\r\nabcdefghijk\r\nseparate", true);
+        let capture = copy
+            .context_text(&cache, CellPosition { column: 1, row: 2 })
+            .unwrap();
+        assert_eq!(capture.text, "abcdefghijk");
+        assert_eq!(&capture.text[capture.clicked_range], "j");
+        copy.click(CellPosition { column: 1, row: 2 });
+        copy.click(CellPosition { column: 2, row: 2 });
+        let capture = copy
+            .context_text(&cache, CellPosition { column: 1, row: 2 })
+            .unwrap();
+        assert_eq!(capture.text, "jk");
+        assert_eq!(&capture.text[capture.clicked_range], "j");
     }
 
     #[test]
