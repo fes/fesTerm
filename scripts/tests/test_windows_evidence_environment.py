@@ -1,6 +1,10 @@
-"""Source contracts only; these tests do not qualify Windows native execution."""
+"""Runner contracts only; these tests do not qualify Windows native execution."""
 
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -41,11 +45,71 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
         self.assertIn(
             "$previousErrorAction = $ErrorActionPreference\n"
             "    $ErrorActionPreference = 'Continue'\n"
+            "    $LASTEXITCODE = $null\n"
             "    try { cargo @buildArguments } finally { $ErrorActionPreference = $previousErrorAction }\n"
+            "    if ($null -eq $LASTEXITCODE) {\n"
+            "        throw 'Cargo did not start; refusing a stale OS-input executable.'\n"
+            "    }\n"
             "    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", source)
         self.assertIn("'build','--locked','--workspace'", source)
         self.assertIn("OS-input source changed during build.", source)
         self.assertIn("OS-input checkout changed during build.", source)
+
+    def test_missing_cargo_cannot_reuse_git_success_or_reach_stale_executable(self):
+        source = (ROOT / "scripts/run-windows-os-input-smoke.ps1").read_text()
+        build = source.index("$LASTEXITCODE = $null")
+        call = source.index("try { cargo @buildArguments }", build)
+        missing = source.index("if ($null -eq $LASTEXITCODE)", call)
+        nonzero = source.index("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", missing)
+        identity = source.index("$builtSource = & git", nonzero)
+        executable = source.index("$executableHash = (Get-FileHash", identity)
+        self.assertLess(build, call)
+        self.assertLess(call, missing)
+        self.assertLess(missing, nonzero)
+        self.assertLess(nonzero, identity)
+        self.assertLess(identity, executable)
+
+    @unittest.skipUnless(
+        os.name == "nt" and (shutil.which("powershell.exe") or shutil.which("pwsh")),
+        "Windows PowerShell required for bounded synthetic process-start contract")
+    def test_windows_cargo_scope_rejects_missing_and_unstartable_applications(self):
+        shell = shutil.which("powershell.exe") or shutil.which("pwsh")
+        source = (ROOT / "scripts/run-windows-os-input-smoke.ps1").read_text()
+        start = source.index("$previousErrorAction = $ErrorActionPreference")
+        end = source.index("$builtSource = & git", start)
+        scope = source[start:end]
+        scratch = ROOT / "target" / "windows-evidence-contracts"
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            fixture = Path(directory)
+            for name, body, expected in (
+                ("missing.exe", None, None),
+                ("unstartable.exe", "not a Windows executable\n", None),
+                ("success.cmd", "@echo off\nexit /b 0\n", 0),
+                ("failure.cmd", "@echo off\nexit /b 7\n", 7),
+            ):
+                with self.subTest(application=name):
+                    application = fixture / name
+                    if body is not None:
+                        application.write_text(body)
+                    script = fixture / (name + ".ps1")
+                    quoted_application = str(application).replace("'", "''")
+                    script.write_text(
+                        "$ErrorActionPreference = 'Stop'\n$LASTEXITCODE = 0\n"
+                        f"Set-Alias -Name cargo -Value '{quoted_application}'\n"
+                        "$buildArguments = @()\ntry {\n" + scope +
+                        "\nexit 0\n} catch {\n"
+                        "if ($ErrorActionPreference -ne 'Stop') { exit 91 }\n"
+                        "Write-Output 'CARGO-START-REFUSED'\nexit 19\n}\n",
+                        encoding="utf-8-sig")
+                    result = subprocess.run(
+                        [shell, "-NoProfile", "-File", str(script)],
+                        capture_output=True, text=True, timeout=15)
+                    if expected is None:
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertNotEqual(result.returncode, 91, result.stdout + result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

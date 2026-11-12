@@ -60,12 +60,17 @@ by this evidence PR. The current HOST supplies in-process relay retry only;
 existing native acceptance gates remain under
 [#681](https://github.com/fes/fesTerm/issues/681).
 
-Existing policies remain: the legacy Linux unit restarts failures after
-15 seconds, excluding exit78; Windows has in-process transient retry, not
-external crash respawn; macOS without daemon-recovery opt-in stays offline
-until operator restart. Opted-in daemon recovery retries transient failures
-after 15 seconds on all OSes. These are not new service definitions or a
-blanket claim that native control is unimplemented. Native manager,
+For the **legacy ADR0053/0072 profile workers**, Linux's unit restarts failures
+after 15 seconds, excluding exit78; Windows has in-process transient retry,
+not external crash respawn; macOS without daemon-recovery opt-in stays offline
+until operator restart. Opted-in legacy daemon recovery retries transient
+failures after 15 seconds on all OSes.
+
+The **current HOST** has in-process relay recovery on all OSes; its manager
+restart flags remain unchanged pending the separately approved #730 work.
+Neither this evidence slice nor the legacy policy list implements #730 or
+changes service definitions. This is not a blanket claim that native control
+is unimplemented. Native manager,
 sign-in/status/recovery/uninstall, older-helper compatibility and actual
 Windows/macOS/Linux, vault/cloud and DT-05 session/lease/daemon-survival
 acceptance remain open.

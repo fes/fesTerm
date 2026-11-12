@@ -153,7 +153,11 @@ if (-not $SkipBuild) {
     # terminating errors while $ErrorActionPreference is 'Stop'.
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $LASTEXITCODE = $null
     try { cargo @buildArguments } finally { $ErrorActionPreference = $previousErrorAction }
+    if ($null -eq $LASTEXITCODE) {
+        throw 'Cargo did not start; refusing a stale OS-input executable.'
+    }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $builtSource = & git -C $repositoryRoot rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or $builtSource -ne $runnerSource) {
