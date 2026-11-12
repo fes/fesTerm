@@ -72,6 +72,8 @@ pub(crate) struct SettingsViewModel {
     pub automation: crate::automation::SettingsSnapshot,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
+    pub session_recording_enabled: bool,
+    pub recording_preference_unsaved: bool,
 }
 
 #[derive(Clone, Default)]
@@ -133,6 +135,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         automation,
         default_sftp_local_directory,
         sftp_pane_order,
+        session_recording_enabled,
+        recording_preference_unsaved,
     } = settings;
     #[cfg(not(windows))]
     let _ = prefer_powershell;
@@ -216,15 +220,28 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         ui.add_space(2.0);
 
                         settings_card(ui, "Recordings", |ui| {
-                            ui.label("Choose a device-local export folder, naming and playback defaults.");
-                            ui.horizontal(|ui| {
-                                if ui.button("Recording settings…").clicked() {
-                                    command = Some(AppCommand::OpenRecordingSettings);
+                            if settings_toggle_row(
+                                ui,
+                                "Allow session recording",
+                                "Off by default. Turning this off stops an active recording; existing recordings remain available in the library.",
+                                session_recording_enabled,
+                            ) {
+                                command = Some(AppCommand::SetSessionRecordingAllowed(
+                                    !session_recording_enabled,
+                                ));
+                            }
+                            if session_recording_enabled && ui.button("Recording settings >").clicked() {
+                                command = Some(AppCommand::OpenRecordingSettings);
+                            }
+                            if recording_preference_unsaved {
+                                ssh_paragraph(ui, "Recording is off for this run, but the saved preference is unconfirmed and may permit recording after restart. Retry saving, or reconcile the configuration if saves are blocked.");
+                                if ui.button("Retry saving recording opt-out").clicked() {
+                                    command = Some(AppCommand::SetSessionRecordingAllowed(false));
                                 }
-                                if ui.button("Recording library…").clicked() {
-                                    command = Some(AppCommand::OpenRecordingLibrary);
-                                }
-                            });
+                            }
+                            if ui.button("Recording library…").clicked() {
+                                command = Some(AppCommand::OpenRecordingLibrary);
+                            }
                         });
                         settings_card(ui, "Panes", |ui| {
                             if settings_toggle_row(
@@ -2472,6 +2489,8 @@ mod tests {
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
+                            session_recording_enabled: false,
+                            recording_preference_unsaved: false,
                         },
                     ) {
                         // Applied here so the keyboard editor behaves like it
@@ -4564,6 +4583,8 @@ mod tests {
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
+                            session_recording_enabled: false,
+                            recording_preference_unsaved: false,
                         },
                     ) {
                         state.command = Some(command);

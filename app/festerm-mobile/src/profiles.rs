@@ -126,6 +126,8 @@ pub enum KeyImportFailure {
 const TEXT_SIZE_FILE: &str = "terminal-text-size";
 const KEYBOARD_FILE: &str = "default-keyboard";
 const SPLIT_KEYBOARD_FILE: &str = "split-keyboard";
+const RECORDING_ENABLED_FILE: &str = "session-recording-enabled";
+const KEYBOARD_HAPTICS_FILE: &str = "custom-keyboard-haptics";
 
 pub struct Profiles {
     store: Arc<Mutex<ProfileStore>>,
@@ -219,8 +221,57 @@ impl Profiles {
             .map_err(|_| "The split keyboard setting could not be saved".to_owned())
     }
 
+    pub fn session_recording_enabled(&self) -> Result<bool, String> {
+        Self::read_bool_preference(
+            self.directory.join(RECORDING_ENABLED_FILE),
+            false,
+            "The saved session-recording preference is invalid",
+            "The session-recording preference could not be read",
+        )
+    }
+
+    pub fn save_session_recording_enabled(&self, enabled: bool) -> Result<(), String> {
+        std::fs::write(
+            self.directory.join(RECORDING_ENABLED_FILE),
+            if enabled { "true" } else { "false" },
+        )
+        .map_err(|_| "The session-recording preference could not be saved".to_owned())
+    }
+
+    pub fn keyboard_haptics_enabled(&self) -> Result<bool, String> {
+        Self::read_bool_preference(
+            self.directory.join(KEYBOARD_HAPTICS_FILE),
+            false,
+            "The saved keyboard haptics preference is invalid",
+            "The keyboard haptics preference could not be read",
+        )
+    }
+
+    pub fn save_keyboard_haptics_enabled(&self, enabled: bool) -> Result<(), String> {
+        std::fs::write(
+            self.directory.join(KEYBOARD_HAPTICS_FILE),
+            if enabled { "true" } else { "false" },
+        )
+        .map_err(|_| "The keyboard haptics preference could not be saved".to_owned())
+    }
+
     fn store(&self) -> MutexGuard<'_, ProfileStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn read_bool_preference(
+        path: PathBuf,
+        default: bool,
+        invalid: &'static str,
+        unreadable: &'static str,
+    ) -> Result<bool, String> {
+        match std::fs::read_to_string(path) {
+            Ok(value) if value.trim() == "true" => Ok(true),
+            Ok(value) if value.trim() == "false" => Ok(false),
+            Ok(_) => Err(invalid.to_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(default),
+            Err(_) => Err(unreadable.to_owned()),
+        }
     }
 
     /// The shared store handle for services that persist their own state
@@ -706,6 +757,31 @@ mod tests {
         assert!(profiles
             .save_default_keyboard(KeyboardKind::ShellRow)
             .is_err());
+    }
+
+    #[test]
+    fn recording_and_keyboard_haptics_preferences_default_off_and_persist() {
+        let profiles = testing::profiles();
+        assert!(!profiles.session_recording_enabled().unwrap());
+        assert!(!profiles.keyboard_haptics_enabled().unwrap());
+
+        profiles.save_session_recording_enabled(true).unwrap();
+        profiles.save_keyboard_haptics_enabled(true).unwrap();
+        assert!(profiles.session_recording_enabled().unwrap());
+        assert!(profiles.keyboard_haptics_enabled().unwrap());
+    }
+
+    #[test]
+    fn malformed_opt_in_preferences_fail_closed() {
+        let profiles = testing::profiles();
+        std::fs::write(
+            profiles.directory.join(RECORDING_ENABLED_FILE),
+            "unexpected",
+        )
+        .unwrap();
+        std::fs::write(profiles.directory.join(KEYBOARD_HAPTICS_FILE), "unexpected").unwrap();
+        assert!(profiles.session_recording_enabled().is_err());
+        assert!(profiles.keyboard_haptics_enabled().is_err());
     }
 
     fn ssh(auth: SshAuth, remote_session: RemoteSession) -> SshProfile {

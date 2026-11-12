@@ -392,6 +392,66 @@ fn shared_custom_keyboard_edits_source_and_dictation_replaces_unicode_as_one_und
 }
 
 #[test]
+fn local_source_and_dictation_keys_use_the_haptic_preference() {
+    use crate::terminal_keyboard::{KeyboardKind, SplitMode};
+    use festerm_ios_window::DictationPhase;
+
+    for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+        for split in [SplitMode::Never, SplitMode::Always] {
+            let mut app = app(true);
+            app.choose_keyboard(kind);
+            app.terminal_keyboard.split = split;
+            app.shell.keyboard_haptics_enabled = true;
+            let view = app.documents.active.unwrap();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1194.0, 834.0))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run();
+            focus(&mut harness, view, 0);
+            for (index, label) in ["q", "#+=", "["].into_iter().enumerate() {
+                harness.get_by_label(label).click();
+                harness.run();
+                assert_eq!(
+                    harness.state().keyboard_haptic_count.get(),
+                    index + 1,
+                    "{kind:?} {split:?} {label}"
+                );
+            }
+            harness.get_by_label("Mic").click();
+            harness.run();
+            harness
+                .state()
+                .dictation
+                .as_ref()
+                .unwrap()
+                .with_text(|draft| draft.phase = DictationPhase::Review);
+            harness.run();
+            let before = harness.state().keyboard_haptic_count.get();
+            harness.get_by_label("[").click();
+            harness.run();
+            assert_eq!(harness.state().keyboard_haptic_count.get(), before + 1);
+            harness.state_mut().shell.keyboard_haptics_enabled = false;
+            harness.get_by_label("[").click();
+            harness.run();
+            assert_eq!(harness.state().keyboard_haptic_count.get(), before + 1);
+        }
+    }
+
+    let mut app = app(true);
+    app.shell.keyboard_haptics_enabled = true;
+    let view = app.documents.active.unwrap();
+    let mut harness = harness(app);
+    harness.run();
+    focus(&mut harness, view, 0);
+    harness.get_by_label("Tab key").click();
+    harness.run();
+    assert_eq!(harness.state().keyboard_haptic_count.get(), 1);
+}
+
+#[test]
 fn document_dictation_cannot_replay_into_a_revised_or_invalidated_source() {
     use festerm_ios_window::DictationPhase;
     let mut harness = harness(app(true));

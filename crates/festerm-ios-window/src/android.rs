@@ -50,6 +50,12 @@ impl KeyboardBridge {
         }
     }
 
+    pub fn play_input_haptic(&self) {
+        if let Err(error) = native::input_haptic() {
+            eprintln!("fesTerm: {error}");
+        }
+    }
+
     pub fn set_field_document(&self, document: Option<FieldDocument>) {
         let epoch = native::input_epoch();
         if *self.field.borrow() == document && self.epoch.get() == epoch {

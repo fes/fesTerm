@@ -363,6 +363,14 @@ public final class FestermActivity extends NativeActivity {
         runOnUiThread(() -> { if (!destroyed) input.playSoundEffect(SoundEffectConstants.CLICK); });
     }
 
+    public void inputHaptic() {
+        runOnUiThread(() -> {
+            if (!destroyed && input != null) {
+                input.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            }
+        });
+    }
+
     public String clipboardText() {
         ClipboardManager manager = getSystemService(ClipboardManager.class);
         ClipData clip = manager.getPrimaryClip();

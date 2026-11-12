@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.16.0"
+version = "0.16.1"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "An AI-friendly local, SSH, and serial terminal."
@@ -12,7 +12,7 @@ binaries = [
   { path = "festerm", main = true },
 ]
 resources = [
-  { src = "../target/release/festerm-sessiond-0.16.0.exe", target = "festerm-sessiond-0.16.0.exe" },
+  { src = "../target/release/festerm-sessiond-0.16.1.exe", target = "festerm-sessiond-0.16.1.exe" },
   { src = "../target/release/festerm-tunnel-setup.exe", target = "festerm-tunnel-setup.exe" },
   { src = "../target/release/festerm-tunnel-bridge.exe", target = "festerm-tunnel-bridge.exe" },
   { src = "../target/release/festerm-tunnel-worker.exe", target = "festerm-tunnel-worker.exe" },

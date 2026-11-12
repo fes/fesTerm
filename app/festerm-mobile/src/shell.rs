@@ -36,6 +36,13 @@ pub struct ShellState {
     pub sessions_sheet: bool,
     /// A saved profile lifted by touch-and-hold, following the finger.
     pub reorder: Option<ProfileDrag>,
+    pub keyboard_haptics_enabled: bool,
+    #[cfg(feature = "live-ssh")]
+    pub session_recording_enabled: bool,
+    #[cfg(all(feature = "live-ssh", unix))]
+    pub recording_preference_unsaved: bool,
+    #[cfg(all(feature = "live-ssh", unix))]
+    pub recording_settings_open: bool,
     #[cfg(all(feature = "live-ssh", unix))]
     pub recording_settings: Option<festerm_recording::RecordingSettings>,
     #[cfg(all(feature = "live-ssh", unix))]
@@ -144,6 +151,13 @@ pub enum ShellAction {
     SetTextSize(TextSize),
     SetDefaultKeyboard(KeyboardKind),
     SetSplitKeyboard(SplitMode),
+    SetKeyboardHaptics(bool),
+    #[cfg(all(feature = "live-ssh", unix))]
+    SetSessionRecordingEnabled(bool),
+    #[cfg(all(feature = "live-ssh", unix))]
+    OpenRecordingSettings,
+    #[cfg(all(feature = "live-ssh", unix))]
+    CloseRecordingSettings,
     #[cfg(all(feature = "live-ssh", unix))]
     ChooseRecordingFolder,
     #[cfg(all(feature = "live-ssh", unix))]
@@ -505,11 +519,26 @@ fn settings_screen(
     data: &ShellData<'_>,
     actions: &mut Vec<ShellAction>,
 ) {
+    #[cfg(all(feature = "live-ssh", unix))]
+    if state.recording_settings_open {
+        screen_title(ui, "Recording settings", "Export and playback defaults");
+        if let Some(notice) = data.notice {
+            footnote(ui, notice);
+        }
+        if button(ui, ButtonKind::Secondary, "Back to Settings", true).clicked() {
+            actions.push(ShellAction::CloseRecordingSettings);
+        }
+        recording_settings(ui, state, actions);
+        return;
+    }
     screen_title(
         ui,
         "Settings",
         super::platform_text("fesTerm on this iPhone", "fesTerm on Android"),
     );
+    if let Some(notice) = data.notice {
+        footnote(ui, notice);
+    }
     if true {
         section_header(ui, "Demo", None, false);
         card(ui, |ui| {
@@ -574,8 +603,22 @@ fn settings_screen(
         ui,
         "Terminal keyboards split into left and right halves. Auto splits on wide landscape screens and around a fold or hinge.",
     );
+    section_header(ui, "Keyboard feedback", None, false);
+    card(ui, |ui| {
+        let mut enabled = state.keyboard_haptics_enabled;
+        widgets::switch_row(
+            ui,
+            "Custom keyboard haptics",
+            Some("Use system-aware tactile feedback for custom-keyboard key presses."),
+            &mut enabled,
+            false,
+        );
+        if enabled != state.keyboard_haptics_enabled {
+            actions.push(ShellAction::SetKeyboardHaptics(enabled));
+        }
+    });
     #[cfg(all(feature = "live-ssh", unix))]
-    recording_settings(ui, state, actions);
+    recording_access(ui, state, actions);
     #[cfg(not(all(feature = "live-ssh", unix)))]
     let _ = state;
     section_header(ui, "Dev Tunnel hosts", None, false);
@@ -640,17 +683,66 @@ fn settings_screen(
 }
 
 #[cfg(all(feature = "live-ssh", unix))]
+fn recording_access(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<ShellAction>) {
+    section_header(ui, "Recordings", None, false);
+    if let Some(error) = &state.recording_error {
+        footnote(ui, error);
+    }
+    if let Some(message) = &state.recording_message {
+        footnote(ui, message);
+    }
+    card(ui, |ui| {
+        if state.recording_preference_unsaved {
+            footnote(
+                ui,
+                "Recording is off for this run, but the saved preference is unconfirmed and may permit recording after restart.",
+            );
+            if button(
+                ui,
+                ButtonKind::Secondary,
+                "Retry saving recording opt-out",
+                true,
+            )
+            .clicked()
+            {
+                actions.push(ShellAction::SetSessionRecordingEnabled(false));
+            }
+        }
+        let mut enabled = state.session_recording_enabled;
+        ui.add_enabled_ui(
+            enabled || (state.recording_settings.is_some() && !state.recording_busy),
+            |ui| {
+                widgets::switch_row(
+                    ui,
+                    "Allow session recording",
+                    Some("Off by default. Turning this off stops active capture; existing recordings remain available in the library."),
+                    &mut enabled,
+                    false,
+                );
+            },
+        );
+        if enabled != state.session_recording_enabled {
+            actions.push(ShellAction::SetSessionRecordingEnabled(enabled));
+        }
+        if state.session_recording_enabled {
+            let mut row = RowSpec::new("Recording settings >");
+            row.icon = Some(Icon::Settings);
+            row.trailing = Trailing::Chevron;
+            if list_row(ui, &row).clicked() {
+                actions.push(ShellAction::OpenRecordingSettings);
+            }
+        }
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if button(ui, ButtonKind::Secondary, "Open recording library", true).clicked() {
+            actions.push(ShellAction::OpenRecordingLibrary);
+        }
+    });
+}
+
+#[cfg(all(feature = "live-ssh", unix))]
 fn recording_settings(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<ShellAction>) {
     use festerm_recording::{ExportDestination, LocalStart, RecordingId, StreamId};
 
-    if state.recording_settings.is_none() && state.recording_error.is_none() {
-        return;
-    }
-    section_header(ui, "Recordings", None, false);
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    if button(ui, ButtonKind::Secondary, "Open recording library", true).clicked() {
-        actions.push(ShellAction::OpenRecordingLibrary);
-    }
     if let Some(error) = &state.recording_error {
         footnote(ui, error);
     }

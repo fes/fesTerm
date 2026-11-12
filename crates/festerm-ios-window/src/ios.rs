@@ -20,9 +20,9 @@ use objc2_ui_kit::{
     UIApplication, UIDevice, UIInputViewAudioFeedback, UIKeyInput,
     UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIPasteboard,
     UIResponder, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession,
-    UITextAutocapitalizationType, UITextAutocorrectionType, UITextInputTraits,
-    UITextSmartDashesType, UITextSmartQuotesType, UITextSpellCheckingType, UIView, UIWindow,
-    UIWindowScene, UIWindowSceneDelegate,
+    UISelectionFeedbackGenerator, UITextAutocapitalizationType, UITextAutocorrectionType,
+    UITextInputTraits, UITextSmartDashesType, UITextSmartQuotesType, UITextSpellCheckingType,
+    UIView, UIWindow, UIWindowScene, UIWindowSceneDelegate,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use std::{
@@ -840,6 +840,12 @@ impl KeyboardBridge {
             UIDevice::currentDevice(MainThreadMarker::from(&*self.terminal_responder))
                 .playInputClick();
         }
+    }
+
+    pub fn play_input_haptic(&self) {
+        let generator =
+            UISelectionFeedbackGenerator::new(MainThreadMarker::from(&*self.terminal_responder));
+        generator.selectionChanged();
     }
 }
 

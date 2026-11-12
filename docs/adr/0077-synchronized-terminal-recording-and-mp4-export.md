@@ -27,9 +27,14 @@ Define an explicit application-owned recording operation with one monotonic
 timeline shared by selected terminal sessions. The user reviews and selects
 eligible open terminal sessions before starting; the confirmation states that
 the current visible screen and all subsequent output are captured, including
-unfocused/background tabs. Including future manually opened sessions is a
-separate opt-in. Automation-created sessions are not auto-enrolled. The
-application shows one global recording state and per-included-tab indicators.
+unfocused/background tabs. Enabling session recording in Settings is a
+separate, persistent opt-in that defaults off; disabling it closes capture
+admission before saving, cancels preparation, and retains existing library
+sources and unrelated exports. A failed opt-out stays off for this run and
+reports that the saved preference may still allow recording after restart.
+Including future manually opened sessions is a separate opt-in. Automation-created
+sessions are not auto-enrolled. The application shows one global recording
+state and per-included-tab indicators.
 
 Recording observes changes at the composition root's authoritative
 single-writer boundary, when they are applied to each presented terminal. The
@@ -198,13 +203,16 @@ existing exports are never merged with or overwritten.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** Recording is explicit, local and
-  synchronized across selected streams; it observes the app's single-writer
+- **Invariants introduced or changed:** Recording is off until separately
+  enabled in Settings; disabling cancels preparation/stops capture while
+  retaining library sources. Recording is explicit, local and synchronized
+  across selected streams; it observes the app's single-writer
   terminal mutations without becoming a writer; it excludes input and
   backend/recovery state; offline export is non-interactive; lock, lifecycle
   and integrity cuts stop all streams.
-- **GUI/action edges affected:** `REC-01` covers device-local settings and
-  folder selection; `REC-02` covers consent and preparation; `REC-03` covers
+- **GUI/action edges affected:** `REC-01` covers the default-off opt-in,
+  device-local settings and folder selection; `REC-02` covers consent and
+  preparation; `REC-03` covers
   inclusion and user stop; `REC-04` covers privacy and integrity stops; and
   `REC-05` covers export, retention and library recovery.
 - **Automated tests required:** Recording-only checkpoint projection and size
@@ -221,6 +229,15 @@ existing exports are never merged with or overwritten.
   live sessions. Representative coverage includes
   `synchronized_capture_spans_windows_and_excludes_local_input`,
   `mobile_recording_binds_selected_active_and_parked_sessions`,
+  `recording_is_opt_in_and_unlocks_settings_only_after_saving`,
+  `disabling_session_recording_stops_capture_and_retains_the_source`,
+  `desktop_disabling_session_recording_stops_capture_and_retains_the_source`,
+  `opting_out_stops_other_window_output_before_requests_are_settled`,
+  `recording_opt_out_survives_stale_saves_and_failed_writes`,
+  `unknown_recording_opt_in_save_stays_off_and_blocks_stale_saves`,
+  `recording_opt_out_remains_available_when_settings_are_unavailable_or_busy`,
+  `failed_recording_opt_out_warns_and_can_be_retried`,
+  `desktop_recording_requires_opt_in_before_opening_consent`,
   `shared_lifecycle_stop_blocks_later_output_in_every_stream`,
   `resetting_reopened_sheet_restores_its_top`,
   `advanced_pacing_observes_cancellation_after_the_last_source_read`,
@@ -234,7 +251,8 @@ existing exports are never merged with or overwritten.
   `resizing_into_preconsent_history_stops_before_the_unfaithful_event`,
   `recovered_prefix_is_labeled_and_never_deletes_the_original`, and
   `worker_retains_source_on_encoding_and_publication_failure`.
-- **Native/manual evidence required:** Consent and recording indicators;
+- **Native/manual evidence required:** Default-off opt-in, disable-during-
+  preparation/capture behavior, library retention, consent and recording indicators;
   recording settings, naming previews and persisted directory access;
   lock/background interruption; OS-recommended backup handling and its
   disclosed limitations, deletion/recovery;

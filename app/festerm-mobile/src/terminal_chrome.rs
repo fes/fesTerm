@@ -404,7 +404,7 @@ pub fn key_row(ui: &mut Ui, state: &KeyRowState, keys: &mut KeyPress) -> KeyRowO
     KeyRowOutput {
         action,
         control_rect,
-        click: false,
+        click: action != KeyRowAction::None,
     }
 }
 

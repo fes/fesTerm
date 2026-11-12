@@ -2583,7 +2583,6 @@ pub enum NewProfileKind {
     DevTunnel,
     /// The Dev Tunnel host-setup surface rather than a profile editor.
     HostSetup,
-    PowerShell,
     SshFromDraft(SshProfileDraftSeed),
 }
 
@@ -2720,6 +2719,7 @@ pub enum AppCommand {
     OpenRecording,
     OpenRecordingSettings,
     OpenRecordingLibrary,
+    SetSessionRecordingAllowed(bool),
     /// Moves one tab into another window, or - with `target: None` - out to a
     /// new window of its own at `screen_position` (ADR 0033).
     ///
@@ -3572,6 +3572,7 @@ pub struct AppState {
     /// than a cosmetic chip-layout/status-bar choice, so it needs its own
     /// opt-in rather than defaulting on.
     restore_workspace: bool,
+    session_recording_allowed: bool,
     terminal_font: TerminalFontPreference,
     terminal_ligatures: bool,
     emoji_presentation: EmojiPresentationPreference,
@@ -3672,6 +3673,7 @@ impl AppState {
     /// initial `tabs`/`active` are produced.
     fn new_with_tabs(configuration: Configuration, tabs: Vec<Tab>, active: TabId) -> Self {
         let settings = configuration.interface_settings().clone();
+        let session_recording_allowed = configuration.session_recording_enabled();
         let (sftp_cleanup_sender, sftp_cleanup_receiver) = mpsc::sync_channel(8);
         Self {
             discovery: Default::default(),
@@ -3724,6 +3726,7 @@ impl AppState {
             show_running_dev_tunnels: settings.show_running_dev_tunnels(),
             dev_tunnel_extension_days: settings.dev_tunnel_extension_days(),
             restore_workspace: settings.restore_workspace(),
+            session_recording_allowed,
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
@@ -4074,6 +4077,7 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        self.session_recording_allowed = configuration.session_recording_enabled();
         #[cfg(feature = "experimental-dev-tunnels")]
         if let Some(pending) = &self.pending_resume {
             if let (Some(profile), Some(valid)) = (
@@ -4172,6 +4176,7 @@ impl AppState {
         self.default_sftp_local_directory = settings
             .default_sftp_local_directory()
             .map(Path::to_path_buf);
+        self.session_recording_allowed = configuration.session_recording_enabled();
         self.replace_configuration(configuration);
     }
 
@@ -4349,6 +4354,18 @@ impl AppState {
 
     pub const fn restore_workspace(&self) -> bool {
         self.restore_workspace
+    }
+
+    pub const fn session_recording_allowed(&self) -> bool {
+        self.session_recording_allowed
+    }
+
+    pub(crate) fn set_session_recording_allowed(&mut self, enabled: bool) {
+        self.session_recording_allowed = enabled;
+        self.configuration = self
+            .configuration
+            .with_session_recording_enabled(enabled)
+            .expect("a boolean recording preference is valid");
     }
 
     pub const fn terminal_font(&self) -> TerminalFontPreference {
@@ -4825,6 +4842,9 @@ impl AppState {
             AppCommand::OpenRecording
             | AppCommand::OpenRecordingSettings
             | AppCommand::OpenRecordingLibrary => {}
+            AppCommand::SetSessionRecordingAllowed(enabled) => {
+                self.set_session_recording_allowed(enabled);
+            }
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::CreateProfile { kind } => {
                 self.open_profiles();

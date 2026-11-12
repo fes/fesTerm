@@ -984,6 +984,7 @@ mod tests {
             ..Default::default()
         }));
         let mut app = MobileApp::new(lifecycle);
+        app.shell.session_recording_enabled = true;
         app.open_local_tab();
         let id = app.active_tab.unwrap();
         let original = Arc::new(FakeSession::default());
@@ -1018,6 +1019,7 @@ mod tests {
             ..Default::default()
         }));
         let mut app = MobileApp::new(lifecycle);
+        app.shell.session_recording_enabled = true;
         app.open_local_tab();
         let id = app.active_tab.unwrap();
         *app.sink.live.connection.borrow_mut() = Some(connection(Arc::new(FakeSession::default())));
@@ -1138,6 +1140,7 @@ mod tests {
             ..Default::default()
         }));
         let mut app = MobileApp::new(lifecycle);
+        app.shell.session_recording_enabled = true;
         app.open_local_tab();
         let parked_id = app.active_tab.unwrap();
         let parked_session = Arc::new(FakeSession::default());

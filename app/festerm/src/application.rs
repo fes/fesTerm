@@ -170,6 +170,8 @@ impl FesTermApplication {
     }
 
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        let recording_allowed = primary.session_recording_allowed();
+        primary.initialize_recording_preference();
         primary.set_automation_window(WindowId::PRIMARY);
         primary.initialize_automation_preferences();
         let presentation_workspace = crate::automation::WorkspaceRevision::default();
@@ -184,7 +186,7 @@ impl FesTermApplication {
                 app: primary,
                 placement: None,
             }],
-            recording: recording::DesktopRecording::new(!cfg!(test)),
+            recording: recording::DesktopRecording::new(!cfg!(test), recording_allowed),
             next_window_id: 1,
             last_active_window: WindowId::PRIMARY,
             document_activation: ActivationQueue::default(),

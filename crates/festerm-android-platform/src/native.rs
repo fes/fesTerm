@@ -616,6 +616,13 @@ pub fn input_click() -> Result<(), &'static str> {
     })
 }
 
+pub fn input_haptic() -> Result<(), &'static str> {
+    bridge()?.call(|env, activity| {
+        env.call_method(activity, "inputHaptic", "()V", &[])?;
+        Ok(())
+    })
+}
+
 pub fn clipboard_text() -> Result<Option<String>, &'static str> {
     bridge()?.call(|env, activity| {
         let value = env
