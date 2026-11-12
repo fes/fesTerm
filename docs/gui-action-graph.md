@@ -784,7 +784,14 @@ and widget tests do not promote native theme/scale/accessibility acceptance.
 | `TUNNEL-16` | Hosted profile or locally owned cloud entry -> revoked exposure and owned cleanup | Disable and Save, remove native persistence, delete the profile, or confirm deletion of its locally owned cloud entry. | Protected revocation precedes config write and wins even on save failure; stop only exact owned relay images, then delete only the verified recorded cloud identity/account. Never terminate the daemon, sweep cloud prefixes, clear global credentials or resurrect from stale config. | Pending local inventory survives profile deletion with foreground sign-in/Retry; uncertainty retains records and refuses destructive guesses. A fresh explicit enable creates new consent, not authority to discard an uncertain old reservation. | P,H,N,security; partial |
 | `TUNNEL-17` | Local exposure checkbox -> verified host GitHub account | Checking the checkbox immediately opens the account chooser, before Save. Select the compatible verified CLI account or explicitly connect through the browser. | Bounded read-only desktop/default-script inventory; unknown entries refuse. New browser login is unavailable while any known binding needs its account; recovery checks all known accounts. Older custom-state script hosts cannot be inventoried and the sign-in warning discloses possible interruption. Exclusive account/canonical-installer leases fence login; preparation holds the shared lease. Five-minute single-use tab/request/profile receipt gates Save; protected initial reservation pins and reverifies the numeric identity. No credentials enter configuration. | Cancel unchecks exposure and creates no grant/shell/cloud object; completed official CLI authentication may remain, as disclosed. Stale, expired or changed-editor replies cannot enable exposure. No automatic logout or startup browser prompt. | P,H,N,security; partial |
 
-For `TUNNEL-15`, ordinary profile saves also refuse a name already used by an
+For `TUNNEL-15`, the tagged app-to-helper request preserves numeric session
+generations through `u64::MAX` exactly; larger or malformed generations are
+refused before host setup. Stored targets retain the full `u128` range.
+This compatibility boundary does not create HOST authority. Under `HOST-02`,
+creation and sign-in startup checkbox edits invalidate prior confirmation;
+only a fresh explicit review sends the selected settings to the host worker.
+Neither checkbox shares a session or approves an owner key.
+Ordinary profile saves also refuse a name already used by an
 enabled host and retain the editor draft. Builds without hosting support show
 an error rather than opening a hosted profile in the default runtime. Delayed
 opens preserve newly entered drafts, report failures on the originating

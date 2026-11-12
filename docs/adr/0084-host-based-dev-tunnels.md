@@ -1351,6 +1351,12 @@ cancellation tests and exact-owned activation/revocation fixtures. HOST-04/05
 and HOSTSETUP-01 remain partial: the real logind/manager/last-logout and retained
 daemon PID/generation/child-I/O/cgroup evidence is still required. Manual remains
 inert; no synthetic fixture establishes OS logout survival.
+`desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings`
+additionally drives both HOST creation/startup widgets through their typed
+composition actions. Edits invalidate old confirmation; a new explicit review
+passes exactly the selected settings without a sharing operation or owner-key
+approval. This is separate from the retained ADR0072 tagged-helper decoder
+compatibility fix; neither establishes native setup or live-service acceptance.
 The retry correction adds typed CLI/unit exit-disposition coverage,
 `host_runtime_manager_restart_after_disabled_stop_or_cleanup_is_not_retryable`,
 `host_runtime_sign_in_bad_bundle_is_not_a_login_retry`,

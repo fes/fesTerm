@@ -263,6 +263,58 @@ fn sharing_button(view: &View, label: &str) -> Action {
 }
 
 #[test]
+fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings() {
+    for initially_enabled in [false, true] {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let mut controller = fixture(Arc::new(Fake(
+            move |request: Request, _: &CancellationToken| {
+                assert_eq!(request.operation, Operation::Enable);
+                assert!(request.sharing.is_none());
+                recorded.lock().unwrap().push(request.draft.settings());
+                Ok(Report {
+                    scope: Scope::Absent,
+                    ..Report::default()
+                })
+            },
+        )));
+        let context = egui::Context::default();
+        controller.view.scope = Scope::Absent;
+        controller.view.draft.allow_creation = initially_enabled;
+        controller.view.draft.startup_at_sign_in = initially_enabled;
+        controller.action(Action::Review(Operation::Enable), &context);
+        for label in [
+            "Allow remote creation (separate owner approval still required)",
+            "Start at my sign-in (only where the native policy is qualified)",
+        ] {
+            let action = sharing_button(&controller.view, label);
+            assert!(matches!(action, Action::Edit(_)));
+            controller.action(action, &context);
+            assert!(controller.view.review.is_none());
+            controller.action(Action::Confirm, &context);
+            assert!(!controller.view.busy);
+            assert!(calls.lock().unwrap().is_empty());
+        }
+        controller.action(Action::Review(Operation::Enable), &context);
+        controller.action(Action::Confirm, &context);
+        drain(&mut controller, &context);
+        let settings = calls.lock().unwrap();
+        assert_eq!(settings.len(), 1);
+        assert_eq!(settings[0].allow_creation, !initially_enabled);
+        assert_eq!(
+            settings[0].startup,
+            if initially_enabled {
+                Startup::Manual
+            } else {
+                Startup::UserSignIn
+            }
+        );
+        assert!(controller.view.sharing.is_none());
+        assert!(!controller.view.owner_approved);
+    }
+}
+
+#[test]
 fn desktop_remote_access_sharing_reviewed_recovery_uses_selected_target_and_typed_original() {
     for phase in [SharePhase::Released, SharePhase::Uncertain] {
         for same_target in [false, true] {

@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Consolidating the profile checkbox decoder fix into the HOST branch
+
+The retained legacy profile-host helper request buffers an internally tagged
+operation and could reject an otherwise valid native session generation before
+setup. The compatibility port preserves numeric generations through `u64::MAX`,
+rejects malformed or oversized request values before setup, and leaves persisted
+`u128` targets unchanged. It does not import profile metadata as HOST authority.
+The new HOST workflow separately gains a widget-to-command regression for its
+creation and sign-in startup checkboxes: edits invalidate old confirmation and
+only a fresh explicit review reaches the bounded worker with the selected
+settings. Neither toggle shares a session or approves a client key.
+These regression sources do not qualify native setup, service recovery or
+live-provider behavior; those remain the existing DT-08/HOST acceptance gates.
+
 ## Diagnosing uncertain takeover after temporary pending cancellation
 
 The published `4898f407` macOS native selection retains18 passes/1 failure,
