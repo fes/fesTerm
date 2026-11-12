@@ -73,6 +73,14 @@ all availability/byte/permit assertions completed, then the new test incorrectly
 required successful completion after explicitly disconnecting its own SSH
 client. Its teardown now accepts only success or the SDK's typed `Disconnect`
 result, still awaiting completion; no live-traffic or isolation oracle changes.
+At exact `24511a63`, the changed-source bridge selection passes **7/0/0, 0.07s**,
+including production-peer liveness and all original shared-loop oracles.
+Affected bridge/setup/CLI all-target strict, app fmt, exact published-base
+vendor-byte comparison, actual-main trace and diff exit0. Interleaved stage
+diagnostics required a harness name-parser correction against that existing
+passing output; no passing tests were repeated. The unchanged setup crate's
+exact `e4273190` **8/0/0** evidence is retained as source-specific, not a fresh
+execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

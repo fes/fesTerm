@@ -1,7 +1,8 @@
 # Manual and Usability Validation Registry
 
-HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery is source-only,
-pending deterministic checks and separately authorized native qualification.
+HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery has focused
+source-specific deterministic coverage; affected delta review and separately
+authorized native qualification remain required.
 On each native platform eventually prove old-listener/client retirement,
 15-second cancellable delay, fresh same-account scoped-token/current signed
 bundle/native-owner admission, identical run/host identity and daemon PID/
