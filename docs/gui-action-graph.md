@@ -6,6 +6,11 @@ backend must retain publisher authentication, journal-before-Create and
 canonical task XML/ACL ownership; pending stop proves both tasks quiescent under
 one protected-revocation deadline. Source/model evidence is not Windows PKI,
 ordinary-user native service or persistent-daemon acceptance.
+Publisher authentication gates update/run/commit, not local removal. Cleanup
+requires the exact CleanupPending epoch and journal-owned quiescent tasks;
+untrusted/missing/tampered payloads cannot prevent removal, while XML/ACL
+substitution and submitted-unobserved absence cannot authorize it. Interrupted
+Remove retries the same operation/resources, never creates a replacement.
 The co-located `services::replacement::windows_tests` model keeps separate task
 resources, verifies durable submission before Create and unchanged old active
 receipt, and exercises exact retry, interrupted commit/retirement, missing

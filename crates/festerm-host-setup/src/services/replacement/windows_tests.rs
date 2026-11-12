@@ -568,11 +568,124 @@ fn windows_stopped_update_compact_names_bind_both_uuids_and_origin() {
 }
 
 #[test]
-fn windows_stopped_update_cleanup_authenticates_both_and_confirms_exact_absence() {
+fn windows_stopped_update_cleanup_untrusted_tampered_or_missing_bundles_confirms_exact_absence() {
+    for payload in ["untrusted", "tampered", "missing"] {
+        let fixture = Fixture::new();
+        let services = fixture.services();
+        fixture.installed(&services);
+        services.runner.state.borrow_mut().fail_create_after = true;
+        assert!(fixture.update(&services).is_err());
+        fixture.store.revoke().unwrap();
+        let stopped = fixture.store.snapshot().unwrap();
+        services.stop(stopped.epoch).unwrap();
+        fixture
+            .store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        fixture.store.request_cleanup().unwrap();
+        let cleanup = fixture.store.snapshot().unwrap();
+        let mut pending = services.replacement().unwrap().unwrap();
+        for (target, version) in [
+            (&pending.old, pending.from_version.as_str()),
+            (&pending.new, pending.to_version.as_str()),
+        ] {
+            match payload {
+                "tampered" => std::fs::write(&target.executable, b"untrusted payload").unwrap(),
+                "missing" => std::fs::remove_file(&target.executable).unwrap(),
+                _ => {}
+            }
+            // Test-key provenance is not trusted by production admission. This
+            // is not a native publisher-revocation or offline PKI fixture.
+            assert!(TrustedStage::authenticate_registered(target, version).is_err());
+            if payload != "untrusted" {
+                assert!(TrustedStage::authenticate_fixture_registered(target, version).is_err());
+            }
+        }
+        let preserved = fixture.preserved();
+        let mut active = services.registration().unwrap().1.unwrap();
+        let count = services.runner.state.borrow().calls.len();
+        assert!(services.cleanup(cleanup.epoch - 1).is_err());
+        assert_eq!(services.runner.state.borrow().calls.len(), count);
+        assert_eq!(services.replacement().unwrap().unwrap(), pending);
+        let result = services.cleanup(cleanup.epoch).unwrap();
+        assert_eq!(result.process, ProcessState::Absent);
+        assert!(services.runner.state.borrow().tasks.is_empty());
+        pending.state = ReplacementState::Aborted;
+        assert_eq!(services.replacement().unwrap().unwrap(), pending);
+        active.retiring_definition = true;
+        active.removed = true;
+        assert_eq!(services.registration().unwrap().1.unwrap(), active);
+        assert_eq!(fixture.store.snapshot().unwrap(), cleanup);
+        assert_eq!(fixture.preserved(), preserved);
+    }
+}
+
+#[test]
+fn windows_stopped_update_cleanup_foreign_uncertain_or_live_tasks_refuse_without_remove() {
+    for fault in 0..5 {
+        let fixture = Fixture::new();
+        let services = fixture.services();
+        fixture.installed(&services);
+        {
+            let mut state = services.runner.state.borrow_mut();
+            state.fail_create_before = fault == 2;
+            state.fail_create_after = fault != 2;
+        }
+        assert!(fixture.update(&services).is_err());
+        fixture.store.request_cleanup().unwrap();
+        let cleanup = fixture.store.snapshot().unwrap();
+        let pending = services.replacement().unwrap().unwrap();
+        let active = services.registration().unwrap().1.unwrap();
+        let preserved = fixture.preserved();
+        let mut state = services.runner.state.borrow_mut();
+        match fault {
+            0 => state
+                .tasks
+                .get_mut(&pending.new.resource)
+                .unwrap()
+                .0
+                .push_str("foreign"),
+            1 => state
+                .tasks
+                .get_mut(&pending.new.resource)
+                .unwrap()
+                .1
+                .push_str("foreign"),
+            2 => assert!(!state.tasks.contains_key(&pending.new.resource)),
+            3 => state.fail_query = true,
+            _ => state.tasks.get_mut(&pending.new.resource).unwrap().2 = 4,
+        }
+        let count = state.calls.len();
+        drop(state);
+        assert!(services.cleanup(cleanup.epoch).is_err());
+        assert!(services.runner.state.borrow().calls[count..]
+            .iter()
+            .all(|request| matches!(
+                request,
+                NativeRequest::Task {
+                    action: TaskAction::Query,
+                    ..
+                }
+            )));
+        let retained = services.replacement().unwrap().unwrap();
+        if fault == 4 {
+            let mut observed = pending;
+            observed.new.native_snapshot = observed.new.native_expected.clone();
+            assert_eq!(retained, observed);
+        } else {
+            assert_eq!(retained, pending);
+        }
+        assert_eq!(services.registration().unwrap().1.unwrap(), active);
+        assert_eq!(fixture.store.snapshot().unwrap(), cleanup);
+        assert_eq!(fixture.preserved(), preserved);
+    }
+}
+
+#[test]
+fn windows_stopped_update_cleanup_lost_new_remove_retries_only_exact_operation() {
     let fixture = Fixture::new();
     let services = fixture.services();
     fixture.installed(&services);
-    let preserved = fixture.preserved();
     services.runner.state.borrow_mut().fail_create_after = true;
     assert!(fixture.update(&services).is_err());
     fixture.store.revoke().unwrap();
@@ -584,26 +697,39 @@ fn windows_stopped_update_cleanup_authenticates_both_and_confirms_exact_absence(
         .unwrap();
     fixture.store.request_cleanup().unwrap();
     let cleanup = fixture.store.snapshot().unwrap();
+    let mut pending = services.replacement().unwrap().unwrap();
+    let active = services.registration().unwrap().1.unwrap();
+    let preserved = fixture.preserved();
     let count = services.runner.state.borrow().calls.len();
-    let _operation = services.lease().unwrap();
-    assert!(services
-        .cleanup_replacement_with(cleanup.epoch, |_, _| Err(refused(
-            "fixture.publisher_refusal"
-        )))
-        .is_err());
-    // Both observed snapshots were already retained by stop; refusing publisher
-    // authority cannot remove either task.
-    assert_eq!(services.runner.state.borrow().calls.len(), count);
-    let result = services
-        .cleanup_replacement_with(cleanup.epoch, TrustedStage::authenticate_fixture_registered)
-        .unwrap()
-        .unwrap();
-    assert_eq!(result.process, ProcessState::Absent);
+    services.runner.state.borrow_mut().fail_remove_after = true;
+    assert!(services.cleanup(cleanup.epoch).is_err());
+    assert_eq!(services.replacement().unwrap().unwrap(), pending);
+    assert_eq!(services.registration().unwrap().1.unwrap(), active);
     assert!(services.runner.state.borrow().tasks.is_empty());
+    assert_eq!(fixture.store.snapshot().unwrap(), cleanup);
+    assert_eq!(fixture.preserved(), preserved);
     assert_eq!(
-        services.replacement().unwrap().unwrap().state,
-        ReplacementState::Aborted
+        services.cleanup(cleanup.epoch).unwrap().process,
+        ProcessState::Absent
     );
+    pending.state = ReplacementState::Aborted;
+    assert_eq!(services.replacement().unwrap().unwrap(), pending);
+    let state = services.runner.state.borrow();
+    let removed: Vec<_> = state.calls[count..]
+        .iter()
+        .filter_map(|request| match request {
+            NativeRequest::Task {
+                name,
+                action: TaskAction::Remove,
+            } => Some(name.as_str()),
+            NativeRequest::Task {
+                action: TaskAction::Query,
+                ..
+            } => None,
+            _ => panic!("cleanup must only query/remove exact tasks"),
+        })
+        .collect();
+    assert_eq!(removed, [pending.new.resource.as_str()]);
     assert_eq!(fixture.store.snapshot().unwrap(), cleanup);
     assert_eq!(fixture.preserved(), preserved);
 }
@@ -625,10 +751,7 @@ fn windows_stopped_update_missing_receipt_cannot_finalize_aborted_cleanup() {
     fixture.store.request_cleanup().unwrap();
     std::fs::remove_file(fixture.root.path().join("state").join(RECORD)).unwrap();
     let epoch = fixture.store.snapshot().unwrap().epoch;
-    let _operation = services.lease().unwrap();
-    assert!(services
-        .cleanup_replacement_with(epoch, TrustedStage::authenticate_fixture_registered,)
-        .is_err());
+    assert!(services.cleanup(epoch).is_err());
     assert_eq!(
         services.replacement().unwrap().unwrap().state,
         ReplacementState::Applying

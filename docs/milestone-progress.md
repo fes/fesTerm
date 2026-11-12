@@ -15336,7 +15336,8 @@ native completion recovers only the original reservation in the replacement
 journal, including ownership retained after revocation; absent submitted but
 unobserved tasks still refuse as unknown. Retirement uses exact quiescence,
 Remove and independent absence rather than file-definition stubs. Cleanup
-reauthenticates both signed bundles before retirement.
+originally reauthenticated both signed bundles before retirement; the bounded
+normal correction below removes that cleanup-only availability defect.
 
 Pending Windows stop shares protected revocation, runtime-lease release and
 both task observations under one existing deadline, including recovery time.
@@ -15375,3 +15376,32 @@ traceability against actual PR base6614 (311 edges) and full-base diff checks
 pass. The pre-existing vendored `connect_via_proxy` warning and initial
 inner-test-registration warning log remain retained; there is no warning
 suppression or native retry-to-green.
+
+### Correcting local pending cleanup availability after169b
+
+The169b cleanup-only verifier prerequisite was incorrect: fresh publisher
+availability and intact executables authorize running/updating, not deleting
+an exact-owned quiescent task. Offline/revoked trust or missing/altered payloads
+could strand the pending operation and leave owned logon tasks registered.
+The normal child removes that prerequisite and its authenticator test seam;
+update/run/commit and all trust-policy bytes remain unchanged.
+
+Protected CleanupPending epochs, replacement reconciliation, exact canonical
+XML/ACL/submission/observation ownership, quiescence, Remove and independent
+absence still gate cleanup. Unknown/missing receipts cannot become Aborted.
+Portable controls use the production cleanup entrypoint with both bundles
+untrusted, altered or missing, preserve grants/receipts/fences and unrelated
+helpers, and retain zero-Remove failures for foreign/uncertain/nonquiescent
+tasks plus exact-resource recovery after lost Remove completion.
+
+After the79ab priority campaign released its slot, bounded local validation
+passed: affected services **54/0/1, 53.88s**, with all **15** named Windows
+model cases actually passing; minimal-feature refusal **1/0/0, 1.07s**;
+both matching lib/tests strict profiles, fmt, actual-base6614 trace (311 edges)
+and diff exit0. The private warm target stayed jobs1/offline/locked/debug0/
+incremental0; measured free memory stayed48–50%. All seven command children
+were wait-reaped and verified absent and the private Cargo lock was free.
+Historical169b raw logs/handoff remain untouched, not reused as child
+qualification. This introduces no signing policy, native Windows/guest claim
+or executable action. No unchanged native campaign or new publisher trust
+seam was added.

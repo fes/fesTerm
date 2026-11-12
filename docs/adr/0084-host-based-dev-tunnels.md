@@ -532,6 +532,12 @@ protected-revocation/runtime-release check with both task observations. It
 never launches/stops a host or session daemon, weakens signing policy or
 claims real Windows/native release acceptance. See the
 [receipt/recovery contract](../native-host-services.md#windows-stopped-replacement-contract-design-before-implementation).
+Pending local cleanup is removal authority, not launch/update authority:
+protected CleanupPending epochs, exact journal/task XML/ACL ownership and
+quiescence plus independent absence suffice even when either bundle is
+unavailable, altered or its publisher no longer trusted. Update/run/commit
+authentication remains mandatory. Unknown ownership/absence, missing receipts
+and foreign tasks do not become successful cleanup.
 
 ### 10. Protocol, resource and failure contract
 

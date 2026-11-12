@@ -2,6 +2,20 @@
 
 **Status:** Active registry
 
+The normal source child of169b corrects pending local cleanup's mistaken
+publisher-authentication prerequisite. New portable controls exercise the
+production cleanup entrypoint with untrusted test-key provenance and tampered
+or missing old/new executables after protected revocation, exact-resource lost
+Remove recovery, and refusal without Remove for XML/ACL substitution,
+submitted-unobserved absence, query uncertainty and nonquiescence. After the
+priority campaign released the slot, affected services passed **54/0/1,
+53.88s**, with all **15** named Windows model cases actually passing. Minimal
+runtime refusal passed **1/0/0, 1.07s**. Both matching lib/tests strict profiles,
+fmt, actual-base6614 trace (311 edges) and diff passed. All seven command PIDs
+were wait-reaped/absent, the private target lock was free and measured memory
+remained48–50%. No native helper or guest campaign ran. Fixture trust refusal
+is not actual native signer/TSA revocation or offline PKI acceptance.
+
 ADR0084 Windows stopped replacement has a bounded portable two-resource
 scheduler model under `festerm-host-setup` with `native-services,cloud,host-runtime`.
 The source preserves the embedded updater key and compiled publisher verifier;
@@ -10,7 +24,7 @@ Windows v3 canonical XML/ACL/submission/snapshot recovery, exact retry/cleanup,
 epoch fences and protected runtime-release contention are automated model
 boundaries. Feature-minimal registration/update retains its runtime-watcher
 refusal; default headless Windows stop uses cooperative protected revocation.
-Actual local macOS evidence: affected services **52 passed /0 failed /1
+Historical169b local macOS evidence: affected services **52 passed /0 failed /1
 existing native case ignored**, including all13 named new model cases;
 minimal-feature exact Windows recovery/refusal **1/0/0**. Both affected
 lib/tests strict profiles, default headless check, fmt and actual-base trace/

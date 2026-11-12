@@ -817,6 +817,10 @@ task, never infer absence from an unobserved completion or use the Windows file-
 definition stub as ownership. Old/new bundle reauthentication remains the existing
 updater/native-publisher path. Exact quiescent retirement and pending two-resource
 revocation reconciliation neither execute the host nor stop independent daemons.
+Local pending-replacement cleanup relies on protected CleanupPending epochs and
+exact journal/task ownership, not executable authentication or publisher availability.
+It preserves unknown outcomes and confirms independent absence before Aborted;
+update/commit/run authentication is unchanged.
 Portable scheduler models are not Windows COM/PKI or signed-release acceptance.
 Configure defaults disabled;
 compilation, native Running and last-run history confer no consent or Ready claim.

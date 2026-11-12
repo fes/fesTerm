@@ -9,6 +9,10 @@ Submission intent precedes Create; unknown absence remains unknown. Pending
 stop observes protected revocation, runtime release and both resources under
 one deadline without launching/killing HOST or sessiond. See the design-before-
 implementation contract in `docs/native-host-services.md`.
+Pending local cleanup requires protected CleanupPending consent and exact-owned
+quiescent task removal with independent absence, not executable publisher trust.
+Unavailable, revoked or altered bundles cannot veto removal; update, commit and
+run retain their existing full-bundle authentication.
 
 This document captures the current product and architectural direction for fesTerm. Accepted decisions are recorded in `docs/adr/`; detailed subsystem boundaries are in `ARCHITECTURE.md`, and delivery milestones are in `ROADMAP.md`.
 

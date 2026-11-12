@@ -260,6 +260,17 @@ sessiond launch, automatic reenable or grant restoration is permitted. Every
 native error, Busy, stale epoch or unknown result preserves the journal for
 exact retry/cleanup, never implies absence.
 
+Local pending-replacement cleanup follows the ordinary cleanup contract below:
+the protected CleanupPending epoch, validated old/new journal, exact canonical
+XML/owner+SYSTEM ACL, submission/observation evidence and confirmed quiescence
+authorize only exact removal and independent absence. It does not authenticate
+either executable bundle or contact a publisher verifier. Offline, revoked,
+missing or tampered executable payloads cannot strand owned registrations.
+Missing receipts or submitted-but-unobserved absence still cannot finalize
+Aborted; foreign XML/ACL and uncertainty refuse without removal. Interrupted
+Remove retries only the same owned resources and operation. No payload executes,
+trust is repaired or update/run/commit authentication is relaxed.
+
 The receipt retains verified file/directory handles; registration/start reopens
 no-follow and rechecks file identity, ownership, permissions and exact bytes.
 Changed or foreign cache entries are refused, never overwritten or repaired.

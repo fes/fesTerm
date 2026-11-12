@@ -555,22 +555,10 @@ impl<R: CommandRunner> Services<'_, R> {
     }
 
     pub(super) fn cleanup_replacement(&self, epoch: u64) -> io::Result<Option<Observation>> {
-        self.cleanup_replacement_with(epoch, TrustedStage::authenticate_registered)
-    }
-
-    fn cleanup_replacement_with(
-        &self,
-        epoch: u64,
-        authenticate: impl Fn(&Registration, &str) -> io::Result<()>,
-    ) -> io::Result<Option<Observation>> {
         let Some(mut transaction) = self.replacement()?.filter(Replacement::pending) else {
             return Ok(None);
         };
         self.reconcile_replacement_tasks(&mut transaction)?;
-        if self.context.platform == Platform::Windows {
-            authenticate(&transaction.old, &transaction.from_version)?;
-            authenticate(&transaction.new, &transaction.to_version)?;
-        }
         transaction.state = ReplacementState::Applying;
         self.save_replacement(&transaction, epoch, Phase::CleanupPending)?;
         self.retire_update_resource(&transaction.old, epoch, Phase::CleanupPending)?;
