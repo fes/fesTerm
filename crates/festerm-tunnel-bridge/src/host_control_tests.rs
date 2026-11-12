@@ -1446,81 +1446,165 @@ pub(crate) mod native_routes {
             }
         }
 
-        let fixture = NativeFixture::new(true);
-        let (native, source) = fixture.backend();
-        let backend = Arc::new(LostReply {
-            native,
-            first: AtomicBool::new(true),
-            committed: tokio::sync::Notify::new(),
-            release: Condvar::new(),
-            paused: Mutex::new(true),
-        });
-        let budgets = Budgets::default();
-        let (mut first, first_server) = fixture
-            .connect(backend.clone(), source.clone(), &budgets)
-            .await;
-        let (mut second, second_server) = fixture
-            .connect(backend.clone(), source.clone(), &budgets)
-            .await;
-        let creation = fixture.creation();
-        let operation = first.issue_operation().unwrap();
-        let cancel = CancellationToken::new();
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            let request = first.request_issued(
-                &operation,
-                Request::Ensure {
-                    creation: creation.clone(),
-                },
-                &cancel,
-            );
-            tokio::pin!(request);
-            tokio::select! {
-                result = &mut request => {
-                    let response = result.unwrap();
+        for restore_pending_checkpoint in [false, true] {
+            let fixture = NativeFixture::new(true);
+            let (native, source) = fixture.backend();
+            let backend = Arc::new(LostReply {
+                native,
+                first: AtomicBool::new(true),
+                committed: tokio::sync::Notify::new(),
+                release: Condvar::new(),
+                paused: Mutex::new(true),
+            });
+            let budgets = Budgets::default();
+            let (mut first, first_server) = fixture
+                .connect(backend.clone(), source.clone(), &budgets)
+                .await;
+            let (mut second, second_server) = fixture
+                .connect(backend.clone(), source.clone(), &budgets)
+                .await;
+            let creation = fixture.creation();
+            let operation = first.issue_operation().unwrap();
+            let cancel = CancellationToken::new();
+            let initial_identity = if restore_pending_checkpoint {
+                let setup_deadline = Instant::now() + Duration::from_secs(8);
+                let running = loop {
+                    match fixture.control().ensure(
+                        &fixture.policy.principal,
+                        operation.operation(),
+                        &creation,
+                        false,
+                        &AtomicBool::new(false),
+                        |_| Ok::<_, ControlError>(()),
+                    ) {
+                        Ok(running) => break running,
+                        Err(
+                            ControlError::Busy
+                            | ControlError::Unknown
+                            | ControlError::CommittedButNotPublished,
+                        ) if Instant::now() < setup_deadline => {
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        Err(error) => panic!("owned creation setup failed: {error:?}"),
+                    }
+                };
+                let mut journal = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+                let record = &mut journal["sessions"][creation.logical.as_str()];
+                record["phase"] = "Launching".into();
+                record["identity"] = serde_json::Value::Null;
+                let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+                private_storage::replace_private(
+                    &directory,
+                    std::path::Path::new("host-sessions.json"),
+                    &serde_json::to_vec(&journal).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    first
+                        .request_issued(
+                            &operation,
+                            Request::Ensure {
+                                creation: creation.clone()
+                            },
+                            &cancel
+                        )
+                        .await
+                        .unwrap()
+                        .body,
+                    Response::Refused {
+                        reason: Refusal::Stale
+                    },
+                );
+                Some((running.target.generation, running.identity.pid))
+            } else {
+                None
+            };
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                // Reconcile a still-launching committed generation before replaying
+                // the original operation; readiness never grants another creation.
+                loop {
+                    let response = second
+                        .request(OperationId::new(), Request::List { cursor: None }, &cancel)
+                        .await
+                        .unwrap();
+                    if matches!(response.body, Response::Inventory { .. }) {
+                        break;
+                    }
                     let (variant, refusal_code) = public_response_kind(&response.body);
-                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
-                    assert!(Instant::now() < deadline, "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
+                    assert!(
+                        matches!(
+                            response.body,
+                            Response::Refused {
+                                reason: Refusal::Busy | Refusal::Unknown | Refusal::Stale
+                            }
+                        ),
+                        "creation readiness response variant={variant}, refusal_code={refusal_code:?}"
+                    );
+                    assert!(
+                        Instant::now() < deadline,
+                        "creation readiness response variant={variant}, refusal_code={refusal_code:?}"
+                    );
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
-                _ = backend.committed.notified() => {
-                    let held = source.0.clone().try_lock_owned().unwrap();
-                    *backend.paused.lock().unwrap() = false;
-                    backend.release.notify_all();
-                    assert_eq!(request.await.unwrap().body, Response::Refused { reason: Refusal::OutcomeUncertain });
-                    assert_eq!(second.request(OperationId::new(), Request::List { cursor: None }, &cancel).await.unwrap().body,
-                        Response::Refused { reason: Refusal::Busy });
-                    drop(held);
-                    break;
+                let request = first.request_issued(
+                    &operation,
+                    Request::Ensure {
+                        creation: creation.clone(),
+                    },
+                    &cancel,
+                );
+                tokio::pin!(request);
+                tokio::select! {
+                    result = &mut request => {
+                        let response = result.unwrap();
+                        let (variant, refusal_code) = public_response_kind(&response.body);
+                        assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
+                        assert!(Instant::now() < deadline, "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    _ = backend.committed.notified() => {
+                        let held = source.0.clone().try_lock_owned().unwrap();
+                        *backend.paused.lock().unwrap() = false;
+                        backend.release.notify_all();
+                        assert_eq!(request.await.unwrap().body, Response::Refused { reason: Refusal::OutcomeUncertain });
+                        assert_eq!(second.request(OperationId::new(), Request::List { cursor: None }, &cancel).await.unwrap().body,
+                            Response::Refused { reason: Refusal::Busy });
+                        drop(held);
+                        break;
+                    }
                 }
             }
-        }
-        let journal = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
-        let generation: GenerationId = serde_json::from_value(
-            journal["sessions"][creation.logical.as_str()]["generation"].clone(),
-        )
-        .unwrap();
-        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
-        let held_lease = private_storage::open_private_file(
-            &directory,
-            std::path::Path::new(&format!("host-daemon-{}.lock", generation.get())),
-            false,
-        )
-        .unwrap();
-        fs2::FileExt::lock_exclusive(&held_lease).unwrap();
-        let lease_name = format!("host-daemon-{}.json", generation.get());
-        let lease = fixture.checkpoint(&lease_name, 16 * 1024);
-        assert_eq!(journal["sessions"].as_object().unwrap().len(), 1);
-        assert_eq!(journal["operations"].as_object().unwrap().len(), 1);
-        let body = Request::Ensure {
-            creation: creation.clone(),
-        };
-        let response = first
-            .request_issued(&operation, body.clone(), &cancel)
-            .await
+            let journal = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+            let generation: GenerationId = serde_json::from_value(
+                journal["sessions"][creation.logical.as_str()]["generation"].clone(),
+            )
             .unwrap();
-        let (variant, refusal_code) = public_response_kind(&response.body);
-        assert!(
+            let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+            let held_lease = private_storage::open_private_file(
+                &directory,
+                std::path::Path::new(&format!("host-daemon-{}.lock", generation.get())),
+                false,
+            )
+            .unwrap();
+            fs2::FileExt::lock_exclusive(&held_lease).unwrap();
+            let lease_name = format!("host-daemon-{}.json", generation.get());
+            let lease = fixture.checkpoint(&lease_name, 16 * 1024);
+            if let Some((expected_generation, expected_pid)) = initial_identity {
+                assert_eq!(generation, expected_generation);
+                assert_eq!(lease["native_pid"], serde_json::json!(expected_pid));
+            }
+            assert_eq!(journal["sessions"].as_object().unwrap().len(), 1);
+            assert_eq!(journal["operations"].as_object().unwrap().len(), 1);
+            let body = Request::Ensure {
+                creation: creation.clone(),
+            };
+            let response = first
+                .request_issued(&operation, body.clone(), &cancel)
+                .await
+                .unwrap();
+            let (variant, refusal_code) = public_response_kind(&response.body);
+            assert!(
             matches!(
                 response.body,
                 Response::Refused {
@@ -1529,20 +1613,20 @@ pub(crate) mod native_routes {
             ),
             "original-operation lease replay response variant={variant}, refusal_code={refusal_code:?}"
         );
-        assert_eq!(
-            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
-            journal
-        );
-        assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
-        drop(held_lease);
-        loop {
-            let response = first
-                .request_issued(&operation, body.clone(), &cancel)
-                .await
-                .unwrap();
-            let (variant, refusal_code) = public_response_kind(&response.body);
-            assert!(Instant::now() < deadline, "original-operation replay response variant={variant}, refusal_code={refusal_code:?}");
-            match &response.body {
+            assert_eq!(
+                fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+                journal
+            );
+            assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
+            drop(held_lease);
+            loop {
+                let response = first
+                    .request_issued(&operation, body.clone(), &cancel)
+                    .await
+                    .unwrap();
+                let (variant, refusal_code) = public_response_kind(&response.body);
+                assert!(Instant::now() < deadline, "original-operation replay response variant={variant}, refusal_code={refusal_code:?}");
+                match &response.body {
                 Response::Ensured {
                     session,
                     disposition,
@@ -1565,21 +1649,22 @@ pub(crate) mod native_routes {
                 }
                 _ => panic!("committed original-operation replay variant={variant}, refusal_code={refusal_code:?}"),
             }
+            }
+            assert_eq!(
+                fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+                journal
+            );
+            assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
+            assert_eq!(
+                festerm_sessiond::list_running_sessions_in(&fixture.root)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            drop((first, second));
+            assert!(first_server.await.unwrap().is_err());
+            assert!(second_server.await.unwrap().is_err());
         }
-        assert_eq!(
-            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
-            journal
-        );
-        assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
-        assert_eq!(
-            festerm_sessiond::list_running_sessions_in(&fixture.root)
-                .unwrap()
-                .len(),
-            1
-        );
-        drop((first, second));
-        assert!(first_server.await.unwrap().is_err());
-        assert!(second_server.await.unwrap().is_err());
     }
 
     #[tokio::test]

@@ -1603,10 +1603,32 @@ fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_re
             .retire_local(&fixture.owner, &running.target),
         Err(ControlError::Revoked)
     );
-    fixture
-        .control()
-        .reconfirm_local(&fixture.owner, &running.target, absent.revision)
-        .unwrap();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let daemon = storage::open_private_file(
+        &directory,
+        Path::new(&format!("{}.daemon.lock", running.identity.name)),
+        false,
+    )
+    .unwrap();
+    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&daemon) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
+        Err(error) => panic!("owned daemon lifetime lock failed: {error}"),
+    })
+    .unwrap();
+    assert_eq!(
+        fixture
+            .control()
+            .reconfirm_local(&fixture.owner, &running.target, absent.revision),
+        Err(ControlError::Busy)
+    );
+    drop(daemon);
+    retry_busy(|| {
+        fixture
+            .control()
+            .reconfirm_local(&fixture.owner, &running.target, absent.revision)
+    })
+    .unwrap();
     assert_eq!(
         fixture
             .control()
@@ -2117,17 +2139,21 @@ fn failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create() {
         Err(ControlError::Unknown)
     ));
     for next in [&operation, &fixture.issued()] {
-        assert!(matches!(
+        let result = retry_busy(|| {
             fixture.control().ensure(
                 &fixture.owner,
                 next,
                 &creation,
                 false,
                 &AtomicBool::new(false),
-                allow
-            ),
-            Err(ControlError::Unknown)
-        ));
+                allow,
+            )
+        });
+        assert!(
+            matches!(result, Err(ControlError::Unknown)),
+            "failed-spawn replay actual={}",
+            control_result_diagnostic(&result),
+        );
     }
     assert_eq!(
         fixture
@@ -2205,20 +2231,19 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
     let other_owner = PrincipalId::new();
     let mut other = fixture.creation(Lifetime::Persistent {});
     other.name = Some("private other owner".into());
-    fixture
-        .control()
-        .ensure(
+    let other_operation = fixture.issued();
+    retry_busy(|| {
+        fixture.control().ensure(
             &other_owner,
-            &fixture.issued(),
+            &other_operation,
             &other,
             false,
             &AtomicBool::new(false),
             allow,
         )
-        .unwrap();
-    let inventory = fixture
-        .control()
-        .inventory(&fixture.owner, allow)
+    })
+    .unwrap();
+    let inventory = retry_busy(|| fixture.control().inventory(&fixture.owner, allow))
         .unwrap_or_else(|error| {
             panic!(
                 "HOST control stage=protected-inventory/initial-owner-inventory actual={}",
@@ -2231,10 +2256,12 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
     assert_eq!(inventory.sessions[0].summary.target, running.target);
     assert!(!inventory.sessions[0].summary.attached);
     assert_eq!(inventory.sessions[0].grant.owner, fixture.owner);
-    let inspected = fixture
-        .control()
-        .inspect(&fixture.owner, &creation.logical, allow)
-        .unwrap();
+    let inspected = retry_busy(|| {
+        fixture
+            .control()
+            .inspect(&fixture.owner, &creation.logical, allow)
+    })
+    .unwrap();
     assert_eq!(inspected.summary.unwrap(), running.summary);
     assert_eq!(
         inspected.grant.unwrap().revision,
@@ -2250,20 +2277,20 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
         .unwrap()
         .iter()
         .all(|session| session.attached_by.is_none()));
-    fixture
-        .control()
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
-    assert!(fixture
-        .control()
-        .inventory(&fixture.owner, allow)
-        .unwrap()
-        .sessions
-        .is_empty());
-    assert_eq!(
+    retry_busy(|| {
         fixture
             .control()
-            .inventory(&other_owner, allow)
+            .revoke_local(&fixture.owner, &creation.logical)
+    })
+    .unwrap();
+    assert!(
+        retry_busy(|| fixture.control().inventory(&fixture.owner, allow))
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+    assert_eq!(
+        retry_busy(|| fixture.control().inventory(&other_owner, allow))
             .unwrap()
             .sessions
             .len(),

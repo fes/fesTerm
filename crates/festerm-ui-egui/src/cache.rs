@@ -489,9 +489,10 @@ mod tests {
             assert_eq!(cache.rows.as_ptr(), outer);
             for (row, pointer) in pointers.iter().enumerate() {
                 assert_eq!(cache.rows[row].cells.as_ptr(), *pointer);
-                for column in 0..80 {
+                assert_eq!(cache.rows[row].cells.len(), 80);
+                for (column, rendered) in cache.rows[row].cells.iter().enumerate() {
                     assert_eq!(
-                        cache.rows[row].cells[column].text(),
+                        rendered.text(),
                         snapshot.cell(column, row).map_or(" ", Cell::text)
                     );
                 }
@@ -542,9 +543,10 @@ mod tests {
         let mut cache = TerminalRenderCache::default();
         let snapshot = TerminalSnapshot::from_terminal(&terminal);
         cache.update(snapshot, &[]);
-        for row in 0..3 {
-            for column in 0..80 {
-                let rendered = &cache.rows[row].cells[column];
+        assert_eq!(cache.rows.len(), 3);
+        for (row, cached_row) in cache.rows.iter().enumerate() {
+            assert_eq!(cached_row.cells.len(), 80);
+            for (column, rendered) in cached_row.cells.iter().enumerate() {
                 let core = snapshot.cell(column, row).unwrap();
                 assert_eq!(rendered.text(), core.text());
                 assert_eq!(rendered.width(), core.width());

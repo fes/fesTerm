@@ -101,14 +101,14 @@ impl MobileApp {
                 #[cfg(feature = "live-ssh")]
                 session,
             }) => {
-                if !self.terminal_surface()
-                    || !self.terminal_input_ready(self.lifecycle.get())
-                    || self.active_tab != self.dictation_tab
-                {
-                    return false;
-                }
+                let terminal_valid = self.terminal_surface()
+                    && self.terminal_input_ready(self.lifecycle.get())
+                    && self.active_tab == self.dictation_tab;
                 #[cfg(feature = "live-ssh")]
                 {
+                    if !terminal_valid {
+                        return false;
+                    }
                     let current = self.sink.live.connection.borrow();
                     let current = current.as_ref().and_then(|live| live.input_destination());
                     match (session, current) {
@@ -121,7 +121,7 @@ impl MobileApp {
                 }
                 #[cfg(not(feature = "live-ssh"))]
                 {
-                    true
+                    terminal_valid
                 }
             }
             Some(Destination::Document(target)) => {

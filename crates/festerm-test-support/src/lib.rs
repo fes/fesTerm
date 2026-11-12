@@ -3,6 +3,7 @@
 pub mod captures;
 #[cfg(feature = "powershell")]
 pub mod powershell;
+pub mod pty_child;
 pub mod replies;
 pub mod tui_workload;
 

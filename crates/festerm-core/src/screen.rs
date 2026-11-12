@@ -1190,8 +1190,8 @@ impl Screen {
         debug_assert!((extent..columns).all(|offset| {
             !self.occupied_cells[start + offset] && is_structural_blank(&self.cells[start + offset])
         }));
-        for index in start..start + extent {
-            self.cells[index].clone_from(cell);
+        for existing in &mut self.cells[start..start + extent] {
+            existing.clone_from(cell);
         }
         self.occupied_cells[start..start + extent].fill(false);
         self.soft_wrapped_rows[physical_row] = false;

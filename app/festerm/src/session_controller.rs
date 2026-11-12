@@ -4591,26 +4591,7 @@ mod tests {
     /// Returns the path to the `festerm-pty-test-child` binary for smoke tests.
     #[cfg(any(unix, windows))]
     fn test_child_path_for_smoke() -> std::path::PathBuf {
-        let mut path = std::env::current_exe()
-            .expect("test executable path is known")
-            .canonicalize()
-            .expect("test executable path is accessible");
-        path.pop();
-        if path.ends_with("deps") {
-            path.pop();
-        }
-        let name = if cfg!(windows) {
-            "festerm-pty-test-child.exe"
-        } else {
-            "festerm-pty-test-child"
-        };
-        path.push(name);
-        assert!(
-            path.exists(),
-            "festerm-pty-test-child not found at {path:?}; \
-             run `cargo test --workspace` to build it first"
-        );
-        path
+        festerm_test_support::pty_child::executable().to_owned()
     }
 
     /// Poll `controller` until the session exits or the deadline passes.
