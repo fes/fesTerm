@@ -30,6 +30,23 @@ private host configuration must explicitly allow this mode and pin a reviewed
 adapter commit that supports it. Use a short guest checkout path for Unix
 domain socket limits.
 
+On Unix the Running Sessions harness uses an owned private XDG runtime
+directory, or a fresh `0700` leaf beneath a trusted home `.fsm` parent.
+Shared-writable ancestors, symlinks and foreign/private-mode mismatches fail
+without permission repair; it no longer stages daemon runtime state in shared
+temporary storage. Keep the home/runtime path short enough for Unix sockets.
+
+Windows build modes initialize the existing Visual Studio Build Tools
+environment and select `clang-cl` when installed, otherwise `clang`. OS-input
+builds keep that environment in their child PowerShell process. Cargo stderr
+progress is not itself a failure, but its nonzero exit still fails the run.
+Portable source/fixture contracts do not qualify native Windows execution.
+
+The fixed November ADR 0084 campaign modes are not in the current allowlist.
+Historical source `62b1a47b` and its immutable private evidence retain those
+operators; see the [scope and outcome record](../../docs/manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).
+No old source result qualifies a new head or authorizes another VM window.
+
 `keyboard-routing-check` invokes `scripts/check_keyboard_routing.py` without
 arguments. It runs synthesized production routing/configuration/controller
 checks on the guest platform; it does not open a window or establish native

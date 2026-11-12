@@ -1,5 +1,28 @@
 # Milestone Progress Narrative
 
+## Retaining useful evidence delivery without carrying a closed campaign
+
+The single #712 merge at `261c1f25` included all eight foundation slices.
+The remaining evidence pair is #692/#719, not eight pending foundation merges.
+Legacy #729 is rejected unmerged under the November 11 relevance decision.
+The later explicit approval tracks new HOST-scoped process-crash recovery
+separately under [#730](https://github.com/fes/fesTerm/issues/730), not implemented
+or qualified by this evidence PR. Existing native gates remain under #681.
+The rebased evidence pair
+consolidates #719's useful MSVC-driver selection, scoped Cargo stderr handling,
+OS-input Build Tools environment and private Running Sessions runtime into
+#692. The runtime rejects symlinks, foreign ownership and shared-writable
+ancestors without repairing existing permissions; its tests use owned fixtures.
+Windows source contracts are not Windows-native execution.
+
+The old #692 operators only admit frozen source hashes, fixed identities and
+private November campaign inputs. Carrying these and duplicate embedded
+Python/vendor copies into today's adapter would add no current native
+qualification. Their original source and immutable first failures remain
+historical, while the [manual evidence record](manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope)
+retains the narrow actual Linux positives and their limits. No native service,
+vault, provider or full ADR 0084 acceptance advances.
+
 ## Keeping framed creation replays exact across native contention
 
 The consolidated `fef6eb09` macOS job observed a correlated `Busy`, not a
@@ -82,8 +105,11 @@ passing output; no passing tests were repeated. The unchanged setup crate's
 exact `e4273190` **8/0/0** evidence is retained as source-specific, not a fresh
 execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
-#729 crash recovery, older-helper manager migration and native/cloud/vault/
-daemon-survival qualification remain explicit gaps.
+legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped
+process-crash recovery is separately approved under #730, not implemented
+or qualified by this evidence PR.
+Native manager/older-helper compatibility and native/cloud/vault/DT-05
+session/lease/daemon-survival qualification remain explicit gaps.
 
 ## Diagnosing uncertain takeover after temporary pending cancellation
 

@@ -778,6 +778,15 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+Historical selected Linux Logind and acquisition/replay observations are
+recorded with exact source and immutable archive digests in the
+[manual evidence record](../manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).
+Their first failures, partial negative coverage and reviewed cleanup limits
+remain explicit. The rebased evidence delivery removes closed-campaign
+operators rather than extending their frozen source allowlists. It retains
+portable runner/build-environment fixes only, with no new GUI edge or change
+to HOST-01–HOST-06 classifications, native-service requirements or ADR status.
+
 The bounded new-HOST in-process recovery contract is in
 [native services](../native-host-services.md#in-process-host-relay-recovery).
 HOST-02/03 require typed positive transient classification, the same exclusive
@@ -812,8 +821,17 @@ source-specific limits are recorded in the
 unit coverage does not establish native/provider acceptance or waive review.
 
 Native manager
-definitions/receipt versions and RunRecord v1 remain unchanged. This is not
-#729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
+definitions/receipt versions and RunRecord v1 remain unchanged. The November 11
+relevance decision rejects legacy #729 unmerged: its Windows respawn loop and
+new macOS restart/migration policy contradict ADR0053's existing boundary.
+Legacy callers remain reachable; #729 is neither unreachable nor fully replaced.
+New HOST-scoped process-crash recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by this evidence PR or delivered by in-process relay retry. Existing
+[#681](https://github.com/fes/fesTerm/issues/681) native
+manager, older-helper, sign-in/status/recovery/uninstall and DT-05
+session/lease/daemon-survival qualification remain required. See the
+[current platform policies](../native-host-services.md#in-process-host-relay-recovery).
 
 ### Composed Desktop lifetime qualification
 
@@ -2079,7 +2097,15 @@ but does not qualify native/first-connect acceptance. Real native-control/scoped
 `native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
 These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
-acceptance. At that historical core checkpoint no listener advertised HOST; the
+acceptance. The framed ensure/create fixture also holds the exact generation
+lease during Lookup, requires typed Busy without changing either checkpoint,
+then retries only Busy on the same Lookup operation ID, without a creation
+issuance epoch, within the existing
+eight-second deadline and requires the original exact Running target. Other
+responses fail immediately and are printed. Required Ubuntu CI at `114015f9`
+failed its earlier one-shot Running assertion without printing the response;
+the controlled contention case does not retrospectively identify that cause.
+At that historical core checkpoint no listener advertised HOST; the
 standalone adapter still reports only
 inventory capability and enforces it for every operation: unadvertised
 ensure/create/attach/detach/end refuse before backend effects. Native control

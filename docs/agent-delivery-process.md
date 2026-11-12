@@ -92,24 +92,26 @@ evidence. Never change an owned VM's configuration or acceptance scope silently.
 
 ## ADR 0084 working plan after the strategy review
 
-1. Qualify the existing in-process HOST recovery candidate, including its
-   shared live-service isolation/retirement behavior. Compile and run focused
-   setup, bridge, and vendor tests before acceptance reviews. The written SSH
-   peer seam is a candidate, not a predetermined design or accepted behavior;
-   retain it only if it is the smallest justified proof. Do not expand
-   synthetic peer fidelity beyond that proof.
-2. Review that tested logical recovery slice, publish it through the existing
-   consolidated PR #712, and obtain fresh required checks. Reuse earlier
-   native evidence only for the behavior and source it actually tested.
-   In parallel, obtain the remaining foundation PR approvals and run fresh
-   applicable CI as their bases change. Do not postpone this merge-critical
-   work until every new feature or lab task is finished.
-3. Resolve the residual #729 behavior explicitly. Network retry and independent
-   session-daemon survival do not implement host-process crash restart.
-   Keep the gap visible; do not close #729 as fully replaced unless its
-   required behavior is delivered or the user explicitly approves a documented
-   deferral. Do not start a new supervisor architecture merely to preserve a
-   legacy implementation mechanism.
+1. Preserve the tested in-process HOST recovery and shared live-service
+   isolation/retirement behavior merged by the single #712 merge (`261c1f25`).
+   All eight foundation slices are included and indirectly merged, not a pending
+   queue. Native evidence still qualifies only the behavior and exact source
+   actually tested, not every subsequent source composition.
+2. Resolve the remaining #692/#719 evidence pair against current main.
+   Prune closed-campaign scaffolding and duplicate code, consolidate useful
+   unique fixes, and test the retained logical candidate before independent
+   reviews and fresh required three-platform CI. Do not mechanically carry
+   obsolete operators forward or equate source integration with native acceptance.
+3. Retain the November 11 explicit relevance disposition: legacy #729 is
+   rejected unmerged, not unreachable or fully replaced. Its Windows respawn
+   loop and new macOS restart/migration policy conflict with ADR0053.
+   Separately deliver the newly approved HOST-scoped process-crash recovery
+   under [#730](https://github.com/fes/fesTerm/issues/730); this evidence PR does
+   not implement or qualify it. The #729 rejection does not replace that work.
+   In-process relay retry and independent daemon survival do not implement it.
+   Do not restore rejected legacy policy merely to preserve its mechanism. Existing
+   native manager/older-helper and sign-in/status/recovery/uninstall,
+   cloud/vault and DT-05 session/lease/daemon-survival gates remain required under #681.
 4. Unblock required cross-platform evidence with a bounded, supported lab
    plan or obtain an explicit acceptance decision. Portable models and CI
    compilation are useful evidence, not native Task Scheduler, PKI, or

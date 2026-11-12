@@ -149,8 +149,16 @@ if (-not $SkipBuild) {
         '--manifest-path',(Join-Path $repositoryRoot 'Cargo.toml'),
         '--target-dir',(Join-Path $repositoryRoot 'target'))
     if ($Configuration -eq 'Release') { $buildArguments += '--release' }
-    cargo @buildArguments
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Windows PowerShell 5.1 turns cargo's normal stderr progress output into
+    # terminating errors while $ErrorActionPreference is 'Stop'.
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = $null
+    try { cargo @buildArguments } finally { $ErrorActionPreference = $previousErrorAction }
+    if ($null -eq $global:LASTEXITCODE) {
+        throw 'Cargo did not start; refusing a stale OS-input executable.'
+    }
+    if ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }
     $builtSource = & git -C $repositoryRoot rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or $builtSource -ne $runnerSource) {
         throw 'OS-input source changed during build.'

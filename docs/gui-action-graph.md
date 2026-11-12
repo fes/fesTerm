@@ -1,5 +1,13 @@
 # GUI Exploration and Test Action Graph
 
+HOST-02/03 owned framed-control fixtures exercise Lookup under the exact
+generation lease: typed Busy preserves both protected checkpoints, and the same
+Lookup operation ID must observe the original Running target after release
+within the existing eight-second Busy-only deadline. Other refusals fail
+immediately with the actual response. Lookup carries no creation issuance epoch.
+The `114015f9` Ubuntu Running-assertion failure did not print its response;
+controlled contention does not establish that failure's cause.
+
 HOST-02/03 consented HOST transport recovery stays inside the same runtime
 lease/run ID and original snapshot, watching revocation during acquisition,
 serving and the fixed 15-second retry delay. Retire/drain the old listener
@@ -15,8 +23,12 @@ peer/vendor extension is removed. Earlier accepting-peer passes did not cover
 production-client availability. No new HOST authority or native acceptance is
 implied; affected source still requires delta review.
 No terminal input replay or daemon operation is introduced. See
-`native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
-and native/cloud/vault acceptance remain open.
+`native-host-services.md#in-process-host-relay-recovery`. Legacy #729 is rejected
+unmerged, not as fully replaced. New HOST-scoped process-crash recovery is
+separately approved under [#730](https://github.com/fes/fesTerm/issues/730),
+not implemented or qualified by this evidence PR.
+Existing native manager/older-helper, sign-in/status/recovery/uninstall,
+cloud/vault and DT-05 session/lease/daemon-survival acceptance remains open under #681.
 
 ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
 epochs and exact old/new reservations through replacement/recovery. The shared
