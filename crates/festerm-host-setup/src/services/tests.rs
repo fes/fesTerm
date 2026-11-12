@@ -1372,6 +1372,14 @@ fn native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive
     let services = services(root.path(), &store, Platform::Windows);
     if !cfg!(all(feature = "cloud", feature = "host-runtime")) {
         assert!(services.install(&stage, snapshot.epoch).is_err());
+        assert_eq!(
+            services
+                .replace_stopped(&stage, "0.15.0", snapshot.epoch)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.service_windows_authenticated_graceful_stop_unavailable"
+        );
         assert!(services
             .start_with(&stage, snapshot.epoch, || panic!(
                 "disabled Windows start must not invoke credentials"

@@ -2,6 +2,28 @@
 
 **Status:** Active registry
 
+ADR0084 Windows stopped replacement has a bounded portable two-resource
+scheduler model under `festerm-host-setup` with `native-services,cloud,host-runtime`.
+The source preserves the embedded updater key and compiled publisher verifier;
+test-key bundles and fake task observations are not native PKI evidence.
+Windows v3 canonical XML/ACL/submission/snapshot recovery, exact retry/cleanup,
+epoch fences and protected runtime-release contention are automated model
+boundaries. Feature-minimal registration/update retains its runtime-watcher
+refusal; default headless Windows stop uses cooperative protected revocation.
+Actual local macOS evidence: affected services **52 passed /0 failed /1
+existing native case ignored**, including all13 named new model cases;
+minimal-feature exact Windows recovery/refusal **1/0/0**. Both affected
+lib/tests strict profiles, default headless check, fmt and actual-base trace/
+diff pass. These are not Windows compilation or native acceptance results.
+
+Still required under separate authorization: Windows compilation of the full
+host-setup/headless composition; genuine owner-approved old/new signed whole
+bundles and fresh signer/TSA revocation; ordinary-user Task Scheduler canonical
+XML/owner+SYSTEM ACL registration/retirement and interrupted recovery; protected
+runtime release with both exact tasks; and persistent sessiond PID/generation/
+endpoint, old helper bytes and existing writer preservation. No guest, native
+PKI, signing, SDK, provider or OS changes were performed for the portable models.
+
 The composed ADR 0084 Desktop source keeps two native lifetime domains
 separate: imported/ordinary-private Bind/Switch/Resume/Release/rollback never
 authorizes native End of the original local shell, including an already-Absent

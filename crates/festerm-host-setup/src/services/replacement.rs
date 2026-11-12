@@ -13,8 +13,10 @@ pub enum ReplacementState {
 
 #[cfg(all(test, unix))]
 mod tests;
+#[cfg(all(test, feature = "cloud", feature = "host-runtime"))]
+mod windows_tests;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Replacement {
     version: u8,
@@ -93,6 +95,53 @@ impl Replacement {
 }
 
 impl<R: CommandRunner> Services<'_, R> {
+    fn reconcile_replacement_tasks(&self, record: &mut Replacement) -> io::Result<()> {
+        if self.context.platform != Platform::Windows {
+            return Ok(());
+        }
+        let prior = record.clone();
+        for target in [&mut record.old, &mut record.new] {
+            if target.native_snapshot.is_some() {
+                continue;
+            }
+            let observed = self.task(target, TaskAction::Query)?;
+            match (&observed.xml, &observed.security) {
+                (Some(xml), Some(security))
+                    if target.native_submitted
+                        && Some(xml) == target.native_expected.as_ref()
+                        && Some(security) == target.native_security.as_ref() =>
+                {
+                    target.native_snapshot = observed.xml;
+                }
+                (None, None) if !target.native_submitted => {}
+                (None, None) => {
+                    return Err(refused("host.service_task_registration_outcome_unknown"));
+                }
+                _ => return Err(refused("host.service_foreign_native_definition")),
+            }
+        }
+        if *record == prior {
+            return Ok(());
+        }
+        self.with_record(|directory, snapshot| {
+            let bytes = storage::read_private(directory, Path::new(JOURNAL), 512 * 1024)?;
+            let current: Replacement = serde_json::from_slice(&bytes)
+                .map_err(|_| refused("host.update_invalid_journal"))?;
+            if current != prior {
+                return Err(refused("host.update_conflicting_recovery_intent"));
+            }
+            self.validate_registration(&record.old, snapshot)?;
+            self.validate_registration(&record.new, snapshot)?;
+            // Retain exact observed ownership even if revocation won the epoch
+            // race. This cannot commit the update or restore consent.
+            storage::replace_private(
+                directory,
+                Path::new(JOURNAL),
+                &serde_json::to_vec(record).map_err(|_| refused("host.update_invalid_journal"))?,
+            )
+        })
+    }
+
     fn replacement(&self) -> io::Result<Option<Replacement>> {
         self.with_record(|directory, snapshot| {
             let bytes = match storage::read_private(directory, Path::new(JOURNAL), 512 * 1024) {
@@ -199,9 +248,11 @@ impl<R: CommandRunner> Services<'_, R> {
         epoch: u64,
         authenticate: impl Fn(&Registration, &str) -> io::Result<()>,
     ) -> io::Result<ReplacementReport> {
-        if self.context.platform == Platform::Windows {
+        if self.context.platform == Platform::Windows
+            && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
             return Err(refused(
-                "host.service_windows_release_publisher_policy_unconfigured",
+                "host.service_windows_authenticated_graceful_stop_unavailable",
             ));
         }
         let _operation = self.lease()?;
@@ -267,15 +318,31 @@ impl<R: CommandRunner> Services<'_, R> {
                 new.version = 3;
                 new.epoch = epoch;
                 new.reservation = uuid::Uuid::new_v4().to_string();
-                new.resource = format!(
-                    "{}-{}",
-                    definitions::resource(&snapshot, epoch),
-                    new.reservation
-                );
+                new.resource = definitions::replacement_resource(
+                    &snapshot,
+                    epoch,
+                    &new.reservation,
+                    self.context.platform,
+                )?;
                 new.executable = stage.path.clone();
                 new.digest = stage.digest.clone();
                 new.provenance = Some(stage.provenance_path().to_owned());
                 new.definition = definitions::render(&new)?;
+                if self.context.platform == Platform::Windows {
+                    new.native_submitted = false;
+                    new.native_snapshot = None;
+                    let prepared = self.task(&new, TaskAction::Prepare(new.definition.clone()))?;
+                    new.native_expected = Some(
+                        prepared
+                            .xml
+                            .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?,
+                    );
+                    new.native_security = Some(
+                        prepared
+                            .security
+                            .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?,
+                    );
+                }
                 Replacement {
                     version: 1,
                     operation: new.reservation.clone(),
@@ -295,11 +362,17 @@ impl<R: CommandRunner> Services<'_, R> {
         authenticate(&transaction.old, from_version)?;
         authenticate(&transaction.new, stage.version())?;
         self.validate_registration(&transaction.new, &snapshot)?;
+        if self.context.platform == Platform::Windows
+            && transaction.state != ReplacementState::Prepared
+        {
+            self.reconcile_replacement_tasks(&mut transaction)?;
+        }
         let mut old = transaction.old.clone();
         old.retiring_definition = transaction.state != ReplacementState::Prepared;
         if transaction.state == ReplacementState::Prepared
-            && (!definitions::check_file(&self.context, &old)?
-                || definitions::check_file(&self.context, &transaction.new)?
+            && ((self.context.platform != Platform::Windows
+                && (!definitions::check_file(&self.context, &old)?
+                    || definitions::check_file(&self.context, &transaction.new)?))
                 || self.observe(&transaction.new)? != ProcessState::Absent)
         {
             return Err(refused("host.update_unreserved_native_resource"));
@@ -313,9 +386,10 @@ impl<R: CommandRunner> Services<'_, R> {
         if transaction.state == ReplacementState::Committed {
             let observed = self.observe(&transaction.new)?;
             if current != transaction.new
-                || !definitions::check_file(&self.context, &transaction.new)?
+                || (self.context.platform != Platform::Windows
+                    && !definitions::check_file(&self.context, &transaction.new)?)
                 || !matches!(observed, ProcessState::Absent | ProcessState::Stopped)
-                || (self.context.platform == Platform::Linux && observed == ProcessState::Absent)
+                || (self.context.platform != Platform::Macos && observed == ProcessState::Absent)
             {
                 return Err(refused("host.update_committed_definition_changed"));
             }
@@ -328,15 +402,38 @@ impl<R: CommandRunner> Services<'_, R> {
         self.retire_update_resource(&transaction.old, epoch, Phase::Disabled)?;
         self.fence(epoch, Phase::Disabled)?;
         stage.sessiond_path()?;
-        definitions::publish_file(&self.context, &transaction.new)?;
+        if self.context.platform == Platform::Windows {
+            if !transaction.new.native_submitted {
+                if self.observe(&transaction.new)? != ProcessState::Absent {
+                    return Err(refused("host.update_unreserved_native_resource"));
+                }
+                transaction.new.native_submitted = true;
+                self.save_replacement(&transaction, epoch, Phase::Disabled)?;
+                self.fence(epoch, Phase::Disabled)?;
+                self.task(
+                    &transaction.new,
+                    TaskAction::Create(
+                        transaction
+                            .new
+                            .native_expected
+                            .clone()
+                            .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?,
+                    ),
+                )?;
+            }
+            self.reconcile_replacement_tasks(&mut transaction)?;
+        } else {
+            definitions::publish_file(&self.context, &transaction.new)?;
+        }
         self.fence(epoch, Phase::Disabled)?;
         if self.context.platform == Platform::Linux {
             self.run(&["--user", "daemon-reload"])?;
         }
         let state = self.observe(&transaction.new)?;
-        if !definitions::check_file(&self.context, &transaction.new)?
+        if (self.context.platform != Platform::Windows
+            && !definitions::check_file(&self.context, &transaction.new)?)
             || !matches!(state, ProcessState::Absent | ProcessState::Stopped)
-            || (self.context.platform == Platform::Linux && state == ProcessState::Absent)
+            || (self.context.platform != Platform::Macos && state == ProcessState::Absent)
         {
             return Err(refused("host.update_new_registration_unconfirmed"));
         }
@@ -389,9 +486,10 @@ impl<R: CommandRunner> Services<'_, R> {
                 definitions::remove_file(&self.context, &record)?;
             }
             Platform::Windows => {
-                return Err(refused(
-                    "host.service_windows_authenticated_graceful_stop_unavailable",
-                ))
+                if before != ProcessState::Absent {
+                    self.fence(epoch, phase)?;
+                    self.task(&record, TaskAction::Remove)?;
+                }
             }
         }
         if self.observe(&record)? != ProcessState::Absent {
@@ -402,9 +500,27 @@ impl<R: CommandRunner> Services<'_, R> {
     }
 
     pub(super) fn stop_replacement(&self, epoch: u64) -> io::Result<Option<Observation>> {
-        let Some(record) = self.replacement()?.filter(Replacement::pending) else {
+        let Some(mut record) = self.replacement()?.filter(Replacement::pending) else {
             return Ok(None);
         };
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        let started = std::time::Instant::now();
+        self.reconcile_replacement_tasks(&mut record)?;
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            return self
+                .wait_windows_resources_revocation(
+                    &self.fence(epoch, Phase::StopRequested)?,
+                    &[&record.old, &record.new],
+                    std::time::Duration::from_secs(10).saturating_sub(started.elapsed()),
+                )
+                .map(Some);
+        }
+        if self.context.platform == Platform::Windows {
+            return Err(refused(
+                "host.service_windows_authenticated_graceful_stop_unavailable",
+            ));
+        }
         for mut target in [record.old, record.new] {
             target.retiring_definition = true;
             self.fence(epoch, Phase::StopRequested)?;
@@ -439,9 +555,22 @@ impl<R: CommandRunner> Services<'_, R> {
     }
 
     pub(super) fn cleanup_replacement(&self, epoch: u64) -> io::Result<Option<Observation>> {
+        self.cleanup_replacement_with(epoch, TrustedStage::authenticate_registered)
+    }
+
+    fn cleanup_replacement_with(
+        &self,
+        epoch: u64,
+        authenticate: impl Fn(&Registration, &str) -> io::Result<()>,
+    ) -> io::Result<Option<Observation>> {
         let Some(mut transaction) = self.replacement()?.filter(Replacement::pending) else {
             return Ok(None);
         };
+        self.reconcile_replacement_tasks(&mut transaction)?;
+        if self.context.platform == Platform::Windows {
+            authenticate(&transaction.old, &transaction.from_version)?;
+            authenticate(&transaction.new, &transaction.to_version)?;
+        }
         transaction.state = ReplacementState::Applying;
         self.save_replacement(&transaction, epoch, Phase::CleanupPending)?;
         self.retire_update_resource(&transaction.old, epoch, Phase::CleanupPending)?;

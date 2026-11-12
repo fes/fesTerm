@@ -42,6 +42,30 @@ pub(super) fn resource(snapshot: &Snapshot, epoch: u64) -> String {
     )
 }
 
+pub(super) fn replacement_resource(
+    snapshot: &Snapshot,
+    epoch: u64,
+    reservation: &str,
+    platform: Platform,
+) -> io::Result<String> {
+    if platform != Platform::Windows {
+        return Ok(format!("{}-{reservation}", resource(snapshot, epoch)));
+    }
+    let installation = uuid::Uuid::parse_str(&snapshot.installation)
+        .map_err(|_| refused("host.service_foreign_receipt"))?;
+    let operation =
+        uuid::Uuid::parse_str(reservation).map_err(|_| refused("host.service_foreign_receipt"))?;
+    Ok(format!(
+        "fesTerm-Host-{}-{}-{}",
+        match snapshot.origin {
+            Origin::Desktop => "desktop",
+            Origin::Headless => "headless",
+        },
+        installation.simple(),
+        operation.simple()
+    ))
+}
+
 fn xml(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")

@@ -15317,3 +15317,61 @@ Only after execution/resources close does a normal docs-only child record this
 qualified evidence; parent bounded continuity gates/final proof precede any
 promotion. No push, PR/main merge, bypass, installation, SDK/ADB/guest/vault/
 provider/VM/OS change accompanies this delivery.
+
+## Completing the bounded Windows stopped-update source path
+
+Exact published4898 still refused Windows stopped replacement before calling
+the already implemented registered-bundle publisher verifier. Removing that
+refusal alone would have been incorrect: Windows v3 receipts were rejected,
+the long Unix-style operation name exceeded the native facade's96-byte bound,
+the file-definition check was a Windows stub, and old task submission/snapshot
+fields would have been inherited by the replacement.
+
+A normal design commit first defines the compact two-UUID v3 name and recovery
+encoding. The source child keeps the actual embedded updater/native
+Authenticode/RFC3161/fresh-revocation path, prepares fresh canonical task XML/
+owner+SYSTEM ACL, and journals the new submission before Create. The active
+old receipt remains unchanged until exact new stopped observation. Interrupted
+native completion recovers only the original reservation in the replacement
+journal, including ownership retained after revocation; absent submitted but
+unobserved tasks still refuse as unknown. Retirement uses exact quiescence,
+Remove and independent absence rather than file-definition stubs. Cleanup
+reauthenticates both signed bundles before retirement.
+
+Pending Windows stop shares protected revocation, runtime-lease release and
+both task observations under one existing deadline, including recovery time.
+The reduced-feature build retains the missing-runtime refusal rather than
+silently confirming stop without the watcher. No Scheduler Stop, process
+launch/kill, sessiond action, grant restoration or automatic enable is added.
+Unix names and native lifetime tests keep their existing guards.
+
+The portable test scheduler has two separately keyed resources and checks
+durable intent plus the unchanged old receipt inside every replacement Create.
+Its cases cover exact committed/repeated operation, lost Create completion,
+submitted-unobserved absence, XML/ACL substitution, contended queries,
+interrupted retirement/active receipt commit, post-revocation ownership,
+both-task quiescence/run-lease contention, lost receipts, altered helpers,
+publisher/epoch refusal, compact names, authenticated cleanup and corrupt v3
+fences. Initial ten-case execution passed. Adding three cleanup/fence cases
+first produced inner-test registration warnings (only ten actually ran); that
+raw log is retained, braces were corrected, and all thirteen actual cases then
+passed within the affected services selection. No count is inferred from
+source declarations or a neighboring aggregate.
+
+These are test-key bundles and scheduler models on macOS, not genuine Windows
+publisher/COM/full-composition or ordinary-user/native daemon acceptance.
+Genuine old/new signed whole bundles, fresh revocation and Windows native
+recovery/persistent-session evidence remain explicitly gated. No frozen
+worktree, old target/helper, CI/provider/SDK/OS or guest state is changed.
+
+Final bounded macOS validation uses a fresh owned target, offline/locked Cargo,
+jobs1/debug0/incremental0. The affected services selection passes **52/0/1,
+46.49s**, including all thirteen named new model cases; the one existing
+controlled native-daemon case remains ignored and was not executed. The exact
+minimal-feature Windows recovery/refusal case passes **1/0/0, 1.01s**. Both
+`native-services` and `native-services,cloud,host-runtime` lib/tests strict
+Clippy profiles pass, as does the default headless binary check. Full fmt,
+traceability against actual PR base6614 (311 edges) and full-base diff checks
+pass. The pre-existing vendored `connect_via_proxy` warning and initial
+inner-test-registration warning log remain retained; there is no warning
+suppression or native retry-to-green.

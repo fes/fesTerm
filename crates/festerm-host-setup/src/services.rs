@@ -241,8 +241,12 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     fn validate_registration(&self, record: &Registration, snapshot: &Snapshot) -> io::Result<()> {
         let mut resource = definitions::resource(snapshot, record.epoch);
         if record.version == 3 {
-            resource.push('-');
-            resource.push_str(&record.reservation);
+            resource = definitions::replacement_resource(
+                snapshot,
+                record.epoch,
+                &record.reservation,
+                record.platform,
+            )?;
         }
         if !matches!(record.version, 2 | 3)
             || record.installation != snapshot.installation
@@ -256,7 +260,6 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             || record.platform != self.context.platform
             || record.definition != definitions::render(record)?
             || uuid::Uuid::parse_str(&record.reservation).is_err()
-            || (record.version == 3 && record.platform == Platform::Windows)
             || (record.platform == Platform::Windows
                 && (record.native_expected.as_ref().is_none_or(|xml| {
                     !xml.contains(&format!("fesTerm-host-reservation:{}", record.reservation))
@@ -833,18 +836,34 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         record: &Registration,
         wait: std::time::Duration,
     ) -> io::Result<Observation> {
+        self.wait_windows_resources_revocation(snapshot, &[record], wait)
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn wait_windows_resources_revocation(
+        &self,
+        snapshot: &Snapshot,
+        records: &[&Registration],
+        wait: std::time::Duration,
+    ) -> io::Result<Observation> {
         let deadline = std::time::Instant::now() + wait;
         loop {
             self.fence(snapshot.epoch, Phase::StopRequested)?;
             let released = crate::controller::revoked_runtime_released(self.store, snapshot)?;
-            let process = self.observe(record)?;
-            self.fence(snapshot.epoch, Phase::StopRequested)?;
-            if released
-                && matches!(
-                    process,
+            let mut process = ProcessState::Absent;
+            let mut quiescent = true;
+            for record in records {
+                let observed = self.observe(record)?;
+                quiescent &= matches!(
+                    observed,
                     ProcessState::Stopped | ProcessState::Failed | ProcessState::Absent
-                )
-            {
+                );
+                if observed != ProcessState::Absent {
+                    process = observed;
+                }
+            }
+            self.fence(snapshot.epoch, Phase::StopRequested)?;
+            if released && quiescent {
                 return Ok(observation(snapshot, process));
             }
             if std::time::Instant::now() >= deadline {

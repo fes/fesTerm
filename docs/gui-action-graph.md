@@ -6,6 +6,11 @@ backend must retain publisher authentication, journal-before-Create and
 canonical task XML/ACL ownership; pending stop proves both tasks quiescent under
 one protected-revocation deadline. Source/model evidence is not Windows PKI,
 ordinary-user native service or persistent-daemon acceptance.
+The co-located `services::replacement::windows_tests` model keeps separate task
+resources, verifies durable submission before Create and unchanged old active
+receipt, and exercises exact retry, interrupted commit/retirement, missing
+receipts, XML/ACL substitution, epoch/publisher refusal and run-lease contention.
+No native endpoint or Windows acceptance is implied by these automated edges.
 
 ## Synchronized terminal recording (ADR 0077)
 

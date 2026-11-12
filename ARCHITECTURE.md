@@ -810,6 +810,14 @@ controller now composes explicit setup, separate owner-key/permission approval,
 run, disable, authenticated stopped-version update and exact-owned removal with
 those APIs. Update retains signed old/new helper provenance and a protected
 reservation/unknown-outcome journal, never automatic rollback or access reenabling.
+The Windows stopped-update branch uses compact v3 installation/operation UUID
+task names and replacement-owned fresh canonical XML/ACL evidence. Its protected
+submission intent precedes Create; recovery can adopt only that exact submitted
+task, never infer absence from an unobserved completion or use the Windows file-
+definition stub as ownership. Old/new bundle reauthentication remains the existing
+updater/native-publisher path. Exact quiescent retirement and pending two-resource
+revocation reconciliation neither execute the host nor stop independent daemons.
+Portable scheduler models are not Windows COM/PKI or signed-release acceptance.
 Configure defaults disabled;
 compilation, native Running and last-run history confer no consent or Ready claim.
 Default legacy/mobile dependencies remain unchanged. See the
