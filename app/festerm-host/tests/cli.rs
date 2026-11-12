@@ -2,6 +2,51 @@ use std::process::Command;
 
 #[cfg(feature = "owner-routing")]
 #[test]
+fn host_process_recovery_managed_entries_fail_closed_without_registration_and_status_is_history() {
+    use festerm_host_setup::lifecycle::{Origin, Settings, Startup, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    for origin in [Origin::Headless, Origin::Desktop] {
+        let state = root.path().join(format!("{origin:?}"));
+        let store = Store::create(
+            &state,
+            origin,
+            Settings {
+                friendly_name: "managed refusal fixture".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+            },
+        )
+        .unwrap();
+        let before = store.snapshot().unwrap();
+        let (run, status) = if origin == Origin::Desktop {
+            ("run-desktop-managed", "run-desktop-status")
+        } else {
+            ("run-managed", "run-status")
+        };
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args([run, "--state-dir"])
+            .arg(&state)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("invalid_arguments"));
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args([status, "--state-dir"])
+            .arg(&state)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(report["managed_result"].is_null());
+        assert!(report["last_run"].is_null());
+        assert_eq!(report["meaning"], "history-only-not-liveness-or-ready");
+        assert_eq!(store.snapshot().unwrap(), before);
+    }
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
 fn desktop_native_binary_entry_refuses_headless_origin_and_never_grants_from_metadata() {
     use festerm_host_setup::lifecycle::{Origin, Settings, Startup, Store};
     let root = festerm_sessiond::private_storage::private_test_directory();

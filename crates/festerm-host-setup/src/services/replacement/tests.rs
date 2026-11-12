@@ -234,6 +234,36 @@ impl Fixture {
 }
 
 #[test]
+fn host_process_recovery_stopped_replacement_preserves_old_and_new_policy_generations() {
+    for recovery in [false, true] {
+        let fixture = Fixture::new();
+        let services = fixture.services();
+        let stopped = fixture.installed(&services);
+        if recovery {
+            // Model a retained recovery-policy release, not a production migration.
+            let old = services.registration().unwrap().1.unwrap();
+            definitions::remove_file(&services.context, &old).unwrap();
+            let mut retained = old;
+            retained.version = 4;
+            retained.definition = definitions::render(&retained).unwrap();
+            definitions::publish_file(&services.context, &retained).unwrap();
+            services
+                .save(&retained, stopped.epoch, Phase::Disabled)
+                .unwrap();
+        }
+        let preserved = fixture.preserved();
+        let report = fixture.update(&services).unwrap();
+        assert_eq!(report.state, ReplacementState::Committed);
+        let new = services.registration().unwrap().1.unwrap();
+        assert_eq!(new.version, if recovery { 5 } else { 3 });
+        assert_eq!(new.definition.contains("run-managed"), recovery);
+        assert_eq!(new.definition.contains("Restart=on-failure"), recovery);
+        assert_eq!(fixture.store.snapshot().unwrap(), stopped);
+        assert_eq!(fixture.preserved(), preserved);
+    }
+}
+
+#[test]
 fn host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers(
 ) {
     let fixture = Fixture::new();

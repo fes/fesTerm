@@ -815,6 +815,34 @@ Native manager
 definitions/receipt versions and RunRecord v1 remain unchanged. This is not
 #729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
 
+### Approved native HOST-process recovery (#730)
+
+The owner separately approved recovery of the single HOST process after an
+unexpected exit, using native managers rather than a legacy worker launcher.
+New registrations opt into a versioned policy; existing versions 2/3 keep their
+exact definitions and exit contract, including through ordinary helper updates.
+Versions 4/5 identify fresh/replacement recovery registrations and are rejected
+by older helpers. No existing registration silently gains restart authority.
+
+Native-managed entrypoints are distinct from public foreground `run` commands.
+Every invocation retains ordinary fresh bundle/owner/account/receipt/token and
+host-identity admission. Returned refusal, stop and operational failure are
+typed, protected, observable history before native exit translation; a manager
+stop code must never be reported as product success or Ready. Failure to record
+that disposition is an operational error, not a successful managed stop.
+Panic, signal or another unexpected process exit remains native failure.
+RunRecord v1 and all session/lease authority remain unchanged.
+
+Linux uses rate/attempt-limited systemd restart; Windows uses finite native
+Scheduler retries at its supported one-minute interval. macOS uses throttled
+unsuccessful-exit recovery. Since any launchd KeepAlive implies RunAtLoad,
+new Manual definitions live under protected state outside login discovery and
+are bootstrapped only by explicit Start; sign-in definitions remain in
+LaunchAgents. Stop/Disable/revocation must retire or suppress hosting without
+ending independent sessiond/shells, replaying input, interactive sign-in,
+provisioning or reconstructing consent. Native release/OS/provider qualification
+remains separate from deterministic policy and controlled process tests.
+
 ### Composed Desktop lifetime qualification
 
 The normal Desktop/mobile/NativeEnd/adoption/frame/fixture composition retains

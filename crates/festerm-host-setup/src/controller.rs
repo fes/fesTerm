@@ -53,6 +53,8 @@ pub(crate) fn revoked_runtime_released(store: &Store, expected: &Snapshot) -> io
     })
 }
 
+pub mod managed;
+
 /// Separate host-local approval after the client reviewed its exact binding.
 pub struct OwnerConsent {
     pub owner_public_key: [u8; 32],
@@ -150,7 +152,7 @@ impl SetupBoundary for NativeBoundary {
         stage: &TrustedStage,
         epoch: u64,
     ) -> io::Result<Observation> {
-        Services::current_user(store, state)?.install(stage, epoch)
+        Services::current_user(store, state)?.install_with_recovery(stage, epoch)
     }
 }
 

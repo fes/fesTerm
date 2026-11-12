@@ -157,7 +157,7 @@ impl<R: CommandRunner> Services<'_, R> {
                 || record.epoch == 0
                 || record.epoch > snapshot.epoch
                 || version(&record.from_version)? >= version(&record.to_version)?
-                || record.new.version != 3
+                || record.new.version != if record.old.version >= 4 { 5 } else { 3 }
                 || record.old.resource == record.new.resource
                 || record.old.settings != record.new.settings
                 || record.operation != record.new.reservation
@@ -315,7 +315,7 @@ impl<R: CommandRunner> Services<'_, R> {
                 }
                 authenticate(&current, from_version)?;
                 let mut new = current.clone();
-                new.version = 3;
+                new.version = if current.version >= 4 { 5 } else { 3 };
                 new.epoch = epoch;
                 new.reservation = uuid::Uuid::new_v4().to_string();
                 new.resource = definitions::replacement_resource(

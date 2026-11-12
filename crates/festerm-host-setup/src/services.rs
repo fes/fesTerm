@@ -240,7 +240,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     fn validate_registration(&self, record: &Registration, snapshot: &Snapshot) -> io::Result<()> {
         let mut resource = definitions::resource(snapshot, record.epoch);
-        if record.version == 3 {
+        if matches!(record.version, 3 | 5) {
             resource = definitions::replacement_resource(
                 snapshot,
                 record.epoch,
@@ -248,7 +248,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 record.platform,
             )?;
         }
-        if !matches!(record.version, 2 | 3)
+        if !matches!(record.version, 2 | 3 | 4 | 5)
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
@@ -548,6 +548,24 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Registers the exact definition. Linux UserSignIn also activates the
     /// guarded launcher; Manual registration never starts a process.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
+        self.install_policy(stage, epoch, false)
+    }
+
+    /// New registrations gain native crash recovery; existing receipts keep their policy.
+    pub fn install_with_recovery(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+    ) -> io::Result<Observation> {
+        self.install_policy(stage, epoch, true)
+    }
+
+    fn install_policy(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        recovery: bool,
+    ) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows
             && !cfg!(all(feature = "cloud", feature = "host-runtime"))
         {
@@ -555,16 +573,32 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 "host.service_windows_authenticated_graceful_stop_unavailable",
             ));
         }
-        self.install_reserved(stage, epoch)
+        if recovery {
+            self.install_reserved_policy(stage, epoch, true)
+        } else {
+            self.install_reserved(stage, epoch)
+        }
     }
 
     fn install_reserved(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
+        self.install_reserved_policy(stage, epoch, false)
+    }
+
+    fn install_reserved_policy(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        recovery: bool,
+    ) -> io::Result<Observation> {
         let _lease = self.lease()?;
         self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         stage.revalidate()?;
         let (_, prior) = self.reconciled_registration()?;
         let new = prior.is_none();
+        if new && recovery && stage.version() != crate::VERSION {
+            return Err(refused("host.native_recovery_current_helpers_required"));
+        }
         let mut record = if let Some(record) = prior {
             if record.executable != stage.path
                 || record.digest != stage.digest
@@ -576,7 +610,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             record
         } else {
             let mut record = Registration {
-                version: 2,
+                version: if recovery { 4 } else { 2 },
                 installation: snapshot.installation.clone(),
                 origin: snapshot.origin,
                 binding: snapshot
@@ -695,6 +729,15 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_registration_not_observed"));
         }
         Ok(observation(&snapshot, process))
+    }
+
+    pub(crate) fn require_recovery_registration(&self) -> io::Result<()> {
+        let (_, record) = self.registration()?;
+        if record.is_some_and(|record| matches!(record.version, 4 | 5) && !record.removed) {
+            Ok(())
+        } else {
+            Err(refused("host.native_recovery_registration_required"))
+        }
     }
 
     /// Explicit start requires current protected native-vault policy. A locked
