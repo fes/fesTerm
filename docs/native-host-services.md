@@ -51,10 +51,33 @@ That in-process slice kept native registration versions and rendered
 bytes/restart flags unchanged.
 RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
 or cached permission is introduced. Older receipt-only registrations remain
-removable, not executable authority. This source slice does **not** implement
-#729 process-crash recovery or manager-policy/older-helper migration, nor
-establish native Windows/macOS/Linux, vault/cloud or daemon-survival acceptance.
-The existing Linux login-only exit75 retry is a separate policy.
+removable, not executable authority. The November 11 relevance decision rejects
+legacy [#729](https://github.com/fes/fesTerm/pull/729) unmerged, not as unreachable
+or fully replaced. Its Windows respawn loop and new macOS restart/migration
+policy conflict with [ADR0053](adr/0053-separate-dev-tunnels-session-bridge.md).
+New HOST-scoped process-crash recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by the #692 evidence candidate `114015f9` alone. Main `261c1f25` supplies
+in-process relay retry; this composition additionally retains the separately
+reviewed #730 implementation below, not native acceptance. Existing native gates remain under
+[#681](https://github.com/fes/fesTerm/issues/681).
+
+For the **legacy ADR0053/0072 profile workers**, Linux's unit restarts failures
+after 15 seconds, excluding exit78; Windows has in-process transient retry,
+not external crash respawn; macOS without daemon-recovery opt-in stays offline
+until operator restart. Opted-in legacy daemon recovery retries transient
+failures after 15 seconds on all OSes.
+
+The **main `261c1f25` HOST** has in-process relay recovery on all OSes; #692's
+evidence candidate alone does not change its manager restart flags. The
+separate #730 source composed here configures new policy4/5 as documented below,
+preserving existing2/3 and all native qualification limits. Neither the #692
+evidence slice nor the legacy policy list implements that feature or changes
+service definitions. This is not a blanket claim that native control is
+unimplemented. Native manager,
+sign-in/status/recovery/uninstall, older-helper compatibility and actual
+Windows/macOS/Linux, vault/cloud and DT-05 session/lease/daemon-survival
+acceptance remain open.
 
 ## Native HOST-process recovery
 

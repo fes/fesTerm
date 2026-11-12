@@ -15,20 +15,90 @@ spec.loader.exec_module(running_sessions)
 
 
 class RunningSessionRunnerTests(unittest.TestCase):
+    def setUp(self):
+        scratch = Path(__file__).resolve().parents[2] / "target" / "running-session-contracts"
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fixture = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(fixture.cleanup)
+        self.home = Path(fixture.name)
+        home = patch.object(running_sessions.Path, "home", return_value=self.home)
+        home.start()
+        self.addCleanup(home.stop)
+        environment = patch.dict(running_sessions.os.environ, {"XDG_RUNTIME_DIR": ""})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     @unittest.skipIf(running_sessions.os.name == "nt", "Unix socket byte budget")
     def test_runtime_ignores_long_checkout_and_tmpdir(self):
-        with tempfile.TemporaryDirectory(prefix="fs-fixture-", dir="/tmp") as directory:
-            inherited_temp = Path(directory) / ("long-temp-" * 20)
-            inherited_temp.mkdir()
-            with patch.dict(running_sessions.os.environ, {"TMPDIR": str(inherited_temp)}):
-                root = running_sessions.create_runtime_root()
-            try:
-                endpoint = root / "n/4294967295-0/festerm/sessiond/4294967295-1789499400000.sock"
-                self.assertLess(len(running_sessions.os.fsencode(endpoint)), 104)
-                self.assertEqual(root.stat().st_mode & 0o777, 0o700)
-                self.assertNotIn(str(inherited_temp), str(root))
-            finally:
-                shutil.rmtree(root)
+        inherited_temp = self.home / ("long-temp-" * 20)
+        with patch.dict(running_sessions.os.environ, {"TMPDIR": str(inherited_temp)}), \
+             patch.object(running_sessions.Path, "home", return_value=Path("/h")), \
+             patch.object(running_sessions, "trusted_runtime_directory", return_value=True), \
+             patch.object(running_sessions.Path, "mkdir"), \
+             patch.object(running_sessions.tempfile, "mkdtemp",
+                          return_value="/h/.fsm/fs-mux-12345678") as create:
+            root = running_sessions.create_runtime_root()
+        endpoint = root / "n/4294967295-0/festerm/sessiond/4294967295-1789499400000.sock"
+        self.assertLess(len(running_sessions.os.fsencode(endpoint)), 104)
+        self.assertNotIn(str(inherited_temp), str(root))
+        create.assert_called_once_with(prefix="fs-mux-", dir="/h/.fsm")
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix private runtime parent")
+    def test_existing_private_xdg_runtime_is_used(self):
+        with patch.dict(running_sessions.os.environ, {"XDG_RUNTIME_DIR": str(self.home)}):
+            root = running_sessions.create_runtime_root()
+        self.assertEqual(root.parent, self.home)
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix private runtime parent")
+    def test_unsafe_xdg_falls_back_without_permission_repair(self):
+        unsafe = self.home / "shared"
+        unsafe.mkdir(mode=0o777)
+        unsafe.chmod(0o777)
+        with patch.dict(running_sessions.os.environ, {"XDG_RUNTIME_DIR": str(unsafe)}):
+            root = running_sessions.create_runtime_root()
+        self.assertEqual(root.parent, self.home / ".fsm")
+        self.assertEqual(unsafe.stat().st_mode & 0o777, 0o777)
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix private runtime parent")
+    def test_unsafe_existing_home_leaf_is_rejected_without_repair(self):
+        base = self.home / ".fsm"
+        base.mkdir(mode=0o755)
+        base.chmod(0o755)
+        with self.assertRaises(PermissionError):
+            running_sessions.create_runtime_root()
+        self.assertEqual(base.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(list(base.iterdir()), [])
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix nofollow runtime parent")
+    def test_symlink_home_leaf_is_rejected_without_following(self):
+        target = self.home / "unrelated"
+        target.mkdir(mode=0o700)
+        (self.home / ".fsm").symlink_to(target, target_is_directory=True)
+        with self.assertRaises(PermissionError):
+            running_sessions.create_runtime_root()
+        self.assertEqual(list(target.iterdir()), [])
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix trusted runtime ancestors")
+    def test_shared_writable_ancestor_and_foreign_owner_are_rejected(self):
+        parent = self.home / "shared"
+        parent.mkdir(mode=0o777)
+        parent.chmod(0o777)
+        child = parent / "private"
+        child.mkdir(mode=0o700)
+        self.assertFalse(running_sessions.trusted_runtime_directory(child, private=True))
+        with patch.object(running_sessions.os, "geteuid", return_value=999999):
+            self.assertFalse(running_sessions.trusted_runtime_directory(self.home, private=True))
+        self.assertFalse(running_sessions.trusted_runtime_directory(Path("relative")))
+
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix ancestor permissions")
+    def test_runtime_has_no_shared_writable_ancestor(self):
+        root = running_sessions.create_runtime_root()
+        try:
+            for ancestor in [root, *root.resolve().parents]:
+                self.assertEqual(ancestor.stat().st_mode & 0o022, 0, ancestor)
+        finally:
+            shutil.rmtree(root)
 
     def test_long_checkout_namespace_is_cleaned_on_success_and_runner_failure(self):
         for fail in (False, True):

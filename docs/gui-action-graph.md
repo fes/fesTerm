@@ -15,8 +15,13 @@ peer/vendor extension is removed. Earlier accepting-peer passes did not cover
 production-client availability. No new HOST authority or native acceptance is
 implied; affected source still requires delta review.
 No terminal input replay or daemon operation is introduced. See
-`native-host-services.md#in-process-host-relay-recovery`. Native crash-policy qualification
-and native/cloud/vault acceptance remain open.
+`native-host-services.md#in-process-host-relay-recovery`. Legacy #729 is rejected
+unmerged, not as fully replaced. New HOST-scoped process-crash recovery is
+separately approved under [#730](https://github.com/fes/fesTerm/issues/730),
+not implemented or qualified by the #692 evidence candidate `114015f9` alone;
+the separately reviewed #730 source slice is composed below.
+Existing native manager/older-helper, sign-in/status/recovery/uninstall,
+cloud/vault and DT-05 session/lease/daemon-survival acceptance remains open under #681.
 
 HOST-02/03/04/05 additionally have the separately approved #730 native
 **single-HOST process** recovery source slice. Fresh policy4 and retained-policy

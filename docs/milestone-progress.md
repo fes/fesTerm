@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Composing reviewed recovery with candidate evidence delivery
+
+The normal merge composes reviewed #730 `6605011e` with exact #692 evidence
+candidate `114015f9`, preserving feature source and evidence scripts unchanged.
+At composition, main remains `261c1f25` and #692's required CI is still running:
+the evidence candidate is not treated as merged or CI-green. Both source-specific
+histories and unrun native qualifications below remain distinct.
+
 ## Adding native single-HOST process recovery under #730
 
 The user separately approved native recovery of the single HOST after
@@ -42,6 +50,31 @@ also counts explicit Starts; sign-in/macOS throttles are not finite attempt
 limits. Only process-terminating panic bypasses managed error translation;
 spawned panic may become Failed/native0. Source and executed evidence are
 unchanged; no Cargo or native campaign is implied.
+
+## Retaining useful evidence delivery without carrying a closed campaign
+
+The single #712 merge at `261c1f25` included all eight foundation slices.
+The remaining evidence pair is #692/#719, not eight pending foundation merges.
+Legacy #729 is rejected unmerged under the November 11 relevance decision.
+The later explicit approval tracks new HOST-scoped process-crash recovery
+separately under [#730](https://github.com/fes/fesTerm/issues/730), not implemented
+or qualified by that #692 evidence candidate alone. This composition additionally
+retains the separately reviewed #730 source above, not native acceptance.
+Existing native gates remain under #681.
+The rebased evidence pair
+consolidates #719's useful MSVC-driver selection, scoped Cargo stderr handling,
+OS-input Build Tools environment and private Running Sessions runtime into
+#692. The runtime rejects symlinks, foreign ownership and shared-writable
+ancestors without repairing existing permissions; its tests use owned fixtures.
+Windows source contracts are not Windows-native execution.
+
+The old #692 operators only admit frozen source hashes, fixed identities and
+private November campaign inputs. Carrying these and duplicate embedded
+Python/vendor copies into today's adapter would add no current native
+qualification. Their original source and immutable first failures remain
+historical, while the [manual evidence record](manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope)
+retains the narrow actual Linux positives and their limits. No native service,
+vault, provider or full ADR 0084 acceptance advances.
 
 ## Keeping framed creation replays exact across native contention
 
@@ -125,8 +158,11 @@ passing output; no passing tests were repeated. The unchanged setup crate's
 exact `e4273190` **8/0/0** evidence is retained as source-specific, not a fresh
 execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
-#729 crash recovery, older-helper manager migration and native/cloud/vault/
-daemon-survival qualification remain explicit gaps.
+legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped
+process-crash recovery is separately approved under #730, not implemented
+or qualified by this evidence PR.
+Native manager/older-helper compatibility and native/cloud/vault/DT-05
+session/lease/daemon-survival qualification remain explicit gaps.
 
 ## Diagnosing uncertain takeover after temporary pending cancellation
 

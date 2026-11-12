@@ -778,6 +778,15 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+Historical selected Linux Logind and acquisition/replay observations are
+recorded with exact source and immutable archive digests in the
+[manual evidence record](../manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).
+Their first failures, partial negative coverage and reviewed cleanup limits
+remain explicit. The rebased evidence delivery removes closed-campaign
+operators rather than extending their frozen source allowlists. It retains
+portable runner/build-environment fixes only, with no new GUI edge or change
+to HOST-01–HOST-06 classifications, native-service requirements or ADR status.
+
 The bounded new-HOST in-process recovery contract is in
 [native services](../native-host-services.md#in-process-host-relay-recovery).
 HOST-02/03 require typed positive transient classification, the same exclusive
@@ -811,9 +820,20 @@ source-specific limits are recorded in the
 [progress narrative](../milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery);
 unit coverage does not establish native/provider acceptance or waive review.
 
-Native manager
-definitions/receipt versions and RunRecord v1 remain unchanged. This is not
-#729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
+That in-process slice left native manager definitions/receipt versions and
+RunRecord v1 unchanged. The November 11
+relevance decision rejects legacy #729 unmerged: its Windows respawn loop and
+new macOS restart/migration policy contradict ADR0053's existing boundary.
+Legacy callers remain reachable; #729 is neither unreachable nor fully replaced.
+New HOST-scoped process-crash recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by the #692 evidence candidate `114015f9` alone or delivered by in-process relay
+retry. This composition retains the separately reviewed #730 policy4/5 source
+and all native qualifications in the following section. Existing
+[#681](https://github.com/fes/fesTerm/issues/681) native
+manager, older-helper, sign-in/status/recovery/uninstall and DT-05
+session/lease/daemon-survival qualification remain required. See the
+[current platform policies](../native-host-services.md#in-process-host-relay-recovery).
 
 ### Approved native HOST-process recovery (#730)
 

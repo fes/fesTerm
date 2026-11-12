@@ -13,8 +13,15 @@ changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
 control. That in-process slice kept manager definitions/receipt bytes unchanged;
 the separate #730 source slice below adds new-registration crash policy.
-Actual process crash recovery, manager/older-helper compatibility and
-vault/cloud/service/daemon-survival evidence remain open. See
+Legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped process-crash
+recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by the #692 evidence candidate `114015f9` alone. This composition retains the
+separately reviewed #730 implementation and all unrun native qualifiers below.
+Existing native gates remain under
+[#681](https://github.com/fes/fesTerm/issues/681): native manager
+and older-helper compatibility, sign-in/status/recovery/uninstall and actual
+vault/cloud/service/DT-05 session/lease/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.
 
 The real shared serving path must retain an authenticated production
@@ -86,6 +93,43 @@ No native manager, provider, vault, device or VM acceptance is inferred from
 portable tests; see `native-host-services.md#native-host-process-recovery`.
 
 **Status:** Active registry
+
+### Historical ADR 0084 VM evidence and retained delivery scope
+
+The closed November 10–11 campaign qualifies only its exact historical sources,
+not current main. Product `be8bd06b` ran one real Linux Logind positive under
+Cargo/rustc 1.97.1, UID1001: **1 passed /0 failed /0 ignored /119 filtered,
+0.07s**. Both the SSH observer (`user/tty/active`) and baseline
+(`user/x11/active`) were eligible, so negative Cargo remained zero and the
+aggregate was **PARTIAL, exit2**. The preserved local
+`7f3db948-linux-positive-evidence-sha256.json` index has digest
+`c5a680f90ad55b46e7b856dbaf308baf07303bec7fa1c6f4637f46a1d5a1afe9`.
+Earlier a98 stopped at its harness-only `x11` lexer defect with zero Cargo;
+4ba retained registration101 for missing offline `tree-sitter`, zero native.
+Those first outcomes and the Mac compound-prerequisite UNKNOWN are not
+reclassified by later successes.
+
+The separate exact `6ad4d1df` Linux acquisition/replay window built sessiond
+and its PTY child, registered and ran the three retained selectors once:
+**3 passed /0 failed /0 ignored /127 filtered, 4.44s**, with actual ARM64
+Cargo/rustc 1.97.1. The held-lease control and two original cases passed; this
+does not identify the original Ensure Busy holder or prove a production fix.
+Its local `4bd89a87-linux-replay-actual-evidence-sha256.json` index has digest
+`cf99baf1035417435e1b782a236013c13e52c9a12ab13214889c1f1506bf0c91`.
+Both campaigns retained normal stop, subsequent same-baseline rollback,
+unchanged nine-VM inventory/three snapshot sets/configs and released ownership.
+No execution grant remains. Review residuals on the replay run remain:
+stop/rollback lacked separate time bounds, helper hashes were not rechecked
+after execution, and detached helpers were detected before baseline cleanup.
+
+The rebased evidence delivery keeps useful Windows build-environment and
+private Running Sessions runtime fixes. Frozen source-specific operators,
+duplicated embedded runners/vendor helpers and their campaign-only modes stay
+in historical source `62b1a47b`, not the current adapter allowlist; they cannot
+qualify today's main or authorize another campaign. HOST-01–HOST-06, DT-08 and
+the native service/vault/provider/GUI gates retain their existing classifications.
+No logon/logout, hosting, signed release or whole-ADR acceptance follows from
+these selected daemon/Logind observations or portable runner contracts.
 
 The normal source child of169b corrects pending local cleanup's mistaken
 publisher-authentication prerequisite. New portable controls exercise the
