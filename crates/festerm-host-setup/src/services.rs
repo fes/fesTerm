@@ -248,7 +248,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 record.platform,
             )?;
         }
-        if !matches!(record.version, 2 | 3 | 4 | 5)
+        if !matches!(record.version, 2..=5)
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
