@@ -54,9 +54,11 @@ removable, not executable authority. The November 11 relevance decision rejects
 legacy [#729](https://github.com/fes/fesTerm/pull/729) unmerged, not as unreachable
 or fully replaced. Its Windows respawn loop and new macOS restart/migration
 policy conflict with [ADR0053](adr/0053-separate-dev-tunnels-session-bridge.md).
-Optional HOST-process crash restart/extended manager policy is explicitly
-deferred under [#681](https://github.com/fes/fesTerm/issues/681), unimplemented
-and unqualified. The current HOST supplies in-process relay retry only.
+New HOST-scoped process-crash recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by this evidence PR. The current HOST supplies in-process relay retry only;
+existing native acceptance gates remain under
+[#681](https://github.com/fes/fesTerm/issues/681).
 
 Existing policies remain: the legacy Linux unit restarts failures after
 15 seconds, excluding exit78; Windows has in-process transient retry, not

@@ -11,10 +11,12 @@ unrelated live clients or new admission; once retiring, its earlier drain
 uncertainty must still refuse replacement and a repeated close. Revoke/disable,
 changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
-control. Existing manager definitions/receipt bytes stay unchanged; process
-crash restart and extended manager policy are explicitly deferred under
-[#681](https://github.com/fes/fesTerm/issues/681), following the November 11
-decision to reject legacy #729 unmerged, not as fully replaced. Native manager
+control. Existing manager definitions/receipt bytes stay unchanged. Legacy
+#729 is rejected unmerged, not as fully replaced. New HOST-scoped process-crash
+recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by this evidence PR. Existing native gates remain under
+[#681](https://github.com/fes/fesTerm/issues/681): native manager
 and older-helper compatibility, sign-in/status/recovery/uninstall and actual
 vault/cloud/service/DT-05 session/lease/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.

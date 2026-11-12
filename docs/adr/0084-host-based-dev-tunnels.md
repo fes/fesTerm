@@ -825,9 +825,10 @@ definitions/receipt versions and RunRecord v1 remain unchanged. The November 11
 relevance decision rejects legacy #729 unmerged: its Windows respawn loop and
 new macOS restart/migration policy contradict ADR0053's existing boundary.
 Legacy callers remain reachable; #729 is neither unreachable nor fully replaced.
-Optional HOST-process crash restart/extended manager policy is explicitly
-deferred under [#681](https://github.com/fes/fesTerm/issues/681), unimplemented
-and unqualified, not delivered by in-process relay retry. Existing native
+New HOST-scoped process-crash recovery is separately approved and tracked under
+[#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
+by this evidence PR or delivered by in-process relay retry. Existing
+[#681](https://github.com/fes/fesTerm/issues/681) native
 manager, older-helper, sign-in/status/recovery/uninstall and DT-05
 session/lease/daemon-survival qualification remain required. See the
 [current platform policies](../native-host-services.md#in-process-host-relay-recovery).

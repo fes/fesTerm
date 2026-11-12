@@ -105,12 +105,13 @@ evidence. Never change an owned VM's configuration or acceptance scope silently.
 3. Retain the November 11 explicit relevance disposition: legacy #729 is
    rejected unmerged, not unreachable or fully replaced. Its Windows respawn
    loop and new macOS restart/migration policy conflict with ADR0053.
-   Optional HOST-process crash restart/extended manager policy is deferred,
-   unimplemented and unqualified, under [#681](https://github.com/fes/fesTerm/issues/681).
+   Separately deliver the newly approved HOST-scoped process-crash recovery
+   under [#730](https://github.com/fes/fesTerm/issues/730); this evidence PR does
+   not implement or qualify it. The #729 rejection does not replace that work.
    In-process relay retry and independent daemon survival do not implement it.
-   Do not add a supervisor merely to preserve a legacy mechanism. Existing
+   Do not restore rejected legacy policy merely to preserve its mechanism. Existing
    native manager/older-helper and sign-in/status/recovery/uninstall,
-   cloud/vault and DT-05 session/lease/daemon-survival gates remain required.
+   cloud/vault and DT-05 session/lease/daemon-survival gates remain required under #681.
 4. Unblock required cross-platform evidence with a bounded, supported lab
    plan or obtain an explicit acceptance decision. Portable models and CI
    compilation are useful evidence, not native Task Scheduler, PKI, or
