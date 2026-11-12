@@ -92,14 +92,18 @@ evidence. Never change an owned VM's configuration or acceptance scope silently.
 
 ## ADR 0084 working plan after the strategy review
 
-1. Finish validation of the existing in-process HOST recovery change, including
-   its shared live-service isolation/retirement behavior and the narrow SSH
-   peer seam. Compile and run focused setup, bridge, and vendor tests before
-   acceptance reviews. Do not expand synthetic peer fidelity beyond the
-   required proof.
+1. Qualify the existing in-process HOST recovery candidate, including its
+   shared live-service isolation/retirement behavior. Compile and run focused
+   setup, bridge, and vendor tests before acceptance reviews. The written SSH
+   peer seam is a candidate, not a predetermined design or accepted behavior;
+   retain it only if it is the smallest justified proof. Do not expand
+   synthetic peer fidelity beyond that proof.
 2. Review that tested logical recovery slice, publish it through the existing
    consolidated PR #712, and obtain fresh required checks. Reuse earlier
    native evidence only for the behavior and source it actually tested.
+   In parallel, obtain the remaining foundation PR approvals and run fresh
+   applicable CI as their bases change. Do not postpone this merge-critical
+   work until every new feature or lab task is finished.
 3. Resolve the residual #729 behavior explicitly. Network retry and independent
    session-daemon survival do not implement host-process crash restart.
    Keep the gap visible; do not close #729 as fully replaced unless its
