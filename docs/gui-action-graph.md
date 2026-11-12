@@ -2,10 +2,11 @@
 
 HOST-02/03 owned framed-control fixtures exercise Lookup under the exact
 generation lease: typed Busy preserves both protected checkpoints, and the same
-issued lookup must observe the original Running target after release within the
-existing eight-second Busy-only deadline. Other refusals fail immediately with
-the actual response. The `114015f9` Ubuntu Running-assertion failure did not print
-its response; controlled contention does not establish that failure's cause.
+Lookup operation ID must observe the original Running target after release
+within the existing eight-second Busy-only deadline. Other refusals fail
+immediately with the actual response. Lookup carries no creation issuance epoch.
+The `114015f9` Ubuntu Running-assertion failure did not print its response;
+controlled contention does not establish that failure's cause.
 
 HOST-02/03 consented HOST transport recovery stays inside the same runtime
 lease/run ID and original snapshot, watching revocation during acquisition,

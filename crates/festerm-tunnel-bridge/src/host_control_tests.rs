@@ -1132,9 +1132,9 @@ pub(crate) mod native_routes {
             let lookup = Request::Lookup {
                 logical: creation.logical,
             };
-            let lookup_operation = client.issue_operation().unwrap();
+            let lookup_operation = OperationId::new();
             let busy_lookup = client
-                .request_issued(&lookup_operation, lookup.clone(), &cancel)
+                .request(lookup_operation.clone(), lookup.clone(), &cancel)
                 .await
                 .unwrap();
             assert_eq!(
@@ -1161,8 +1161,26 @@ pub(crate) mod native_routes {
             drop(held_lease);
             let retried = issued_request_after_busy(&mut client, &operation, body, &cancel).await;
             assert_eq!(retried, first);
-            let found =
-                issued_request_after_busy(&mut client, &lookup_operation, lookup, &cancel).await;
+            let lookup_deadline = Instant::now() + Duration::from_secs(8);
+            let found = loop {
+                let response = client
+                    .request(lookup_operation.clone(), lookup.clone(), &cancel)
+                    .await
+                    .unwrap();
+                if !matches!(
+                    response.body,
+                    Response::Refused {
+                        reason: Refusal::Busy
+                    }
+                ) {
+                    break response;
+                }
+                assert!(
+                    Instant::now() < lookup_deadline,
+                    "same-operation native Lookup remained Busy at fixture deadline"
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            };
             assert!(
                 matches!(
                     &found.body,

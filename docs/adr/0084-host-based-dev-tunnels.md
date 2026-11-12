@@ -2099,7 +2099,8 @@ These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
 acceptance. The framed ensure/create fixture also holds the exact generation
 lease during Lookup, requires typed Busy without changing either checkpoint,
-then retries only Busy on the same issued lookup within the existing
+then retries only Busy on the same Lookup operation ID, without a creation
+issuance epoch, within the existing
 eight-second deadline and requires the original exact Running target. Other
 responses fail immediately and are printed. Required Ubuntu CI at `114015f9`
 failed its earlier one-shot Running assertion without printing the response;
