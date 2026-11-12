@@ -172,21 +172,24 @@ async fn profile_host_request_decodes_generation_and_refuses_malformed_input() {
             upgrade: false,
         })),
     };
-    let request = serde_json::to_value(request).unwrap();
+    let request = serde_json::to_string(&request).unwrap();
+    let generation_field = "\"generation\":1700000000000";
+    assert_eq!(request.matches(generation_field).count(), 1);
 
     for (generation, valid) in [
-        (serde_json::json!(1_700_000_000_000u64), true),
-        (serde_json::json!(-1), false),
-        (serde_json::json!(1.5), false),
+        ("1700000000000", true),
+        ("18446744073709551615", true),
+        ("18446744073709551616", false),
+        ("-1", false),
+        ("1.5", false),
+        ("\"123\"", false),
+        ("null", false),
     ] {
-        let mut request = request.clone();
-        request["operation"]["target"]["generation"] = generation;
-        setup_storage::replace_private(
-            &directory,
-            Path::new("request.json"),
-            &serde_json::to_vec(&request).unwrap(),
-        )
-        .unwrap();
+        // Keep oversized integer text exact instead of rounding it through Value.
+        let request =
+            request.replacen(generation_field, &format!("\"generation\":{generation}"), 1);
+        setup_storage::replace_private(&directory, Path::new("request.json"), request.as_bytes())
+            .unwrap();
         let result = output(
             Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
                 .arg("--profile-host")

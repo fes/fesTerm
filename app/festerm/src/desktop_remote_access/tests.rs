@@ -282,11 +282,12 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         controller.view.scope = Scope::Absent;
         controller.view.draft.allow_creation = initially_enabled;
         controller.view.draft.startup_at_sign_in = initially_enabled;
-        controller.action(Action::Review(Operation::Enable), &context);
         for label in [
             "Allow remote creation (separate owner approval still required)",
             "Start at my sign-in (only where the native policy is qualified)",
         ] {
+            controller.action(Action::Review(Operation::Enable), &context);
+            assert_eq!(controller.view.review, Some(Operation::Enable));
             let action = sharing_button(&controller.view, label);
             assert!(matches!(action, Action::Edit(_)));
             controller.action(action, &context);
