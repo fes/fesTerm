@@ -44,6 +44,9 @@ fesTerm's token use or improves its answers.
   page's source hash then mismatches and the next run regenerates it.
 - Generated text is untrusted. It is reviewed in the PR diff like code, and
   the generator drops text that addresses agents.
+- The glossary page is generated separately and refreshed when its cited source
+  files or the manifest settings change; if it is stale, the same freshness
+  check fails until the page is regenerated.
 
 ## Opt-in comparison
 

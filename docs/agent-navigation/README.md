@@ -19,6 +19,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration and packaging: OS-specific window, wake, lock/privacy plumbing; native smoke evidence; and signed distributable app/package metadata and update flow. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Shared Rust mobile host for iOS and Android, with native bridges, offline-by-default app policy, and opt-in transient SSH/files/document flows. |
 | [Desktop application shell and screens](app-shell.md) | The app-shell domain owns fesTerm's window composition root, egui frame loop, launcher/settings/profile surfaces, pane/session routing, and lifecycle/automation diagnostics for the desktop shell. |
+| [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 
 Pages regenerate per PR when their sources change
 ([workflow](../../.github/workflows/agent-navigation.yml),

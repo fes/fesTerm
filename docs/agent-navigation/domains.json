@@ -3,6 +3,7 @@
   "model": "mai-code-1.1-flash",
   "page_budget_bytes": 6000,
   "index_budget_bytes": 3500,
+  "glossary_budget_bytes": 12000,
   "coverage_roots": ["app/", "crates/"],
   "domains": [
     {
