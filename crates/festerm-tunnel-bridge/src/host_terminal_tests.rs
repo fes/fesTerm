@@ -883,8 +883,19 @@ mod native_routes {
         drop(cancelled.unwrap());
         assert!(cancelled_server.await.unwrap().is_err());
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let (mut terminal, server, _) =
-            live(&fixture, source, target, true, &budgets, &scheduler).await;
+        let (pending, server) = pending(&fixture, source, target, true, &budgets, &scheduler).await;
+        let mut pending = pending.unwrap_or_else(|error| {
+            panic!("HOST terminal stage=temporary-cancel/final-takeover actual={error:?}")
+        });
+        let snapshot = pending.take_snapshot().unwrap();
+        let mut terminal = match pending.adopt(&CancellationToken::new()).await {
+            Ok(terminal) => terminal.spawn().unwrap(),
+            Err(error) => {
+                let result = tokio::time::timeout(Duration::from_secs(2), server).await;
+                panic!("owned adoption {error:?}; server={result:?}");
+            }
+        };
+        drop(snapshot);
         let actual = terminal.binding().lease.as_ref().unwrap();
         assert_eq!(actual.epoch, old_lease.epoch.next().unwrap());
         assert_ne!(actual.attachment, old_lease.attachment);

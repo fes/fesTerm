@@ -38,6 +38,32 @@ runtime release with both exact tasks; and persistent sessiond PID/generation/
 endpoint, old helper bytes and existing writer preservation. No guest, native
 PKI, signing, SDK, provider or OS changes were performed for the portable models.
 
+**Temporary-cancellation diagnostic slice:** exact `4898f407` macOS native19
+fails18/1 in174.87s: final takeover establish returns OutcomeUncertain before
+SNAPSHOT (`host_terminal_tests.rs:467`). Five cleanup Busy lines do not identify
+its producer; post-panic NotFound is not an established cause. Test-only
+boundary labels and protected-file unwind regressions do not fix production or
+prove that200ms sleeps caused it. Sleeps, deadlines and all ownership/lease
+oracles remain unchanged. At the diagnostic source freeze, new native execution
+was **UNRUN**, separately gated; original raw failure and earlier source-specific
+results remain preserved.
+
+After separate review and authorization, exact `79ab03a` ran the changed
+temporary-cancellation native case once: **1/0/0, 2.30s**, test command exit0,
+with freshly built sessiond/PTY images and exclusive immutable byte-copy
+staging. Cargo reported the helper build successful, but an observer failure
+lost its numerical OS exit and interrupted continuous memory monitoring;
+neither missing witness is inferred. The case emitted16 cleanup Busy labels
+then Stale without a final-takeover failure. The original `4898f407` producer
+remains **UNKNOWN**; this is not a production fix or clean whole-campaign proof.
+The source-freeze UNRUN descriptions elsewhere retain their historical scope.
+
+This normal Windows-correction/diagnostic composition preserves both reviewed
+Rust slices unchanged. Composed portable checks and independent composition
+gates are pending at this source freeze. No composed native execution,
+Windows/native signer or whole-ADR acceptance is claimed; existing platform,
+vault, provider and required-three-OS-CI prerequisites remain open.
+
 The composed ADR 0084 Desktop source keeps two native lifetime domains
 separate: imported/ordinary-private Bind/Switch/Resume/Release/rollback never
 authorizes native End of the original local shell, including an already-Absent

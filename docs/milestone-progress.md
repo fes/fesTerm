@@ -1,5 +1,22 @@
 # Milestone Progress Narrative
 
+## Diagnosing uncertain takeover after temporary pending cancellation
+
+The published `4898f407` macOS native selection retains18 passes/1 failure,
+174.87s: final takeover establish returns OutcomeUncertain before SNAPSHOT.
+The existing diagnostic gate excludes takeovers; preceding cleanup Busy does
+not identify the uncertainty producer. The design-first diagnostic slice
+extends only test/test-support labels and exact failure staging, with protected
+temporary-lease unwind regressions. It preserves all original calls, IDs,
+success/epoch/detach oracles, sleeps and deadlines. Root cause remains unknown;
+this is not a production fix, uncertainty retry or new native qualification.
+The existing unwind regression shares its protected-file setup between
+persistent and temporary leases; held-lock uncertainty, foreign byte no-op,
+exact-ticket-only cancellation and already-committed uncertainty stay strict.
+The new takeover diagnostic gate and unchanged content-free renderer are
+covered together. Deterministic execution receipts remain separate; native
+helper build and the changed real case are **UNRUN** pending review/GO.
+
 ## Executing the bounded Native-index/retained-backend Forget case
 
 Exact `ad219ad7a98d31931a203aefe372ca08ab1204ee` and its sealed APKs now execute

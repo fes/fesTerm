@@ -301,6 +301,18 @@ finished. Current work proceeds from that foundation:
 
 ## Deferred or Open Questions
 
+### ADR 0084 temporary cancellation diagnostic boundary
+
+An uncertain final takeover after pending cancellation must remain a failure,
+not absence or permission to replay. Test/test-support-only diagnostics must
+identify the existing reservation/native-connect/unwind/readmission boundary
+for temporary takeovers using fixed content-free labels. Production stderr and
+control behavior remain unchanged. Protected-file tests preserve exact pending
+tickets, temporary ownership/epoch/deadline and committed uncertainty.
+The `4898f407` macOS failure's producer remains unknown; sleeps are not proof
+of cancellation completion, but are not changed without causal evidence.
+New native execution requires separate review and authorization.
+
 - Future parser extensions and supporting crates, if they become necessary.
 - Async runtime, cancellation, and bounded-channel choices.
 - Complex-script shaping scope beyond the accepted grapheme and emoji policy.
