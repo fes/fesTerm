@@ -682,13 +682,98 @@ pub(crate) mod tests {
         }
     }
 
+    struct RecoveryPeer(VerifiedHost);
+
+    impl client::Handler for RecoveryPeer {
+        type Error = russh::Error;
+        reject_unrelated_server_channels!();
+
+        async fn check_server_key(
+            &mut self,
+            key: &russh::keys::PublicKey,
+        ) -> Result<bool, Self::Error> {
+            client::Handler::check_server_key(&mut self.0, key).await
+        }
+
+        async fn server_tcpip_forward(
+            &mut self,
+            address: &str,
+            port: u32,
+        ) -> Result<Option<u32>, Self::Error> {
+            Ok((address == "127.0.0.1" && port == 47461).then_some(port))
+        }
+
+        async fn server_channel_open_forwarded_tcpip(
+            &mut self,
+            channel: Channel<client::Msg>,
+            address: &str,
+            port: u32,
+            origin: &str,
+            origin_port: u32,
+            reply: client::ChannelOpenHandle,
+            session: &mut client::Session,
+        ) -> Result<(), Self::Error> {
+            client::Handler::server_channel_open_forwarded_tcpip(
+                &mut self.0,
+                channel,
+                address,
+                port,
+                origin,
+                origin_port,
+                reply,
+                session,
+            )
+            .await
+        }
+    }
+
+    #[tokio::test]
+    async fn host_relay_recovery_peer_accepts_only_exact_registration_and_pinned_key() {
+        let trusted = key();
+        let other = key();
+        let mut verified = VerifiedHost(pin(&trusted));
+        assert_eq!(
+            client::Handler::server_tcpip_forward(&mut verified, "127.0.0.1", 47461)
+                .await
+                .unwrap(),
+            None
+        );
+        let mut peer = RecoveryPeer(verified);
+        assert!(
+            client::Handler::check_server_key(&mut peer, trusted.public_key())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !client::Handler::check_server_key(&mut peer, other.public_key())
+                .await
+                .unwrap()
+        );
+        for (address, port, expected) in [
+            ("127.0.0.1", 47461, Some(47461)),
+            ("localhost", 47461, None),
+            ("::1", 47461, None),
+            ("0.0.0.0", 47461, None),
+            ("127.0.0.1", 47462, None),
+            ("127.0.0.1", 0, None),
+            ("127.0.0.1", 65536, None),
+        ] {
+            assert_eq!(
+                client::Handler::server_tcpip_forward(&mut peer, address, port)
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn host_relay_recovery_failed_client_is_isolated_live_but_retirement_stays_uncertain() {
         async fn peer(
             incoming: &mpsc::Sender<(GatedStream, OwnedSemaphorePermit)>,
             slots: &Arc<Semaphore>,
             pin: String,
-        ) -> (client::Handle<VerifiedHost>, Arc<CleanupGate>) {
+        ) -> (client::Handle<RecoveryPeer>, Arc<CleanupGate>) {
             let (client_io, server_io) = tokio::io::duplex(64 * 1024);
             let gate = Arc::new(CleanupGate::default());
             incoming
@@ -703,7 +788,11 @@ pub(crate) mod tests {
                 .unwrap();
             let client = tokio::time::timeout(
                 Duration::from_secs(2),
-                client::connect_stream(Arc::new(client_config()), client_io, VerifiedHost(pin)),
+                client::connect_stream(
+                    Arc::new(client_config()),
+                    client_io,
+                    RecoveryPeer(VerifiedHost(pin)),
+                ),
             )
             .await
             .unwrap()

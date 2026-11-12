@@ -1902,6 +1902,170 @@ mod tests {
             std::mem::take(&mut session.common.encrypted.as_mut().unwrap().write)
         }
 
+        fn server_forward_request(address: &str, port: u32, want: u8) -> Vec<u8> {
+            let mut packet = request("tcpip-forward", want);
+            address.encode(&mut packet).unwrap();
+            port.encode(&mut packet).unwrap();
+            packet
+        }
+
+        #[tokio::test]
+        async fn client_server_tcpip_forward_defaults_to_deny() {
+            for want in [0, 1, 2] {
+                for packet in [
+                    server_forward_request("127.0.0.1", 47461, want),
+                    request("unknown@example.com", want),
+                    request("cancel-tcpip-forward", want),
+                ] {
+                    let mut session = session();
+                    session
+                        .process_packet(&mut TestHandler, &packet)
+                        .await
+                        .unwrap();
+                    let expected = if want == 0 {
+                        Vec::new()
+                    } else {
+                        vec![0, 0, 0, 1, msg::REQUEST_FAILURE]
+                    };
+                    assert_eq!(take_written(&mut session), expected);
+                }
+            }
+        }
+
+        struct ForwardReplyHandler {
+            assigned: Option<u32>,
+            calls: usize,
+        }
+
+        impl Handler for ForwardReplyHandler {
+            type Error = crate::Error;
+
+            async fn server_tcpip_forward(
+                &mut self,
+                address: &str,
+                _port: u32,
+            ) -> Result<Option<u32>, Self::Error> {
+                assert!(address.len() <= 255);
+                self.calls += 1;
+                Ok(self.assigned)
+            }
+        }
+
+        #[tokio::test]
+        async fn client_server_tcpip_forward_reply_and_port_zero_semantics() {
+            for (port, want, assigned, success, calls) in [
+                (47461, 0, Some(47461), true, 1),
+                (47461, 1, Some(47461), true, 1),
+                (47461, 2, Some(47461), true, 1),
+                (47461, 1, None, false, 1),
+                (47461, 1, Some(47462), false, 1),
+                (47461, 1, Some(0), false, 1),
+                (47461, 1, Some(65536), false, 1),
+                (0, 1, Some(47461), true, 1),
+                (0, 2, Some(65535), true, 1),
+                (0, 1, None, false, 1),
+                (0, 1, Some(0), false, 1),
+                (0, 1, Some(65536), false, 1),
+                (0, 0, Some(47461), false, 0),
+                (65536, 1, Some(47461), false, 0),
+                (u32::MAX, 1, Some(47461), false, 0),
+                (65535, 1, Some(65535), true, 1),
+            ] {
+                let mut session = session();
+                let mut handler = ForwardReplyHandler { assigned, calls: 0 };
+                session
+                    .process_packet(
+                        &mut handler,
+                        &server_forward_request("127.0.0.1", port, want),
+                    )
+                    .await
+                    .unwrap();
+                let expected = if want == 0 {
+                    Vec::new()
+                } else if success && port == 0 {
+                    let mut reply = vec![0, 0, 0, 5, msg::REQUEST_SUCCESS];
+                    assigned.unwrap().encode(&mut reply).unwrap();
+                    reply
+                } else {
+                    vec![
+                        0,
+                        0,
+                        0,
+                        1,
+                        if success {
+                            msg::REQUEST_SUCCESS
+                        } else {
+                            msg::REQUEST_FAILURE
+                        },
+                    ]
+                };
+                assert_eq!(
+                    take_written(&mut session),
+                    expected,
+                    "{port}/{want}/{assigned:?}"
+                );
+                assert_eq!(handler.calls, calls);
+            }
+        }
+
+        #[tokio::test]
+        async fn client_server_tcpip_forward_requires_complete_bounded_payload() {
+            let mut header_without_want = vec![msg::GLOBAL_REQUEST];
+            "tcpip-forward".encode(&mut header_without_want).unwrap();
+            let missing_address = request("tcpip-forward", 1);
+            let mut truncated_address = missing_address.clone();
+            8u32.encode(&mut truncated_address).unwrap();
+            truncated_address.extend_from_slice(b"127");
+            let mut missing_port = missing_address.clone();
+            "127.0.0.1".encode(&mut missing_port).unwrap();
+            let mut truncated_port = missing_port.clone();
+            truncated_port.extend_from_slice(&[0, 0, 1]);
+            let mut trailing = server_forward_request("127.0.0.1", 47461, 1);
+            trailing.push(0);
+            let mut invalid_utf8 = missing_address.clone();
+            vec![0xffu8].encode(&mut invalid_utf8).unwrap();
+            47461u32.encode(&mut invalid_utf8).unwrap();
+            let mut oversized_declared = missing_address.clone();
+            u32::MAX.encode(&mut oversized_declared).unwrap();
+            for packet in [
+                header_without_want,
+                missing_address,
+                truncated_address,
+                missing_port,
+                truncated_port,
+                trailing,
+                invalid_utf8,
+                oversized_declared,
+                server_forward_request(&"a".repeat(256), 47461, 1),
+            ] {
+                let mut session = session();
+                let mut handler = ForwardReplyHandler {
+                    assigned: Some(47461),
+                    calls: 0,
+                };
+                assert!(session.process_packet(&mut handler, &packet).await.is_err());
+                assert_eq!(handler.calls, 0);
+                assert!(take_written(&mut session).is_empty());
+            }
+            let mut session = session();
+            let mut handler = ForwardReplyHandler {
+                assigned: Some(47461),
+                calls: 0,
+            };
+            session
+                .process_packet(
+                    &mut handler,
+                    &server_forward_request(&"a".repeat(255), 47461, 1),
+                )
+                .await
+                .unwrap();
+            assert_eq!(handler.calls, 1);
+            assert_eq!(
+                take_written(&mut session),
+                vec![0, 0, 0, 1, msg::REQUEST_SUCCESS]
+            );
+        }
+
         #[tokio::test]
         async fn client_global_request_fifo_tracks_only_reply_requested_packets() {
             let mut session = session();
@@ -2591,6 +2755,22 @@ pub trait Handler: Sized + Send {
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         async { Ok(()) }
+    }
+
+    /// Called for a server's `tcpip-forward` notification. The default refuses.
+    ///
+    /// Returning `Some(port)` accepts the notification, not a network listener.
+    /// A nonzero requested port must be returned unchanged. Port zero requires
+    /// a reply and an assigned port in 1..=65535; invalid results are refused.
+    /// The address is valid UTF-8 of at most 255 bytes and the complete payload
+    /// is validated before this callback. No other global request is delegated.
+    #[allow(unused_variables)]
+    fn server_tcpip_forward(
+        &mut self,
+        address: &str,
+        port: u32,
+    ) -> impl Future<Output = Result<Option<u32>, Self::Error>> + Send {
+        async { Ok(None) }
     }
 
     /// Called when the server opens a channel for a new remote port forwarding connection.

@@ -650,6 +650,38 @@ impl Session {
                             self.common.wants_reply = false;
                             push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS));
                         }
+                    } else if req == "tcpip-forward" {
+                        let mut address_length = r;
+                        if map_err!(u32::decode(&mut address_length))? > 255 {
+                            return Err(Error::Inconsistent.into());
+                        }
+                        let address = map_err!(String::decode(&mut r))?;
+                        let port = map_err!(u32::decode(&mut r))?;
+                        map_err!(ensure_end(&r))?;
+                        let assigned = if port <= u32::from(u16::MAX) && (port != 0 || wants_reply)
+                        {
+                            client.server_tcpip_forward(&address, port).await?
+                        } else {
+                            None
+                        };
+                        let assigned = assigned.filter(|assigned| {
+                            *assigned != 0
+                                && *assigned <= u32::from(u16::MAX)
+                                && (port == 0 || *assigned == port)
+                        });
+                        if wants_reply {
+                            self.common.wants_reply = false;
+                            push_packet!(enc.write, {
+                                enc.write.push(if assigned.is_some() {
+                                    msg::REQUEST_SUCCESS
+                                } else {
+                                    msg::REQUEST_FAILURE
+                                });
+                                if let (0, Some(assigned)) = (port, assigned) {
+                                    map_err!(assigned.encode(&mut enc.write))?;
+                                }
+                            });
+                        }
                     } else if req == "hostkeys-00@openssh.com" {
                         if wants_reply {
                             push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE));

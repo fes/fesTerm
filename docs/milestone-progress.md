@@ -38,8 +38,12 @@ runtime budgets, drains the old listener, waits the existing-style fixed
 Only positively typed transient evidence permits another attempt; coarse
 network/unknown/refused authority stops. Deterministic validation is pending.
 The source correction isolates failed per-client cleanup while serving and
-retains sticky retirement refusal; actual encrypted shared-path and direct
-typed WebSocket-wrapper regressions are added but remain unexecuted.
+retains sticky retirement refusal. Exact da9967 passed setup8/0/0 and bridge5/1;
+the first healthy-channel fixture failed before fault injection because its
+peer cannot acknowledge the host's port notification. The corrected test peer
+uses only an exact-port typed callback with unchanged pin verification and
+default production refusal. New dispatch/peer and corrected shared-path tests
+remain UNRUN; no completed live-isolation/retirement proof is claimed.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

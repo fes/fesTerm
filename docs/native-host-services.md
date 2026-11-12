@@ -33,6 +33,17 @@ retirement and repeated close must refuse replacement, even if its transport
 later closes. Cancel/epoch change during acquisition cancels and
 drains any listener already obtained before completing the run.
 
+The encrypted shared-path test peer alone acknowledges the exact
+`127.0.0.1:47461` notification through the pinned client's typed
+`server_tcpip_forward` callback, retaining the existing host-key verifier and
+channel refusals. All existing production handlers still default to rejection;
+no network listener or forwarding permission is created. Complete bounded
+payload parsing and fixed-port/port-zero/reply behavior are specified in
+[ADR 0084](adr/0084-host-based-dev-tunnels.md#validation-impact).
+The new dispatch/peer and corrected encrypted regression are **UNRUN**;
+da9967's 5/1 bridge result failed before fault injection, not at isolation or
+retirement. Production registration refusal is not relaxed.
+
 Keep native registration versions and rendered bytes/restart flags unchanged.
 RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
 or cached permission is introduced. Older receipt-only registrations remain

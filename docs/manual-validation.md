@@ -15,6 +15,13 @@ crash restart, manager migration/older-helper compatibility and actual
 vault/cloud/service/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.
 
+The encrypted shared-path fixture's typed notification callback is test-only
+opt-in, exact `127.0.0.1:47461` with the unchanged host-key verifier. Require
+default/unknown/malformed/wrong-port refusal and strict reply/port-zero tests
+before accepting its live isolation/retirement proof. No listener or production
+handler opt-in is added. These changed-source checks remain UNRUN; da9967's
+first healthy-channel failure did not reach fault injection.
+
 **Status:** Active registry
 
 The normal source child of169b corrects pending local cleanup's mistaken
