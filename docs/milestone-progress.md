@@ -6,7 +6,7 @@ The user separately approved native recovery of the single HOST after
 unexpected failure. This does not revive rejected legacy #729 or its per-profile
 launcher loop. Fresh registrations use policy4, retained recovery replacements5;
 old2/3, older helpers and missing legacy definitions retain exact policy.
-Native systemd/launchd/Scheduler bounds and an explicit protected managed-stop
+Configured systemd/launchd/Scheduler bounds and an explicit protected managed-stop
 protocol avoid retrying permanent refusal without hiding product failure.
 Manual macOS definitions live outside login discovery; every recovered process
 reenters existing fresh authorization with the same identity and independent
@@ -31,6 +31,17 @@ Source/model tests and controlled refusal are not positive native recovery.
 Genuine current release/publisher admission, native crash/startup/stop/login,
 provider/vault and persistent daemon survival remain open under #730; no native,
 helper-rebuild, VM or provider campaign ran for this feature.
+
+The documentation-only successor to reviewed `fd5ab66a` qualifies Windows
+post-start crash/nonzero applicability as natively **UNQUALIFIED**: Microsoft's Win32 schema
+says “fails for any reason,” while MS-TSCH §2.5.4.2 describes start-condition/
+action-start failure (both authoritative URLs are in the native policy).
+Neither supported nor unsupported is established without genuine bounded
+launch/crash/explicit-task-Stop/exhaustion observations. Linux Manual's limit
+also counts explicit Starts; sign-in/macOS throttles are not finite attempt
+limits. Only process-terminating panic bypasses managed error translation;
+spawned panic may become Failed/native0. Source and executed evidence are
+unchanged; no Cargo or native campaign is implied.
 
 ## Keeping framed creation replays exact across native contention
 

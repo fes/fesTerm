@@ -56,10 +56,29 @@ signed helpers, test Manual and UserSignIn, Desktop and Headless:
 4. Prove Manual macOS installation is outside LaunchAgents discovery, inert
    across login until explicit Start, and booted out by Stop. KeepAlive's
    implied RunAtLoad must not become an automatic-login loophole.
-5. Prove Linux eligible-login loss/return and native restart limits; Windows
-   one-minute/three-retry exhaustion and exact task XML/ACL; macOS 60-second
-   throttle (not a finite attempt count). Restart exhaustion and native
-   running state are not Ready or product success.
+5. Prove Linux eligible-login loss/return and native restart limits, including
+   explicit Starts counting against Manual's 3-start/300-second limit and a
+   potentially delayed subsequent Start. Linux sign-in and macOS's 60-second
+   launch throttle are not finite attempt limits. For Windows, retain exact
+   task XML/ACL and separately exercise:
+   - unmet start conditions/action-launch failure;
+   - genuine crash and unexpected nonzero termination **after proving the
+     actual HOST process has started and entered its running phase**, not
+     merely an action-launch failure or managed refusal/native0;
+   - explicit native task Stop as a negative crash control, never the product's
+     graceful-stop implementation.
+   Observe each case under a declared bounded deadline, recording actual
+   replacement launches, intervals, configured one-minute/three-retry
+   exhaustion, product Stop/Disable suppression and whether any replacement
+   follows explicit Scheduler Stop. That Stop must not simulate or be classified
+   as a crash. Microsoft describes different failure
+   boundaries in the [Win32 schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restartonfailure-settingstype-element)
+   and [MS-TSCH §2.5.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f);
+   post-start crash/nonzero applicability is natively **UNQUALIFIED**, not
+   declared unsupported; no Windows crash-recovery claim precedes that native case.
+   Only a process-terminating panic exercises native crash behavior; a spawned
+   task panic can instead become managed Failed/native0. Restart exhaustion
+   and native running state are not Ready or product success.
 
 These scenarios are **UNRUN** for #730. Current signed/native release
 prerequisites block positive execution qualification, not source implementation.

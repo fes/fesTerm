@@ -20,13 +20,20 @@ and native/cloud/vault acceptance remain open.
 
 HOST-02/03/04/05 additionally have the separately approved #730 native
 **single-HOST process** recovery source slice. Fresh policy4 and retained-policy
-replacement5 use native restart; existing2/3 keep exact policy, never automatic
+replacement5 configure native restart; Windows running-process crash/nonzero
+applicability remains natively UNQUALIFIED pending genuine bounded launch/crash/explicit-Stop/
+exhaustion tests, not inferred from ambiguous Microsoft descriptions (see the
+linked policy contract). No Windows crash-recovery claim precedes the actual
+native case. Existing2/3 keep exact policy, never automatic
 migration. Managed-only typed protected failure remains product failure before
 native restart-suppression exit translation. Same identity, fresh authorization,
 no daemon/input operation, revoke-before-stop and Manual versus sign-in remain
 mandatory. Manual launchd definitions stay outside login discovery because
 KeepAlive implies RunAtLoad. Deterministic models/CLI refusal are not native
-crash/login/daemon-survival acceptance; #730 qualification remains open. See
+crash/login/daemon-survival acceptance; #730 qualification remains open.
+Linux Manual's start limit counts explicit Starts; macOS/sign-in throttles
+are not finite attempt limits. Only process-terminating panic bypasses managed
+failure translation; a spawned-task panic may become Failed/native0. See
 `native-host-services.md#native-host-process-recovery` and the origin-specific
 history commands, neither of which grants liveness or Ready.
 

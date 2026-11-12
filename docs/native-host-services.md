@@ -59,7 +59,7 @@ The existing Linux login-only exit75 retry is a separate policy.
 ## Native HOST-process recovery
 
 The separately approved [#730](https://github.com/fes/fesTerm/issues/730)
-recovers the **single HOST**, not a per-profile worker. Shared setup uses
+targets recovery of the **single HOST**, not a per-profile worker. Shared setup uses
 `Services::install_with_recovery`: only a fresh registration with current
 authenticated helpers receives policy version 4. Stopped replacement preserves
 that policy as version 5. Existing versions 2/3 retain their exact policy,
@@ -72,11 +72,24 @@ The new native policies are:
 
 | Manager / startup | Unexpected process failure | Explicit startup / stop |
 | --- | --- | --- |
-| systemd Manual | `Restart=on-failure`, 60-second delay; at most 3 starts in 300 seconds before native rate-limit refusal | Not enabled at login; existing exact-owned Start/Stop |
+| systemd Manual | `Restart=on-failure`, 60-second delay; 3-start/300-second limit counts explicit Starts too | Not enabled at login; subsequent Start can be rate-limited for up to 300 seconds |
 | systemd UserSignIn | 60-second restart delay; no attempt-count limit, retaining typed exit75's eventual fresh current-login proof | Existing eligible-login fence and revoke-before-stop; no linger or login-policy changes |
 | launchd Manual | `SuccessfulExit=false`, 60-second launch throttle; rate-bound, not finite attempts | Protected `STATE/native-manual-services/*.plist`, outside login discovery; only explicit Start bootstraps, Stop boots out |
 | launchd UserSignIn | Same launch throttle and unsuccessful-exit policy | User LaunchAgents discovery; never pre-login |
-| Task Scheduler Manual / UserSignIn | Native `RestartOnFailure`: 1-minute interval, 3 retries | Manual has no trigger; sign-in retains exact SID logon trigger, InteractiveToken and LeastPrivilege |
+| Task Scheduler Manual / UserSignIn | Configured `RestartOnFailure`: 1-minute interval, 3 retries; post-start crash/nonzero applicability natively **UNQUALIFIED** | Manual has no trigger; sign-in retains exact SID logon trigger, InteractiveToken and LeastPrivilege; explicit task Stop is not a crash |
+
+Microsoft's documentation is ambiguous about the Windows failure boundary:
+the [Win32 RestartOnFailure schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restartonfailure-settingstype-element)
+says the task “fails for any reason,” whereas
+[MS-TSCH §2.5.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f)
+describes unmet start conditions or failure to start an action. Neither this
+source configuration nor those differing descriptions proves recovery of an
+already-running HOST after crash/nonzero termination. That required behavior
+remains **natively unqualified, not declared unsupported or waived**, pending a genuine
+process-crash test distinguishing launch failure, running-process failure and
+explicit task Stop, with bounded restart/exhaustion observation and protected
+Stop/Disable suppression. No Windows crash-recovery claim is made before
+that actual native case.
 
 Any launchd KeepAlive implies RunAtLoad. The Manual policy therefore relies on
 **not being registered in a login-discovery directory**, not on a false
@@ -101,8 +114,12 @@ Ordinary foreground `run` errors retain their failure exit codes.
 unchanged RunRecord v1, explicitly not liveness, Ready or retry authority.
 Typed Linux login unavailability remains exit75 / `WaitingForLogin`; failure
 to durably record history remains an ordinary operational error/nonzero.
-Panic, signal and other unexpected process failure bypass managed-stop
-translation and remain eligible for the native policy. Restart never signs in,
+Only a process-terminating panic or other unexpected process termination
+bypasses managed-stop translation; actual Windows restart remains natively unqualified.
+A spawned-task panic may instead become a returned runtime error, recorded
+`Failed` with native exit0; handled shutdown signals may complete normally.
+macOS and Linux sign-in throttles are not finite attempt-count limits.
+Restart never signs in,
 provisions, creates identity, acquires a frontend, kills sessiond/shells or
 replays input. Stale history cannot restore revoked authority.
 

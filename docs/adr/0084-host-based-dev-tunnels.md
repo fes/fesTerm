@@ -830,16 +830,28 @@ host-identity admission. Returned refusal, stop and operational failure are
 typed, protected, observable history before native exit translation; a manager
 stop code must never be reported as product success or Ready. Failure to record
 that disposition is an operational error, not a successful managed stop.
-Panic, signal or another unexpected process exit remains native failure.
+Only a process-terminating panic or unexpected process termination bypasses
+managed-stop translation. A spawned-task panic may instead become a returned
+runtime failure, recorded Failed/native0; handled shutdown is not a crash.
 RunRecord v1 and all session/lease authority remain unchanged. The managed
 report is written from the owned RunRecord before releasing that run lease;
 an invocation that cannot acquire it never adopts another invocation's history.
 
-Linux Manual uses a 60-second delay and 3-start/300-second systemd limit;
+Linux Manual uses a 60-second delay and 3-start/300-second systemd limit that
+also counts explicit Starts and may delay a later Start for up to 300 seconds;
 UserSignIn retains eventual typed exit75 eligibility with a 60-second delay
-without an attempt-count limit. Windows uses three finite native Scheduler
-retries at its supported one-minute interval. macOS uses 60-second throttled
-unsuccessful-exit recovery. Since any launchd KeepAlive implies RunAtLoad,
+without an attempt-count limit. Windows configures native Scheduler
+RestartOnFailure with three retries at one-minute intervals; recovery of an
+already-running HOST after crash/nonzero termination remains natively
+**UNQUALIFIED**; no Windows crash-recovery claim precedes the actual native case.
+The [Win32 schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restartonfailure-settingstype-element)
+says “fails for any reason,” while
+[MS-TSCH §2.5.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f)
+describes start-condition/action-start failure. A genuine bounded native test
+must distinguish launch failure, running-process crash/nonzero and explicit
+task Stop; this ambiguity neither proves support nor declares it unsupported.
+macOS uses a 60-second launch throttle, not a finite attempt limit.
+Since any launchd KeepAlive implies RunAtLoad,
 new Manual definitions live under protected state outside login discovery and
 are bootstrapped only by explicit Start; sign-in definitions remain in
 LaunchAgents. Stop/Disable/revocation must retire or suppress hosting without
