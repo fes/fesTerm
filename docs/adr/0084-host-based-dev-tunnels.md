@@ -521,6 +521,18 @@ Aborted, proves prior registration, so a lost receipt refuses rather than
 manufacturing absence.
 These coupled negative fixtures retain the native/cloud/vault qualifications.
 
+The bounded Windows stopped-update design retains this same transaction and
+publisher policy. Windows v3 task names compact both installation/operation
+UUIDs while full protected origin/account/epoch fences remain authoritative.
+Fresh canonical XML/ACL, submission intent and observed identity belong to the
+replacement journal before any Create, not the active old receipt. Submitted
+but unobserved absence remains unknown. Retirement is exact quiescent-task
+deletion plus independent absence, and pending stop composes one bounded
+protected-revocation/runtime-release check with both task observations. It
+never launches/stops a host or session daemon, weakens signing policy or
+claims real Windows/native release acceptance. See the
+[receipt/recovery contract](../native-host-services.md#windows-stopped-replacement-contract-design-before-implementation).
+
 ### 10. Protocol, resource and failure contract
 
 Introduce an explicitly versioned host marker/capability handshake distinct from

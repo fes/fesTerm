@@ -1,5 +1,12 @@
 # GUI Exploration and Test Action Graph
 
+ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
+epochs and exact old/new reservations through replacement/recovery. The shared
+backend must retain publisher authentication, journal-before-Create and
+canonical task XML/ACL ownership; pending stop proves both tasks quiescent under
+one protected-revocation deadline. Source/model evidence is not Windows PKI,
+ordinary-user native service or persistent-daemon acceptance.
+
 ## Synchronized terminal recording (ADR 0077)
 
 | Edge | From | Action | To / recovery |

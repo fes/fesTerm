@@ -205,7 +205,9 @@ stopped. Native workers retain existing late-completion leases/fences.
 No daemon or shell stop is implied; real Windows runtime/daemon evidence remains
 required, and pure fixtures do not establish it.
 
-Concrete owner approval input still required, not a candidate-derived pin:
+Historical proposal (superseded by the compiled owner-approved policy at
+lines above and the protected revocation channel): concrete owner approval input
+was required, not a candidate-derived pin:
 approve a public certificate/profile-policy export from the existing
 `fesLabs-CodeSign` / `fesTermPublicTrust` release authority, naming the exact
 canonical publisher DN/organization, allowed Microsoft public-trust chain/policy
@@ -219,6 +221,44 @@ No proposed subject, certificate hash, policy OID or revocation exception is
 invented/accepted here. The exact-host stop proposal additionally requires
 named-pipe client/server OS-user verification and PID **plus process-creation
 identity**, rather than a PID/name/command-line substring or whole-job kill.
+
+The historical 24-hour offline grace and new stop-pipe proposal are not current
+policy. Current verification requires fresh native signer/TSA revocation with
+no custom grace; stop uses protected lifecycle revocation, not additional IPC.
+
+### Windows stopped replacement contract (design before implementation)
+
+The stopped-update slice reuses the existing embedded updater key and compiled
+native publisher verifier for the complete old and new bundles. No new trust
+input, environment override, downloaded key or generic signature-validity gate
+is introduced. Native signing/PKI and ordinary-user execution acceptance remain
+separate gates.
+
+Windows v3 registration resources use
+`fesTerm-Host-{desktop|headless}-{installation UUID simple}-{operation UUID simple}`.
+The compact UUID encoding fits the existing 96-byte facade limit without
+relaxation; protected origin, installation, account binding, creation epoch,
+state-directory and full rendered definition validation remain mandatory.
+Unix v3 names and Windows v2 receipts retain their existing encoding.
+
+Each replacement journals its own fresh canonical expected task XML and exact
+owner/SYSTEM ACL, submission flag and observed snapshot. These fields must not
+be cloned from the old task. Prepare is non-registering. Prepared is durable
+before retirement, and Applying plus submission intent is durable before Create.
+The active old receipt stays unchanged until the exact new stopped task is
+observed and committed. After an interrupted Create, only the journal's exact
+reservation/XML/ACL can recover observed ownership, including after revocation;
+submitted-but-unobserved absence remains unknown and cannot authorize resubmission,
+cleanup completion, fresh reservation or success.
+
+Windows replacement must use scheduler observations, not the Windows
+`definitions::check_file` stub. Retirement requires exact-owned quiescence,
+Remove and independent absence confirmation. Pending old/new stop shares one
+existing ten-second deadline and proves the protected revoked snapshot, released
+runtime lease and both exact task observations. No Start, Scheduler Stop, kill,
+sessiond launch, automatic reenable or grant restoration is permitted. Every
+native error, Busy, stale epoch or unknown result preserves the journal for
+exact retry/cleanup, never implies absence.
 
 The receipt retains verified file/directory handles; registration/start reopens
 no-follow and rechecks file identity, ownership, permissions and exact bytes.

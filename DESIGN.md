@@ -2,6 +2,14 @@
 
 **Status:** Draft
 
+ADR0084 Windows stopped updates reuse verified-bundle publisher policy and
+protected old/new operation journals. Compact v3 task names do not confer
+ownership: exact canonical XML/ACL and origin/account/epoch evidence do.
+Submission intent precedes Create; unknown absence remains unknown. Pending
+stop observes protected revocation, runtime release and both resources under
+one deadline without launching/killing HOST or sessiond. See the design-before-
+implementation contract in `docs/native-host-services.md`.
+
 This document captures the current product and architectural direction for fesTerm. Accepted decisions are recorded in `docs/adr/`; detailed subsystem boundaries are in `ARCHITECTURE.md`, and delivery milestones are in `ROADMAP.md`.
 
 ## Product Vision
