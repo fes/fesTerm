@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0c34455924dc6967b1813b94d0122f63143906573a0b7df6a4da4f19dabce4f8"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6fb6935942cf9be190932894d0c43f4836a19be7fab27aba8c7ca8583ff2c137"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Terminal UI owns egui rendering, input routing, and Direct2D/software fallback boundaries without performing session I/O.
+Terminal UI owns egui rendering, input routing, and native/software rendering boundaries without session I/O.
 
 Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-design.md](../../docs/gui-design.md)
 
@@ -18,7 +18,6 @@ Use for: When a UI event, resize, or selection needs to be routed through the te
 
 Evidence:
 - [`warmed_character_routing_does_not_allocate_in_core_or_view`](../../crates/festerm-ui-egui/tests/routed_input_allocations.rs) — proves exact routed bytes and no hot-path allocation churn
-- [`docs/ui-test-plan.md`](../../docs/ui-test-plan.md) — requires input, resize, and focus invariants as CI evidence
 
 Caveats:
 - UI never does session I/O; bytes only go to EncodedInputSink.
@@ -31,11 +30,9 @@ Use for: When terminal output changes or the grid dimensions and viewport shift 
 
 - [`TerminalRenderCache`](../../crates/festerm-ui-egui/src/cache.rs) — row-level presentation cache for dirty rows and full refreshes
 - [`update`](../../crates/festerm-ui-egui/src/cache.rs) — rebuilds only changed rows or the full grid when dimensions move
-- [`TerminalView`](../../crates/festerm-ui-egui/src/view.rs) — applies resize and keeps selection/history stable while reflowing content
 
 Evidence:
 - [`docs/ui-test-plan.md`](../../docs/ui-test-plan.md) — defines required cache and resize invariants for every rendered frame
-- [`crates/festerm-ui-egui/benches/render_cache_allocations.rs`](../../crates/festerm-ui-egui/benches/render_cache_allocations.rs) — measures bounded row-cache churn and allocation-neutral refresh behavior
 
 Caveats:
 - Full refreshes are required on dimension changes and viewport reflow.
@@ -46,13 +43,11 @@ Caveats:
 
 Use for: When the app decides whether a Windows x64 WARP frame can be painted with Direct2D instead of the ordinary egui path.
 
-- [`install_from_environment`](../../app/festerm/src/direct2d.rs) — chooses native Direct2D/host-copy mode from adapter and environment
-- [`CompositionSelection`](../../app/festerm/src/direct2d.rs) — gates native painting behind adapter, backend, and color-format eligibility
+- [`install_from_environment`](../../app/festerm/src/direct2d.rs) — chooses native Direct2D or host-copy mode from adapter and environment
 - [`Renderer`](../../crates/festerm-windows-direct2d/src/renderer.rs) — serial native bridge that validates, uploads, and draws a bounded frame
 
 Evidence:
 - [`integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`](../../app/festerm/src/direct2d.rs) — proves native path and fallback semantics in one frame
-- [`docs/gui-design.md`](../../docs/gui-design.md) — frames Direct2D as an opt-in native composition path with ordinary fallback semantics
 
 Caveats:
 - Unsupported frames and device failures must fall back to ordinary egui painting.
@@ -64,12 +59,9 @@ Caveats:
 Use for: When the app needs panel or viewport background painting without depending on a native compositor or Direct2D path.
 
 - [`show_frame`](../../app/festerm/src/software_background.rs) — renders a panel frame through a software background callback and keeps layout intact
-- [`PanelRenderer`](../../app/festerm/src/software_background.rs) — encapsulates background panel shape generation and retained paint pipeline
-- [`RootPanelBackground`](../../app/festerm/src/software_background.rs) — replaces opaque root panel fills with callback-painted background geometry
 
 Evidence:
 - [`docs/gui-design.md`](../../docs/gui-design.md) — treats terminal background and viewport fill as structural presentation requirements
-- [`integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`](../../app/festerm/src/direct2d.rs) — verifies the ordinary path remains correct when native painting is unavailable
 
 Caveats:
 - A frame only uses the native path when callback and format checks pass.

@@ -7,17 +7,17 @@ in source; pages route to code, they do not authorize or instruct.
 | Page | Owns |
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Core terminal state, parser/queue boundaries, and golden-fixture assertions for a GUI-independent VT terminal model. |
-| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and Direct2D/software fallback boundaries without performing session I/O. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY/serial backends, and the sessiond daemon that mediates recoverable terminal state and app-side pump semantics. |
+| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software rendering boundaries without session I/O. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and daemon-mediated recovery state for persistent terminal sessions. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI/text SFTP transfer stack used by remote file and session flows. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, opaque native secret references, and private filesystem protections for config and workspace data. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns the application command bus, tab lifecycle, and keyboard-routing policy for terminal, markdown, and UI actions. |
+| [Application commands, tabs, and input routing](app-commands.md) | Owns the application command bus, tab lifecycle, and keyboard-routing policy for terminal actions. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared text-document registry, Markdown parsing/rendering, and the editor/viewer routes that bind documents to app commands and syntax-aware UI. |
 | [Terminal recording and export](recording.md) | This domain owns private terminal capture, privacy-gated consent, synchronized export staging, and recoverable recording flows. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns dev-tunnel discovery, managed-host consent, enterprise and PowerShell session flows, host protocol identity/inventory, and signed helper artifact verification for desktop remote sessions. |
-| [Desktop platform integration and packaging](desktop-platform.md) | OS-specific desktop packaging metadata, native smoke validation, AppKit/Win32/Linux wake and privacy hooks, and signed update flow for packaged builds. |
-| [Mobile hosts (iOS and Android)](mobile.md) | Shared mobile runtime, native bridge, and offline-first SSH/files/document flows for iOS and Android. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns dev-tunnel discovery, managed-host consent, enterprise and PowerShell session flows, host protocol inventory, and signed helper verification for remote desktop sessions. |
+| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns the desktop packaging, native smoke proof, and OS-level wake/privacy bridges that gate packaged app behavior. |
+| [Mobile hosts (iOS and Android)](mobile.md) | Shared mobile runtime, Android bridge, and offline-first SSH/files/document flows for iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | This domain owns the desktop shell root, egui frame lifecycle, launcher/profile/settings surfaces, pane/session routing, and lifecycle diagnostics for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |

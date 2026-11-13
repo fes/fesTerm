@@ -1,55 +1,52 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "50b476a698c7c7c3744bb08f8de3dfee6ca14ba724468f82e456abb1bc1ec784"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8936ba7efdccaad5359cbcd3d5e8a414778f85f3d05f70b9eaf5bf08c81acb3e"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Shared mobile runtime, native bridge, and offline-first SSH/files/document flows for iOS and Android.
+Shared mobile runtime, Android bridge, and offline-first SSH/files/document flows for iOS and Android.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
 ## Shared native host
 
-Use for: When a mobile task starts in the app or needs the shared lifecycle, window host, and app policy.
+Use for: When a mobile task starts in the app or needs the shared lifecycle, native host, and app policy.
 
-- [`run_native`](../../app/festerm-mobile/src/runtime.rs) — Boots the winit/eframe host, lifecycle lock, and native window wiring.
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Stores tabs, terminal, lock, documents, and live-SSH state in one app model.
+- [`run_native`](../../app/festerm-mobile/src/runtime.rs) — Builds the native event loop and one app lifecycle lock.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal, documents, SSH state, and widget policy.
 
 Evidence:
-- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Documents the offline default and opt-in live-SSH prototype.
-- [`docs/mobile-port-plan.md`](../../docs/mobile-port-plan.md) — Explains the shared core/renderer mobile host instead of a rewrite.
+- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Explains offline default and opt-in live SSH prototype.
 
 Caveats:
-- Offline is the default; feature-gated live SSH is not product acceptance.
+- Offline stays the default; live SSH remains prototype-only.
 - Only content-free lifecycle and repaint data cross the UI seam.
-- App policy stays in Rust; native services must not bypass it.
+- Rust keeps app policy; native services must not bypass it.
 
 ## Android JNI bridge
 
 Use for: When Android-only services, insets, gestures, or secrets touch the native boundary.
 
-- [`android_main`](../../app/festerm-android/src/lib.rs) — Initializes the JNI bridge then runs the shared Rust app.
-- [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, secret storage, and recording services.
+- [`android_main`](../../app/festerm-android/src/lib.rs) — Starts the JNI bridge then runs the shared Rust app.
+- [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
 
 Evidence:
-- [`app/festerm-android/README.md`](../../app/festerm-android/README.md) — States the same Rust app is used as iOS and Java stays service glue.
-- [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording behavior through the test APK.
+- [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording services.
 
 Caveats:
-- Rust owns the app UI and session policy; Java is service glue only.
-- No local shell or background service is allowed in the bridge.
-- JNI must not bypass app policy or persist app state outside the model.
+- Rust owns the app UI and session policy.
+- Java is service glue, not the app runtime.
+- JNI must not persist app state outside the model.
 
 ## Live SSH shell
 
 Use for: When a task touches transient SSH trust, auth, suspend, or reconnect behavior.
 
-- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Transient SSH session with host trust, password prompts, resize, and tunnel recovery.
+- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Transient SSH state with host trust, password prompts, and reconnect logic.
 - [`connect`](../../app/festerm-mobile/src/live_ssh.rs) — Builds the SSH profile, resolves trust, authenticates, and starts the shell.
 
 Evidence:
 - [`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Proves explicit trust and password retry on loopback SSH.
-- [`mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Rejects unknown or changed hosts before authentication.
 
 Caveats:
 - Pins and credentials are memory-only; no persisted trust or saved credentials.
@@ -60,12 +57,11 @@ Caveats:
 
 Use for: When a task needs SFTP, markdown preview, or protected document save/open/import behavior.
 
-- [`FilesSession`](../../app/festerm-mobile/src/files.rs) — SFTP pane and transfer queue with conflict handling and markdown opening.
-- [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview/edit state, dirty-save logic, and open/import/save policy.
+- [`FilesSession`](../../app/festerm-mobile/src/files.rs) — SFTP pane and transfer queue with trust, password, and conflict handling.
+- [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview, edit state, and dirty-save policy.
 
 Evidence:
-- [`files_link_walks_trust_password_and_failure_without_leaking_the_password`](../../app/festerm-mobile/src/files.rs) — Proves host trust and password flow do not leak secrets.
-- [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs) — Locks document edits to the native source, not the terminal.
+- [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs) — Locks document edits to the native source, never the terminal.
 
 Caveats:
 - Saved documents stay private and avoid overwriting provider originals.
