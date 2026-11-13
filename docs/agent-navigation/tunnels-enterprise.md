@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e5e13177271b56524e84629f29ef6a60463fc81ec6f276c85baac7fde663e271"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b2fec5f593455ba07498efd0a3204620aeb89fdfbb4ea1806898e0a19b26db15"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing.
+Owns discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -13,7 +13,7 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 Use for: When inventory must be refreshed or bounded across native, tmux, screen, and hosted roots
 
 - [`Inventory`](../../app/festerm/src/discovery.rs) — Coalesces native, tmux, screen, and hosted roots into one bounded inventory.
-- [`Discovery`](../../app/festerm/src/discovery.rs) — Runs one refresh worker and only publishes visible changes.
+- [`Discovery`](../../app/festerm/src/discovery.rs) — Runs one refresh worker and only publishes visible inventory changes.
 
 Evidence:
 - [`native_inventory_keeps_same_name_sessions_in_their_exact_roots`](../../app/festerm/src/discovery.rs) — Same-name sessions remain distinct by runtime root and hosted source.
@@ -21,7 +21,7 @@ Evidence:
 Caveats:
 - Hosted roots are gated behind feature and runtime checks.
 - Refresh coalescing drops superseded results.
-- Provider errors remain per-root instead of becoming global.
+- Provider errors remain per-root rather than becoming global.
 
 ## Local bind
 
@@ -81,16 +81,5 @@ Evidence:
 
 Caveats:
 - Worker-side data stays off the UI thread and budgets are enforced.
-
-## Dev tunnel sign-in
-
-Use for: When following the tunnel browser, account verification, or reconnect workflow for signed-in profiles
-
-- [`AccountStatus`](../../app/festerm/src/tunnel_browser.rs) — Tracks whether the local Dev Tunnel account is verified, expired, or application-changed.
-- [`Workflow`](../../app/festerm/src/tunnel_workflow.rs) — Owns account/host approval, remembered identity leasing, and connection preparation.
-
-Evidence:
-- [`account_selection_requires_logged_in_github_numeric_identity`](../../app/festerm/src/profile_hosting_account.rs) — Only a verified GitHub numeric identity is accepted for a hosting account choice.
-
-Caveats:
-- The browser flow keeps sign-in data transient; profiles save only the approved account reference.
+- HTTPS/SSH transport choices are explicit and non-ambiguous.
+- Session lifecycle uses distinct failed/closed states rather than success masquerading.
