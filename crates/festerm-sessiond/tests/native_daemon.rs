@@ -649,7 +649,17 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     }
     arguments.push("spin");
     #[cfg(unix)]
-    launch_session_with(&executable, &runtime, &name, &shell, &arguments);
+    {
+        let arguments = without_terminal_echo(&shell, &arguments);
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        launch_session_with(
+            &executable,
+            &runtime,
+            &name,
+            Path::new("/bin/sh"),
+            &arguments,
+        );
+    }
     #[cfg(windows)]
     let mut daemon = launch_session_with(&executable, &runtime, &name, &shell, &arguments);
     let selection = bridge_selection(&runtime, &name);
@@ -2668,6 +2678,20 @@ fn test_shell_arguments() -> Vec<&'static str> {
         "echo:INPUT",
         "spin",
     ]
+}
+
+/// Runs `child` with canonical echo disabled. Once a slow reader fills the PTY
+/// output queue, macOS may drop echoed input and splice it into a child write,
+/// so tests asserting exact child-output order must not depend on echo.
+#[cfg(unix)]
+fn without_terminal_echo(child: &Path, arguments: &[&str]) -> Vec<String> {
+    let mut wrapped = vec![
+        "-c".to_owned(),
+        "stty -echo && exec \"$0\" \"$@\"".to_owned(),
+        child.to_str().unwrap().to_owned(),
+    ];
+    wrapped.extend(arguments.iter().map(|argument| (*argument).to_owned()));
+    wrapped
 }
 
 #[cfg(unix)]

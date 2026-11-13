@@ -1897,7 +1897,26 @@ async fn native_authenticated_runtime_end_confirms_original_exact_gone_generatio
     let context = fixture.client_context();
     let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
     let original = end.operation().clone();
-    let first_end = client_end_worker(&mut fixture, end.clone()).await;
+    // A freshly created generation's lease may still be held by its starting
+    // daemon. End refuses that contention as Busy before any effect, so retry
+    // the same original operation, as the user would, within a bounded deadline.
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let first_end = loop {
+        let outcome = client_end_worker(&mut fixture, end.clone()).await;
+        if matches!(
+            &outcome,
+            crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::Refused(Refusal::Busy)
+            ))
+        ) && std::time::Instant::now() < deadline
+        {
+            assert_eq!(end.operation(), &original);
+            assert!(!end.is_resolved());
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            continue;
+        }
+        break outcome;
+    };
     assert!(
         matches!(
             &first_end,
