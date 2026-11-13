@@ -1678,6 +1678,11 @@ mod tests {
         })
     }
 
+    // Fixture-only bound, separate from the production `DEADLINE`: a cold
+    // hosted runner compiles the Add-Type matcher and starts WMI/CIM while
+    // other tests run, which has exceeded 15s without any hang (#740).
+    const WINDOWS_FIXTURE_DEADLINE: Duration = Duration::from_secs(60);
+
     #[cfg(windows)]
     fn run_windows_read_only_fixture(expression: &str, stage: &'static str) -> io::Result<Vec<u8>> {
         // Hosted runners can be elevated: these read-only fixtures need OS
@@ -1693,7 +1698,7 @@ mod tests {
         let mut command =
             tokio::process::Command::new(system.join("WindowsPowerShell\\v1.0\\powershell.exe"));
         command.args(["-NoProfile", "-NonInteractive", "-Command", &expression]);
-        run_read_only_fixture(command, stage, DEADLINE, OUTPUT_LIMIT)
+        run_read_only_fixture(command, stage, WINDOWS_FIXTURE_DEADLINE, OUTPUT_LIMIT)
     }
 
     #[test]
@@ -3006,7 +3011,8 @@ mod tests {
     #[test]
     #[ignore = "read-only creation-identity fixture child; no service registration"]
     fn service_runner_identity_child() {
-        std::thread::sleep(Duration::from_secs(30));
+        // Outlive the fixture deadline; the parent kills this owned child.
+        std::thread::sleep(WINDOWS_FIXTURE_DEADLINE + Duration::from_secs(30));
     }
 
     #[test]
