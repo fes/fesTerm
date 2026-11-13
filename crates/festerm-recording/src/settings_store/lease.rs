@@ -8,13 +8,31 @@ use super::platform;
 
 const LEASE_NAME: &str = "recording-active.lock";
 
+/// Releases its advisory lock explicitly: closing alone does not release it
+/// while a concurrently spawned child still shares the open file description.
+pub(super) struct HeldLock(pub(super) File);
+
+impl std::ops::Deref for HeldLock {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl Drop for HeldLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
 /// Coordinates capture, export and recovery across fesTerm processes sharing
 /// one private recording directory. The caller must keep the lease for the
 /// entire operation, including final publication and source cleanup.
 pub struct RecordingLease {
     directory_path: PathBuf,
     directory: File,
-    lock: File,
+    lock: HeldLock,
     identity: (u64, u64),
 }
 
@@ -29,8 +47,9 @@ impl RecordingLease {
             }
             Err(error) => return Err(error),
         };
+        let lock = HeldLock(lock);
         platform::require_private_file(&lock)?;
-        fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+        fs2::FileExt::try_lock_exclusive(&*lock).map_err(|error| {
             if error.kind() == io::ErrorKind::WouldBlock {
                 io::Error::new(
                     io::ErrorKind::WouldBlock,

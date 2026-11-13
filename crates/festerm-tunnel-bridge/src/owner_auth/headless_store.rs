@@ -67,15 +67,25 @@ impl ExplicitHeadlessFileStore {
         &self.installation
     }
 
-    fn lease(&self) -> Result<File, SecretStoreError> {
+    fn lease(&self) -> Result<Lease, SecretStoreError> {
         let lock = storage::open_private_file(&self.directory, Path::new(LOCK), false)
             .map_err(map_error)?;
         lock.try_lock_exclusive().map_err(map_error)?;
-        Ok(lock)
+        Ok(Lease(lock))
     }
 
     fn name(reference: &SecretReference) -> std::path::PathBuf {
         format!("headless-owner-secret-{}", reference.to_persisted_string()).into()
+    }
+}
+
+struct Lease(File);
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // Release even if a concurrent process spawn briefly inherited the
+        // descriptor before exec closed it; closing alone would keep the lock.
+        let _ = FileExt::unlock(&self.0);
     }
 }
 
@@ -171,5 +181,42 @@ impl SecretStore for ExplicitHeadlessFileStore {
             festerm_windows_security::remove_private_staging_file(&file).map_err(map_error)?;
         }
         Ok(true)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn headless_lease_is_released_while_a_concurrent_spawn_inherits_it() {
+        let root = crate::test_support::private_directory("festerm-headless-lease");
+        let directory = storage::private_directory(&root, false).unwrap();
+        let store =
+            ExplicitHeadlessFileStore::select(&directory, &uuid::Uuid::new_v4().to_string())
+                .unwrap();
+        let reference = store.put(&SecretBytes::copy_from_slice(b"anchor")).unwrap();
+        let stop = AtomicBool::new(false);
+        let mut failures = 0;
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = std::process::Command::new("true").status();
+                    }
+                });
+            }
+            for _ in 0..500 {
+                if store.get(&reference).is_err() {
+                    failures += 1;
+                }
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+        drop(store);
+        drop(directory);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(failures, 0);
     }
 }

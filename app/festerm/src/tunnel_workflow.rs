@@ -38,13 +38,13 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 mod tests;
 
 struct WorkerSlot {
-    identity_lease: OnceLock<std::fs::File>,
+    identity_lease: OnceLock<festerm_sessiond::private_storage::UnlockOnDrop>,
 }
 
 fn acquire_identity_lease(
     root: &std::path::Path,
     reference: &SecretReference,
-) -> Result<std::fs::File, Error> {
+) -> Result<festerm_sessiond::private_storage::UnlockOnDrop, Error> {
     std::fs::create_dir_all(root).map_err(|_| Error::Store)?;
     let metadata = std::fs::symlink_metadata(root).map_err(|_| Error::Store)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -63,7 +63,8 @@ fn acquire_identity_lease(
         .truncate(false)
         .open(path)
         .map_err(|_| Error::Store)?;
-    fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
+    let file = festerm_sessiond::private_storage::UnlockOnDrop(file);
+    fs2::FileExt::try_lock_exclusive(&*file).map_err(|error| {
         if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
             Error::Busy
         } else {
@@ -75,14 +76,14 @@ fn acquire_identity_lease(
 
 pub(super) fn account_lease(
     account: Option<&DevTunnelAccount>,
-) -> Result<Option<std::fs::File>, Error> {
+) -> Result<Option<festerm_sessiond::private_storage::UnlockOnDrop>, Error> {
     profile_identity_lease(account, true)
 }
 
 fn profile_identity_lease(
     account: Option<&DevTunnelAccount>,
     remember: bool,
-) -> Result<Option<std::fs::File>, Error> {
+) -> Result<Option<festerm_sessiond::private_storage::UnlockOnDrop>, Error> {
     let identity = account;
     if !remember || identity.is_none() {
         return Ok(None);

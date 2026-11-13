@@ -899,8 +899,12 @@ fn exact_native(
         return Ok(false);
     }
     let directory = storage::private_directory(&target.runtime_root, false)?;
-    let lock = storage::open_private_file(&directory, Path::new("registry.lock"), false)?;
-    FileExt::try_lock_shared(&lock)?;
+    let lock = storage::UnlockOnDrop(storage::open_private_file(
+        &directory,
+        Path::new("registry.lock"),
+        false,
+    )?);
+    FileExt::try_lock_shared(&*lock)?;
     let registry: NativeRegistry = read(&directory, "registry.json", LIMIT)?;
     let Some(session) = registry.sessions.get(&target.name) else {
         return Ok(false);

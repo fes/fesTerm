@@ -15690,3 +15690,22 @@ computer** is the master switch, every profile shared from the profile editor
 is advertised even while stopped and started on connect, and disabling host
 access withdraws the whole catalog. Revisions fence stale connections when a
 profile is toggled or edited.
+
+## Keeping a committed HOST launch certain under daemon lease contention
+
+A macOS CI run of the native revocation test failed while creating its shell:
+the first Ensure returned `OutcomeUncertain`, and retrying the same issued
+operation returned `Stale`. Probes showed the cause. Right after spawning the
+daemon, Ensure writes the session grant into the daemon lease with a try-lock.
+The new daemon polls that same lease every 250 ms. If the two overlapped,
+Ensure reported the launch as uncertain without saving the `Running` journal
+entry. The retry then found a `Launching` record, whose `Unknown` grant owner
+authorization correctly refuses as `Stale` before reconciliation.
+
+The post-spawn grant write now retries lease contention for up to one second,
+using the same pattern as the daemon's attachment commit. Every other error,
+and contention lasting past that bound, is still reported as
+`CommittedButNotPublished`. No authorization or fencing check changed. A
+remaining gap is that an Ensure replay cannot reconcile its own uncommitted
+`Launching` record. Until a Lookup or List reconciles the record, the replay
+returns `Stale`. That gap is a separate follow-up and is not part of this fix.

@@ -28,10 +28,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 const STATE_LIMIT: usize = 4 * 1024 * 1024;
 const STATE_FILE: &str = "host-sessions.json";
+/// A freshly spawned daemon polls its lease with a try-lock. That brief,
+/// bounded contention must not turn a committed launch into an uncertain one.
+const COMMITTED_LEASE_CONTENTION: Duration = Duration::from_secs(1);
 #[path = "host_binding.rs"]
 mod binding;
 pub use binding::ImportedBinding;
@@ -731,7 +735,7 @@ impl Default for State {
 
 struct Transaction {
     directory: File,
-    _lock: File,
+    _lock: storage::UnlockOnDrop,
     state: State,
 }
 
@@ -932,6 +936,37 @@ mod end_confirmation_tests {
     }
 
     #[test]
+    fn committed_grant_sync_waits_out_bounded_daemon_lease_contention() {
+        let (_directory, control, _owner, target) = observed_fixture();
+        let mut record = control.transaction().unwrap().state.sessions[&target.logical].clone();
+        record.epoch = record.epoch.next().unwrap();
+        let held = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+        assert_eq!(
+            control.sync_grant(&mut record.clone()),
+            Err(ControlError::Busy)
+        );
+        assert_eq!(
+            control.sync_grant_contended(&mut record.clone(), Instant::now()),
+            Err(ControlError::Busy),
+            "contention outlasting the bound is still reported"
+        );
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(held);
+        });
+        assert_eq!(
+            control.sync_grant_contended(&mut record, Instant::now() + Duration::from_secs(5)),
+            Ok(())
+        );
+        release.join().unwrap();
+        let lease = LeaseGuard::acquire(&control.root, target.generation)
+            .unwrap()
+            .read()
+            .unwrap();
+        assert!(same_grant(&lease.grant, &record.grant()));
+    }
+
+    #[test]
     fn end_confirmation_refuses_contended_or_corrupt_native_lease() {
         let (_directory, control, owner, target) = observed_fixture();
         let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
@@ -1032,6 +1067,7 @@ impl SessionControl {
                 ControlError::Storage
             }
         })?;
+        let lock = storage::UnlockOnDrop(lock);
         let state = match storage::read_private(&directory, Path::new(STATE_FILE), STATE_LIMIT) {
             Ok(bytes) => {
                 serde_json::from_slice::<State>(&bytes).map_err(|_| ControlError::Storage)?
@@ -1302,6 +1338,31 @@ impl SessionControl {
             guard.replace(&mut lease).map_err(storage_error)?;
         }
         Ok(())
+    }
+
+    /// Lease contention is not a failed publication; any other error, or
+    /// contention outlasting `deadline`, is returned unchanged.
+    fn sync_grant_contended(
+        &self,
+        record: &mut Record,
+        deadline: Instant,
+    ) -> Result<(), ControlError> {
+        loop {
+            let mut attempt = record.clone();
+            match self.sync_grant(&mut attempt) {
+                Ok(()) => {
+                    *record = attempt;
+                    return Ok(());
+                }
+                Err(ControlError::Busy) if Instant::now() < deadline => {
+                    std::thread::sleep(
+                        Duration::from_millis(5)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn reconcile_native(&self, record: &mut Record) -> Result<(), ControlError> {
@@ -2017,7 +2078,7 @@ impl SessionControl {
         });
         record.phase = Phase::Running;
         record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
-        self.sync_grant(record)
+        self.sync_grant_contended(record, Instant::now() + COMMITTED_LEASE_CONTENTION)
             .map_err(|_| ControlError::CommittedButNotPublished)?;
         tx.save()
             .map_err(|_| ControlError::CommittedButNotPublished)?;

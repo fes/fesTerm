@@ -59,7 +59,7 @@ pub fn now_ms() -> u128 {
         .map_or(0, |time| time.as_millis())
 }
 
-fn storage(root: &Path, name: &str) -> io::Result<(File, PathBuf, File)> {
+fn storage(root: &Path, name: &str) -> io::Result<(File, PathBuf, private_storage::UnlockOnDrop)> {
     festerm_ssh::PersistentSessionName::new(name)
         .map_err(|_| io::Error::other("invalid lifecycle identity"))?;
     let directory = private_storage::private_directory(&root.join("lifecycle"), true)?;
@@ -71,9 +71,9 @@ fn storage(root: &Path, name: &str) -> io::Result<(File, PathBuf, File)> {
         }
         Err(error) => return Err(error),
     };
+    let lock = private_storage::UnlockOnDrop(lock);
     // Diagnostics must not stall PTY handling or shutdown behind another
-    // process, but a concurrent reader/writer (or a child that briefly
-    // inherited the descriptor before exec) only holds the lock momentarily.
+    // process, but a concurrent reader/writer only holds the lock momentarily.
     let mut attempts = 0;
     loop {
         match lock.try_lock_exclusive() {

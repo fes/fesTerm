@@ -284,16 +284,17 @@ fn open_lock(directory: &File, name: &Path) -> Result<File, PersistentSessionErr
     }
 }
 
-fn lock(file: &File, exclusive: bool) -> Result<(), PersistentSessionError> {
+fn lock(file: File, exclusive: bool) -> Result<storage::UnlockOnDrop, PersistentSessionError> {
+    let file = storage::UnlockOnDrop(file);
     let deadline = Instant::now() + Duration::from_millis(500);
     loop {
         let result = if exclusive {
-            FileExt::try_lock_exclusive(file)
+            FileExt::try_lock_exclusive(&*file)
         } else {
-            FileExt::try_lock_shared(file)
+            FileExt::try_lock_shared(&*file)
         };
         match result {
-            Ok(()) => return Ok(()),
+            Ok(()) => return Ok(file),
             Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
                 thread::sleep(POLL_INTERVAL);
             }
@@ -308,28 +309,31 @@ fn lock(file: &File, exclusive: bool) -> Result<(), PersistentSessionError> {
 
 /// Shared with ordinary helper starts. Never hold a registry lock while launching a child.
 #[doc(hidden)]
-pub fn lock_native_start_in(root: &Path, name: &str) -> Result<File, PersistentSessionError> {
+pub fn lock_native_start_in(
+    root: &Path,
+    name: &str,
+) -> Result<storage::UnlockOnDrop, PersistentSessionError> {
     PersistentSessionName::new(name).map_err(|_| refused("invalid session name"))?;
     let directory = storage::private_directory(root, false).map_err(storage_error)?;
     let file = open_lock(&directory, Path::new(&format!("{name}.start.lock")))?;
-    lock(&file, true)?;
-    Ok(file)
+    lock(file, true)
 }
 
 /// Serializes a hosted migration with ordinary starts without repairing
 /// existing legacy directory or lock permissions.
-pub fn lock_legacy_start_in(root: &Path, name: &str) -> Result<File, PersistentSessionError> {
+pub fn lock_legacy_start_in(
+    root: &Path,
+    name: &str,
+) -> Result<storage::UnlockOnDrop, PersistentSessionError> {
     PersistentSessionName::new(name).map_err(|_| refused("invalid session name"))?;
     let directory = storage::trusted_directory(root, true).map_err(storage_error)?;
     let file = storage::open_trusted_lock(&directory, Path::new(&format!("{name}.start.lock")))
         .map_err(storage_error)?;
-    lock(&file, true)?;
-    Ok(file)
+    lock(file, true)
 }
 
 fn registry(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
-    let file = open_lock(directory, Path::new("registry.lock"))?;
-    lock(&file, false)?;
+    let _lock = lock(open_lock(directory, Path::new("registry.lock"))?, false)?;
     match storage::read_private(directory, Path::new("registry.json"), REGISTRY_LIMIT) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| refused("invalid native registry")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SessionRegistry::default()),
@@ -361,11 +365,11 @@ fn verified_live(
         Path::new(&format!("lease-{generation}")),
         false,
     ) {
-        Ok(lease) => lease,
+        Ok(lease) => storage::UnlockOnDrop(lease),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(storage_error(error)),
     };
-    match FileExt::try_lock_shared(&lease) {
+    match FileExt::try_lock_shared(&*lease) {
         Ok(()) => Ok(false),
         Err(error) if lock_is_contended(&error) => {
             if cfg!(unix) {
@@ -536,8 +540,10 @@ fn ensure_reserved_with_launcher(
     let fingerprint = normalized_fingerprint(&profile)?;
     let directory = prepare_native_runtime(root)?;
     // UUID-global serialization also prevents reusing a request for another name.
-    let request_lock = open_lock(&directory, Path::new(&format!("launch-{id}.lock")))?;
-    lock(&request_lock, true)?;
+    let _request_lock = lock(
+        open_lock(&directory, Path::new(&format!("launch-{id}.lock")))?,
+        true,
+    )?;
     let start_lock = lock_native_start_in(root, request.name)?;
     let journal_name = PathBuf::from(format!("launch-{id}.json"));
     let previous = match storage::read_private(&directory, &journal_name, JOURNAL_LIMIT) {
@@ -832,7 +838,7 @@ pub(crate) fn host_generation_state(
         None => {
             let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
             match storage::open_private_file(&directory, Path::new(&name), false) {
-                Ok(lease) => match FileExt::try_lock_shared(&lease) {
+                Ok(lease) => match FileExt::try_lock_shared(&*storage::UnlockOnDrop(lease)) {
                     Ok(()) => Ok(false),
                     Err(_) => Err(refused("native generation outcome is unknown")),
                 },
@@ -870,9 +876,10 @@ pub(crate) fn host_generation_lease_live(
 ) -> Result<bool, PersistentSessionError> {
     let directory = storage::private_directory(root, false).map_err(storage_error)?;
     let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
-    let file =
-        storage::open_private_file(&directory, Path::new(&name), false).map_err(storage_error)?;
-    match FileExt::try_lock_shared(&file) {
+    let file = storage::UnlockOnDrop(
+        storage::open_private_file(&directory, Path::new(&name), false).map_err(storage_error)?,
+    );
+    match FileExt::try_lock_shared(&*file) {
         Ok(()) => Ok(false),
         Err(error) if crate::lock_is_contended(&error) => Ok(true),
         Err(error) => Err(storage_error(error)),
@@ -880,7 +887,7 @@ pub(crate) fn host_generation_lease_live(
 }
 
 pub(crate) struct HostRetirement {
-    _daemon: File,
+    _daemon: storage::UnlockOnDrop,
     pub identity: Option<NativeSessionIdentity>,
 }
 
@@ -896,9 +903,11 @@ pub(crate) fn prove_host_reservation_absence(
     expected: &str,
 ) -> io::Result<HostRetirement> {
     let directory = storage::private_directory(root, false)?;
-    let daemon = open_lock(&directory, Path::new(&format!("{name}.daemon.lock")))
-        .map_err(io::Error::other)?;
-    FileExt::try_lock_exclusive(&daemon)?;
+    let daemon = storage::UnlockOnDrop(
+        open_lock(&directory, Path::new(&format!("{name}.daemon.lock")))
+            .map_err(io::Error::other)?,
+    );
+    FileExt::try_lock_exclusive(&*daemon)?;
     let records = registry(&directory).map_err(io::Error::other)?;
     let identity = match matching_record(&records, name).map_err(io::Error::other)? {
         Some(record) => {
@@ -936,7 +945,7 @@ pub(crate) fn prove_host_reservation_absence(
     if let Some(identity) = &identity {
         let name = format!("lease-{}-{}", identity.pid, identity.created_at_unix_ms);
         match storage::open_private_file(&directory, Path::new(&name), false) {
-            Ok(lease) => FileExt::try_lock_shared(&lease)?,
+            Ok(lease) => FileExt::try_lock_shared(&*storage::UnlockOnDrop(lease))?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }

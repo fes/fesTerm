@@ -850,7 +850,7 @@ pub fn daemon_generation_is_live(
     }
     let path = root.join(format!("lease-{generation}"));
     let lease = match OpenOptions::new().read(true).open(path) {
-        Ok(lease) => lease,
+        Ok(lease) => private_storage::UnlockOnDrop(lease),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
             return Err(PersistentSessionError::new(format!(
@@ -858,7 +858,7 @@ pub fn daemon_generation_is_live(
             )))
         }
     };
-    match FileExt::try_lock_shared(&lease) {
+    match FileExt::try_lock_shared(&*lease) {
         Ok(()) => Ok(false),
         Err(error) if lock_is_contended(&error) => Ok(true),
         Err(error) => Err(PersistentSessionError::new(format!(
@@ -3750,7 +3750,7 @@ fn load_registry_bytes_in_with_cancel(
     let lock_path = root.join("registry.lock");
     let registry_path = root.join("registry.json");
     let lock = match OpenOptions::new().read(true).open(&lock_path) {
-        Ok(lock) => lock,
+        Ok(lock) => private_storage::UnlockOnDrop(lock),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return read_registry_bytes(&registry_path, max_bytes)
         }
@@ -3761,7 +3761,7 @@ fn load_registry_bytes_in_with_cancel(
         if cancelled.load(Ordering::Acquire) {
             return Err(PersistentSessionError::new("session connection cancelled"));
         }
-        match FileExt::try_lock_shared(&lock) {
+        match FileExt::try_lock_shared(&*lock) {
             Ok(()) => break,
             Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
                 thread::sleep(POLL_INTERVAL);
@@ -3774,7 +3774,7 @@ fn load_registry_bytes_in_with_cancel(
         }
     }
     let registry = read_registry_bytes(&registry_path, max_bytes);
-    FileExt::unlock(&lock).map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    FileExt::unlock(&*lock).map_err(|error| PersistentSessionError::new(error.to_string()))?;
     registry
 }
 

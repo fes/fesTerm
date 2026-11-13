@@ -238,7 +238,10 @@ fn prepare_store(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn acquire_lock(root: &Path, cancel: &AtomicBool) -> Result<File, String> {
+fn acquire_lock(
+    root: &Path,
+    cancel: &AtomicBool,
+) -> Result<festerm_sessiond::private_storage::UnlockOnDrop, String> {
     let path = root.join("download.lock");
     if fs::symlink_metadata(&path)
         .is_ok_and(|metadata| !metadata.is_file() || metadata.file_type().is_symlink())
@@ -252,10 +255,11 @@ fn acquire_lock(root: &Path, cancel: &AtomicBool) -> Result<File, String> {
         .write(true)
         .open(path)
         .map_err(|_| "The font store cannot be locked. Check permissions and Retry.")?;
+    let lock = festerm_sessiond::private_storage::UnlockOnDrop(lock);
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
         cancelled(cancel)?;
-        match fs2::FileExt::try_lock_exclusive(&lock) {
+        match fs2::FileExt::try_lock_exclusive(&*lock) {
             Ok(()) => return Ok(lock),
             Err(error)
                 if error.raw_os_error() == fs2::lock_contended_error().raw_os_error()

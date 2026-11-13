@@ -57,6 +57,7 @@ pub(super) fn stage() -> io::Result<Helpers> {
             }
             Err(error) => return Err(error),
         };
+    let lease = setup_storage::UnlockOnDrop(lease);
     lease.try_lock_exclusive()?;
     let cache = cache(&root);
     let directory = setup_storage::private_directory(&cache, true)?;

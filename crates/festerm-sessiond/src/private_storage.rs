@@ -150,6 +150,27 @@ fn file_name(name: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// A lock file whose advisory lock, if acquired, is released explicitly on
+/// drop. Closing the descriptor alone is not enough: a child spawned
+/// concurrently by any thread shares the open file description until exec,
+/// so the lock would outlive this owner and spuriously refuse the next taker.
+#[derive(Debug)]
+pub struct UnlockOnDrop(pub File);
+
+impl std::ops::Deref for UnlockOnDrop {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl Drop for UnlockOnDrop {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
 /// Opens an existing legacy lock without changing its permissions, or creates
 /// a private lock in a verified trusted directory.
 pub fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {

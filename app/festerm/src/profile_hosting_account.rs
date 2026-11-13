@@ -368,6 +368,7 @@ async fn inspect(helpers: &staging::Helpers, mode: InspectionMode) -> Result<Ins
                 }
                 Err(_) => return Err("Script-host inventory cannot be verified.".into()),
             };
+        let file = setup_storage::UnlockOnDrop(file);
         file.try_lock_exclusive()
             .map_err(|_| "A script-host operation is busy. Retry shortly.")?;
         Some(file)
