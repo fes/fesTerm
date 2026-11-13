@@ -138,3 +138,8 @@ pub fn set_clipboard_text(text: &str) -> bool {
 pub fn open_url(url: &str) -> bool {
     native::open_url(url).is_ok()
 }
+
+/// Android reports whether startActivity accepted the browser invocation.
+pub fn open_url_with_completion(url: &str, completion: impl Fn(bool) + Send + Sync + 'static) {
+    completion(open_url(url));
+}

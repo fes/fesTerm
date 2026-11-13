@@ -9,7 +9,8 @@ use eframe::egui;
 use festerm_host_protocol::{AttachmentId, Creation, LogicalSessionId, OperationId, Recipe};
 use festerm_mobile_profiles::{
     host_recipes::{
-        AccountReference, ConnectionBehavior, HostReference, MetadataCommand, PublicRecipe,
+        AccountReference, ConnectionBehavior, HostHint, HostReference, MetadataCommand,
+        PublicRecipe,
     },
     TunnelAccount,
 };
@@ -185,6 +186,23 @@ struct Pending {
     job: Job<Result<ResultEvent, String>>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SavedConnect {
+    Receipt,
+    Resolve,
+    Inventory,
+    Originals,
+}
+
+struct QuickCheck {
+    recipe: PublicRecipe,
+    account: TunnelAccount,
+    epoch: u64,
+    generation: u64,
+    owner: OwnerBinding,
+    reference: festerm_secret_store::SecretReference,
+}
+
 struct Original {
     recipe: PublicRecipe,
     account: TunnelAccount,
@@ -302,9 +320,227 @@ pub(super) struct HostUi {
     epoch: u64,
     generation: u64,
     error: Option<String>,
+    discovered: bool,
+    quick_new: bool,
+    quick_name: String,
+    editing: bool,
+    profile_name: String,
+    session_name: String,
+    create_if_missing: bool,
+    existing_session: Option<usize>,
+    host_collapsed: bool,
+    saved_connect: Option<SavedConnect>,
+    connection_notice: Option<(host_client::EnsureDisposition, std::time::Instant)>,
+    quick_check: Option<QuickCheck>,
 }
 
 impl HostUi {
+    fn finish_quick_check(&mut self, account: &TunnelAccount) -> Result<Action, String> {
+        let review = self
+            .quick_check
+            .take()
+            .ok_or("Create review is no longer current.")?;
+        let receipt = self
+            .receipt
+            .as_ref()
+            .ok_or("Protected owner approval changed.")?;
+        if !self.quick_new
+            || self.selected.as_ref() != Some(&review.recipe)
+            || account != &review.account
+            || self.epoch != review.epoch
+            || self.generation != review.generation
+            || receipt.binding() != &review.owner
+            || receipt.reference() != review.reference
+            || self.quick_name.trim() != review.recipe.session_name()
+            || !self.quick_creation_allowed()
+            || self.original_store.is_none()
+        {
+            return Err("Create review changed. Review the session and try again.".into());
+        }
+        self.context()?;
+        if self.originals.iter().any(|original| {
+            original.recipe.id == review.recipe.id && !original.intent.is_presented()
+        }) {
+            return Err(
+                "An original action is retained. Review it in Details & recovery before retrying."
+                    .into(),
+            );
+        }
+        self.launch = true;
+        Ok(Action::Create)
+    }
+
+    fn saved_receipt_loaded(&mut self) -> Result<Option<Action>, String> {
+        if self.saved_connect != Some(SavedConnect::Receipt) {
+            return Ok(None);
+        }
+        let recipe = self
+            .selected
+            .as_ref()
+            .ok_or("Saved profile selection changed.")?;
+        let account = self
+            .approval_account
+            .as_ref()
+            .ok_or("Original account no longer current.")?;
+        let receipt = self
+            .receipt
+            .as_ref()
+            .ok_or(host_client::ENROLLMENT_PREREQUISITE)?;
+        if self.locator.trim().is_empty() {
+            return Err("Choose this profile's host endpoint before connecting.".into());
+        }
+        if receipt.binding().host.host != recipe.host.id
+            || receipt.binding().account != format!("github:{}", account.account_id)
+            || recipe.host.account
+                != (AccountReference::Github {
+                    account_id: account.account_id,
+                })
+            || self.fingerprint != receipt.binding().host.host_key_fingerprint
+        {
+            return Err(
+                "The protected host or account approval does not match this profile.".into(),
+            );
+        }
+        self.saved_connect = Some(SavedConnect::Resolve);
+        Ok(Some(Action::Resolve))
+    }
+
+    fn busy(&self) -> bool {
+        self.pending.is_some() || self.worker.is_some()
+    }
+
+    fn quick_creation_allowed(&self) -> bool {
+        self.inventory.as_ref().is_some_and(|inventory| {
+            inventory.capabilities.create
+                && inventory.capabilities.creation_allowed
+                && inventory.capabilities.attach
+        })
+    }
+
+    fn valid_quick_name(&self) -> bool {
+        let name = self.quick_name.trim();
+        !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
+    }
+
+    fn begin_profile_edit(&mut self) {
+        if let Some(recipe) = &self.selected {
+            self.profile_name = recipe.name.clone();
+            self.session_name = recipe.session_name().to_owned();
+            self.create_if_missing = matches!(recipe.behavior, ConnectionBehavior::ResumeOrCreate);
+            self.existing_session = self.inventory.as_ref().and_then(|inventory| {
+                inventory.sessions.iter().position(|session| {
+                    session.target.logical == recipe.logical_session
+                        && match recipe.behavior {
+                            ConnectionBehavior::AttachOnly { generation } => {
+                                session.target.generation == generation
+                            }
+                            _ => true,
+                        }
+                })
+            });
+        }
+        self.editing = true;
+        self.quick_new = false;
+    }
+
+    fn profile_draft(&self) -> Result<PublicRecipe, String> {
+        let mut recipe = self.selected.clone().ok_or("Choose a host first.")?;
+        recipe.name = self.profile_name.trim().to_owned();
+        let existing_session = self
+            .existing_session
+            .and_then(|index| self.inventory.as_ref()?.sessions.get(index));
+        let preserve_logical_resume = existing_session.is_some_and(|session| {
+            session.target.logical == recipe.logical_session
+                && matches!(
+                    recipe.behavior,
+                    ConnectionBehavior::ResumeOnly {} | ConnectionBehavior::ResumeOrCreate
+                )
+        });
+        if let Some(session) = existing_session {
+            recipe.logical_session = session.target.logical.clone();
+        }
+        if self.create_if_missing {
+            recipe.session_name = Some(self.session_name.trim().to_owned());
+            recipe.behavior = ConnectionBehavior::ResumeOrCreate;
+            recipe.lifetime = festerm_host_protocol::Lifetime::Persistent {};
+        } else if preserve_logical_resume {
+            recipe.behavior = ConnectionBehavior::ResumeOnly {};
+        } else if let Some(session) = existing_session {
+            recipe.logical_session = session.target.logical.clone();
+            recipe.behavior = ConnectionBehavior::AttachOnly {
+                generation: session.target.generation,
+            };
+            recipe.session_name = Some(session.name.clone());
+            recipe.lifetime = session.lifetime;
+        } else if !matches!(recipe.behavior, ConnectionBehavior::AttachOnly { .. }) {
+            if matches!(recipe.behavior, ConnectionBehavior::ChooseSession) {
+                return Err(
+                    "Choose an existing session, or enable Create session if missing.".into(),
+                );
+            }
+            recipe.behavior = ConnectionBehavior::ResumeOnly {};
+        }
+        if !self.locator.trim().is_empty() {
+            recipe.host_hint = Some(HostHint {
+                locator: self.locator.trim().to_owned(),
+                name: self
+                    .hosts
+                    .iter()
+                    .find(|host| host.locator == self.locator)
+                    .and_then(|host| host.name.clone())
+                    .unwrap_or_else(|| self.locator.clone()),
+            });
+        }
+        recipe.validate().map_err(|_| {
+            "Enter a profile name and a valid session name (up to 128 bytes).".to_owned()
+        })?;
+        Ok(recipe)
+    }
+
+    fn freeze_quick_recipe(&mut self, account: &TunnelAccount) -> Result<(), String> {
+        if !self.quick_new || !self.quick_creation_allowed() {
+            return Err("This host does not currently permit new sessions.".into());
+        }
+        let name = self.quick_name.trim();
+        if !self.valid_quick_name() {
+            return Err("Enter a session name (up to 128 bytes).".into());
+        }
+        let current = self.selected.as_ref().ok_or("Choose a host first.")?;
+        let frozen = self
+            .originals
+            .iter()
+            .any(|original| original.recipe.id == current.id);
+        if frozen {
+            if current.session_name() != name
+                || current.behavior != ConnectionBehavior::AlwaysCreate
+            {
+                return Err(
+                    "Retry the original session name; its result is not yet reconciled.".into(),
+                );
+            }
+        } else {
+            let mut recipe = current.clone();
+            recipe.name = name.to_owned();
+            recipe.session_name = Some(name.to_owned());
+            recipe.behavior = ConnectionBehavior::AlwaysCreate;
+            recipe.lifetime = festerm_host_protocol::Lifetime::Persistent {};
+            recipe
+                .validate()
+                .map_err(|_| "Enter a valid session name.")?;
+            if recipe.host.account
+                != (AccountReference::Github {
+                    account_id: account.account_id,
+                })
+            {
+                return Err("The selected host belongs to another account.".into());
+            }
+            self.selected = Some(recipe);
+            self.saved = false;
+        }
+        self.launch = true;
+        Ok(())
+    }
+
     fn has_forget_selection(
         &self,
         id: &OriginalId,
@@ -425,7 +661,7 @@ impl HostUi {
                             })
                         || creation.recipe != recipe.launch
                         || creation.lifetime != recipe.lifetime
-                        || creation.name.as_deref() != Some(recipe.name.as_str())
+                        || creation.name.as_deref() != Some(recipe.session_name())
                         || (intent.mode() == CreationMode::Ensure
                             && (recipe.behavior != ConnectionBehavior::ResumeOrCreate
                                 || creation.logical != recipe.logical_session))
@@ -433,6 +669,7 @@ impl HostUi {
                             && matches!(
                                 recipe.behavior,
                                 ConnectionBehavior::ResumeOrCreate
+                                    | ConnectionBehavior::ResumeOnly {}
                                     | ConnectionBehavior::AttachOnly { .. }
                             ))
                     {
@@ -579,6 +816,8 @@ impl HostUi {
     }
 
     fn cancel(&mut self) {
+        self.quick_check = None;
+        self.saved_connect = None;
         self.forget_review = None;
         if let Some(pending) = self.pending.take() {
             pending.token.cancel();
@@ -610,10 +849,15 @@ impl HostUi {
         self.fingerprint.clear();
         self.prerequisite = Zeroizing::new(String::new());
         self.selected_original = None;
+        self.quick_new = false;
+        self.quick_name.clear();
+        self.editing = false;
+        self.existing_session = None;
+        self.host_collapsed = false;
     }
 
     fn context(&self) -> Result<ApprovedContext, String> {
-        if !self.enrolled {
+        if !self.enrolled && self.saved_connect.is_none() {
             return Err(host_client::ENROLLMENT_PREREQUISITE.into());
         }
         let receipt = self
@@ -658,7 +902,7 @@ impl HostUi {
             ConnectionBehavior::AlwaysCreate | ConnectionBehavior::ChooseSession => {
                 CreationMode::Create
             }
-            ConnectionBehavior::AttachOnly { .. } => {
+            ConnectionBehavior::AttachOnly { .. } | ConnectionBehavior::ResumeOnly {} => {
                 return Err("Attach-only cannot create.".into());
             }
         };
@@ -707,7 +951,7 @@ impl HostUi {
             attachment: AttachmentId::new(),
             recipe: recipe.launch.clone(),
             lifetime: recipe.lifetime,
-            name: Some(recipe.name.clone()),
+            name: Some(recipe.session_name().to_owned()),
         };
         let intent = Arc::new(
             CreationIntent::new(context, mode, creation)
@@ -741,9 +985,19 @@ enum Action {
     ReviewForgetEnd(usize),
     ConfirmForget,
     CancelForget,
+    #[cfg(test)]
     Save,
     Import,
     Close,
+    FindAccount(usize),
+    SelectHost(usize),
+    Settings,
+    QuickNew,
+    QuickCreate,
+    EditProfile,
+    SaveProfile,
+    CancelEdit,
+    NewProfile,
 }
 
 fn selected_target(
@@ -758,6 +1012,9 @@ fn selected_target(
             "Resume must keep this recipe's logical session; use its explicit Ensure action."
                 .into(),
         ),
+        Some((ConnectionBehavior::ResumeOnly {}, logical)) if logical != &target.logical => {
+            Err("Resume must keep this profile's saved logical session.".into())
+        }
         Some((ConnectionBehavior::AttachOnly { generation }, logical))
             if logical != &target.logical || generation != &target.generation =>
         {
@@ -767,7 +1024,120 @@ fn selected_target(
     }
 }
 
+fn requires_launch_review(recipe: &PublicRecipe) -> bool {
+    recipe.launch.shell.is_some()
+        || !recipe.launch.args.is_empty()
+        || recipe.launch.cwd.is_some()
+        || !matches!(
+            recipe.lifetime,
+            festerm_host_protocol::Lifetime::Persistent {}
+        )
+}
+
 impl MobileApp {
+    pub(super) fn connect_saved_host_profile(&mut self, ctx: &egui::Context, id: &str) -> bool {
+        let recipe = self.profiles.as_ref().and_then(|profiles| {
+            profiles
+                .store_handle()
+                .lock()
+                .ok()?
+                .host_recipes()
+                .recipes()
+                .iter()
+                .find(|recipe| recipe.id.as_str() == id)
+                .cloned()
+        });
+        let Some(recipe) = recipe else {
+            return false;
+        };
+        if self.hosts.busy() {
+            self.notice = Some("Finish or cancel the current host action first.".into());
+            return true;
+        }
+        self.open_hosts();
+        self.select_host_recipe(recipe);
+        self.hosts.connection_notice = None;
+        self.hosts.saved_connect = Some(SavedConnect::Receipt);
+        self.hosts.launch = !self
+            .hosts
+            .selected
+            .as_ref()
+            .is_some_and(requires_launch_review);
+        if let Err(error) = self.host_action(ctx, Action::Load) {
+            self.hosts.saved_connect = None;
+            self.hosts.error = Some(error);
+        }
+        true
+    }
+
+    fn continue_saved_inventory(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let recipe = self
+            .hosts
+            .selected
+            .as_ref()
+            .ok_or("Saved profile selection changed.")?;
+        let inventory = self
+            .hosts
+            .inventory
+            .as_ref()
+            .ok_or("Authorized sessions unavailable.")?;
+        match recipe.behavior {
+            ConnectionBehavior::AttachOnly { .. } | ConnectionBehavior::ResumeOnly {} => {
+                let index = inventory
+                    .sessions
+                    .iter()
+                    .position(|session| selected_target(Some(recipe), &session.target).is_ok())
+                    .ok_or_else(|| {
+                        if inventory
+                            .unknown
+                            .iter()
+                            .any(|target| target.logical == recipe.logical_session)
+                        {
+                            "Session status is unknown. Refresh to try again."
+                        } else {
+                            "Session not found or not authorized."
+                        }
+                    })?;
+                self.hosts.saved_connect = None;
+                self.host_action(ctx, Action::Attach(index))
+            }
+            ConnectionBehavior::ResumeOrCreate | ConnectionBehavior::AlwaysCreate => {
+                self.hosts.saved_connect = Some(SavedConnect::Originals);
+                self.host_action(ctx, Action::RecoverOriginals)
+            }
+            ConnectionBehavior::ChooseSession => {
+                self.hosts.saved_connect = None;
+                Ok(())
+            }
+        }
+    }
+
+    fn continue_saved_originals(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        self.hosts.saved_connect = None;
+        let recipe = self
+            .hosts
+            .selected
+            .as_ref()
+            .ok_or("Saved profile selection changed.")?;
+        if self
+            .hosts
+            .originals
+            .iter()
+            .any(|original| original.recipe.id == recipe.id && !original.intent.is_presented())
+        {
+            return Err(
+                "An original action is retained. Review it in Details & recovery before retrying."
+                    .into(),
+            );
+        }
+        if requires_launch_review(recipe) {
+            self.hosts.launch = false;
+            return Ok(());
+        }
+        self.hosts.launch = true;
+        self.host_action(ctx, Action::Create)
+    }
+
     fn review_end(&mut self, account: TunnelAccount, intent: Arc<EndIntent>) {
         self.hosts.end_review = Some(EndReview {
             account,
@@ -865,6 +1235,59 @@ impl MobileApp {
         self.hosts.clear_approval();
         self.hosts.epoch = self.sink.live.host.epoch();
         self.hosts.open = true;
+    }
+
+    pub(super) fn select_host_profile(&mut self, id: &str, edit: bool) -> bool {
+        let Some(recipe) = self.profiles.as_ref().and_then(|profiles| {
+            profiles
+                .store_handle()
+                .lock()
+                .ok()?
+                .host_recipes()
+                .recipes()
+                .iter()
+                .find(|recipe| recipe.id.as_str() == id)
+                .cloned()
+        }) else {
+            return false;
+        };
+        self.open_hosts();
+        self.select_host_recipe(recipe);
+        if edit {
+            self.hosts.begin_profile_edit();
+        }
+        true
+    }
+
+    fn select_host_recipe(&mut self, recipe: PublicRecipe) {
+        self.hosts.clear_review();
+        let AccountReference::Github { account_id } = recipe.host.account;
+        let account = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| {
+                profiles
+                    .store_handle()
+                    .lock()
+                    .ok()?
+                    .accounts()
+                    .iter()
+                    .find(|account| account.account_id == account_id)
+                    .map(|account| account.id.clone())
+            })
+            .unwrap_or_default();
+        if self.hosts.account != account {
+            self.hosts.hosts.clear();
+            self.hosts.discovered = false;
+        }
+        self.hosts.account = account;
+        self.hosts.locator = recipe
+            .host_hint
+            .as_ref()
+            .map(|hint| hint.locator.clone())
+            .unwrap_or_default();
+        self.hosts.selected = Some(recipe);
+        self.hosts.saved = true;
     }
 
     pub(super) fn review_host_reconnection(&mut self) {
@@ -1009,25 +1432,86 @@ impl MobileApp {
         if let Some(result) = completed {
             self.hosts.pending = None;
             match result {
-                Ok(ResultEvent::Hosts(hosts)) => self.hosts.hosts = hosts,
+                Ok(ResultEvent::Hosts(hosts)) => {
+                    self.hosts.hosts = hosts;
+                    self.hosts.discovered = true;
+                }
                 Ok(ResultEvent::Receipt(receipt)) => {
                     self.hosts.enrolled = false;
-                    self.hosts.launch = false;
+                    if self.hosts.saved_connect.is_none() {
+                        self.hosts.launch = false;
+                    }
+                    if self.hosts.fingerprint.is_empty() {
+                        self.hosts.fingerprint =
+                            receipt.binding().host.host_key_fingerprint.clone();
+                    }
                     self.hosts.receipt = Some(*receipt);
                     self.hosts.approval_account = account.clone();
+                    if self.hosts.selected.is_none() {
+                        if let Some(account) = &account {
+                            let receipt = self.hosts.receipt.as_ref().expect("installed receipt");
+                            if let Ok(mut recipe) = PublicRecipe::persistent(
+                                "Host session",
+                                HostReference {
+                                    id: receipt.binding().host.host.clone(),
+                                    account: AccountReference::Github {
+                                        account_id: account.account_id,
+                                    },
+                                },
+                                Recipe {
+                                    shell: None,
+                                    args: Vec::new(),
+                                    cwd: None,
+                                },
+                            ) {
+                                recipe.behavior = ConnectionBehavior::ChooseSession;
+                                self.hosts.selected = Some(recipe);
+                                self.hosts.saved = false;
+                            }
+                        }
+                    }
+                    match self.hosts.saved_receipt_loaded() {
+                        Ok(Some(action)) => {
+                            if let Err(error) = self.host_action(ctx, action) {
+                                self.hosts.saved_connect = None;
+                                self.hosts.error = Some(error);
+                            }
+                        }
+                        Err(error) => {
+                            self.hosts.saved_connect = None;
+                            self.hosts.error = Some(error);
+                        }
+                        Ok(None) => {}
+                    }
                 }
                 Ok(ResultEvent::Resolved(resolved)) => {
                     self.hosts.resolved = Some(*resolved);
+                    if self.hosts.saved_connect == Some(SavedConnect::Resolve) {
+                        self.hosts.saved_connect = Some(SavedConnect::Inventory);
+                    }
                     if let Err(error) =
                         self.start_host_operation(ctx, host_client::Operation::Inventory)
                     {
+                        self.hosts.saved_connect = None;
                         self.hosts.error = Some(error);
                     }
                 }
                 Ok(ResultEvent::Originals(store, originals)) => match account.as_ref() {
                     Some(account) => {
                         if let Err(error) = self.hosts.accept_recovered(store, originals, account) {
+                            self.hosts.saved_connect = None;
+                            self.hosts.quick_check = None;
                             self.hosts.error = Some(error);
+                        } else if self.hosts.saved_connect == Some(SavedConnect::Originals) {
+                            if let Err(error) = self.continue_saved_originals(ctx) {
+                                self.hosts.error = Some(error);
+                            }
+                        } else if self.hosts.quick_check.is_some() {
+                            let next = self.hosts.finish_quick_check(account);
+                            match next.and_then(|action| self.host_action(ctx, action)) {
+                                Ok(()) => {}
+                                Err(error) => self.hosts.error = Some(error),
+                            }
                         }
                     }
                     None => self.hosts.error = Some("Original account no longer current.".into()),
@@ -1055,7 +1539,11 @@ impl MobileApp {
                         self.hosts.error = Some(error);
                     }
                 }
-                Err(error) => self.hosts.error = Some(error),
+                Err(error) => {
+                    self.hosts.saved_connect = None;
+                    self.hosts.quick_check = None;
+                    self.hosts.error = Some(error);
+                }
             }
         }
         let result = self
@@ -1068,18 +1556,35 @@ impl MobileApp {
             self.hosts.worker = None;
             self.hosts.worker_account = None;
             match result.outcome {
-                Outcome::Inventory(inventory) => self.hosts.inventory = Some(inventory),
+                Outcome::Inventory(inventory) => {
+                    self.hosts.inventory = Some(inventory);
+                    if self.hosts.saved_connect == Some(SavedConnect::Inventory) {
+                        self.hosts.enrolled = true;
+                        if let Err(error) = self.continue_saved_inventory(ctx) {
+                            self.hosts.saved_connect = None;
+                            self.hosts.error = Some(error);
+                        }
+                    }
+                }
                 Outcome::Created(created) => {
+                    let disposition = created.disposition();
                     let attachment = self.hosts.context().and_then(|context| {
                         ApprovedAttachment::from_created(context, result.scope, *created)
                             .map_err(|error| error.message().into())
                     });
                     match attachment {
-                        Ok(attachment) => self.install_host(ctx, attachment),
+                        Ok(attachment) => {
+                            self.hosts.connection_notice =
+                                Some((disposition, std::time::Instant::now()));
+                            self.install_host(ctx, attachment);
+                        }
                         Err(error) => self.hosts.error = Some(error),
                     }
                 }
-                Outcome::Failed(error) => self.hosts.error = Some(error.message().into()),
+                Outcome::Failed(error) => {
+                    self.hosts.saved_connect = None;
+                    self.hosts.error = Some(error.message().into());
+                }
                 Outcome::Ended { target } => {
                     self.hosts.inventory = None;
                     self.hosts.error = Some(format!(
@@ -1094,6 +1599,7 @@ impl MobileApp {
                 }
             }
         }
+        self.show_host_connection_notice(ctx);
     }
 
     fn start_host_operation(
@@ -1207,6 +1713,13 @@ impl MobileApp {
     }
 
     fn host_action(&mut self, ctx: &egui::Context, action: Action) -> Result<(), String> {
+        if matches!(action, Action::Settings) {
+            self.hosts.cancel();
+            self.hosts.open = false;
+            self.shell.tab = super::shell::Tab::Settings;
+            self.surface = Surface::Tabs;
+            return Ok(());
+        }
         if matches!(action, Action::CancelForget) {
             self.hosts.forget_review = None;
             return Ok(());
@@ -1247,6 +1760,157 @@ impl MobileApp {
                     .into(),
             );
         }
+        if matches!(action, Action::CancelEdit) {
+            self.hosts.editing = false;
+            self.hosts.quick_new = false;
+            return Ok(());
+        }
+        if matches!(action, Action::EditProfile) {
+            self.hosts.begin_profile_edit();
+            return Ok(());
+        }
+        if matches!(action, Action::NewProfile) {
+            let previous = self
+                .hosts
+                .selected
+                .as_ref()
+                .ok_or("Choose a saved host first.")?;
+            let mut recipe =
+                PublicRecipe::persistent("New profile", previous.host.clone(), Recipe::default())
+                    .map_err(|_| "The saved host is invalid.")?;
+            recipe.host_hint = previous.host_hint.clone();
+            recipe.behavior = ConnectionBehavior::ChooseSession;
+            self.hosts.selected = Some(recipe);
+            self.hosts.saved = false;
+            self.hosts.selected_original = None;
+            self.hosts.launch = false;
+            self.hosts.begin_profile_edit();
+            self.hosts.profile_name.clear();
+            self.hosts.session_name.clear();
+            self.hosts.create_if_missing = false;
+            return Ok(());
+        }
+        if let Action::FindAccount(index) = action {
+            let account = self
+                .profiles
+                .as_ref()
+                .and_then(|profiles| {
+                    profiles
+                        .store_handle()
+                        .lock()
+                        .ok()?
+                        .accounts()
+                        .get(index)
+                        .cloned()
+                })
+                .ok_or("Account selection expired. Open Settings to sign in.")?;
+            if self.hosts.account != account.id {
+                self.hosts.clear_review();
+                self.hosts.hosts.clear();
+                self.hosts.discovered = false;
+                self.hosts.account = account.id;
+            }
+            return self.host_action(ctx, Action::Find);
+        }
+        if let Action::SelectHost(index) = action {
+            let locator = self
+                .hosts
+                .hosts
+                .get(index)
+                .ok_or("Host selection expired.")?
+                .locator
+                .clone();
+            if self.hosts.locator != locator {
+                self.hosts.clear_review();
+                self.hosts.locator = locator;
+                self.hosts.host_collapsed = false;
+            } else {
+                self.hosts.host_collapsed = !self.hosts.host_collapsed;
+            }
+            return Ok(());
+        }
+        if matches!(action, Action::QuickNew) {
+            if !self.hosts.quick_creation_allowed() {
+                return Err("This host does not currently permit new sessions.".into());
+            }
+            let previous = self.hosts.selected.as_ref().ok_or("Choose a host first.")?;
+            let mut recipe =
+                PublicRecipe::persistent("New session", previous.host.clone(), Recipe::default())
+                    .map_err(|_| "The host recipe is invalid.")?;
+            recipe.host_hint = previous.host_hint.clone();
+            recipe.behavior = ConnectionBehavior::ChooseSession;
+            self.hosts.selected = Some(recipe);
+            self.hosts.saved = false;
+            self.hosts.selected_original = None;
+            self.hosts.launch = false;
+            self.hosts.quick_new = true;
+            self.hosts.quick_name.clear();
+            self.hosts.editing = false;
+            return Ok(());
+        }
+        if matches!(action, Action::QuickCreate) {
+            if self.hosts.busy() {
+                return Err("A host action is already running.".into());
+            }
+            if !self.hosts.launch
+                && self.hosts.selected.as_ref().is_some_and(|recipe| {
+                    self.hosts.originals.iter().any(|original| {
+                        original.recipe.id == recipe.id && !original.intent.is_presented()
+                    })
+                })
+            {
+                return Err(
+                    "Review the retained original in Details & recovery before retrying.".into(),
+                );
+            }
+            let account = self.host_account().ok_or("Sign in from Settings first.")?;
+            self.hosts.freeze_quick_recipe(&account)?;
+            if self.hosts.original_store.is_none() {
+                self.hosts.context()?;
+                let receipt = self
+                    .hosts
+                    .receipt
+                    .as_ref()
+                    .ok_or("Protected owner approval unavailable.")?;
+                self.hosts.quick_check = Some(QuickCheck {
+                    recipe: self.hosts.selected.clone().expect("frozen quick recipe"),
+                    account,
+                    epoch: self.hosts.epoch,
+                    generation: self.hosts.generation,
+                    owner: receipt.binding().clone(),
+                    reference: receipt.reference(),
+                });
+                self.hosts.launch = false;
+                let result = self.host_action(ctx, Action::RecoverOriginals);
+                if result.is_err() {
+                    self.hosts.quick_check = None;
+                }
+                return result;
+            }
+            return self.host_action(ctx, Action::Create);
+        }
+        if matches!(action, Action::SaveProfile) {
+            let recipe = self.hosts.profile_draft()?;
+            let command = if self.hosts.saved {
+                MetadataCommand::Edit(recipe.clone())
+            } else {
+                MetadataCommand::Save(recipe.clone())
+            };
+            self.profiles
+                .as_ref()
+                .ok_or("Profile storage unavailable.")?
+                .store_handle()
+                .lock()
+                .map_err(|_| "Profile store busy.")?
+                .apply_host_recipe_command(command)
+                .map_err(|error| error.to_string())?;
+            self.hosts.selected = Some(recipe);
+            self.hosts.saved = true;
+            self.hosts.editing = false;
+            self.hosts.launch = false;
+            self.hosts.error = None;
+            return Ok(());
+        }
         let profiles = self
             .profiles
             .as_ref()
@@ -1268,6 +1932,7 @@ impl MobileApp {
             self.hosts.import_reviewed = false;
             return Ok(());
         }
+        #[cfg(test)]
         if matches!(action, Action::Save) {
             let recipe = self
                 .hosts
@@ -1285,9 +1950,7 @@ impl MobileApp {
         if self.hosts.pending.is_some() || self.hosts.worker.is_some() {
             return Err("One foreground HOST action is already running.".into());
         }
-        let account = self
-            .host_account()
-            .ok_or("Choose a signed-in account in Profiles; no background sign-in was started.")?;
+        let account = self.host_account().ok_or("Sign in from Settings first.")?;
         if self
             .hosts
             .approval_account
@@ -1551,7 +2214,8 @@ impl MobileApp {
             None
         };
         if matches!(action, Action::Resolve)
-            && (!self.hosts.enrolled || self.hosts.receipt.is_none())
+            && ((!self.hosts.enrolled && self.hosts.saved_connect != Some(SavedConnect::Resolve))
+                || self.hosts.receipt.is_none())
         {
             return Err(host_client::ENROLLMENT_PREREQUISITE.into());
         }
@@ -1653,9 +2317,9 @@ impl MobileApp {
                         .with_bytes(|bytes| {
                             Identity::decode_private(bytes, snapshot.account_id, client_id)
                         })
-                        .map_err(|_| "Foreground sign-in required in Profiles.")?;
+                        .map_err(|_| "Sign in again from Settings.")?;
                     if identity.needs_sign_in() {
-                        return Err("Foreground sign-in required in Profiles; no refresh or sign-in was started.".into());
+                        return Err("Sign in again from Settings.".into());
                     }
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
@@ -1692,185 +2356,145 @@ impl MobileApp {
         Ok(())
     }
 
-    pub(super) fn show_hosts(&mut self, ctx: &egui::Context) {
-        let accounts = self
-            .profiles
-            .as_ref()
-            .map(Profiles::store_handle)
-            .and_then(|store| store.lock().ok().map(|store| store.accounts().to_vec()))
-            .unwrap_or_default();
-        let recipes = self
-            .profiles
-            .as_ref()
-            .map(Profiles::store_handle)
-            .and_then(|store| {
-                store
-                    .lock()
-                    .ok()
-                    .map(|store| store.host_recipes().recipes().to_vec())
-            })
-            .unwrap_or_default();
-        let old_account = self.hosts.account.clone();
-        let old_locator = self.hosts.locator.clone();
-        let old_fingerprint = self.hosts.fingerprint.clone();
-        let old_prerequisite = self.hosts.prerequisite.clone();
-        let old_consent = (self.hosts.trust, self.hosts.enrolled, self.hosts.launch);
-        let mut action = None;
-        let mut selection = None;
-        egui::Window::new("Dev Tunnel hosts — foreground only").id(egui::Id::new("mobile-hosts"))
-            .resizable(true).vscroll(true).max_height(ctx.content_rect().height().max(120.0)).show(ctx, |ui| {
-            ui.label("Private by default. Opening/saving/importing does not connect, sign in, trust, enroll or create.");
-            if ui.button("Review another host (local only)").clicked() { action = Some(Action::NewReview); }
-            egui::ComboBox::from_id_salt("host-account").selected_text(&self.hosts.account).show_ui(ui, |ui| {
-                for account in &accounts { ui.selectable_value(&mut self.hosts.account, account.id.clone(), format!("{} · github:{}", account.login, account.account_id)); }
-            });
-            if ui.button("Find hosts / refresh account").clicked() { action = Some(Action::Find); }
-            ui.label("Service metadata only (up to 32 results); no online/session-absence claim.");
-            for host in &self.hosts.hosts {
-                if ui.button(format!("{} · {}", host.name.as_deref().unwrap_or("HOST"), host.locator)).clicked() { self.hosts.locator = host.locator.clone(); }
-            }
-            ui.separator();
-            ui.label("Locally saved public recipes");
-            for recipe in &recipes {
-                if ui.button(format!("{} · {}", recipe.name, recipe.host.id)).clicked() { selection = Some(recipe.clone()); }
-            }
-            ui.collapsing("Reviewed public import (never execution approval)", |ui| {
-                ui.add(egui::TextEdit::multiline(&mut self.hosts.import).char_limit(64 * 1024));
-                ui.checkbox(&mut self.hosts.import_reviewed, "I reviewed the public host/account/launch metadata");
-                if ui.button("Import metadata only").clicked() { action = Some(Action::Import); }
-            });
-            ui.label("Selected HOST locator"); ui.text_edit_singleline(&mut self.hosts.locator);
-            ui.label("Independently confirmed SSH host fingerprint"); ui.text_edit_singleline(&mut self.hosts.fingerprint);
-            ui.collapsing("Protected owner prerequisite / first execution", |ui| {
-                ui.add(egui::TextEdit::multiline(&mut *self.hosts.prerequisite).char_limit(4096));
-                ui.checkbox(&mut self.hosts.trust, "I independently verified this installation, host fingerprint, account and principal");
-                if ui.button("Prepare native owner key (does NOT enroll on host)").clicked() { action = Some(Action::Prepare); }
-                if ui.button("Load existing protected local receipt").clicked() { action = Some(Action::Load); }
-            });
-            if let Some(receipt) = &self.hosts.receipt {
-                ui.label(format!("Host {} · principal {} · installation {}", receipt.binding().host.host, receipt.binding().principal, receipt.binding().installation));
-                ui.label(receipt.public_key().iter().map(|byte| format!("{byte:02x}")).collect::<String>());
-                if let Ok(fingerprint) = owner_key_fingerprint(&receipt.public_key()) { ui.label(fingerprint); }
-                ui.label("Have this public key explicitly approved on the selected host. Imported metadata and this local key preparation do not enroll it.");
-                if self.hosts.selected.is_none() {
-                    if let Ok(mut recipe) = PublicRecipe::persistent("New host shell", HostReference { id: receipt.binding().host.host.clone(), account: AccountReference::Github { account_id: accounts.iter().find(|account| account.id == self.hosts.account).map_or(0, |account| account.account_id) } }, Recipe { shell: None, args: Vec::new(), cwd: None }) {
-                        recipe.behavior = ConnectionBehavior::ChooseSession;
-                        self.hosts.selected = Some(recipe);
-                        self.hosts.saved = false;
-                    }
-                }
-            }
-            ui.add_enabled(self.hosts.receipt.is_some(), egui::Checkbox::new(&mut self.hosts.enrolled, "I confirm this exact host fingerprint and that the displayed owner public key was approved on this host"));
-            if ui.button("Connect / refresh authorized sessions").clicked() { action = Some(Action::Resolve); }
-            if let Some(inventory) = &self.hosts.inventory {
-                ui.label(format!("Capabilities: attach={} create={} ensure={} End={} · protected creation={} temporary={}", inventory.capabilities.attach, inventory.capabilities.create, inventory.capabilities.ensure, inventory.capabilities.explicit_end, inventory.capabilities.creation_allowed, inventory.capabilities.temporary));
-                if !inventory.unknown.is_empty() { ui.label("Some sessions are unknown, NOT absent."); }
-                for (index, session) in inventory.sessions.iter().enumerate() {
-                    let allowed = inventory.capabilities.attach && selected_target(self.hosts.selected.as_ref(), &session.target).is_ok();
-                    if ui.add_enabled(allowed, egui::Button::new(format!("Attach {} · generation {}", session.target.logical, session.target.generation.get()))).clicked() { action = Some(Action::Attach(index)); }
-                    ui.label(format!("{} · {:?}", session.name, session.lifetime));
-                    if ui.add_enabled(inventory.capabilities.explicit_end, egui::Button::new(format!("End session {}…", session.target.logical))).clicked() { action = Some(Action::ReviewEnd(index)); }
-                }
-            }
-            if let Some(recipe) = &self.hosts.selected {
-                ui.label(format!("Logical session {}", recipe.logical_session));
-                ui.label(format!("{} · {:?} · shell={:?} argv={:?} cwd={:?} · {:?}", recipe.name, recipe.behavior, recipe.launch.shell, recipe.launch.args, recipe.launch.cwd, recipe.lifetime));
-                ui.checkbox(&mut self.hosts.launch, "Confirm this exact logical recipe, launch and lifetime");
-                let allowed = self.hosts.inventory.as_ref().is_some_and(|inventory| match recipe.behavior {
-                    ConnectionBehavior::ResumeOrCreate => inventory.capabilities.ensure && inventory.capabilities.attach,
-                    ConnectionBehavior::AttachOnly { .. } => false,
-                    _ => inventory.capabilities.create && inventory.capabilities.creation_allowed && inventory.capabilities.attach,
-                });
-                if ui.add_enabled(allowed && self.hosts.launch, egui::Button::new("Explicit Create / resume-or-create (or original-action retry)")).clicked() { action = Some(Action::Create); }
-                if !self.hosts.saved && ui.button("Save public recipe only").clicked() { action = Some(Action::Save); }
-            }
-            if self.hosts.resolved.is_some() && self.hosts.enrolled
-                && ui.button("Explicitly reopen protected original actions (no network retry)").clicked()
+    fn show_host_recovery(&mut self, ui: &mut egui::Ui, action: &mut Option<Action>) {
+        if self.hosts.resolved.is_some()
+            && self.hosts.enrolled
+            && ui
+                .button("Explicitly reopen protected original actions (no network retry)")
+                .clicked()
+        {
+            *action = Some(Action::RecoverOriginals);
+        }
+        if self.hosts.original_store.is_none() {
+            ui.label("Create/End requires an explicit protected-original check under the current owner/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
+        }
+        for (index, original) in self.hosts.originals.iter().enumerate() {
+            ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
+            if ui
+                .button(format!(
+                    "Review retained original: {}",
+                    original.recipe.name
+                ))
+                .clicked()
             {
-                action = Some(Action::RecoverOriginals);
+                *action = Some(Action::ReviewOriginal(index));
             }
-            if self.hosts.original_store.is_none() {
-                ui.label("Create/End requires an explicit protected-original check under the current owner/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
+            if ui
+                .add_enabled(
+                    self.hosts.original_store.is_some()
+                        && self.hosts.pending.is_none()
+                        && self.hosts.worker.is_none(),
+                    egui::Button::new("Forget this local Create retry history..."),
+                )
+                .clicked()
+            {
+                *action = Some(Action::ReviewForgetCreation(index));
             }
-            for (index, original) in self.hosts.originals.iter().enumerate() {
-                ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
-                if ui.button(format!("Review retained original: {}", original.recipe.name)).clicked() { action = Some(Action::ReviewOriginal(index)); }
-                if ui.add_enabled(self.hosts.original_store.is_some() && self.hosts.pending.is_none() && self.hosts.worker.is_none(), egui::Button::new("Forget this local Create retry history...")).clicked() { action = Some(Action::ReviewForgetCreation(index)); }
-            }
-            for (index, original) in self.hosts.ends.iter().enumerate() {
-                ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; protected capture required before sending",
+        }
+        for (index, original) in self.hosts.ends.iter().enumerate() {
+            ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; protected capture required before sending",
                     original.intent.target().logical, original.intent.target().generation.get(),
                     original.intent.operation(), original.intent.is_issued(), original.intent.is_resolved()));
-                if ui.add_enabled(!original.intent.is_resolved(), egui::Button::new("Review original End / retry")).clicked() { action = Some(Action::ReviewOriginalEnd(index)); }
-                if ui.add_enabled(self.hosts.original_store.is_some() && self.hosts.pending.is_none() && self.hosts.worker.is_none(), egui::Button::new("Forget this local End retry history...")).clicked() { action = Some(Action::ReviewForgetEnd(index)); }
+            if ui
+                .add_enabled(
+                    !original.intent.is_resolved(),
+                    egui::Button::new("Review original End / retry"),
+                )
+                .clicked()
+            {
+                *action = Some(Action::ReviewOriginalEnd(index));
             }
-            if let Some(review) = &mut self.hosts.forget_review {
-                ui.separator();
-                ui.heading("Forget local retry history - NOT End session");
-                ui.label(format!("Account github:{} · original {:?}", review.account.account_id, review.record.id()));
-                if let Some(logical) = review.record.logical() { ui.label(format!("Logical session {logical}")); }
-                if let Some(target) = review.record.target() { ui.label(format!("Captured native generation {}", target.generation.get())); }
-                ui.label(format!("Privacy epoch {} · request generation {}", review.epoch, review.generation));
-                ui.label("The protected host/installation/principal above are fixed. Only this local checkpoint is selected. Other originals are preserved.");
-                ui.label("The remote session may still be running and its action may still complete. Forget does NOT End, detach, revoke, prove absence, retry or authorize a replacement. Other clients are not revoked.");
-                ui.checkbox(&mut review.confirmed, "I explicitly abandon only this original's local retry history");
-                if ui.add_enabled(review.confirmed, egui::Button::new("Confirm local Forget once")).clicked() { action = Some(Action::ConfirmForget); }
-                if ui.button("Cancel local Forget (keep history)").clicked() { action = Some(Action::CancelForget); }
-            }
-            if let Some(review) = &mut self.hosts.end_review {
-                ui.separator();
-                ui.heading("Confirm End session — not Close tab");
-                ui.label(format!("Account github:{} · logical {} · native generation {} · original operation {}",
-                    review.account.account_id, review.intent.target().logical,
-                    review.intent.target().generation.get(), review.intent.operation()));
-                ui.label(format!("Native privacy epoch {} · foreground request generation {}", review.epoch, review.generation));
-                ui.label("The protected host/installation/principal above and this exact generation are fixed. Native PID/namespace stay host-journal-owned; inventory does not expose a PID.");
-                ui.label("End stops the remote process. Closing a persistent attachment does not. Stop-requested/timeout/denial is NOT confirmation that it ended or is absent.");
-                ui.checkbox(&mut review.confirmed, "I explicitly authorize End for this exact host and generation");
-                if ui.add_enabled(review.confirmed, egui::Button::new("Confirm exact End once")).clicked() { action = Some(Action::ConfirmEnd); }
-                if ui.button("Cancel End (no request)").clicked() { action = Some(Action::CancelEnd); }
-            }
-            ui.label("Originals are protected in the native vault before a mutation can be sent. After restart explicitly approve this same owner/account, reopen originals, review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
-            if self.hosts.pending.is_some() || self.hosts.worker.is_some() { ui.label("Bounded foreground HOST work in progress…"); }
-            if let Some(error) = &self.hosts.error { ui.label(error); }
-            if ui.button("Cancel / close host review").clicked() { action = Some(Action::Close); }
-        });
-        if let Some(recipe) = selection {
-            self.hosts.clear_approval();
-            let AccountReference::Github { account_id } = recipe.host.account;
-            self.hosts.account = accounts
-                .iter()
-                .find(|account| account.account_id == account_id)
-                .map(|account| account.id.clone())
-                .unwrap_or_default();
-            self.hosts.selected = Some(recipe);
-            self.hosts.saved = true;
-            action = None;
-        } else if old_account != self.hosts.account
-            || old_locator != self.hosts.locator
-            || old_fingerprint != self.hosts.fingerprint
-            || old_prerequisite != self.hosts.prerequisite
-            || (old_consent.0 && !self.hosts.trust)
-            || (old_consent.1 && !self.hosts.enrolled)
-            || ((self.hosts.pending.is_some() || self.hosts.worker.is_some())
-                && old_consent != (self.hosts.trust, self.hosts.enrolled, self.hosts.launch))
-        {
-            self.hosts.clear_approval();
-            if old_account != self.hosts.account {
-                self.hosts.selected = None;
-                self.hosts.saved = false;
-                self.hosts.hosts.clear();
-            }
-            action = None;
-        }
-        if let Some(action) = action {
-            self.hosts.error = None;
-            if let Err(error) = self.host_action(ctx, action) {
-                self.hosts.error = Some(error);
+            if ui
+                .add_enabled(
+                    self.hosts.original_store.is_some()
+                        && self.hosts.pending.is_none()
+                        && self.hosts.worker.is_none(),
+                    egui::Button::new("Forget this local End retry history..."),
+                )
+                .clicked()
+            {
+                *action = Some(Action::ReviewForgetEnd(index));
             }
         }
+        if let Some(review) = &mut self.hosts.forget_review {
+            ui.separator();
+            ui.heading("Forget local retry history - NOT End session");
+            ui.label(format!(
+                "Account github:{} · original {:?}",
+                review.account.account_id,
+                review.record.id()
+            ));
+            if let Some(logical) = review.record.logical() {
+                ui.label(format!("Logical session {logical}"));
+            }
+            if let Some(target) = review.record.target() {
+                ui.label(format!(
+                    "Captured native generation {}",
+                    target.generation.get()
+                ));
+            }
+            ui.label(format!(
+                "Privacy epoch {} · request generation {}",
+                review.epoch, review.generation
+            ));
+            ui.label("The protected host/installation/principal above are fixed. Only this local checkpoint is selected. Other originals are preserved.");
+            ui.label("The remote session may still be running and its action may still complete. Forget does NOT End, detach, revoke, prove absence, retry or authorize a replacement. Other clients are not revoked.");
+            ui.checkbox(
+                &mut review.confirmed,
+                "I explicitly abandon only this original's local retry history",
+            );
+            if ui
+                .add_enabled(
+                    review.confirmed,
+                    egui::Button::new("Confirm local Forget once"),
+                )
+                .clicked()
+            {
+                *action = Some(Action::ConfirmForget);
+            }
+            if ui.button("Cancel local Forget (keep history)").clicked() {
+                *action = Some(Action::CancelForget);
+            }
+        }
+        if let Some(review) = &mut self.hosts.end_review {
+            ui.separator();
+            ui.heading("Confirm End session — not Close tab");
+            ui.label(format!(
+                "Account github:{} · logical {} · native generation {} · original operation {}",
+                review.account.account_id,
+                review.intent.target().logical,
+                review.intent.target().generation.get(),
+                review.intent.operation()
+            ));
+            ui.label(format!(
+                "Native privacy epoch {} · foreground request generation {}",
+                review.epoch, review.generation
+            ));
+            ui.label("The protected host/installation/principal above and this exact generation are fixed. Native PID/namespace stay host-journal-owned; inventory does not expose a PID.");
+            ui.label("End stops the remote process. Closing a persistent attachment does not. Stop-requested/timeout/denial is NOT confirmation that it ended or is absent.");
+            ui.checkbox(
+                &mut review.confirmed,
+                "I explicitly authorize End for this exact host and generation",
+            );
+            if ui
+                .add_enabled(
+                    review.confirmed,
+                    egui::Button::new("Confirm exact End once"),
+                )
+                .clicked()
+            {
+                *action = Some(Action::ConfirmEnd);
+            }
+            if ui.button("Cancel End (no request)").clicked() {
+                *action = Some(Action::CancelEnd);
+            }
+        }
+        ui.label("Originals are protected in the native vault before a mutation can be sent. After restart explicitly approve this same owner/account, reopen originals, review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
     }
 }
+
+#[path = "host_clients_view.rs"]
+mod view;
 
 #[cfg(test)]
 #[path = "host_clients_tests.rs"]

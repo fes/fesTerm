@@ -16,10 +16,7 @@ use festerm_tunnel_client::{
     identity::{self, Account, DevicePrompt, Identity},
     service, Error, Https,
 };
-use festerm_ui_egui::{
-    controls::{action_button_monospace, ActionButtonRole},
-    theme,
-};
+use festerm_ui_egui::{controls::ActionButtonRole, theme};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -173,6 +170,7 @@ fn connection_launch(launch: Launch, takeover: bool, reclaim: bool, client: &Cli
 
 enum Event {
     Device(DevicePrompt),
+    AccountObservation(super::tunnel_browser::AccountStatus),
     Refresh {
         bytes: zeroize::Zeroizing<Vec<u8>>,
         published: oneshot::Sender<Result<(), Error>>,
@@ -208,6 +206,7 @@ pub(super) struct Workflow {
     ephemeral: bool,
     takeover: bool,
     focus_cancel: bool,
+    device: super::tunnel_browser::DeviceActions,
     ready: Option<Box<Prepared>>,
     /// Reconnects this tab in place, presenting its client id.
     reconnect: Option<(TabId, ClientId)>,
@@ -260,6 +259,7 @@ impl Workflow {
             ephemeral,
             takeover,
             focus_cancel: true,
+            device: super::tunnel_browser::DeviceActions::default(),
             ready: None,
             reconnect: None,
             automatic: None,
@@ -332,21 +332,36 @@ async fn prepare(
     let http = Https::new()?;
     let new_account = force_sign_in || account.is_none() || !(remember || reuse_account);
     let identity = if new_account {
-        identity::sign_in(&http, client_id, None, cancel, |prompt| {
-            if !notify(Event::Device(prompt)) {
-                cancel.cancel();
-            }
-        })
+        identity::sign_in(
+            &http,
+            client_id,
+            account.as_ref().map(DevTunnelAccount::account_id),
+            cancel,
+            |prompt| {
+                if !notify(Event::Device(prompt)) {
+                    cancel.cancel();
+                }
+            },
+        )
         .await?
     } else {
         let binding = account.as_ref().ok_or(Error::AccountChanged)?;
         let secret = store
             .get(binding.credential_reference())
             .map_err(|_| Error::Store)?;
+        let observe = |error: &Error| {
+            if let Some(status) = super::tunnel_browser::credential_issue(*error) {
+                notify(Event::AccountObservation(status));
+            }
+        };
         let identity = secret
-            .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id(), client_id))?;
+            .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id(), client_id))
+            .inspect_err(observe)?;
         if identity.needs_sign_in() {
-            let refreshed = identity.refresh(&http, client_id, cancel).await?;
+            let refreshed = identity
+                .refresh(&http, client_id, cancel)
+                .await
+                .inspect_err(observe)?;
             let (published, publication) = oneshot::channel();
             if !notify(Event::Refresh {
                 bytes: refreshed.encode_private()?,
@@ -368,6 +383,11 @@ async fn prepare(
         .inspect_err(|error| {
             tracing::warn!(stage = "tunnel-lookup", error = ?error, "Native Dev Tunnel setup failed");
         })?;
+    if !new_account {
+        notify(Event::AccountObservation(
+            super::tunnel_browser::AccountStatus::LastOperationSucceeded,
+        ));
+    }
     if let Some(days) = extend_days {
         // Best effort: only the owner may extend, and the connection must not
         // depend on it.
@@ -801,12 +821,16 @@ impl FesTermApp {
         let Some(mut workflow) = self.native_tunnel.take() else {
             return;
         };
-        if !workflow.ephemeral
-            && self
-                .state
-                .configuration()
-                .profile(workflow.expected.identifier())
-                != Some(&workflow.expected)
+        let account_changed = workflow.account.as_ref().is_some_and(|expected| {
+            self.state.configuration().account(expected.identifier()) != Some(expected)
+        });
+        if account_changed
+            || (!workflow.ephemeral
+                && self
+                    .state
+                    .configuration()
+                    .profile(workflow.expected.identifier())
+                    != Some(&workflow.expected))
         {
             let cleanup_failed = workflow
                 .ready
@@ -815,7 +839,11 @@ impl FesTermApp {
             if cleanup_failed {
                 self.report_configuration_notice("Profile changed, and a new native credential could not be removed. Reconcile secure storage manually.");
             } else if workflow.automatic.is_none() {
-                self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
+                self.secure_storage_feedback = Some(if account_changed {
+                    "Account changed. Sign-in cancelled."
+                } else {
+                    "Profile changed. Sign-in cancelled."
+                });
             }
             self.overlays.native_tunnel = false;
             return;
@@ -832,7 +860,22 @@ impl FesTermApp {
                 }
             };
             match event {
-                Event::Device(prompt) => workflow.stage = Stage::Device(prompt),
+                Event::Device(prompt) => {
+                    if workflow.automatic.is_none() {
+                        workflow.device.initial(&prompt.user_code);
+                    }
+                    workflow.stage = Stage::Device(prompt);
+                }
+                Event::AccountObservation(status) => {
+                    if let Some(account) = &workflow.account {
+                        super::tunnel_browser::record_account_status(
+                            context,
+                            self.state.configuration().accounts(),
+                            account,
+                            status,
+                        );
+                    }
+                }
                 Event::Refresh { bytes, published } => {
                     let result = workflow
                         .account
@@ -848,6 +891,16 @@ impl FesTermApp {
                                 )
                                 .map_err(|_| Error::Store)
                         });
+                    if result.is_ok() {
+                        if let Some(account) = &workflow.account {
+                            super::tunnel_browser::record_account_status(
+                                context,
+                                self.state.configuration().accounts(),
+                                account,
+                                super::tunnel_browser::AccountStatus::LastOperationSucceeded,
+                            );
+                        }
+                    }
                     let _ = published.send(result);
                 }
                 Event::Host {
@@ -913,6 +966,7 @@ impl FesTermApp {
         }
         if let Some(mut ready) = workflow.ready.take() {
             if let Some(binding) = ready.binding.take() {
+                let signed_in = binding.account.clone();
                 // Once saving begins, unwinding must retain the candidate secrets:
                 // the replacement may already have been installed.
                 let new_references = std::mem::take(&mut ready.stored.references);
@@ -951,6 +1005,26 @@ impl FesTermApp {
                     }
                     self.overlays.native_tunnel = false;
                     return;
+                }
+                if let Some(signed_in) = signed_in {
+                    if let Some(account) =
+                        self.state
+                            .configuration()
+                            .accounts()
+                            .iter()
+                            .find(|account| {
+                                account.account_id() == signed_in.account_id()
+                                    && account.credential_reference()
+                                        == signed_in.credential_reference()
+                            })
+                    {
+                        super::tunnel_browser::record_account_status(
+                            context,
+                            self.state.configuration().accounts(),
+                            account,
+                            super::tunnel_browser::AccountStatus::VerifiedAtSignIn,
+                        );
+                    }
                 }
             }
             if workflow.connect {
@@ -1003,6 +1077,8 @@ impl FesTermApp {
             return;
         };
         let mut dismiss = escape;
+        let mut device_action = super::tunnel_browser::DeviceAction::None;
+        let mut reauthenticate = None;
         egui::Modal::new(egui::Id::new("native_dev_tunnel")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 520.0);
             ui.heading("Dev Tunnel");
@@ -1015,19 +1091,7 @@ impl FesTermApp {
                     });
                 }
                 Stage::Device(prompt) => {
-                    ui.label("Sign in to Microsoft Dev Tunnels");
-                    ui.label("Enter this code on GitHub:");
-                    ui.add_space(6.0);
-                    if action_button_monospace(ui, ActionButtonRole::Accent, &prompt.user_code)
-                        .on_hover_text("Copy code and open GitHub")
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(prompt.user_code.clone());
-                        ui.ctx()
-                            .open_url(egui::OpenUrl::new_tab(identity::VERIFICATION_URI));
-                    }
-                    ui.add_space(6.0);
-                    ui.label("Waiting for sign-in…");
+                    device_action = workflow.device.show(ui, &prompt.user_code);
                 }
                 Stage::Host { account, host, .. } => {
                     ui.label(format!("GitHub · {}", account.login));
@@ -1064,6 +1128,17 @@ impl FesTermApp {
                 }
                 Stage::Error(error) => {
                     ui.label(error.to_string());
+                    if let Some(account) = &workflow.account {
+                        if super::confirmations::dialog_action(
+                            ui,
+                            ActionButtonRole::Accent,
+                            "Sign in again",
+                        )
+                        .clicked()
+                        {
+                            reauthenticate = Some(account.identifier().to_owned());
+                        }
+                    }
                 }
             });
             ui.add_space(10.0);
@@ -1096,6 +1171,18 @@ impl FesTermApp {
                 }
             });
         });
+        if !dismiss {
+            if let Stage::Device(prompt) = &workflow.stage {
+                workflow.device.handle(device_action, &prompt.user_code);
+            }
+        }
+        if !dismiss {
+            if let Some(key) = reauthenticate {
+                self.cancel_native_tunnel();
+                self.reauthenticate_dev_tunnel_account(&key, context);
+                return;
+            }
+        }
         if dismiss {
             self.cancel_native_tunnel();
         } else if self

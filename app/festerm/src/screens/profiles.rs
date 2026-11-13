@@ -14,6 +14,8 @@ mod host_recipes;
 #[cfg(all(test, feature = "experimental-dev-tunnels"))]
 pub(crate) use host_recipes::install_host_recipe_request_for_test;
 #[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use host_recipes::select_host_for_profile;
+#[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use host_recipes::{
     host_recipe_request_is_current, report_host_connection_started, report_host_recipe_outcome,
 };
@@ -89,6 +91,144 @@ fn local_host_view(context: &egui::Context, identifier: &str) -> LocalHostView {
         })
         .and_then(|views| views.get(identifier).cloned())
         .unwrap_or_default()
+}
+
+#[cfg(feature = "local-host-settings")]
+#[derive(Clone, Default)]
+pub(crate) struct LocalRemoteAccessView {
+    pub host: crate::app::desktop_remote_access::View,
+    pub targets: Vec<crate::app::desktop_remote_access::ShareTarget>,
+}
+
+#[cfg(feature = "local-host-settings")]
+pub(crate) fn set_local_remote_access_view(context: &egui::Context, view: LocalRemoteAccessView) {
+    context.data_mut(|data| {
+        data.insert_temp(egui::Id::new("local_remote_access_view"), view);
+    });
+}
+
+#[cfg(feature = "local-host-settings")]
+fn local_remote_access_controls(
+    ui: &mut egui::Ui,
+    draft: &mut LocalProfileDraft,
+) -> Option<AppCommand> {
+    use crate::app::desktop_remote_access::{self, Action, Failure, Scope, SharePhase};
+    let view = ui
+        .ctx()
+        .data(|data| {
+            data.get_temp::<LocalRemoteAccessView>(egui::Id::new("local_remote_access_view"))
+        })
+        .unwrap_or_default();
+    let eligible = draft
+        .durable_session
+        .persistence()
+        .ok()
+        .flatten()
+        .is_some_and(|persistence| {
+            persistence.provider() == PersistenceProviderKind::FestermSessiond
+        });
+    if !eligible {
+        return None;
+    }
+    let target = draft.original_id.as_deref().and_then(|profile| {
+        let mut targets = view
+            .targets
+            .iter()
+            .filter(|target| target.profile.as_deref() == Some(profile));
+        let first = targets.next()?;
+        targets.next().is_none().then_some(first)
+    });
+    let active = view.host.sharing.as_ref().is_some_and(|sharing| {
+        Some(&sharing.target) == target && sharing.phase == SharePhase::Active
+    });
+    let requested = draft.host_share_requested.get_or_insert(active);
+    let mut command = None;
+    ui.add_space(10.0);
+    ssh_section_heading(ui, "Remote access");
+    if matches!(&view.host.scope, Scope::Present(snapshot)
+        if snapshot.phase == festerm_host_setup::lifecycle::Phase::Provisioned)
+    {
+        let supported = target.is_some_and(|target| target.source.is_some());
+        if ui
+            .add_enabled(
+                supported && !view.host.busy,
+                egui::Checkbox::new(requested, "Allow remote access to this session"),
+            )
+            .changed()
+        {
+            if let Some(target) = target {
+                command = Some(AppCommand::LocalRemoteAccess(if *requested {
+                    Action::ReviewShare(target.clone())
+                } else if view.host.sharing.as_ref().is_some_and(|sharing| {
+                    &sharing.target == target && sharing.phase != SharePhase::Released
+                }) {
+                    Action::Unshare(target.clone())
+                } else {
+                    Action::Dismiss
+                }));
+            }
+        }
+        if !supported {
+            ssh_paragraph(
+                ui,
+                if target.is_some() {
+                    "This running shell does not support protected HOST sharing. It has not been restarted."
+                } else {
+                    "Save and connect this native durable profile first. Choose one running local session to share."
+                },
+            );
+            if action_button(
+                ui,
+                ActionButtonRole::Secondary,
+                "Review running sessions in Settings",
+            )
+            .clicked()
+            {
+                command = Some(AppCommand::OpenSettings);
+            }
+        }
+        if *requested {
+            if let Some(action) =
+                desktop_remote_access::show_session_sharing(ui, &view.host, target)
+            {
+                command = Some(AppCommand::LocalRemoteAccess(action));
+            }
+            if !active {
+                ui.small("Bind privately, then explicitly Switch this exact session. This choice is not proof of current remote access.");
+            }
+        }
+    } else if action_button(
+        ui,
+        ActionButtonRole::Secondary,
+        "Enable remote access in Settings to share this session.",
+    )
+    .clicked()
+    {
+        command = Some(AppCommand::OpenSettings);
+    }
+    if let Some(failure) = view.host.failure {
+        let notice = match failure {
+            Failure::SignIn => "GitHub sign-in required. Sign in again in Settings.",
+            Failure::NativeVault => "Unlock the credential store, then retry in Settings.",
+            Failure::OwnerApproval => "Review owner approval in Settings before sharing.",
+            Failure::ShareCapability => "This shell does not support protected HOST sharing.",
+            Failure::SessionChanged => "The running session changed. Review it again in Settings.",
+            _ => "Remote access needs attention in Settings. Your draft is retained.",
+        };
+        ui.colored_label(theme::STATUS_ERROR, notice);
+        if action_button(
+            ui,
+            ActionButtonRole::Secondary,
+            "Open remote access Settings",
+        )
+        .clicked()
+        {
+            command = Some(AppCommand::OpenSettings);
+        }
+    } else if matches!(view.host.scope, Scope::Unobserved) {
+        ui.small("Host status has not been checked.");
+    }
+    command
 }
 
 pub(crate) fn report_local_profile_save_outcome(
@@ -472,6 +612,8 @@ struct LocalProfileDraft {
     account_selection: Option<egui::Id>,
     account_verified: bool,
     pending_save: Option<egui::Id>,
+    #[cfg(feature = "local-host-settings")]
+    host_share_requested: Option<bool>,
     error: Option<String>,
 }
 
@@ -514,6 +656,8 @@ impl LocalProfileDraft {
             account_selection: None,
             account_verified: false,
             pending_save: None,
+            #[cfg(feature = "local-host-settings")]
+            host_share_requested: None,
         }
     }
 
@@ -537,6 +681,8 @@ impl LocalProfileDraft {
             account_selection: None,
             account_verified: false,
             pending_save: None,
+            #[cfg(feature = "local-host-settings")]
+            host_share_requested: None,
         }
     }
 
@@ -1315,7 +1461,16 @@ pub(crate) fn show_profiles(
         clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
         state.mode = match kind {
             NewProfileKind::DevTunnel => {
-                ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())
+                #[cfg(feature = "experimental-dev-tunnels")]
+                {
+                    ProfilesScreenMode::HostRecipes(Box::new(
+                        host_recipes::HostRecipesState::new_editor(),
+                    ))
+                }
+                #[cfg(not(feature = "experimental-dev-tunnels"))]
+                {
+                    ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())
+                }
             }
             NewProfileKind::HostSetup => ProfilesScreenMode::HostSetup(HostSetupDraft::default()),
             NewProfileKind::Local => {
@@ -1627,7 +1782,7 @@ pub(crate) fn show_profiles(
                 ui.heading("Profiles");
                 ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
                 #[cfg(feature = "experimental-dev-tunnels")]
-                if action_button(ui, ActionButtonRole::Secondary, "Host/session recipes · Experimental").clicked() {
+                if action_button(ui, ActionButtonRole::Secondary, "Dev Tunnel profiles").clicked() {
                     next_mode = Some(ProfilesScreenMode::HostRecipes(Box::default()));
                 }
                 #[cfg(feature = "experimental-dev-tunnels")]
@@ -1696,7 +1851,13 @@ pub(crate) fn show_profiles(
                                 )),
                             ),
                             ("SSH", ProfilesScreenMode::EditSsh(Box::default())),
-                            ("Dev Tunnel · Experimental", ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())),
+                            ("Dev Tunnel · Experimental", {
+                                #[cfg(feature = "experimental-dev-tunnels")]
+                                { ProfilesScreenMode::HostRecipes(Box::new(host_recipes::HostRecipesState::new_editor())) }
+                                #[cfg(not(feature = "experimental-dev-tunnels"))]
+                                { ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default()) }
+                            }),
+                            ("Legacy single-session Dev Tunnel", ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())),
                             ("SFTP", ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))),
                             (
                                 "Serial",
@@ -1958,11 +2119,17 @@ pub(crate) fn show_profiles(
                         );
                         #[cfg(feature = "experimental-dev-tunnels")]
                         {
+                            #[cfg(feature = "local-host-settings")]
+                            if let Some(action) = local_remote_access_controls(ui, draft) {
+                                command = Some(action);
+                            }
                             let eligible = draft.durable_session.persistence().ok().flatten()
                                 .is_some_and(|persistence| persistence.provider() == PersistenceProviderKind::FestermSessiond);
                             if eligible || draft.original_hosting.is_some() {
+                                ui.collapsing("Legacy advanced compatibility · per-profile hosting", |ui| {
                                 ui.add_space(10.0);
-                                ssh_section_heading(ui, "Dev Tunnel hosting");
+                                ssh_section_heading(ui, "Legacy Dev Tunnel hosting");
+                                ui.small("Separate legacy protocol. This does not enable HOST sharing or migrate this shell.");
                                 if ui.add_enabled(eligible, egui::Checkbox::new(&mut draft.expose, "Expose via Dev Tunnel")).changed() {
                                     draft.explicit_enable = draft.expose;
                                     draft.account_verified = false;
@@ -2020,6 +2187,7 @@ pub(crate) fn show_profiles(
                                         }
                                     });
                                 }
+                                });
                             }
                         }
                         if let Some(error) = &draft.error {
@@ -2705,6 +2873,139 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "local-host-settings")]
+    fn local_host_sharing_is_conditional_and_settings_recovery_retains_draft() {
+        let profile = Profile::local("private-shell", "shell", vec![], None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "private-shell")
+            .unwrap();
+        let draft = LocalProfileDraft {
+            host_share_requested: Some(true),
+            ..LocalProfileDraft::from_profile(profile.as_local().unwrap())
+        };
+        let mut harness = Harness::builder()
+            .with_size(vec2(700.0, 900.0))
+            .build_ui_state(
+                |ui, state: &mut (LocalProfileDraft, Option<AppCommand>)| {
+                    if let Some(command) = local_remote_access_controls(ui, &mut state.0) {
+                        state.1 = Some(command);
+                    }
+                },
+                (draft, None),
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Allow remote access to this session")
+            .is_none());
+        harness
+            .get_by_label("Enable remote access in Settings to share this session.")
+            .click();
+        harness.run();
+        assert!(matches!(harness.state().1, Some(AppCommand::OpenSettings)));
+        set_local_remote_access_view(
+            &harness.ctx,
+            LocalRemoteAccessView {
+                host: crate::app::desktop_remote_access::View {
+                    failure: Some(crate::app::desktop_remote_access::Failure::SignIn),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        harness.run();
+        harness.get_by_label("GitHub sign-in required. Sign in again in Settings.");
+        assert_eq!(harness.state().0.host_share_requested, Some(true));
+        assert_eq!(harness.state().0.name, "private-shell");
+        assert!(!harness.state().0.expose);
+        assert!(harness.query_by_label("Choose GitHub account").is_none());
+        {
+            use festerm_host_setup::lifecycle::{Binding, Origin, Settings, Startup, Store};
+            let root = festerm_sessiond::private_storage::private_test_directory();
+            let store = Store::create(
+                &root.path().join("desktop"),
+                Origin::Desktop,
+                Settings {
+                    friendly_name: "This computer".into(),
+                    allow_creation: false,
+                    startup: Startup::Manual,
+                },
+            )
+            .unwrap();
+            let ticket = store
+                .request_enable(&store.snapshot().unwrap().settings)
+                .unwrap();
+            store
+                .record_provisioned(
+                    &ticket,
+                    Binding {
+                        host_id: "11111111-1111-4111-8111-111111111111".into(),
+                        account: "github:42".into(),
+                        qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                        cloud_incarnation: "synthetic-incarnation".into(),
+                        host_key_fingerprint: "synthetic-public-pin".into(),
+                    },
+                )
+                .unwrap();
+            set_local_remote_access_view(
+                &harness.ctx,
+                LocalRemoteAccessView {
+                    host: crate::app::desktop_remote_access::View {
+                        scope: crate::app::desktop_remote_access::Scope::Present(
+                            store.snapshot().unwrap().into(),
+                        ),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+        harness.state_mut().1 = None;
+        harness.run();
+        let checkbox = harness.get_by_label("Allow remote access to this session");
+        assert!(checkbox.accesskit_node().is_disabled());
+        assert!(harness.state().1.is_none());
+        assert_eq!(harness.state().0.host_share_requested, Some(true));
+        harness.state_mut().0.durable_session.enabled = false;
+        harness.run();
+        assert!(harness
+            .query_by_label("Enable remote access in Settings to share this session.")
+            .is_none());
+        assert!(harness
+            .query_by_label("GitHub sign-in required. Sign in again in Settings.")
+            .is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "local-host-settings")]
+    fn local_host_sharing_preference_never_enters_legacy_save_host_spawn() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run();
+        open_new_profile(&mut harness, "Local");
+        let tab = harness.state().tab_id;
+        harness.ctx.data_mut(|data| {
+            let id = profiles_state_id(tab);
+            let mut state = data.get_temp::<ProfilesScreenState>(id).unwrap();
+            let ProfilesScreenMode::EditLocal(draft) = &mut state.mode else {
+                panic!("local draft")
+            };
+            draft.name = "private-profile".into();
+            draft.durable_session.enabled = true;
+            draft.durable_session.session_name = "private-profile".into();
+            draft.host_share_requested = Some(true);
+            data.insert_temp(id, state);
+        });
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("HOST sharing intent must never dispatch legacy SaveLocalProfile hosting");
+        };
+        assert!(profile.as_local().unwrap().tunnel_hosting().is_none());
+    }
+
+    #[test]
     fn failed_local_host_save_retains_the_draft_and_ignores_stale_replies() {
         let context = egui::Context::default();
         let tab = AppState::for_test().active();
@@ -2749,6 +3050,10 @@ mod tests {
         harness.get_by_label("Name").type_text("hosted-shell");
         harness.run_ok();
         harness.get_by_label("Use a durable local session").click();
+        harness.run_ok();
+        harness
+            .get_by_label("Legacy advanced compatibility · per-profile hosting")
+            .click();
         harness.run_ok();
         harness.get_by_label("Expose via Dev Tunnel").click();
         harness.run_ok();
@@ -3121,7 +3426,9 @@ mod tests {
         harness.run();
         harness.get_by_label("New Profile").click();
         harness.run();
-        harness.get_by_label("Dev Tunnel · Experimental").click();
+        harness
+            .get_by_label("Legacy single-session Dev Tunnel")
+            .click();
         harness.run();
         harness.get_by_label("Paste setup JSON").click();
         harness.run();

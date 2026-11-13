@@ -265,6 +265,13 @@ fn configure(app: &mut MobileApp, state: &str) {
         "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ ",
     ]);
     match state {
+        #[cfg(all(feature = "host-clients", unix))]
+        "hosts-before-discovery"
+        | "hosts-found"
+        | "hosts-sessions"
+        | "hosts-unavailable"
+        | "hosts-new"
+        | "hosts-profile" => app.configure_host_gallery(state),
         "keyboard-hold" | "keyboard-shell" | "keyboard-symbols" | "keyboard-preview"
         | "keyboard-hinge" => {
             if state == "keyboard-hinge" {
@@ -337,6 +344,7 @@ fn configure(app: &mut MobileApp, state: &str) {
         "editor-new" => app.editor.open_new(),
         "editor-devtunnel" => {
             app.editor.open_new();
+            app.editor.editing = Some("fixture-legacy-tunnel".to_owned());
             app.editor.kind_index = 1;
             app.editor.name = "build-box".to_owned();
             app.tunnel.preview_editor = true;
@@ -480,6 +488,23 @@ fn capture_mobile_ui_gallery() {
             ("phone", 390.0, 844.0, 0.35),
             ("tablet", 834.0, 1194.0, 0.30),
         ],
+    );
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+#[test]
+#[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
+fn capture_host_client_ui_gallery() {
+    capture_gallery(
+        &[
+            "hosts-before-discovery",
+            "hosts-found",
+            "hosts-sessions",
+            "hosts-unavailable",
+            "hosts-new",
+            "hosts-profile",
+        ],
+        &[("phone", 390.0, 844.0, 0.0), ("tablet", 834.0, 1194.0, 0.0)],
     );
 }
 

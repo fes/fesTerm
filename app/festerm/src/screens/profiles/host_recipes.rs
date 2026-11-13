@@ -46,6 +46,8 @@ struct RecipeDraft {
     id: RecipeId,
     logical: LogicalSessionId,
     name: String,
+    session_name: String,
+    host_hint: Option<festerm_config::host_recipes::HostHint>,
     host: String,
     account: String,
     shell: String,
@@ -63,6 +65,8 @@ impl Default for RecipeDraft {
             id: RecipeId::new(),
             logical: LogicalSessionId::new(),
             name: String::new(),
+            session_name: String::new(),
+            host_hint: None,
             host: String::new(),
             account: String::new(),
             shell: String::new(),
@@ -82,6 +86,8 @@ impl RecipeDraft {
             id: recipe.id.clone(),
             logical: recipe.logical_session.clone(),
             name: recipe.name.clone(),
+            session_name: recipe.session_name().to_owned(),
+            host_hint: recipe.host_hint.clone(),
             host: recipe.host.id.to_string(),
             account: account_id.to_string(),
             shell: recipe.launch.shell.clone().unwrap_or_default(),
@@ -110,6 +116,14 @@ impl RecipeDraft {
             id: self.id.clone(),
             logical_session: self.logical.clone(),
             name: self.name.clone(),
+            session_name: if self.original.as_ref().is_some_and(|original| {
+                original.session_name.is_none() && original.name == self.session_name
+            }) {
+                None
+            } else {
+                Some(self.session_name.trim().to_owned())
+            },
+            host_hint: self.host_hint.clone(),
             host: HostReference {
                 id: self.host.parse().map_err(|_| RecipeError::Invalid)?,
                 account: AccountReference::Github {
@@ -137,33 +151,42 @@ fn field(ui: &mut Ui, label: &str, value: &mut String) {
     ui.label(label);
     ui.add(
         egui::TextEdit::singleline(value)
+            .min_size(egui::vec2(0.0, 24.0))
             .id_salt(label)
             .hint_text(label)
             .char_limit(MAX_PORTABLE_BYTES)
             .desired_width(f32::INFINITY),
     );
+    ui.add_space(8.0);
 }
 
 fn behavior_label(behavior: &ConnectionBehavior) -> &'static str {
     match behavior {
         ConnectionBehavior::ChooseSession => "Choose a session on this host",
         ConnectionBehavior::ResumeOrCreate => "Resume logical session or create if absent",
+        ConnectionBehavior::ResumeOnly {} => "Resume logical session without creating",
         ConnectionBehavior::AlwaysCreate => "Always create a new shell",
         ConnectionBehavior::AttachOnly { .. } => "Attach only to exact running generation",
     }
 }
 
 fn identity(ui: &mut Ui, recipe: &PublicRecipe) {
-    let AccountReference::Github { account_id } = recipe.host.account;
-    ui.label(format!("Host ID: {}", recipe.host.id));
-    ui.label(format!("GitHub account ID (unverified hint): {account_id}"));
-    ui.label(format!("Logical session ID: {}", recipe.logical_session));
-    ui.label(format!("Local recipe ID: {}", recipe.id.as_str()));
-    ui.label(behavior_label(&recipe.behavior));
-    if let ConnectionBehavior::AttachOnly { generation } = recipe.behavior {
-        ui.label(format!("Exact generation: {}", generation.get()));
+    if let Some(hint) = &recipe.host_hint {
+        ui.label(&hint.name);
     }
-    ui.label(REVIEW_NOTICE);
+    ui.label(format!("Session: {}", recipe.session_name()));
+    ui.collapsing("Connection details", |ui| {
+        let AccountReference::Github { account_id } = recipe.host.account;
+        ui.label(format!("Host ID: {}", recipe.host.id));
+        ui.label(format!("GitHub account ID (unverified hint): {account_id}"));
+        ui.label(format!("Logical session ID: {}", recipe.logical_session));
+        ui.label(format!("Local recipe ID: {}", recipe.id.as_str()));
+        ui.label(behavior_label(&recipe.behavior));
+        if let ConnectionBehavior::AttachOnly { generation } = recipe.behavior {
+            ui.label(format!("Exact generation: {}", generation.get()));
+        }
+        ui.label(REVIEW_NOTICE);
+    });
 }
 
 fn launch_summary(ui: &mut Ui, recipe: &PublicRecipe) {
@@ -188,6 +211,12 @@ fn launch_summary(ui: &mut Ui, recipe: &PublicRecipe) {
 }
 
 impl HostRecipesState {
+    pub(super) fn new_editor() -> Self {
+        Self {
+            page: RecipePage::Edit(Box::default()),
+            ..Default::default()
+        }
+    }
     fn submit(&mut self, tab_id: TabId, metadata: MetadataCommand) -> AppCommand {
         let request = egui::Id::new(uuid::Uuid::new_v4());
         self.pending = Some(request);
@@ -211,9 +240,12 @@ impl HostRecipesState {
         let mut intent = None;
         let mut review = None;
         show_bounded_content_scroll(ui, (tab_id, "host_recipe_metadata"), |ui| {
-            ui.heading("Host/session recipes · Experimental");
-            ui.label(OFFLINE_NOTICE);
-            ui.label("Use public IDs and launch options only. Never enter credentials, private keys or bearer tokens.");
+            ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
+            ui.heading(match &self.page {
+                RecipePage::Edit(draft) if draft.original.is_some() => "Edit Dev Tunnel Profile",
+                RecipePage::Edit(_) => "New Dev Tunnel Profile",
+                _ => "Dev Tunnel profiles",
+            });
             if let Some(message) = self.feedback {
                 ui.label(message);
             }
@@ -224,7 +256,7 @@ impl HostRecipesState {
                             if action_button(ui, ActionButtonRole::Secondary, "Back to Profiles").clicked() {
                                 back = true;
                             }
-                            if action_button(ui, ActionButtonRole::Accent, "Add recipe").clicked() {
+                            if action_button(ui, ActionButtonRole::Accent, "New profile").clicked() {
                                 next = Some(RecipePage::Edit(Box::default()));
                             }
                             if action_button(ui, ActionButtonRole::Secondary, "Import recipe").clicked() {
@@ -234,7 +266,7 @@ impl HostRecipesState {
                             }
                         });
                         if configuration.host_recipes().is_empty() {
-                            ui.label("No saved host/session recipes.");
+                            ui.label("No saved Dev Tunnel profiles.");
                         }
                         for recipe in configuration.host_recipes().recipes() {
                             ui.push_id(recipe.id.as_str(), |ui| {
@@ -242,7 +274,7 @@ impl HostRecipesState {
                                     ui.strong(&recipe.name);
                                     identity(ui, recipe);
                                     ui.horizontal_wrapped(|ui| {
-                                        if ui.button("Review and connect…").clicked() {
+                                        if ui.button("Connect").clicked() {
                                             review = Some(recipe.clone());
                                         }
                                         if ui.button("Edit metadata").clicked() {
@@ -263,30 +295,99 @@ impl HostRecipesState {
                         }
                     }
                     RecipePage::Edit(draft) => {
-                        ui.label("Edits affect future creation only, never a running process. Host and logical identity cannot be retargeted by editing.");
-                        field(ui, "Recipe name", &mut draft.name);
+                        crate::software_background::show_frame(ui, egui::Frame::new()
+                            .fill(theme::SURFACE_TAB_INACTIVE)
+                            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                            .corner_radius(8.0).inner_margin(egui::Margin::same(16)), |ui| {
+                        ui.set_width(ui.available_width().min(340.0));
+                        field(ui, "Profile name", &mut draft.name);
+                        let mut hosts = crate::screens::host_workspace::remembered_hosts(ui.ctx());
+                        for recipe in configuration.host_recipes().recipes() {
+                            if let Some(hint) = &recipe.host_hint {
+                                if !hosts.iter().any(|host| host.reference == recipe.host) {
+                                    hosts.push(crate::screens::host_workspace::HostSessions {
+                                        reference: recipe.host.clone(), hint: hint.clone(), sessions: Vec::new(),
+                                    });
+                                }
+                            }
+                        }
+                        ui.label("Host");
                         ui.add_enabled_ui(draft.original.is_none(), |ui| {
-                            field(ui, "Host ID (canonical UUID)", &mut draft.host);
-                            field(ui, "GitHub numeric account ID (unverified hint)", &mut draft.account);
+                            egui::ComboBox::from_id_salt(("recipe_host", tab_id))
+                                .selected_text(draft.host_hint.as_ref().map(|hint| hint.name.as_str())
+                                    .unwrap_or("Select a host…"))
+                                .show_ui(ui, |ui| {
+                                    for host in &hosts {
+                                        let AccountReference::Github { account_id } = host.reference.account;
+                                        if ui.selectable_label(draft.host == host.reference.id.as_str(),
+                                            format!("{} · {}", host.hint.name,
+                                                configuration.accounts().iter()
+                                                    .find(|account| account.account_id() == account_id)
+                                                    .map(|account| format!("@{}", account.login()))
+                                                    .unwrap_or_else(|| "account unavailable".into()))).clicked() {
+                                            draft.host = host.reference.id.to_string();
+                                            draft.account = account_id.to_string();
+                                            draft.host_hint = Some(host.hint.clone());
+                                            draft.generation.clear();
+                                            draft.logical = LogicalSessionId::new();
+                                            draft.session_name.clear();
+                                        }
+                                    }
+                                });
                         });
-                        ui.label(format!("Logical session ID: {}", draft.logical));
-                        ui.label(REVIEW_NOTICE);
-                        field(ui, "Remote shell (blank: host default)", &mut draft.shell);
-                        field(ui, "Arguments (JSON string array)", &mut draft.arguments);
-                        field(ui, "Remote working directory (blank: host default)", &mut draft.cwd);
-                        let mut persistent = matches!(draft.lifetime, Lifetime::Persistent {});
-                        if ui.checkbox(&mut persistent, "Keep running after disconnect").changed() {
-                            draft.lifetime = if persistent { Lifetime::Persistent {} } else { Lifetime::Temporary { reconnect_grace_seconds: 60 } };
+                        if draft.original.is_none() {
+                        ui.collapsing("Find hosts", |ui| {
+                            if let Some(discovery) = crate::screens::host_workspace::show_for_profile(ui, tab_id, configuration) {
+                                *command = Some(discovery);
+                            }
+                        });
                         }
-                        if !persistent {
-                            ui.label("Temporary: intentional disconnect ends the shell; unexpected loss has a 60-second reconnection grace. This screen does not start a shell.");
+                        let mut create = matches!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
+                        if ui.checkbox(&mut create, "Create session if missing").changed() {
+                            draft.behavior = if create { ConnectionBehavior::ResumeOrCreate }
+                                else { ConnectionBehavior::ResumeOnly {} };
                         }
-                        egui::ComboBox::from_id_salt("recipe_connection_behavior")
+                        if create {
+                            field(ui, "Session name", &mut draft.session_name);
+                        } else {
+                            ui.label("Session");
+                            let host = hosts.iter().find(|host| host.reference.id.as_str() == draft.host
+                                && matches!(host.reference.account, AccountReference::Github { account_id }
+                                    if account_id.to_string() == draft.account));
+                            ui.add_enabled_ui(draft.original.is_none(), |ui| {
+                            egui::ComboBox::from_id_salt(("recipe_session", tab_id))
+                                .selected_text(if draft.session_name.is_empty() { "Select a session…" }
+                                    else { &draft.session_name })
+                                .show_ui(ui, |ui| {
+                                    if let Some(host) = host {
+                                        for session in &host.sessions {
+                                            if ui.selectable_label(draft.logical == session.target.logical,
+                                                &session.name).clicked() {
+                                                draft.logical = session.target.logical.clone();
+                                                draft.generation = session.target.generation.get().to_string();
+                                                draft.session_name = session.name.clone();
+                                            }
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                        ui.collapsing("Advanced", |ui| {
+                            ui.label(OFFLINE_NOTICE);
+                            ui.add_enabled_ui(draft.original.is_none(), |ui| {
+                                field(ui, "Host ID (canonical UUID)", &mut draft.host);
+                                field(ui, "GitHub numeric account ID (unverified hint)", &mut draft.account);
+                            });
+                            field(ui, "Remote shell (blank: host default)", &mut draft.shell);
+                            field(ui, "Arguments (JSON string array)", &mut draft.arguments);
+                            field(ui, "Remote working directory (blank: host default)", &mut draft.cwd);
+                            egui::ComboBox::from_id_salt("recipe_connection_behavior")
                             .selected_text(behavior_label(&draft.behavior))
                             .show_ui(ui, |ui| {
                                 for behavior in [
                                     ConnectionBehavior::ChooseSession,
                                     ConnectionBehavior::ResumeOrCreate,
+                                    ConnectionBehavior::ResumeOnly {},
                                     ConnectionBehavior::AlwaysCreate,
                                     ConnectionBehavior::AttachOnly { generation: GenerationId::new(1).expect("nonzero") },
                                 ] {
@@ -294,19 +395,25 @@ impl HostRecipesState {
                                     ui.selectable_value(&mut draft.behavior, behavior, label);
                                 }
                             });
-                        if matches!(draft.behavior, ConnectionBehavior::AttachOnly { .. }) {
-                            field(ui, "Exact generation (positive decimal)", &mut draft.generation);
-                        }
+                            if matches!(draft.behavior, ConnectionBehavior::AttachOnly { .. }) {
+                                field(ui, "Exact generation (positive decimal)", &mut draft.generation);
+                            }
+                        });
                         ui.horizontal_wrapped(|ui| {
                             if action_button(ui, ActionButtonRole::Secondary, "Cancel").clicked() {
                                 next = Some(RecipePage::List);
                             }
-                            if action_button(ui, ActionButtonRole::Accent, "Save metadata").clicked() {
+                            if action_button_enabled(ui, draft.command().is_ok()
+                                && (draft.original.is_some()
+                                    || !matches!(draft.behavior, ConnectionBehavior::ResumeOnly {} | ConnectionBehavior::AttachOnly { .. })
+                                    || !draft.generation.is_empty()),
+                                ActionButtonRole::Accent, "Save").clicked() {
                                 match draft.command() {
                                     Ok(metadata) => intent = Some(metadata),
                                     Err(error) => self.feedback = Some(error.message()),
                                 }
                             }
+                        });
                         });
                     }
                     RecipePage::Import { text, preview, reviewed } => {
@@ -424,6 +531,60 @@ impl HostRecipesState {
         }
         back
     }
+}
+
+pub(crate) fn select_host_for_profile(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+    host: crate::screens::host_workspace::HostSessions,
+    target: Option<festerm_tunnel_bridge::host_client::Target>,
+) -> bool {
+    if !crate::screens::host_workspace::profile_request_is_current(context, tab, request) {
+        return false;
+    }
+    context.data_mut(|data| {
+        let Some(mut state) = data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)) else {
+            return false;
+        };
+        let ProfilesScreenMode::HostRecipes(editor) = &mut state.mode else {
+            return false;
+        };
+        let RecipePage::Edit(draft) = &mut editor.page else {
+            return false;
+        };
+        if draft.original.is_some() {
+            return false;
+        }
+        let session = match &target {
+            Some(target) => {
+                let Some(session) = host
+                    .sessions
+                    .iter()
+                    .find(|session| &session.target == target)
+                else {
+                    return false;
+                };
+                Some(session)
+            }
+            None => None,
+        };
+        draft.host = host.reference.id.to_string();
+        let AccountReference::Github { account_id } = host.reference.account;
+        draft.account = account_id.to_string();
+        draft.host_hint = Some(host.hint.clone());
+        draft.logical = LogicalSessionId::new();
+        draft.generation.clear();
+        if let Some(session) = session {
+            draft.logical = session.target.logical.clone();
+            draft.generation = session.target.generation.get().to_string();
+            draft.session_name = session.name.clone();
+            draft.lifetime = session.lifetime;
+        }
+        editor.feedback = None;
+        data.insert_temp(profiles_state_id(tab), state);
+        true
+    })
 }
 
 pub(crate) fn host_recipe_request_is_current(
@@ -592,14 +753,11 @@ mod tests {
         .unwrap()])
         .unwrap();
         let mut harness = harness(configuration.clone());
-        harness
-            .get_by_label("Host/session recipes · Experimental")
-            .click();
+        harness.get_by_label("Dev Tunnel profiles").click();
         harness.run_ok();
-        harness.get_by_label(OFFLINE_NOTICE);
-        harness.get_by_label("Add recipe").click();
+        harness.get_by_label("New profile").click();
         harness.run_ok();
-        harness.get_by_label(REVIEW_NOTICE);
+        harness.get_by_label("Profile name");
         assert!(harness.state().command.is_none());
         assert_eq!(harness.state().configuration, configuration);
         harness.get_by_label("Cancel").click();
@@ -617,7 +775,7 @@ mod tests {
         install(&harness, RecipePage::List);
         harness.run_ok();
         assert!(harness.state().command.is_none());
-        harness.get_by_label("Review and connect…").click();
+        harness.get_by_label("Connect").click();
         harness.run_ok();
         let Some(AppCommand::ReviewHostFromProfiles {
             tab_id,
@@ -644,7 +802,7 @@ mod tests {
         let mut harness = harness(festerm_config::Configuration::empty());
         install(&harness, RecipePage::Edit(Box::new(draft)));
         harness.run_ok();
-        harness.get_by_label("Save metadata").click();
+        harness.get_by_label("Save").click();
         harness.run_ok();
         let Some(AppCommand::HostRecipeFromProfiles {
             tab_id,
@@ -673,7 +831,7 @@ mod tests {
         );
         harness.run_ok();
         harness.get_by_label(RecipeError::Duplicate.message());
-        harness.get_by_label("Save metadata");
+        harness.get_by_label("Save");
         let state = harness
             .ctx
             .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
@@ -693,6 +851,112 @@ mod tests {
     }
 
     #[test]
+    fn host_profile_creation_can_be_disabled_without_inventing_a_generation() {
+        let original = recipe();
+        let mut harness = harness(festerm_config::Configuration::empty());
+        install(
+            &harness,
+            RecipePage::Edit(Box::new(RecipeDraft::from_recipe(original.clone()))),
+        );
+        harness.run_ok();
+        harness.get_by_label("Create session if missing").click();
+        harness.run_ok();
+        harness.get_by_label("Save").click();
+        harness.run_ok();
+        let Some(AppCommand::HostRecipeFromProfiles {
+            command: MetadataCommand::Edit(edit),
+            ..
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("metadata edit")
+        };
+        assert_eq!(edit.behavior, ConnectionBehavior::ResumeOnly {});
+        assert_eq!(edit.logical_session, original.logical_session);
+        assert_eq!(edit.host, original.host);
+    }
+
+    #[test]
+    fn profile_host_selection_returns_to_the_same_unsaved_draft_without_connecting() {
+        use crate::screens::host_workspace::{HostSessions, SavedSessionChoice};
+        let selected = recipe();
+        let target = festerm_tunnel_bridge::host_client::Target {
+            logical: selected.logical_session.clone(),
+            generation: GenerationId::new(7).unwrap(),
+        };
+        let host = HostSessions {
+            reference: selected.host.clone(),
+            hint: festerm_config::host_recipes::HostHint {
+                name: "Build host".into(),
+                locator: "fixture.use".into(),
+            },
+            sessions: vec![SavedSessionChoice {
+                target: target.clone(),
+                name: "remote-build".into(),
+                lifetime: Lifetime::Persistent {},
+            }],
+        };
+        let mut harness = harness(festerm_config::Configuration::empty());
+        let draft = RecipeDraft {
+            name: "My shortcut".into(),
+            ..Default::default()
+        };
+        install(&harness, RecipePage::Edit(Box::new(draft)));
+        let tab = harness.state().tab;
+        let request = egui::Id::new("pick-host-for-draft");
+        crate::screens::host_workspace::install_profile_request_for_test(
+            &harness.ctx,
+            tab,
+            request,
+        );
+        assert!(!select_host_for_profile(
+            &harness.ctx,
+            tab,
+            egui::Id::new("stale"),
+            host.clone(),
+            Some(target.clone())
+        ));
+        assert!(select_host_for_profile(
+            &harness.ctx,
+            tab,
+            request,
+            host,
+            Some(target.clone())
+        ));
+        harness.run_ok();
+        let state = harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::HostRecipes(editor) = state.mode else {
+            panic!("same editor")
+        };
+        let RecipePage::Edit(draft) = editor.page else {
+            panic!("same draft")
+        };
+        assert_eq!(draft.name, "My shortcut");
+        assert_eq!(draft.session_name, "remote-build");
+        assert_eq!(draft.logical, target.logical);
+        assert_eq!(draft.host, selected.host.id.to_string());
+        assert!(harness.state().command.is_none());
+        assert!(harness.state().configuration.host_recipes().is_empty());
+    }
+
+    #[test]
+    fn legacy_long_profile_name_remains_editable_without_explicit_session_name() {
+        let mut original = recipe();
+        original.name = "x".repeat(200);
+        original.session_name = None;
+        let mut draft = RecipeDraft::from_recipe(original.clone());
+        draft.name = "Renamed local shortcut".into();
+        let MetadataCommand::Edit(edit) = draft.command().unwrap() else {
+            panic!("edit")
+        };
+        assert!(edit.session_name.is_none());
+        assert_eq!(edit.logical_session, original.logical_session);
+        assert_eq!(edit.name, draft.name);
+    }
+
+    #[test]
     fn dev_tunnel_host_recipe_import_requires_review_and_reports_content_free_errors() {
         let recipe = recipe();
         let text = recipe.export().unwrap();
@@ -709,6 +973,8 @@ mod tests {
         harness.get_by_label("Preview metadata").click();
         harness.run_ok();
         harness.get_by_label("Review imported public metadata");
+        harness.get_by_label("Connection details").click();
+        harness.run_ok();
         harness.get_by_label(REVIEW_NOTICE);
         assert!(harness.state().command.is_none());
         assert!(harness

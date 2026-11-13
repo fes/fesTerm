@@ -681,6 +681,44 @@ Mobile sharing, physical restart/End/detach/lifecycle, live cloud/device/vault
 evidence and usability remain open. Desktop local Settings/Remote Access and local sharing are a
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.
 
+## Host-based Dev Tunnel UI redesign evidence
+
+The November 2026 desktop/iOS redesign requires synthetic normal/error captures
+for accounts, sign-in, host settings, eligible local sharing, discovery,
+authorized sessions, named durable creation and profile connection. Capture
+desktop wide/narrow layouts and mobile safe-area/text-scaling states; measure
+padding, containment and action targets before visual acceptance.
+
+Deterministic tests cover public recipe compatibility, explicit command
+boundaries, session-name validation and stale publication. These do not prove
+native clipboard/browser success, Keychain/vault behavior, signed-host readiness,
+separate owner approval or actual private Bind/Switch. Exercise those on an
+owned qualified host with real protected storage, including expired account,
+changed account/pin, denied creation with an existing session, uncertain create
+retry, disable preserving durable processes, and cancellation preserving drafts.
+Keyboard/focus, screen-reader announcements and iOS touch targets remain native
+or usability evidence. Shared Android regressions are required when mobile
+shared code changes; Android-specific redesign is not added here. Light mode
+is explicitly deferred.
+
+Synthetic evidence includes seven Desktop wide/narrow/off/requested surface
+captures and twelve phone/tablet host discovery/session/create/profile captures.
+The host-enabled mobile library passes 259 tests and compiles for the iOS
+Simulator target; neither result is a real-service or native-runtime acceptance.
+The independent two-model Desktop review prompted same-draft profile selection,
+clearer pending-host intent, minimum local control heights and quieter recovery.
+Corrected captures passed the bounded Desktop/mobile UI re-review: the mobile
+header, centered tablet column, painted disclosures and visible creation action
+resolve the initial layout findings. Source and regression checks also require
+explicit review of imported custom launch/lifetime settings before creation and
+preserve logical-resume policy when renaming a profile with inventory loaded.
+Account-status presentation is source-reviewed, not visually qualified.
+Remaining full-chrome, transient interaction, keyboard/focus, native vault,
+clipboard/browser delivery and physical-device evidence is still required.
+Inherited app-wide primary-action text contrast (3.92:1) and subtle control
+boundary contrast remain design-system debt; changing shared theme tokens and
+their unrelated baselines is outside this dark-theme-preserving workflow slice.
+
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 
 Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public

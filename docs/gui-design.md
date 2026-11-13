@@ -1879,8 +1879,57 @@ For private-key and certificate authentication:
 
 ![Profile editor target](images/gui-mockups/profile-editor.png)
 
+#### Host-based Dev Tunnel workflow
+
+The November 2026 UI handoff refines ADR 0084 without changing its protected
+authority boundaries. Settings owns **GitHub accounts** on desktop and iOS:
+recognizable usernames, individual sign-out/reauthentication, and **Sign in with
+GitHub** or **Add account**. Explicit sign-in authorizes one clipboard-copy and
+browser-open attempt after the device code arrives. Display each actual result;
+retain the code, **Copy again**, **Open browser**, and **Cancel** when either
+operation fails. Rendering a prompt never repeats these effects.
+
+Desktop Settings owns **Dev Tunnels**. **Allow remote access to this computer**
+reveals one signed-in host account and default-off **Allow remote clients to
+create shell sessions**. Requested enablement is not observed readiness.
+Disabling fences remote access without terminating durable local shells.
+Operator diagnostics, protected owner approval and recovery remain available
+through contextual disclosures rather than a permanent console.
+
+Only eligible durable local profiles offer **Allow remote access to this
+session**. When the host is off, show an actionable Settings link; do not launch
+a setup wizard or select an account per profile. Authentication failures retain
+preferences and unrelated edits. The checkbox expresses intent, not authority:
+exact-generation protected Bind and separately confirmed Switch remain required.
+Existing legacy per-profile installations retain explicit compatibility controls;
+this redesign does not migrate or restart them.
+
+New Session offers **Find hosts · @username** for each account. Discovery is
+explicit; selecting a host explicitly obtains authorized sessions. Saved hints
+are public metadata, never online indicators. First contact still requires
+independent host verification and separate host-local owner approval. Ordinary
+sessions offer Connect; creation appears only when supported and permitted.
+Quick creation requires a trimmed nonblank **Session name**, creates a durable
+shell only on **Create and connect**, and preserves its original operation on
+uncertainty. No temporary-session toggle appears in these new forms.
+
+A Dev Tunnel profile separates its local name from the remote session name.
+**Create session if missing** is saveable offline even when creation is denied
+or unknown. Saving never contacts a host or creates a shell. Connect resumes
+the bound logical session; only host-authoritative absence and current permission
+permit creation. Names are labels, not a substitute for host/account/logical
+identity. Existing advanced/temporary recipes remain compatible.
+Turning creation off preserves the logical identity with `resume_only`; it does
+not invent an exact generation. Profile discovery returns the chosen public
+host/session into the same draft, with one offline Save.
+
+The handoff HTML is workflow guidance, not a replacement design system. Use
+existing dark semantic tokens, integrated chip chrome and shared action roles;
+light/System appearance is explicitly deferred. Desktop/iOS client semantics
+align while retaining platform-appropriate layout and mobile app-lock behavior.
+
 For ADR 0084's new host flow, [public host recipes](configuration.md#public-host-recipes-adr-0084-foundation)
-have an experimental desktop **Profiles → Host/session recipes** surface over
+have an experimental **Profiles → Dev Tunnel profiles** surface over
 shared offline metadata commands/persistence
 ([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
 legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
@@ -1893,8 +1942,8 @@ by editing. Failed writes retain the draft; results are bound to its tab/request
 Delete initially focuses Cancel, Escape cancels without a command, and changed
 or removed records require reopening the confirmation rather than stale deletion.
 Import review is metadata inspection only, never persisted execution approval.
-All rows say execution review is required; metadata never claims a verified host
-or approval. A distinct **Review and connect…** action enters protected foreground
+Metadata never claims a verified host or approval. A distinct **Connect**
+action enters protected foreground
 binding/pin review and explicit native-key preparation. Host-local owner approval
 remains separate. After explicit selected-host resolution and authorized inventory,
 existing-session attachment and a separate exact-launch/lifetime confirmation
@@ -1903,8 +1952,8 @@ temporary permission remain visible. Explicit Create freezes a fresh logical ID;
 ResumeOrCreate delegates atomic resume/creation to the host, never to an empty
 client inventory. Without creation permission, Ensure can only resume an
 authorized existing session. AttachOnly cannot create. The existing experimental
-Dev Tunnels feature gate controls this desktop-only surface.
-The eventual iOS/Android UI must also use those shared commands: Save,
+Dev Tunnels feature gate controls the Desktop surface; shared mobile host clients
+remain explicitly opt-in. Desktop and mobile use the shared metadata commands: Save,
 edit, duplicate, import/export and delete do not create or end a shell.
 Default duplication means a fresh logical session; saving another shortcut
 to an existing session is deliberate and generation-pinned.
@@ -1918,8 +1967,8 @@ Opening the new host card/launcher shows local metadata only. Find hosts and
 single-host selection/Refresh are explicit network intents; cancellation and
 account changes fence results. Never inherit legacy automatic discovery or
 display cached hosts as online. Selected-host execution has a bounded actual HOST
-worker; account-wide Find hosts, mobile installation and native GUI/vault/service
-qualification remain separate. The original action's logical ID, reserved
+worker. Account-wide discovery is implemented, while mobile installation and
+native GUI/vault/service qualification remain separate. The original action's logical ID, reserved
 attachment and issued operation are shown for explicit retry. The process-local
 bounded registry survives closing review, but is not durable restart
 reconciliation. Unknown, denied, offline, busy and incompatible replies retain
@@ -2035,11 +2084,12 @@ signs in first when it has no account, and connects, so nothing has to be saved
 before authenticating. **Cancel** and **Back** return to the list without
 saving or connecting; neither closes the window or ends a session. Advanced
 sits above this action row. Settings lists the shared accounts with how many
-profiles use each, **Sign out** and **Add GitHub account**. Device authorization displays the short code
-as a standard monospace button with a **Copy code and open GitHub** tooltip.
-One explicit activation copies the code and opens the fixed GitHub device URL,
-without advancing sign-in or approving a host. Merely displaying the dialog
-does neither. Name **Microsoft Dev Tunnels** as the application being authorized;
+profiles use each and individual account actions. Device authorization displays
+the short code. The explicit Sign in/Add account/Sign in again action authorizes
+one copy/browser attempt when that code arrives; rendering does not repeat it.
+Report actual outcomes and retain Copy again/Open browser/Cancel. Copying or
+opening never advances authorization or approves a host.
+Name **Microsoft Dev Tunnels** as the application being authorized;
 keep ordinary labels/buttons, bounded progress and content-free errors concise.
 Use the shared viewport-bounded confirmation sizing with a preferred 520-point
 content width for every sign-in stage, rather than shrinking to the code or

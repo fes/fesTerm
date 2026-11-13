@@ -83,6 +83,8 @@ pub struct ShellData<'a> {
     pub text_size: TextSize,
     pub default_keyboard: KeyboardKind,
     pub split_keyboard: SplitMode,
+    #[cfg(feature = "live-ssh")]
+    pub tunnel_accounts: Vec<(String, String)>,
 }
 
 /// Terminal text size preset. Pinch-zoom still adjusts a session freely; this
@@ -129,6 +131,12 @@ impl TextSize {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShellAction {
+    #[cfg(feature = "live-ssh")]
+    AddTunnelAccount,
+    #[cfg(feature = "live-ssh")]
+    ReauthenticateTunnelAccount(String),
+    #[cfg(feature = "live-ssh")]
+    SignOutTunnelAccount(String),
     #[cfg(feature = "host-clients")]
     OpenHosts,
     #[cfg(feature = "host-clients")]
@@ -538,6 +546,26 @@ fn settings_screen(
     );
     if let Some(notice) = data.notice {
         footnote(ui, notice);
+    }
+    #[cfg(feature = "live-ssh")]
+    {
+        section_header(ui, "GitHub accounts", None, false);
+        card(ui, |ui| {
+            for (id, login) in &data.tunnel_accounts {
+                ui.push_id(id, |ui| {
+                    ui.label(format!("@{login}"));
+                    if button(ui, ButtonKind::Secondary, "Sign in again", true).clicked() {
+                        actions.push(ShellAction::ReauthenticateTunnelAccount(id.clone()));
+                    }
+                    if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
+                        actions.push(ShellAction::SignOutTunnelAccount(id.clone()));
+                    }
+                });
+            }
+            if button(ui, ButtonKind::Primary, "Add GitHub account", true).clicked() {
+                actions.push(ShellAction::AddTunnelAccount);
+            }
+        });
     }
     if true {
         section_header(ui, "Demo", None, false);

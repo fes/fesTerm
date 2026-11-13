@@ -2614,6 +2614,31 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    FindDevTunnelHosts {
+        tab_id: TabId,
+        request: egui::Id,
+        account: String,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ReviewDevTunnelHost {
+        tab_id: TabId,
+        request: egui::Id,
+        host: crate::screens::host_workspace::HostChoice,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ConnectHostRecipe {
+        tab_id: TabId,
+        request: egui::Id,
+        recipe: Box<festerm_config::host_recipes::PublicRecipe>,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    SelectHostForProfile {
+        tab_id: TabId,
+        request: egui::Id,
+        host: crate::screens::host_workspace::HostSessions,
+        target: Option<festerm_tunnel_bridge::host_client::Target>,
+    },
     #[cfg(feature = "local-host-settings")]
     LocalRemoteAccess(crate::app::desktop_remote_access::Action),
     /// Offline recipe metadata only; never connects or changes a host grant.
@@ -2651,6 +2676,9 @@ pub enum AppCommand {
     /// Signs in with GitHub and stores the result as a shared account. Signing
     /// in as an account that already exists re-authenticates it.
     AddDevTunnelAccount,
+    ReauthenticateDevTunnelAccount {
+        account: String,
+    },
     /// Signs an account out: its credential is deleted and profiles using it
     /// become unauthenticated.
     RemoveDevTunnelAccount {
@@ -4934,6 +4962,10 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::HostRecipeFromProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::FindDevTunnelHosts { .. }
+            | AppCommand::ReviewDevTunnelHost { .. }
+            | AppCommand::ConnectHostRecipe { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReviewHostFromProfiles { .. } => {}
             #[cfg(feature = "local-host-settings")]
             AppCommand::LocalRemoteAccess(_) => {}
@@ -4944,6 +4976,22 @@ impl AppState {
                 attachment,
             } => {
                 self.open_approved_host(tab_id, request, *attachment, context);
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::SelectHostForProfile {
+                tab_id,
+                request,
+                host,
+                target,
+            } => {
+                if crate::screens::select_host_for_profile(context, tab_id, request, host, target) {
+                    crate::screens::host_workspace::report_outcome(
+                        context,
+                        tab_id,
+                        request,
+                        "Selection returned to the profile draft. Save remains offline.",
+                    );
+                }
             }
             AppCommand::RetryTerminalFontDownload
             | AppCommand::HostRecipe(_)
@@ -4956,6 +5004,7 @@ impl AppState {
             | AppCommand::StoreDevTunnelConnectToken { .. }
             | AppCommand::BrowseDevTunnels { .. }
             | AppCommand::AddDevTunnelAccount
+            | AppCommand::ReauthenticateDevTunnelAccount { .. }
             | AppCommand::RemoveDevTunnelAccount { .. }
             | AppCommand::SaveAndConnectDevTunnel { .. }
             | AppCommand::ConnectRunningDevTunnel { .. }
@@ -6538,12 +6587,15 @@ impl AppState {
         attachment: festerm_tunnel_bridge::host_client::ApprovedAttachment,
         context: &egui::Context,
     ) {
-        if !self
-            .tabs
-            .iter()
-            .any(|tab| tab.id == tab_id && matches!(tab.content, TabContent::Profiles))
-            || !crate::screens::host_recipe_request_is_current(context, tab_id, request)
-        {
+        if !self.tabs.iter().any(|tab| {
+            tab.id == tab_id
+                && ((matches!(tab.content, TabContent::Profiles)
+                    && crate::screens::host_recipe_request_is_current(context, tab_id, request))
+                    || (matches!(tab.content, TabContent::Profiles | TabContent::Launcher)
+                        && crate::screens::host_workspace::request_is_current(
+                            context, tab_id, request,
+                        )))
+        }) {
             return;
         }
         let binding = &attachment.scope().binding;
@@ -6560,7 +6612,8 @@ impl AppState {
             return;
         };
         let account_reference = account.credential_reference().duplicate_for_transport();
-        let label = format!("Host {}", binding.host());
+        let label = crate::screens::host_workspace::connection_label(context, tab_id, request)
+            .unwrap_or_else(|| format!("Host {}", binding.host()));
         let host = binding.host().to_string();
         let port = attachment.port();
         let operation_description = attachment.description();
@@ -6595,6 +6648,7 @@ impl AppState {
             },
         );
         crate::screens::report_host_connection_started(context, tab_id, request);
+        crate::screens::host_workspace::report_outcome(context, tab_id, request, "Connecting…");
         // Install the real frontend before any snapshot can be acknowledged.
         // Recording enrollment is not started on an uninstalled temporary view.
         self.place_session_with_recording_on_surface(session, None, false);

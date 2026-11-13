@@ -138,8 +138,10 @@ consent and trust decisions are not part of this model. Existing device-local
 account/key stores retain only opaque vault references in configuration;
 public recipes do not copy even those references.
 
-The four behaviors are `choose_session`, `resume_or_create`, `always_create`
-and `attach_only`. New persistent recipes and omitted new-recipe behavior
+The behaviors are `choose_session`, `resume_or_create`, `resume_only`,
+`always_create` and `attach_only`. `resume_only` preserves the saved logical
+identity across authorized generations but never requests creation. New
+persistent recipes and omitted new-recipe behavior
 default to `resume_or_create`. Attach-only also requires `generation = "123"`
 (a canonical nonzero decimal generation), never a PID or friendly name.
 Temporary lifetime is explicit (`kind = "temporary"`,

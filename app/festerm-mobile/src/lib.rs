@@ -1938,7 +1938,7 @@ impl MobileApp {
         self.show_recording_status(ui);
         #[cfg(feature = "host-clients")]
         if self.hosts.open {
-            self.show_hosts(ui.ctx());
+            self.show_hosts_in_bounds(ui.ctx(), bounds);
             return;
         }
         if self.editor.open {
@@ -1996,7 +1996,7 @@ impl MobileApp {
 
     #[allow(clippy::too_many_arguments)]
     fn shell_data<'a>(
-        &self,
+        &mut self,
         profiles: &'a [model::Profile],
         _recents: &'a [model::Profile],
         surfaces: &'a [model::SurfaceSummary],
@@ -2020,6 +2020,8 @@ impl MobileApp {
             text_size: self.text_size,
             default_keyboard: self.default_keyboard,
             split_keyboard: self.terminal_keyboard.split,
+            #[cfg(feature = "live-ssh")]
+            tunnel_accounts: self.tunnel_accounts(),
         }
     }
 
@@ -2058,6 +2060,16 @@ impl MobileApp {
         use shell::ShellAction;
         for action in actions {
             match action {
+                #[cfg(feature = "live-ssh")]
+                ShellAction::AddTunnelAccount => {
+                    self.start_sign_in(ctx, None, tunnel_link::Resume::Nothing);
+                }
+                #[cfg(feature = "live-ssh")]
+                ShellAction::ReauthenticateTunnelAccount(id) => {
+                    self.start_sign_in(ctx, Some(id), tunnel_link::Resume::Nothing);
+                }
+                #[cfg(feature = "live-ssh")]
+                ShellAction::SignOutTunnelAccount(id) => self.sign_out_account(&id),
                 ShellAction::NewProfile => {
                     self.notice = None;
                     self.editor.open_new();
@@ -2474,6 +2486,10 @@ impl MobileApp {
     }
 
     fn edit_profile(&mut self, id: &str) {
+        #[cfg(feature = "host-clients")]
+        if self.select_host_profile(id, true) {
+            return;
+        }
         if let Some(spec) = self
             .profiles
             .as_ref()
@@ -2506,6 +2522,10 @@ impl MobileApp {
     }
 
     fn connect_profile(&mut self, ctx: &egui::Context, id: &str) {
+        #[cfg(feature = "host-clients")]
+        if self.connect_saved_host_profile(ctx, id) {
+            return;
+        }
         if let Some(spec) = self
             .profiles
             .as_ref()
@@ -2681,6 +2701,16 @@ impl MobileApp {
             forms::EditorAction::Cancel => self.close_editor(),
             forms::EditorAction::OpenAuthentication => self.editor.auth_sheet = true,
             forms::EditorAction::OpenHostSetup => self.host_setup.open(),
+            forms::EditorAction::OpenAccountSettings => {
+                self.editor.open = false;
+                self.shell.tab = shell::Tab::Settings;
+                self.surface = Surface::Tabs;
+            }
+            #[cfg(feature = "host-clients")]
+            forms::EditorAction::OpenHosts => {
+                self.editor.open = false;
+                self.open_hosts();
+            }
             forms::EditorAction::SaveOnly => {
                 if self.save_editor_profile().is_some() {
                     self.editor.close();

@@ -2350,6 +2350,7 @@ name = "festerm"
 version = "0.17.0"
 dependencies = [
  "accesskit",
+ "arboard",
  "bytemuck",
  "cap-fs-ext",
  "cap-std",
@@ -2413,6 +2414,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webbrowser",
  "winapi-util",
  "winresource",
  "zeroize",

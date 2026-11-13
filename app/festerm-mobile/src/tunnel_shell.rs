@@ -46,6 +46,14 @@ impl MobileApp {
     }
 
     pub(super) fn sign_out_account(&mut self, id: &str) {
+        if self
+            .tunnel
+            .sign_in
+            .as_ref()
+            .is_some_and(|flow| flow.expected.as_deref() == Some(id))
+        {
+            self.tunnel.sign_in = None;
+        }
         #[cfg(feature = "host-clients")]
         self.sink.live.host.invalidate();
         if let Some(client) = self.tunnel_client() {
@@ -73,8 +81,14 @@ impl MobileApp {
             self.notice = Some(NOT_CONFIGURED.to_owned());
             return;
         };
-        let known = expected.filter(|id| client.accounts().iter().any(|account| account.id == *id));
-        let start_for = known.clone();
+        if expected
+            .as_ref()
+            .is_some_and(|id| !client.accounts().iter().any(|account| account.id == *id))
+        {
+            self.notice = Some("Account changed. Sign in again.".to_owned());
+            return;
+        }
+        let start_for = expected.clone();
         let start = Job::spawn(ctx, move |cancel| {
             client.begin_sign_in(start_for.as_deref(), cancel)
         });
@@ -84,6 +98,8 @@ impl MobileApp {
             active: None,
             error: None,
             resume,
+            expected,
+            effects: tunnel_link::SignInEffects::default(),
         });
     }
 
@@ -471,6 +487,7 @@ impl MobileApp {
             match job.poll() {
                 Poll::Pending => {}
                 Poll::Done(Ok(sign_in)) => {
+                    flow.effects.initial(&sign_in.prompt().user_code, ctx);
                     flow.active = Some(sign_in);
                     flow.started = flow.start.take();
                 }
@@ -478,9 +495,13 @@ impl MobileApp {
                     flow.error = Some(describe_error(&error));
                     flow.start = None;
                 }
-                Poll::Lost => flow.start = None,
+                Poll::Lost => {
+                    flow.start = None;
+                    flow.error = Some("Sign-in unavailable. Try again.".to_owned());
+                }
             }
         }
+        flow.effects.poll();
         if let Some(sign_in) = &flow.active {
             match sign_in.state() {
                 SignInState::Waiting => ctx.request_repaint_after(Duration::from_millis(500)),
@@ -496,7 +517,6 @@ impl MobileApp {
                         }
                         Resume::Nothing => {
                             self.select_tunnel_account(account.id.clone());
-                            self.refresh_tunnel_list(ctx, account.id);
                         }
                     }
                     return;
@@ -512,6 +532,7 @@ impl MobileApp {
             let view = SignInView {
                 prompt: Some(prompt),
                 error: None,
+                effects: None,
             };
             tunnel_link::sign_in_sheet(ctx, bounds, &view);
             return;
@@ -520,20 +541,27 @@ impl MobileApp {
             let view = SignInView {
                 prompt: flow.active.as_ref().map(|sign_in| sign_in.prompt()),
                 error: flow.error.as_deref(),
+                effects: Some(&flow.effects),
             };
             match tunnel_link::sign_in_sheet(ctx, bounds, &view) {
                 SignInAction::None => {}
-                SignInAction::CopyCode => {
-                    if let Some(prompt) = view.prompt {
-                        festerm_ios_window::set_clipboard_text(&prompt.user_code);
-                    }
-                }
-                SignInAction::OpenBrowser => {
-                    if let Some(prompt) = view.prompt {
-                        festerm_ios_window::open_url(&prompt.verification_url);
-                    }
-                }
                 SignInAction::Cancel => self.tunnel.sign_in = None,
+                SignInAction::Retry => {
+                    if let Some(flow) = self.tunnel.sign_in.take() {
+                        let SignInFlow {
+                            expected, resume, ..
+                        } = flow;
+                        self.start_sign_in(ctx, expected, resume);
+                    }
+                }
+                action => {
+                    if let Some(flow) = &mut self.tunnel.sign_in {
+                        if let Some(sign_in) = &flow.active {
+                            flow.effects
+                                .handle(action, &sign_in.prompt().user_code, ctx);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -641,8 +669,8 @@ impl MobileApp {
         self.tunnel.list = None;
     }
 
-    /// Fills the editor's account and tunnel choices from the live backend.
-    pub(super) fn sync_editor_tunnel(&mut self, ctx: &egui::Context) {
+    /// Reads saved accounts and explicitly requested inventory without discovery.
+    pub(super) fn sync_editor_tunnel(&mut self, _ctx: &egui::Context) {
         if !self.editor.open || self.editor.kind(self.caps) != model::ProfileKind::DevTunnel {
             return;
         }
@@ -663,15 +691,6 @@ impl MobileApp {
         });
         if bound != self.editor.tunnel_account {
             self.editor.tunnel_account = bound.clone();
-        }
-        let listed = self.tunnel.list.as_ref().map(|list| list.account.clone());
-        if let Some(account) = bound
-            .as_ref()
-            .filter(|id| accounts.iter().any(|(known, _)| known == *id))
-        {
-            if listed.as_ref() != Some(account) {
-                self.refresh_tunnel_list(ctx, account.clone());
-            }
         }
         let login = bound.as_ref().and_then(|id| {
             accounts

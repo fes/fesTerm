@@ -5,6 +5,38 @@ use festerm_config::{
 };
 
 #[test]
+fn host_quick_create_requires_a_bounded_nonblank_name() {
+    for invalid in ["", "  ", "bad\nname", "bad\u{0}name"] {
+        assert!(!valid_session_name(invalid));
+    }
+    assert!(!valid_session_name(&"x".repeat(129)));
+    assert!(valid_session_name("  release  "));
+}
+
+#[test]
+fn host_creation_uses_remote_session_name_not_local_profile_name() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.recipe.name = "My shortcut".into();
+    browser.recipe.session_name = Some("remote-build".into());
+    browser.host_approved = true;
+    browser.creation_confirmed = true;
+    browser.inventory = Some(Inventory {
+        capabilities: Default::default(),
+        sessions: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let capabilities = &mut browser.inventory.as_mut().unwrap().capabilities;
+    capabilities.attach = true;
+    capabilities.ensure = true;
+    capabilities.creation_allowed = true;
+    assert_eq!(
+        browser.creation_request().unwrap().1.name.as_deref(),
+        Some("remote-build")
+    );
+}
+
+#[test]
 fn selected_host_desktop_fingerprint_does_not_enable_host_owner_enrollment() {
     let (_, features) = include_str!("../Cargo.toml")
         .split_once("\nexperimental-dev-tunnels = [")

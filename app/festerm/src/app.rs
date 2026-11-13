@@ -466,6 +466,8 @@ pub struct FesTermApp {
     #[cfg(feature = "experimental-dev-tunnels")]
     host_browser: Option<host_browser::Browser>,
     #[cfg(feature = "experimental-dev-tunnels")]
+    host_discovery: Option<host_browser::Discovery>,
+    #[cfg(feature = "experimental-dev-tunnels")]
     running_tunnels: running_tunnels::RunningTunnels,
     #[cfg(feature = "experimental-dev-tunnels")]
     local_hosting: profile_hosting::Controller,
@@ -974,6 +976,8 @@ impl FesTermApp {
             tunnel_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             host_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_discovery: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -7127,17 +7131,36 @@ impl FesTermApp {
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         #[cfg(feature = "local-host-settings")]
         {
+            self.local_remote_access.observe_accounts(
+                self.state
+                    .configuration()
+                    .accounts()
+                    .iter()
+                    .map(|account| desktop_remote_access::HostAccount {
+                        account_id: account.account_id(),
+                        login: account.login().to_owned(),
+                    })
+                    .collect(),
+            );
             self.local_remote_access
                 .observe_share_epoch(self.state.local_share_epoch());
             self.local_remote_access
                 .observe_share_targets(self.state.local_share_targets());
             self.local_remote_access.poll(context);
+            crate::screens::set_local_remote_access_view(
+                context,
+                crate::screens::LocalRemoteAccessView {
+                    host: self.local_remote_access.view(),
+                    targets: self.state.local_share_targets(),
+                },
+            );
         }
         #[cfg(feature = "experimental-dev-tunnels")]
         {
             self.poll_native_tunnel(context);
             self.poll_tunnel_browser(context);
             self.poll_host_browser(context);
+            self.poll_host_discovery(context);
             self.poll_local_hosts(context);
             self.drive_tunnel_reconnects(context);
         }
@@ -7536,6 +7559,8 @@ impl FesTermApp {
                         );
                     }
                     TabContent::Settings => {
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        let dev_tunnel_accounts = self.dev_tunnel_account_rows(ui.ctx());
                         screen_command = screens::show_settings(
                             ui,
                             screens::SettingsViewModel {
@@ -7555,7 +7580,7 @@ impl FesTermApp {
                                 show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
                                 dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
                                 #[cfg(feature = "experimental-dev-tunnels")]
-                                dev_tunnel_accounts: self.dev_tunnel_account_rows(),
+                                dev_tunnel_accounts,
                                 #[cfg(not(feature = "experimental-dev-tunnels"))]
                                 dev_tunnel_accounts: Vec::new(),
                                 customize_local_shell: self.state.customize_local_shell(),
@@ -7938,6 +7963,30 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::FindDevTunnelHosts {
+                    tab_id,
+                    request,
+                    account,
+                } => {
+                    self.find_host_tunnels(tab_id, request, &account, ui.ctx());
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ReviewDevTunnelHost {
+                    tab_id,
+                    request,
+                    host,
+                } => {
+                    self.review_discovered_host(tab_id, request, host, ui.ctx());
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ConnectHostRecipe {
+                    tab_id,
+                    request,
+                    recipe,
+                } => {
+                    self.review_workspace_recipe(tab_id, request, *recipe, ui.ctx());
+                }
                 AppCommand::HostRecipe(command) => self.apply_host_recipe_command(command),
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::HostRecipeFromProfiles {
@@ -8002,6 +8051,12 @@ impl FesTermApp {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.begin_tunnel_browser(None, ui.ctx());
                 }
+                AppCommand::ReauthenticateDevTunnelAccount { account } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.reauthenticate_dev_tunnel_account(&account, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = account;
+                }
                 AppCommand::RemoveDevTunnelAccount { account } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.remove_dev_tunnel_account(&account);
@@ -8064,7 +8119,11 @@ impl FesTermApp {
                 }
                 #[cfg(feature = "local-host-settings")]
                 AppCommand::LocalRemoteAccess(action) => {
-                    self.dispatch_local_remote_access(action, ui.ctx());
+                    if matches!(action, desktop_remote_access::Action::SignInAccount) {
+                        self.begin_tunnel_browser(None, ui.ctx());
+                    } else {
+                        self.dispatch_local_remote_access(action, ui.ctx());
+                    }
                 }
                 AppCommand::PowerShell { tab_id, action } => {
                     self.dispatch_powershell_action(tab_id, action, ui.ctx());
@@ -8969,6 +9028,8 @@ impl FesTermApp {
             tunnel_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             host_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_discovery: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]

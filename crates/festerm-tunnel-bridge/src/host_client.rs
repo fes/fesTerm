@@ -32,7 +32,9 @@ pub(crate) use creation::create_authenticated;
 pub use creation::{Created, CreationIntent, CreationMode};
 pub(crate) use ending::end_authenticated;
 pub use ending::EndIntent;
-pub use festerm_host_protocol::{AttachmentId, Budgets, Creation, LogicalSessionId, Target};
+pub use festerm_host_protocol::{
+    AttachmentId, Budgets, Creation, EnsureDisposition, LogicalSessionId, Target,
+};
 pub use session::HostSession;
 #[cfg(feature = "testing")]
 pub mod testing {

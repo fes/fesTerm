@@ -261,18 +261,23 @@ fn short_fingerprint(fingerprint: &str) -> String {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EditorAction {
+    OpenAccountSettings,
+    #[cfg(feature = "host-clients")]
+    OpenHosts,
     None,
     Cancel,
     SaveOnly,
     SaveAndConnect,
     OpenAuthentication,
     Delete,
+    #[allow(dead_code)]
     SignIn,
     SelectTunnelAccount(usize),
     RefreshTunnels,
     PickTunnel(usize),
     DeleteTunnel(usize),
     RenameTunnel(usize),
+    #[allow(dead_code)]
     SignOut,
     OpenHostSetup,
 }
@@ -358,6 +363,8 @@ pub fn show_editor(
     let mut action = EditorAction::None;
     let kinds = EditorState::kinds(caps);
     let kind = state.kind(caps);
+    let host_picker =
+        cfg!(feature = "host-clients") && kind == ProfileKind::DevTunnel && state.editing.is_none();
     egui::Panel::top("editor-top")
         .frame(
             egui::Frame::new()
@@ -406,43 +413,45 @@ pub fn show_editor(
         ProfileKind::Sftp => "Save & Open",
         ProfileKind::Ssh => "Save & Connect",
     };
-    egui::Panel::bottom("editor-bottom")
-        .frame(
-            egui::Frame::new()
-                .fill(color::BAR)
-                .stroke(Stroke::new(1.0, color::DIVIDER))
-                .inner_margin(egui::Margin::symmetric(16, 12)),
-        )
-        .show_separator_line(false)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let width = ui.available_width();
-                let gap = ui.spacing().item_spacing.x;
-                let secondary = (width - gap) * 0.38;
-                if button_sized(
-                    ui,
-                    ButtonKind::Secondary,
-                    "Save only",
-                    true,
-                    egui::vec2(secondary, space::BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    action = EditorAction::SaveOnly;
-                }
-                if button_sized(
-                    ui,
-                    ButtonKind::Primary,
-                    connect_label,
-                    can_connect,
-                    egui::vec2(width - secondary - gap, space::BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    action = EditorAction::SaveAndConnect;
-                }
+    if !host_picker {
+        egui::Panel::bottom("editor-bottom")
+            .frame(
+                egui::Frame::new()
+                    .fill(color::BAR)
+                    .stroke(Stroke::new(1.0, color::DIVIDER))
+                    .inner_margin(egui::Margin::symmetric(16, 12)),
+            )
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let width = ui.available_width();
+                    let gap = ui.spacing().item_spacing.x;
+                    let secondary = (width - gap) * 0.38;
+                    if button_sized(
+                        ui,
+                        ButtonKind::Secondary,
+                        "Save only",
+                        true,
+                        egui::vec2(secondary, space::BUTTON_HEIGHT),
+                    )
+                    .clicked()
+                    {
+                        action = EditorAction::SaveOnly;
+                    }
+                    if button_sized(
+                        ui,
+                        ButtonKind::Primary,
+                        connect_label,
+                        can_connect,
+                        egui::vec2(width - secondary - gap, space::BUTTON_HEIGHT),
+                    )
+                    .clicked()
+                    {
+                        action = EditorAction::SaveAndConnect;
+                    }
+                });
             });
-        });
+    }
     egui::ScrollArea::vertical()
         .id_salt("editor-body")
         .auto_shrink([false, false])
@@ -462,7 +471,9 @@ pub fn show_editor(
                             .collect();
                         segmented(ui, &items, &mut state.kind_index, true);
                     }
-                    text_field(ui, "Profile name", &mut state.name, "prod-web", inner_width);
+                    if !host_picker {
+                        text_field(ui, "Profile name", &mut state.name, "prod-web", inner_width);
+                    }
                     match kind {
                         ProfileKind::DevTunnel => dev_tunnel_fields(ui, state, &mut action),
                         _ => {
@@ -766,6 +777,17 @@ fn key_section(
 }
 
 fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAction) {
+    #[cfg(feature = "host-clients")]
+    if state.editing.is_none() {
+        footnote(
+            ui,
+            "Choose a saved host or explicitly find hosts for your account.",
+        );
+        if button(ui, ButtonKind::Primary, "Choose host & session", true).clicked() {
+            *action = EditorAction::OpenHosts;
+        }
+        return;
+    }
     let choices = state.tunnel.clone().unwrap_or_default();
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -778,35 +800,15 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                 *action = EditorAction::SelectTunnelAccount(index);
             }
         }
-        match &choices.account_login {
-            Some(login) => {
-                info_row(
-                    ui,
-                    login,
-                    "Signed in with GitHub",
-                    false,
-                    Some(Icon::Account),
-                );
-                if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
-                    *action = EditorAction::SignOut;
-                }
-                if button(ui, ButtonKind::Secondary, "Add GitHub account", true).clicked() {
-                    *action = EditorAction::SignIn;
-                }
-                footnote(
-                    ui,
-                    "Choose the account for this profile. Other profiles keep their accounts.",
-                );
-            }
-            None => {
-                if button(ui, ButtonKind::Primary, "Sign in with GitHub", true).clicked() {
-                    *action = EditorAction::SignIn;
-                }
-                footnote(
-                    ui,
-                    "Sign in to list your Dev Tunnels, or type a tunnel name below.",
-                );
-            }
+        if button(
+            ui,
+            ButtonKind::Secondary,
+            "Manage accounts in Settings",
+            true,
+        )
+        .clicked()
+        {
+            *action = EditorAction::OpenAccountSettings;
         }
     });
     text_field(
@@ -894,7 +896,17 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                 }
             }
         }
-        if !choices.loading && button(ui, ButtonKind::Secondary, "Refresh tunnels", true).clicked()
+        if !choices.loading
+            && button(
+                ui,
+                ButtonKind::Secondary,
+                &format!(
+                    "Find hosts · @{}",
+                    choices.account_login.as_deref().unwrap_or("account")
+                ),
+                true,
+            )
+            .clicked()
         {
             *action = EditorAction::RefreshTunnels;
         }

@@ -9,11 +9,12 @@ description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
 default = ["experimental-dev-tunnels", "local-host-settings"]
-experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser"]
 # Local Settings alone composes host authority; portable recipes/fingerprints do not.
 local-host-settings = ["experimental-dev-tunnels", "festerm-host-setup/acquisition", "festerm-host-setup/cloud", "festerm-host-setup/native-services", "festerm-host-setup/host-runtime"]
 
 [dependencies]
+arboard = { version = "3.6.1", default-features = false, optional = true }
 cap-fs-ext = "4.0.3"
 cap-std = "4.0.3"
 directories = "6"
@@ -67,6 +68,7 @@ bytemuck = "1"
 zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
+webbrowser = { version = "1.2.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 festerm-recording-apple = { path = "../../crates/festerm-recording-apple" }

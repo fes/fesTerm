@@ -107,12 +107,68 @@ impl HostReference {
     }
 }
 
+/// Saved public display/routing hints, never host identity, trust or availability.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "UncheckedHostHint")]
+pub struct HostHint {
+    pub locator: String,
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncheckedHostHint {
+    locator: String,
+    name: String,
+}
+
+impl TryFrom<UncheckedHostHint> for HostHint {
+    type Error = RecipeError;
+
+    fn try_from(raw: UncheckedHostHint) -> Result<Self, Self::Error> {
+        let hint = Self {
+            locator: raw.locator,
+            name: raw.name,
+        };
+        hint.validate()?;
+        Ok(hint)
+    }
+}
+
+impl HostHint {
+    pub fn validate(&self) -> Result<(), RecipeError> {
+        // Match the tunnel service's name or id.cluster grammar without adding
+        // a service/network dependency to this offline metadata crate.
+        fn identifier(value: &str) -> bool {
+            !value.is_empty()
+                && value.len() <= 100
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                && !value.starts_with('-')
+                && !value.ends_with('-')
+        }
+        let valid_locator = if let Some((id, cluster)) = self.locator.split_once('.') {
+            identifier(id) && identifier(cluster)
+        } else {
+            identifier(&self.locator)
+        };
+        if !valid_locator || !public_name(&self.name) {
+            return Err(RecipeError::Invalid);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConnectionBehavior {
     ChooseSession,
     #[default]
     ResumeOrCreate,
+    /// Attach the saved logical identity at its current authorized generation;
+    /// never ensure/create a session or infer absence from an unavailable host.
+    ResumeOnly {},
     AlwaysCreate,
     AttachOnly {
         generation: GenerationId,
@@ -126,6 +182,11 @@ pub enum ConnectionBehavior {
 pub struct PublicRecipe {
     pub id: RecipeId,
     pub name: String,
+    /// Remote label, separate from the local profile name. Old recipes use `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_hint: Option<HostHint>,
     pub host: HostReference,
     pub logical_session: LogicalSessionId,
     pub launch: Recipe,
@@ -145,6 +206,10 @@ impl fmt::Debug for PublicRecipe {
 struct UncheckedRecipe {
     id: RecipeId,
     name: String,
+    #[serde(default)]
+    session_name: Option<String>,
+    #[serde(default)]
+    host_hint: Option<HostHint>,
     host: HostReference,
     logical_session: LogicalSessionId,
     launch: Recipe,
@@ -160,6 +225,8 @@ impl TryFrom<UncheckedRecipe> for PublicRecipe {
         let recipe = Self {
             id: raw.id,
             name: raw.name,
+            session_name: raw.session_name,
+            host_hint: raw.host_hint,
             host: raw.host,
             logical_session: raw.logical_session,
             launch: raw.launch,
@@ -182,6 +249,8 @@ impl PublicRecipe {
         let recipe = Self {
             id: RecipeId::new(),
             name: name.into(),
+            session_name: None,
+            host_hint: None,
             host,
             logical_session: LogicalSessionId::new(),
             launch,
@@ -192,6 +261,11 @@ impl PublicRecipe {
         Ok(recipe)
     }
 
+    /// Legacy fallback deliberately retains the old 200-character profile bound.
+    pub fn session_name(&self) -> &str {
+        self.session_name.as_deref().unwrap_or(&self.name)
+    }
+
     pub fn validate(&self) -> Result<(), RecipeError> {
         if self.name.is_empty()
             || self.name.chars().count() > 200
@@ -199,6 +273,16 @@ impl PublicRecipe {
             || self.name.chars().any(char::is_control)
         {
             return Err(RecipeError::Invalid);
+        }
+        if self
+            .session_name
+            .as_deref()
+            .is_some_and(|name| !public_name(name))
+        {
+            return Err(RecipeError::Invalid);
+        }
+        if let Some(hint) = &self.host_hint {
+            hint.validate()?;
         }
         self.host.validate()?;
         self.launch.validate().map_err(|_| RecipeError::Invalid)?;
@@ -243,6 +327,14 @@ impl PublicRecipe {
         document.recipe.validate()?;
         Ok(document.recipe)
     }
+}
+
+fn public_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+        && !secret_bearing(value)
 }
 
 fn secret_bearing(value: &str) -> bool {
