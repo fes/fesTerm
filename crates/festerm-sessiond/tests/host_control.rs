@@ -228,12 +228,22 @@ fn retry_busy<T>(
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::fs::canonicalize(std::env::temp_dir())
-            .unwrap()
-            .join(format!(
-                "festerm-hc-{}",
-                &uuid::Uuid::new_v4().simple().to_string()[..8]
-            ));
+        // Shared temp directories are world-writable and rejected by the
+        // private-storage policy, so use CI's private root or the checkout.
+        let fixture_parent = std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            });
+        let root = std::fs::canonicalize(fixture_parent).unwrap().join(format!(
+            "hc-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ));
         storage::private_directory(&root, true).unwrap();
         if std::env::var_os("FESTERM_HOST_TEST_DIAGNOSTICS").is_some() {
             use std::os::unix::fs::PermissionsExt;
