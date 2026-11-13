@@ -49,6 +49,15 @@ rejection and explicit Job Object breakaway remain native `CP-11` evidence.
 The test is ignored by default and runs once in every native-smoke job and in
 the aggregate optional-validation scripts used by the VM evidence adapter.
 
+### Daemon-owned temporary HOST lease deadlines
+
+The real 60-second temporary-session heartbeat and reconnect-grace integration
+test (`native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned`)
+runs in the scheduled/on-demand Linux and macOS native-smoke jobs. It is
+excluded from the PR-blocking native HOST slice because its real deadlines take
+about two minutes; the test remains unchanged and still exercises the production
+daemon/helper path.
+
 ### Serial loopback smoke (Linux only)
 
 `crates/festerm-serial/tests/socat_loopback.rs` cross-connects two

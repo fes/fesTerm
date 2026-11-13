@@ -1,6 +1,28 @@
 name: Native package smoke
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/package-smoke.yml'
+      - '.github/workflows/release.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'app/festerm/**'
+      - 'crates/festerm-automation-js/**'
+      - 'crates/festerm-tunnel-bridge/**'
+      - 'crates/festerm-sessiond/**'
+      - 'crates/festerm-windows-direct2d/**'
+      - 'assets/app-icon/**'
+      - 'packaging/**'
+      - 'scripts/check_packaging.py'
+      - 'scripts/run-cargo-packager.py'
+      - 'scripts/smoke_linux_automation_worker.py'
+      - 'scripts/tests/test_check_packaging.py'
+      - 'scripts/tests/test_cargo_packager_retry.py'
+      - 'scripts/stage-conpty.ps1'
+      - 'scripts/stage-windows-sessiond.ps1'
+      - 'third_party/conpty/**'
   workflow_dispatch:
   pull_request:
     paths:
@@ -23,6 +45,10 @@ on:
       - 'scripts/stage-conpty.ps1'
       - 'scripts/stage-windows-sessiond.ps1'
       - 'third_party/conpty/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -77,6 +103,7 @@ jobs:
           # builds `--release` artifacts, which produce different
           # fingerprints/objects than the dev/test builds cached there.
           key: package-smoke
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Validate packaging metadata
         run: |
           python scripts/generate_windows_icon.py --check

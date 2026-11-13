@@ -175,6 +175,14 @@ jobs:
           cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
           cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 
+      - name: Verify daemon-owned HOST heartbeat and temporary reconnect grace
+        shell: bash
+        run: |
+          FESTERM_HOST_TEST_HELPER="$GITHUB_WORKSPACE/target/debug/festerm-sessiond" \
+            cargo test --locked -p festerm-tunnel-bridge --features host-routing \
+              native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned \
+              --lib -- --ignored --test-threads=1
+
       - name: Run Linux native-window smoke
         timeout-minutes: 2
         env:
@@ -238,6 +246,14 @@ jobs:
           cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
           cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
           cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+
+      - name: Verify daemon-owned HOST heartbeat and temporary reconnect grace
+        shell: bash
+        run: |
+          FESTERM_HOST_TEST_HELPER="$GITHUB_WORKSPACE/target/debug/festerm-sessiond" \
+            cargo test --locked -p festerm-tunnel-bridge --features host-routing \
+              native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned \
+              --lib -- --ignored --test-threads=1
 
       - name: Run macOS Keychain lifecycle (advisory)
         env:

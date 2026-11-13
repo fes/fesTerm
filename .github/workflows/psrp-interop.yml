@@ -17,7 +17,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
   push:
-    branches: [feat/powershell]
+    branches: [main, feat/powershell]
     paths:
       - '.github/workflows/psrp-interop.yml'
       - 'scripts/run-psrp-interop.ps1'
@@ -26,6 +26,10 @@ on:
       - 'vendor/winrm-rs/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -46,6 +50,7 @@ jobs:
         with:
           key: windows-remote-bridge
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build native terminal child
         run: cargo build --locked -p festerm-pty-test-child
       - name: Test native named-pipe bridge and takeover
@@ -68,6 +73,7 @@ jobs:
         with:
           key: psrp-interop
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check PSRP provisioning harness guards
         shell: powershell
