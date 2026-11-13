@@ -1896,13 +1896,18 @@ Disabling fences remote access without terminating durable local shells.
 Operator diagnostics, protected owner approval and recovery remain available
 through contextual disclosures rather than a permanent console.
 
-Only eligible durable local profiles offer **Allow remote access to this
-session**. When the host is off, show an actionable Settings link; do not launch
-a setup wizard or select an account per profile. Authentication failures retain
-preferences and unrelated edits. The checkbox expresses intent, not authority:
-exact-generation protected Bind and separately confirmed Switch remain required.
-Existing legacy per-profile installations retain explicit compatibility controls;
-this redesign does not migrate or restart them.
+Only eligible durable local profiles offer **Make this profile available on
+the computer's remote host**. When the host is off, show an actionable Settings
+link; do not launch a setup wizard or select an account per profile. Saving
+registers the exact saved recipe in the protected host catalog without starting
+a shell or creating a tunnel. Settings owns the computer-level service and its
+single GitHub account/tunnel. Enabled profiles remain discoverable while their
+shells are stopped; explicit remote Connect may create only the host-stored
+recipe. Profile disable hides/fences that recipe but retains its persistent
+shell. Host disable withdraws the endpoint while retaining profile registrations
+for re-enable. Existing per-profile installations remain separately labelled
+legacy state and require explicit disable/save before a profile can use the
+shared host; they are never adopted or silently migrated.
 
 New Session offers **Find hosts · @username** for each account. Discovery is
 explicit; selecting a host explicitly obtains authorized sessions. Saved hints
@@ -2009,43 +2014,25 @@ close and report a retryable recovery disconnect without displacing the active
 client. This is not a limit on open terminals; command input/resize
 backpressure remains separate.
 
-Installed desktop builds add a default-off **Expose via Dev Tunnel** checkbox
-only for Local profiles using the native daemon. This explicit opt-in is the
-exception to metadata-only profile Save: saving can start the exact configured
-command and publish it without opening a local tab. The explanation identifies
-remote takeover, independent service lifetime and the absence of file/observation
-grants. Starting, sign-in, readiness and cleanup are distinct states; only
-verified ready hosts offer connection details. Checking the box immediately opens
-**GitHub account for hosting**: select the verified current account or explicitly
-connect one in the browser before Save. Hosting uses the official CLI's shared
-host sign-in, not the remote-client account vault. Connecting a different account
-is unavailable while protected desktop or default script bindings still need
-the current one, or their inventory cannot be verified. Older script hosts in
-custom state directories cannot be discovered and may be interrupted by a
-different shared sign-in; the chooser warns about them. Selection expires after five minutes
-and belongs only to that editor. Cancel unchecks exposure and creates no shell,
-grant or tunnel; completed browser authentication can remain in official CLI
-storage. Browser sign-in is foreground and cancellable, never a startup prompt.
+Installed desktop builds add **Make this profile available on the computer's
+remote host** only for Local profiles using the native daemon. Saving this
+explicit opt-in is still metadata-only for process/service purposes: it stores
+the exact recipe and protected profile consent but starts neither shell nor
+tunnel. The explanation identifies the computer-level host control and keeps
+generic shell creation as a separate permission. Catalog status is separate
+from host readiness and shell liveness; the remote host advertises enabled
+profiles even when stopped, and explicit Connect is the only profile-scoped
+resume-or-create action.
 
-Existing inherited product/native-runtime permissions are not repaired. New
-hosts use a dedicated protected runtime. If the selected legacy session is
-running, Save retains it and reports that hosting is pending until the user
-manually ends it and opens the profile again. Ending it stops its programs and
-disconnects its clients; hosting does not stop any session automatically.
-Startup and Retry cannot consume the persisted gate, even after an interrupted
-authorized launch.
-Local open and restoration follow the profile's recorded runtime, and disabling
-hosting retains the shell. Missing/foreign host-local consent permits ordinary
-local opening without adopting cloud authority; unknown inventories refuse
-instead of silently starting a duplicate. See ADR 0085.
-
-Disable/Save, provider removal and profile deletion revoke exposure before the
-config write, retain the shell and track pending cloud cleanup even when the
-profile no longer exists. Profiles lists that protected local cleanup with
-sign-in/Retry actions. Renaming retains ownership and the durable session name;
-duplication clears the hosting grant. Retry cannot authorize another shell or
-cloud object; separate confirmed actions explain each. See ADR 0072 and
-`TUNNEL-15`/`TUNNEL-16`/`TUNNEL-17` for the lifecycle and failure contract.
+Existing per-profile Dev Tunnel grants are shown as legacy and are not adopted
+from portable configuration. Their checkbox must be disabled and saved before
+enabling the shared catalog; re-enabling then grants the new computer-level
+profile entry. Legacy sign-in, status, retry and cleanup remain within a
+separate disclosure and cannot switch the shared account. Profile disable and
+deletion fence remote use before configuration changes, retain the persistent
+shell and keep cleanup state visible. Disabling computer-level access removes
+the endpoint without deleting registrations. See ADR 0084 for the authorization
+and failure contract.
 
 Local executable and initial-directory fields share
 bounded filesystem-backed completion. That completion is asynchronous: it

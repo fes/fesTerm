@@ -9,8 +9,9 @@ use crate::{
 };
 use festerm_host_protocol::{
     AttachmentId, Creation, DetachKind, Epoch, GenerationId, IssuedOperation, LeaseId, Lifetime,
-    LogicalSessionId, LogicalState, OperationId, PrincipalId, Recipe, SessionGrant, SessionSummary,
-    Target, TemporaryLease, Validate, MAX_IDEMPOTENCY_RECORDS, MAX_PENDING_CREATES, MAX_SESSIONS,
+    LogicalSessionId, LogicalState, OperationId, PrincipalId, ProfileSummary, Recipe, SessionGrant,
+    SessionSummary, Target, TemporaryLease, Validate, MAX_IDEMPOTENCY_RECORDS, MAX_PENDING_CREATES,
+    MAX_SESSIONS,
 };
 use festerm_pty::LocalProfile;
 use festerm_session::{SessionEventNotifier, TerminalSize};
@@ -456,6 +457,18 @@ pub struct EnsureResult {
     pub cancelled: bool,
 }
 
+pub struct ProfileEnsureRequest {
+    pub logical: LogicalSessionId,
+    pub revision: Epoch,
+    pub attachment: AttachmentId,
+}
+
+#[derive(Clone, Copy)]
+struct EnsureOptions {
+    create_only: bool,
+    profile_revision: Option<Epoch>,
+}
+
 /// Admission has started, but recovery adoption and lease transfer have NOT
 /// committed. Do not send an Attached success until `attachment_outcome` passes.
 pub struct PendingAttachment {
@@ -584,6 +597,19 @@ struct Record {
     artifacts_retired: bool,
     #[serde(default)]
     binding: Option<ImportedBinding>,
+    #[serde(default)]
+    profile_revision: Option<Epoch>,
+    #[serde(default = "profile_access_enabled")]
+    profile_enabled: bool,
+}
+
+fn profile_access_enabled() -> bool {
+    true
+}
+
+fn valid_profile_consent(value: &str) -> bool {
+    uuid::Uuid::parse_str(value)
+        .is_ok_and(|id| id.get_version_num() == 4 && id.hyphenated().to_string() == value)
 }
 
 impl Record {
@@ -597,7 +623,7 @@ impl Record {
             logical: self.logical.clone(),
             owner: self.owner.clone(),
             revision: self.epoch,
-            remote_access: !self.revoked,
+            remote_access: !self.revoked && self.profile_enabled,
             state: self.state(),
         }
     }
@@ -641,6 +667,16 @@ impl Record {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileRecord {
+    consent: String,
+    revision: Epoch,
+    name: String,
+    recipe: Recipe,
+    enabled: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Operation {
@@ -657,8 +693,9 @@ impl Operation {
         owner: &PrincipalId,
         creation: &Creation,
         create_only: bool,
+        profile_revision: Option<Epoch>,
     ) -> Result<String, ControlError> {
-        let bytes = serde_json::to_vec(&(owner, creation, create_only))
+        let bytes = serde_json::to_vec(&(owner, creation, create_only, profile_revision))
             .map_err(|_| ControlError::Storage)?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
@@ -670,6 +707,8 @@ struct State {
     version: u8,
     issuance_epoch: Epoch,
     sessions: BTreeMap<LogicalSessionId, Record>,
+    #[serde(default)]
+    profiles: BTreeMap<LogicalSessionId, ProfileRecord>,
     operations: BTreeMap<OperationId, Operation>,
     last_generation: u128,
     #[serde(default)]
@@ -682,6 +721,7 @@ impl Default for State {
             version: 2,
             issuance_epoch: Epoch::new(1).expect("nonzero epoch"),
             sessions: BTreeMap::new(),
+            profiles: BTreeMap::new(),
             operations: BTreeMap::new(),
             last_generation: 0,
             namespace: Some(OperationId::new()),
@@ -770,6 +810,8 @@ mod end_confirmation_tests {
             }),
             artifacts_retired: false,
             binding: None,
+            profile_revision: None,
+            profile_enabled: true,
         };
         let lease = DaemonLease {
             version: 1,
@@ -1014,6 +1056,7 @@ impl SessionControl {
         }
         if state.version != 2
             || state.sessions.len() > MAX_SESSIONS
+            || state.profiles.len() > MAX_SESSIONS
             || state.operations.len() > MAX_IDEMPOTENCY_RECORDS
             || state.last_generation > u64::MAX as u128
         {
@@ -1048,6 +1091,12 @@ impl SessionControl {
                 || matches!(record.phase, Phase::Running) && record.identity.is_none()
                 || record.artifacts_retired && !matches!(record.phase, Phase::Absent)
                 || record.generation.get() > state.last_generation
+                || match record.profile_revision {
+                    Some(revision) => state.profiles.get(logical).is_none_or(|profile| {
+                        profile.revision != revision || profile.enabled != record.profile_enabled
+                    }),
+                    None => state.profiles.contains_key(logical) || !record.profile_enabled,
+                }
             {
                 return Err(ControlError::Storage);
             }
@@ -1068,6 +1117,20 @@ impl SessionControl {
             {
                 return Err(ControlError::Storage);
             }
+        }
+        if state.profiles.iter().any(|(logical, profile)| {
+            !valid_profile_consent(&profile.consent)
+                || profile.name.is_empty()
+                || profile.name.len() > 128
+                || profile.name.chars().any(char::is_control)
+                || profile.recipe.validate().is_err()
+                || state.sessions.get(logical).is_some_and(|record| {
+                    record.profile_revision.is_none()
+                        || record.profile_revision != Some(profile.revision)
+                        || record.profile_enabled != profile.enabled
+                })
+        }) {
+            return Err(ControlError::Storage);
         }
         if state.operations.values().any(|operation| {
             operation.intent.len() != 64
@@ -1131,7 +1194,7 @@ impl SessionControl {
             issuance_epoch: None,
         };
         let guard = admit(&state)?;
-        if record.is_some_and(|record| record.revoked) {
+        if record.is_some_and(|record| record.revoked || !record.profile_enabled) {
             return Err(ControlError::Revoked);
         }
         Ok(guard)
@@ -1222,6 +1285,9 @@ impl SessionControl {
         if lease.remote_revoked {
             record.revoked = true;
         }
+        if !record.profile_enabled {
+            lease.pending = None;
+        }
         if !same_grant(&lease.grant, &record.grant()) {
             if lease.grant.revision.get() >= record.epoch.get() {
                 record.epoch = lease
@@ -1231,6 +1297,8 @@ impl SessionControl {
                     .map_err(|_| ControlError::Storage)?;
             }
             lease.grant = record.grant();
+            guard.replace(&mut lease).map_err(storage_error)?;
+        } else if !record.profile_enabled {
             guard.replace(&mut lease).map_err(storage_error)?;
         }
         Ok(())
@@ -1358,11 +1426,10 @@ impl SessionControl {
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         Self::admission(None, owner, Effect::Lookup, &mut admit)?;
         let mut uncertain = std::collections::BTreeSet::new();
-        for record in tx
-            .state
-            .sessions
-            .values_mut()
-            .filter(|record| &record.owner == owner && !record.revoked)
+        for record in
+            tx.state.sessions.values_mut().filter(|record| {
+                &record.owner == owner && !record.revoked && record.profile_enabled
+            })
         {
             if self.reconcile(record).is_err()
                 || !matches!(record.phase, Phase::Running | Phase::Absent)
@@ -1376,7 +1443,10 @@ impl SessionControl {
             unknown: Vec::new(),
         };
         for record in tx.state.sessions.values().filter(|record| {
-            &record.owner == owner && !record.revoked && !matches!(record.phase, Phase::Absent)
+            &record.owner == owner
+                && !record.revoked
+                && record.profile_enabled
+                && !matches!(record.phase, Phase::Absent)
         }) {
             let (_source, source_uncertain) = match record
                 .binding
@@ -1447,6 +1517,116 @@ impl SessionControl {
         Ok(tx.state.issuance_epoch)
     }
 
+    /// Save a host-local recipe grant. Portable profile metadata never
+    /// reconstructs this protected registration.
+    pub fn set_profile(
+        &self,
+        logical: LogicalSessionId,
+        consent: &str,
+        name: &str,
+        recipe: Recipe,
+        enabled: bool,
+    ) -> Result<Epoch, ControlError> {
+        if !valid_profile_consent(consent)
+            || name.is_empty()
+            || name.len() > 128
+            || name.chars().any(char::is_control)
+            || recipe.validate().is_err()
+        {
+            return Err(ControlError::Invalid);
+        }
+        let mut tx = self.transaction()?;
+        if let Some(record) = tx.state.profiles.get(&logical) {
+            if record.consent != consent {
+                return Err(ControlError::Denied);
+            }
+        } else {
+            if tx.state.sessions.contains_key(&logical) {
+                return Err(ControlError::Denied);
+            }
+            if tx.state.profiles.len() >= MAX_SESSIONS {
+                return Err(ControlError::Busy);
+            }
+        }
+
+        let previous = tx.state.profiles.get(&logical);
+        if previous.is_some_and(|profile| {
+            profile.name == name && profile.recipe == recipe && profile.enabled == enabled
+        }) {
+            return Ok(previous.expect("profile checked above").revision);
+        }
+        let revision = previous
+            .map(|profile| profile.revision.next())
+            .transpose()
+            .map_err(|_| ControlError::Storage)?
+            .unwrap_or(Epoch::new(1).map_err(|_| ControlError::Storage)?);
+        tx.state.profiles.insert(
+            logical.clone(),
+            ProfileRecord {
+                consent: consent.to_owned(),
+                revision,
+                name: name.to_owned(),
+                recipe,
+                enabled,
+            },
+        );
+        if let Some(record) = tx.state.sessions.get_mut(&logical) {
+            if record.profile_revision.is_none() {
+                return Err(ControlError::Storage);
+            }
+            let access_changed = record.profile_enabled != enabled;
+            record.profile_revision = Some(revision);
+            record.profile_enabled = enabled;
+            if access_changed && !record.artifacts_retired {
+                self.sync_grant(record)?;
+            }
+        }
+        tx.save()?;
+        Ok(revision)
+    }
+
+    pub fn profile_status(
+        &self,
+        logical: &LogicalSessionId,
+        consent: &str,
+    ) -> Result<Option<(Epoch, bool)>, ControlError> {
+        if !valid_profile_consent(consent) {
+            return Err(ControlError::Invalid);
+        }
+        let tx = self.transaction()?;
+        match tx.state.profiles.get(logical) {
+            Some(profile) if profile.consent == consent => {
+                Ok(Some((profile.revision, profile.enabled)))
+            }
+            Some(_) => Err(ControlError::Denied),
+            None => Ok(None),
+        }
+    }
+
+    /// Current enabled catalog; entries do not imply that a shell is running.
+    pub fn profiles<G>(
+        &self,
+        owner: &PrincipalId,
+        mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<Vec<ProfileSummary>, ControlError> {
+        let tx = self.transaction()?;
+        let mut scoped = scoped_issuance(tx.state.issuance_epoch, &mut admit);
+        let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
+        let profiles = tx
+            .state
+            .profiles
+            .iter()
+            .filter(|(_, profile)| profile.enabled)
+            .map(|(logical, profile)| ProfileSummary {
+                logical: logical.clone(),
+                revision: profile.revision,
+                name: profile.name.clone(),
+            })
+            .collect();
+        let _publication = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
+        Ok(profiles)
+    }
+
     /// Explicit Connect/repair only, not a background reconnect primitive.
     /// `create_only` refuses an already existing logical identity, even if dead.
     pub fn ensure<G>(
@@ -1458,6 +1638,67 @@ impl SessionControl {
         cancelled: &AtomicBool,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<EnsureResult, ControlError> {
+        self.ensure_inner(
+            owner,
+            issued,
+            creation,
+            EnsureOptions {
+                create_only,
+                profile_revision: None,
+            },
+            cancelled,
+            admit,
+        )
+    }
+
+    /// Resolve and revalidate a protected profile recipe under the same
+    /// journal boundary that reserves or resumes its persistent session.
+    pub fn ensure_profile<G>(
+        &self,
+        owner: &PrincipalId,
+        issued: &IssuedOperation,
+        request: ProfileEnsureRequest,
+        cancelled: &AtomicBool,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<EnsureResult, ControlError> {
+        let creation = {
+            let tx = self.transaction()?;
+            let profile = tx
+                .state
+                .profiles
+                .get(&request.logical)
+                .filter(|profile| profile.enabled && profile.revision == request.revision)
+                .ok_or(ControlError::Stale)?;
+            Creation {
+                logical: request.logical,
+                attachment: request.attachment,
+                name: Some(profile.name.clone()),
+                recipe: profile.recipe.clone(),
+                lifetime: Lifetime::Persistent {},
+            }
+        };
+        self.ensure_inner(
+            owner,
+            issued,
+            &creation,
+            EnsureOptions {
+                create_only: false,
+                profile_revision: Some(request.revision),
+            },
+            cancelled,
+            admit,
+        )
+    }
+
+    fn ensure_inner<G>(
+        &self,
+        owner: &PrincipalId,
+        issued: &IssuedOperation,
+        creation: &Creation,
+        options: EnsureOptions,
+        cancelled: &AtomicBool,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<EnsureResult, ControlError> {
         if self.helper.as_os_str().is_empty() {
             return Err(ControlError::Denied);
         }
@@ -1465,6 +1706,25 @@ impl SessionControl {
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let logical = &creation.logical;
+        match (options.profile_revision, tx.state.profiles.get(logical)) {
+            (Some(expected), Some(profile))
+                if profile.enabled
+                    && profile.revision == expected
+                    && profile.name.as_str() == creation.name.as_deref().unwrap_or_default()
+                    && profile.recipe == creation.recipe
+                    && creation.lifetime == (Lifetime::Persistent {}) => {}
+            (Some(_), _) => return Err(ControlError::Stale),
+            (None, Some(_)) => return Err(ControlError::Denied),
+            (None, None) => {}
+        }
+        if let Some(record) = tx.state.sessions.get(logical) {
+            if record.profile_revision != options.profile_revision
+                || !record.profile_enabled
+                || (options.profile_revision.is_none() && record.profile_revision.is_some())
+            {
+                return Err(ControlError::Denied);
+            }
+        }
         if tx
             .state
             .sessions
@@ -1483,7 +1743,12 @@ impl SessionControl {
             return Err(ControlError::Stale);
         }
         let operation = &issued.id;
-        let intent = Operation::intent(owner, creation, create_only)?;
+        let intent = Operation::intent(
+            owner,
+            creation,
+            options.create_only,
+            options.profile_revision,
+        )?;
         if let Some(record) = tx.state.sessions.get_mut(logical) {
             if &record.owner != owner {
                 return Err(ControlError::Denied);
@@ -1529,7 +1794,7 @@ impl SessionControl {
             return Err(ControlError::Stale);
         }
         if let Some(record) = tx.state.sessions.get_mut(logical) {
-            if create_only {
+            if options.create_only {
                 return Err(ControlError::AlreadyExists);
             }
             self.reconcile(record)?;
@@ -1680,6 +1945,8 @@ impl SessionControl {
             phase: Phase::Launching,
             identity: None,
             artifacts_retired: false,
+            profile_revision: options.profile_revision,
+            profile_enabled: true,
         };
         tx.state.sessions.insert(logical.clone(), record);
         tx.state.last_generation = generation.get();

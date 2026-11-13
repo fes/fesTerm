@@ -331,6 +331,17 @@ impl View {
         ))
     }
 
+    pub fn access_status(&self) -> Option<bool> {
+        match &self.scope {
+            Scope::Unobserved => None,
+            Scope::Absent => Some(false),
+            Scope::Present(snapshot) => Some(matches!(
+                snapshot.phase,
+                Phase::EnableRequested | Phase::Provisioned | Phase::Reconciling
+            )),
+        }
+    }
+
     fn bound_account(&self) -> Option<&str> {
         match &self.scope {
             Scope::Present(snapshot) if snapshot.phase != Phase::Removed => snapshot
@@ -450,15 +461,14 @@ pub(crate) struct Controller {
     share_request: Option<ShareTask>,
     share_epoch: Option<Arc<AtomicU64>>,
     share_review_epoch: Option<u64>,
+    startup_observation_attempted: bool,
 }
 
 impl Controller {
     pub fn native() -> Self {
         static SLOTS: OnceLock<Arc<AtomicU8>> = OnceLock::new();
-        let root = directories::ProjectDirs::from("com", "fes", "fesTerm")
-            .map(|dirs| dirs.data_local_dir().join("remote-access-desktop-v1"));
         Self::new(
-            root,
+            Self::state_root(),
             Arc::new(native::Native),
             SLOTS.get_or_init(|| Arc::new(AtomicU8::new(0))).clone(),
         )
@@ -479,11 +489,24 @@ impl Controller {
             share_request: None,
             share_epoch: None,
             share_review_epoch: None,
+            startup_observation_attempted: false,
         }
+    }
+
+    pub(crate) fn state_root() -> Option<PathBuf> {
+        directories::ProjectDirs::from("com", "fes", "fesTerm")
+            .map(|dirs| dirs.data_local_dir().join("remote-access-desktop-v1"))
     }
 
     pub fn view(&self) -> View {
         self.view.clone()
+    }
+
+    pub fn ensure_startup_observation(&mut self, context: &egui::Context) {
+        if !self.startup_observation_attempted && matches!(self.view.scope, Scope::Unobserved) {
+            self.startup_observation_attempted = true;
+            self.start(Operation::Refresh, false, context);
+        }
     }
 
     pub fn observe_accounts(&mut self, accounts: Vec<HostAccount>) {
@@ -945,6 +968,11 @@ impl Drop for Controller {
 
 impl super::FesTermApp {
     pub(crate) fn dispatch_local_remote_access(&mut self, action: Action, context: &egui::Context) {
+        if matches!(&action, Action::Confirm)
+            && self.local_remote_access.view().review == Some(Operation::Disable)
+        {
+            self.suspend_profile_hosting();
+        }
         let target = match &action {
             Action::ReviewShare(target) | Action::Share(target) | Action::Unshare(target) => {
                 Some(target)

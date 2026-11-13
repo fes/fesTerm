@@ -243,7 +243,7 @@ fn execute(
         );
         if matches!(
             admission.request.body,
-            Request::Ensure { .. } | Request::Create { .. }
+            Request::Ensure { .. } | Request::Create { .. } | Request::EnsureProfile { .. }
         ) {
             publication._create = Some(permit.budgets().reserve(Resource::PendingCreate, 1)?);
         }

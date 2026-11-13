@@ -24,6 +24,7 @@ fn host_creation_uses_remote_session_name_not_local_profile_name() {
     browser.inventory = Some(Inventory {
         capabilities: Default::default(),
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     });
     let capabilities = &mut browser.inventory.as_mut().unwrap().capabilities;
@@ -227,6 +228,7 @@ fn selected_host_desktop_creation_requires_separate_consent_and_advertised_creat
     browser.inventory = Some(Inventory {
         capabilities: Default::default(),
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     });
     assert!(
@@ -270,6 +272,7 @@ fn selected_host_desktop_creation_freezes_launch_and_distinguishes_new_logical_f
     browser.inventory = Some(Inventory {
         capabilities: Default::default(),
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     });
     let caps = &mut browser.inventory.as_mut().unwrap().capabilities;
@@ -436,4 +439,18 @@ fn selected_host_desktop_creation_registry_is_bounded_without_discarding_origina
         .unwrap();
     assert!(Arc::ptr_eq(&original, &retry));
     assert_eq!(app.state.host_creation_intents.len(), 16);
+}
+
+#[test]
+fn background_host_discovery_always_leaves_one_connection_permit_free() {
+    let budgets = host_client::Budgets::default();
+    let running: Vec<_> = (0..MAX_PARALLEL_DISCOVERIES)
+        .map(|_| reserve_with_headroom(&budgets).expect("headroom"))
+        .collect();
+    assert!(reserve_with_headroom(&budgets).is_none());
+    let interactive =
+        ConnectionPermit::reserve(&budgets).expect("interactive connect keeps a slot");
+    drop(interactive);
+    drop(running);
+    assert!(reserve_with_headroom(&budgets).is_some());
 }

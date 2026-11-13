@@ -87,6 +87,113 @@ fn host_control_result_diagnostics_are_content_free_and_variant_exact() {
     );
 }
 
+#[test]
+fn shared_profile_catalog_is_advertised_while_stopped_and_fences_old_revisions() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let logical = creation.logical.clone();
+    let consent = uuid::Uuid::new_v4().to_string();
+    let control = fixture.control();
+    let first_revision = control
+        .set_profile(
+            logical.clone(),
+            &consent,
+            "shared-shell",
+            creation.recipe.clone(),
+            true,
+        )
+        .unwrap();
+
+    let listed = control.profiles(&fixture.owner, allow).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].logical, logical);
+    assert_eq!(listed[0].name, "shared-shell");
+    assert_eq!(
+        control.profile_status(&logical, &consent).unwrap(),
+        Some((first_revision, true))
+    );
+    assert!(matches!(
+        control.profile_status(&logical, "00000000-0000-4000-8000-000000000000"),
+        Err(ControlError::Denied)
+    ));
+
+    let (failing_control, marker) = fixture.failing_control();
+    assert!(matches!(
+        failing_control.ensure(
+            &fixture.owner,
+            &fixture.issued(),
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Denied)
+    ));
+    assert!(!marker.exists(), "generic creation must not execute");
+
+    let disabled_revision = control
+        .set_profile(
+            logical.clone(),
+            &consent,
+            "shared-shell",
+            creation.recipe.clone(),
+            false,
+        )
+        .unwrap();
+    assert!(disabled_revision.get() > first_revision.get());
+    assert!(control.profiles(&fixture.owner, allow).unwrap().is_empty());
+    assert_eq!(
+        control.profile_status(&logical, &consent).unwrap(),
+        Some((disabled_revision, false))
+    );
+    assert!(matches!(
+        failing_control.ensure_profile(
+            &fixture.owner,
+            &fixture.issued(),
+            festerm_sessiond::host_control::ProfileEnsureRequest {
+                logical: logical.clone(),
+                revision: first_revision,
+                attachment: creation.attachment.clone(),
+            },
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Stale)
+    ));
+    assert!(!marker.exists(), "stale revisions must not execute");
+
+    let enabled_revision = control
+        .set_profile(
+            logical.clone(),
+            &consent,
+            "shared-shell",
+            creation.recipe.clone(),
+            true,
+        )
+        .unwrap();
+    assert!(enabled_revision.get() > disabled_revision.get());
+    assert_eq!(control.profiles(&fixture.owner, allow).unwrap().len(), 1);
+    assert!(matches!(
+        failing_control.ensure_profile(
+            &fixture.owner,
+            &fixture.issued(),
+            festerm_sessiond::host_control::ProfileEnsureRequest {
+                logical: logical.clone(),
+                revision: enabled_revision,
+                attachment: creation.attachment,
+            },
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    assert!(marker.exists());
+    assert_eq!(
+        fixture.state()["sessions"][logical.as_str()]["effective_recipe"],
+        serde_json::to_value(creation.recipe).unwrap()
+    );
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -121,13 +228,10 @@ fn retry_busy<T>(
 
 impl Fixture {
     fn new() -> Self {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
+        let root = std::fs::canonicalize(std::env::temp_dir())
             .unwrap()
             .join(format!(
-                "hc-{}",
+                "festerm-hc-{}",
                 &uuid::Uuid::new_v4().simple().to_string()[..8]
             ));
         storage::private_directory(&root, true).unwrap();

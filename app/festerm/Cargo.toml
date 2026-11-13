@@ -32,6 +32,7 @@ festerm-document = { path = "../../crates/festerm-document" }
 festerm-enterprise = { path = "../../crates/festerm-enterprise" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-syntax = { path = "../../crates/festerm-syntax" }
+festerm-host-protocol = { path = "../../crates/festerm-host-protocol" }
 festerm-host-setup = { path = "../../crates/festerm-host-setup" }
 festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }

@@ -27,6 +27,10 @@ pub enum ManagementOperation {
     Status {
         installation: String,
     },
+    Suspend {
+        installation: String,
+        consent: String,
+    },
     Remove {
         installation: String,
         consent: Option<String>,
@@ -144,6 +148,7 @@ pub enum Phase {
     Requested,
     Provisioning,
     Exposed,
+    Suspended,
     Revoking,
     CleanupPending,
     Revoked,
@@ -875,6 +880,45 @@ impl Store {
         })
     }
 
+    /// Master host-access disable fences remote publication without revoking
+    /// the profile's separately granted standing consent.
+    pub fn suspend(&self, consent: &str) -> io::Result<Consent> {
+        self.update(consent, |record| {
+            if !record.phase.allows_hosting() && record.phase != Phase::Suspended {
+                return Err(refused("profile_host.consent_not_active"));
+            }
+            record.phase = Phase::Suspended;
+            record.worker_stopped = false;
+            record.failure = None;
+            Ok(())
+        })
+    }
+
+    /// Resume only an explicitly suspended grant; permanent revocation is
+    /// never reversible. This remains safe after an interrupted stop because
+    /// the host service is already fenced by the protected phase.
+    pub fn resume(&self, consent: &str) -> io::Result<Consent> {
+        self.update(consent, |record| {
+            if record.phase != Phase::Suspended {
+                return Err(refused("profile_host.not_suspended"));
+            }
+            record.phase = Phase::Requested;
+            record.failure = None;
+            Ok(())
+        })
+    }
+
+    /// Record the result of stopping only this profile's relay service.
+    pub fn mark_suspended_stopped(&self, consent: &str) -> io::Result<Consent> {
+        self.update(consent, |record| {
+            if record.phase != Phase::Suspended {
+                return Err(refused("profile_host.not_suspended"));
+            }
+            record.worker_stopped = true;
+            Ok(())
+        })
+    }
+
     /// Keep this transaction short: it fences spawning/publication against
     /// revocation, not CLI/network operations or waiting for readiness.
     pub fn with_hosting_permit<T>(
@@ -1229,6 +1273,41 @@ mod tests {
             "1234"
         );
         assert!(store.select_account(&consent, "5678").is_err());
+        drop(store);
+        std::fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn suspended_profile_hosting_resumes_without_reviving_revoked_consent() {
+        let state =
+            std::env::temp_dir().join(format!("festerm-profile-suspend-{}", uuid::Uuid::new_v4()));
+        let installation = uuid::Uuid::new_v4().to_string();
+        let consent = uuid::Uuid::new_v4().to_string();
+        let store = Store::open(&state, &installation, true).unwrap();
+        store
+            .prepare(&consent, "spawn-v1:test", "configured-shell")
+            .unwrap();
+        store.commit_requested(&consent).unwrap();
+        store.bind_target(&consent, target()).unwrap();
+        store.reserve_creation(&consent, "1234").unwrap();
+
+        assert_eq!(store.suspend(&consent).unwrap().phase, Phase::Suspended);
+        let suspended = store.read().unwrap();
+        assert!(!suspended.worker_stopped);
+        assert!(suspended.creation_pending);
+        assert!(suspended.cloud_reservation.is_some());
+        assert!(store.claim_creation_submission(&consent).is_err());
+        assert_eq!(
+            store.mark_suspended_stopped(&consent).unwrap().phase,
+            Phase::Suspended
+        );
+        let resumed = store.resume(&consent).unwrap();
+        assert_eq!(resumed.phase, Phase::Requested);
+        assert!(resumed.worker_stopped);
+        assert!(store.claim_creation_submission(&consent).unwrap());
+
+        store.revoke(&consent).unwrap();
+        assert!(store.resume(&consent).is_err());
         drop(store);
         std::fs::remove_dir_all(state).unwrap();
     }

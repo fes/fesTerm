@@ -466,7 +466,9 @@ pub struct FesTermApp {
     #[cfg(feature = "experimental-dev-tunnels")]
     host_browser: Option<host_browser::Browser>,
     #[cfg(feature = "experimental-dev-tunnels")]
-    host_discovery: Option<host_browser::Discovery>,
+    host_discovery: Vec<host_browser::Discovery>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_discovery_queue: std::collections::VecDeque<host_browser::QueuedDiscovery>,
     #[cfg(feature = "experimental-dev-tunnels")]
     running_tunnels: running_tunnels::RunningTunnels,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -977,7 +979,9 @@ impl FesTermApp {
             #[cfg(feature = "experimental-dev-tunnels")]
             host_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
-            host_discovery: None,
+            host_discovery: Vec::new(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_discovery_queue: std::collections::VecDeque::new(),
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -7146,6 +7150,7 @@ impl FesTermApp {
                 .observe_share_epoch(self.state.local_share_epoch());
             self.local_remote_access
                 .observe_share_targets(self.state.local_share_targets());
+            self.local_remote_access.ensure_startup_observation(context);
             self.local_remote_access.poll(context);
             crate::screens::set_local_remote_access_view(
                 context,
@@ -8254,7 +8259,6 @@ impl FesTermApp {
                     profile,
                     expose,
                     explicit_enable,
-                    account_selection,
                 } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.save_local_hosted_profile(
@@ -8265,26 +8269,15 @@ impl FesTermApp {
                             profile,
                             expose,
                             explicit_enable,
-                            account_selection,
                         },
                         ui.ctx(),
                     );
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     {
-                        let _ = (
-                            original_id,
-                            profile,
-                            expose,
-                            explicit_enable,
-                            account_selection,
-                        );
+                        let _ = (original_id, profile, expose, explicit_enable);
                         screens::report_local_profile_save_outcome(ui.ctx(), tab_id, request,
                             Err("Use a Dev Tunnel hosting-capable build to change this profile's exposure.".into()));
                     }
-                }
-                #[cfg(feature = "experimental-dev-tunnels")]
-                AppCommand::BeginLocalHostAccount { tab_id, request } => {
-                    self.begin_local_host_account(tab_id, request, ui.ctx());
                 }
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::LocalTunnelHost { profile_id, action } => {
@@ -9029,7 +9022,9 @@ impl FesTermApp {
             #[cfg(feature = "experimental-dev-tunnels")]
             host_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
-            host_discovery: None,
+            host_discovery: Vec::new(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_discovery_queue: std::collections::VecDeque::new(),
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]

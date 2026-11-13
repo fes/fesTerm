@@ -4683,6 +4683,18 @@ development wrapper, not installed or production services:
    Process restart is not durable reconciliation and must not be reported as
    recovery of this in-memory action.
 
+   For desktop shared local profiles, use a separate user profile and owned
+   computer-level host. Saving an enabled eligible local profile must register its
+   host-stored recipe without starting its shell, creating a tunnel or selecting a
+   per-profile GitHub account. Verify a stopped profile remains listed after host
+   disable/re-enable and service restart; explicit remote Connect must start only
+   the saved recipe. Disable and Save must hide/fence that profile without ending a
+   running persistent shell, and a delayed Connect using the old revision must not
+   publish or launch. Disabling computer-level access must withdraw the shared
+   endpoint while retaining catalog registrations for re-enable. Existing
+   per-profile tunnel state must be explicitly disabled and saved before enabling
+   the new shared catalog; it is never adopted from portable configuration.
+
 These are pending native/manual checks, not results from the headless recipe
 button, memory-vault/protected-file or framed-session fixtures.
 The authenticated stopped-update slice adds deterministic transaction-core

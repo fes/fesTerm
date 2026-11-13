@@ -10,8 +10,8 @@ use crate::{
 };
 use festerm_core::Terminal;
 use festerm_host_protocol::{
-    Capabilities, ContractError, InventoryPage, OperationId, Request, Response, SessionSummary,
-    Validate, MAX_SESSIONS, PAGE_SIZE,
+    Capabilities, ContractError, InventoryPage, OperationId, ProfileSummary, Request, Response,
+    SessionSummary, Validate, MAX_SESSIONS, PAGE_SIZE,
 };
 use festerm_secret_store::SecretReference;
 use festerm_tunnel_client::host_control::{Binding, ConnectionPermit, ControlClient, Error};
@@ -251,12 +251,18 @@ pub struct Scope {
 pub struct Inventory {
     pub capabilities: Capabilities,
     pub sessions: Vec<SessionSummary>,
+    pub profiles: Vec<ProfileSummary>,
     /// An incomplete observation never becomes absence or recreation authority.
     pub unknown: Vec<Target>,
 }
 
 pub enum Operation {
     Inventory,
+    EnsureProfile {
+        logical: LogicalSessionId,
+        revision: festerm_host_protocol::Epoch,
+        attachment: AttachmentId,
+    },
     Attach {
         target: Target,
     },
@@ -318,6 +324,26 @@ impl ApprovedAttachment {
             attachment: Some(created.attachment),
             disposition,
             creation_intent: Some(created.intent),
+        })
+    }
+
+    pub fn from_profile_ensured(
+        context: ApprovedContext,
+        scope: Scope,
+        session: SessionSummary,
+        disposition: EnsureDisposition,
+        attachment: AttachmentId,
+    ) -> Result<Self, Failure> {
+        if context.binding() != &scope.binding {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(Self {
+            context,
+            scope,
+            target: session.target,
+            attachment: Some(attachment),
+            disposition: Some(disposition),
+            creation_intent: None,
         })
     }
 
@@ -389,7 +415,14 @@ impl ApprovedAttachment {
 pub enum Outcome {
     Inventory(Inventory),
     Created(Box<Created>),
-    Ended { target: Target },
+    ProfileEnsured {
+        session: SessionSummary,
+        disposition: EnsureDisposition,
+        attachment: AttachmentId,
+    },
+    Ended {
+        target: Target,
+    },
     Snapshot(Box<Adoption>),
     Attached(TerminalHandle),
     Failed(Failure),
@@ -615,7 +648,10 @@ async fn execute(
     wake: &Arc<dyn Fn() + Send + Sync>,
 ) -> Result<Outcome, Failure> {
     let role = match operation {
-        Operation::Inventory | Operation::Create(_) | Operation::End(_) => StreamRole::Control,
+        Operation::Inventory
+        | Operation::EnsureProfile { .. }
+        | Operation::Create(_)
+        | Operation::End(_) => StreamRole::Control,
         Operation::Attach { .. } | Operation::AttachReserved { .. } => StreamRole::Terminal,
     };
     let (stream, permit, binding) = context.connect(permit, role, cancel).await?;
@@ -625,6 +661,21 @@ async fn execute(
             Ok(Outcome::Inventory(
                 inventory_authenticated(&mut client, scope.request.clone(), cancel).await?,
             ))
+        }
+        Operation::EnsureProfile {
+            logical,
+            revision,
+            attachment,
+        } => {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            let (session, disposition, attachment) =
+                ensure_profile_authenticated(&mut client, logical, revision, attachment, cancel)
+                    .await?;
+            Ok(Outcome::ProfileEnsured {
+                session,
+                disposition,
+                attachment,
+            })
         }
         Operation::Attach { target } => {
             debug_assert_eq!(&binding, &scope.binding);
@@ -741,8 +792,10 @@ pub(crate) async fn inventory_authenticated<S: AsyncRead + AsyncWrite + Unpin>(
     let mut inventory = Inventory {
         capabilities,
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     };
+    let mut complete = false;
     for _ in 0..MAX_SESSIONS / PAGE_SIZE {
         let cursor = previous.as_ref().and_then(|page| page.next.clone());
         let response = client
@@ -772,11 +825,60 @@ pub(crate) async fn inventory_authenticated<S: AsyncRead + AsyncWrite + Unpin>(
         }
         if page.next.is_none() {
             inventory.unknown = page.unknown;
-            return Ok(inventory);
+            complete = true;
+            break;
         }
         previous = Some(page);
     }
-    Err(ContractError::Limit.into())
+    if !complete {
+        return Err(ContractError::Limit.into());
+    }
+    if inventory.capabilities.profiles {
+        let response = client
+            .request(OperationId::new(), Request::ListProfiles {}, cancel)
+            .await?;
+        match response.body {
+            Response::Profiles { profiles } => inventory.profiles = profiles,
+            Response::Refused { reason } => return Err(Error::Refused(reason)),
+            _ => return Err(ContractError::Malformed.into()),
+        }
+    }
+    Ok(inventory)
+}
+
+async fn ensure_profile_authenticated<S: AsyncRead + AsyncWrite + Unpin>(
+    client: &mut ControlClient<S>,
+    logical: LogicalSessionId,
+    revision: festerm_host_protocol::Epoch,
+    attachment: AttachmentId,
+    cancel: &CancellationToken,
+) -> Result<(SessionSummary, EnsureDisposition, AttachmentId), Failure> {
+    let capabilities = client.handshake(cancel).await?;
+    if !capabilities.ensure_profile || !capabilities.attach {
+        return Err(Error::Refused(festerm_host_protocol::Refusal::Unsupported).into());
+    }
+    let issued = client.issue_operation()?;
+    let response = client
+        .request_issued(
+            &issued,
+            Request::EnsureProfile {
+                logical,
+                revision,
+                attachment: attachment.clone(),
+            },
+            cancel,
+        )
+        .await?;
+    match response.body {
+        Response::Ensured {
+            session,
+            disposition,
+            lease: None,
+        } => Ok((session, disposition, attachment)),
+        Response::Ensured { .. } => Err(ContractError::Malformed.into()),
+        Response::Refused { reason } => Err(Error::Refused(reason).into()),
+        _ => Err(ContractError::Malformed.into()),
+    }
 }
 
 #[cfg(test)]

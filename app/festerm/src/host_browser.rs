@@ -39,12 +39,34 @@ enum Action {
     Prepare,
     Inventory,
     Attach(Target),
+    EnsureProfile {
+        logical: host_client::LogicalSessionId,
+        revision: festerm_host_protocol::Epoch,
+        name: String,
+    },
     Create,
 }
 
 fn valid_session_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
+}
+
+pub(super) const MAX_PARALLEL_DISCOVERIES: usize = 3;
+const MAX_QUEUED_DISCOVERIES: usize = 32;
+
+/// Reserves a discovery permit only when another permit would still remain,
+/// so background host refreshes never take the last connection slot.
+fn reserve_with_headroom(budgets: &host_client::Budgets) -> Option<ConnectionPermit> {
+    let permit = ConnectionPermit::reserve(budgets).ok()?;
+    ConnectionPermit::reserve(budgets).ok()?;
+    Some(permit)
+}
+
+pub(super) struct QueuedDiscovery {
+    tab: TabId,
+    request: egui::Id,
+    account: DevTunnelAccount,
 }
 
 pub(super) struct Discovery {
@@ -92,6 +114,7 @@ pub(super) struct Browser {
     resolve_after_load: bool,
     profile_target: Option<Target>,
     profile_create: bool,
+    profile_label: Option<String>,
 }
 
 impl Drop for Browser {
@@ -371,6 +394,7 @@ impl FesTermApp {
             resolve_after_load: resume_saved,
             profile_target: None,
             profile_create: false,
+            profile_label: None,
         });
         if resume_saved {
             self.apply_host_review_action(Action::Load, context);
@@ -384,64 +408,98 @@ impl FesTermApp {
         account_key: &str,
         context: &egui::Context,
     ) {
-        if !self.state.tabs().iter().any(|candidate| {
+        let Some(account) = self.state.configuration().account(account_key).cloned() else {
+            return;
+        };
+        if !self.host_discovery_is_current(tab, request, &account, context) {
+            return;
+        }
+        // A newer refresh for the same account supersedes older work; other
+        // accounts keep running in parallel.
+        self.host_discovery
+            .retain(|previous| !(previous.tab == tab && previous.account == account));
+        self.host_discovery_queue
+            .retain(|previous| !(previous.tab == tab && previous.account == account));
+        if self.host_discovery_queue.len() >= MAX_QUEUED_DISCOVERIES {
+            crate::screens::host_workspace::report_discovery(
+                context,
+                tab,
+                request,
+                account_key,
+                Err("Too many host refreshes are waiting. Try again.".into()),
+            );
+            return;
+        }
+        self.host_discovery_queue.push_back(QueuedDiscovery {
+            tab,
+            request,
+            account,
+        });
+        self.start_queued_host_discoveries(context);
+    }
+
+    fn host_discovery_is_current(
+        &self,
+        tab: TabId,
+        request: egui::Id,
+        account: &DevTunnelAccount,
+        context: &egui::Context,
+    ) -> bool {
+        self.state.tabs().iter().any(|candidate| {
             candidate.id == tab
                 && matches!(
                     candidate.content,
                     TabContent::Launcher | TabContent::Profiles
                 )
-        }) || !crate::screens::host_workspace::discovery_is_current(
+        }) && crate::screens::host_workspace::discovery_is_current(
             context,
             tab,
             request,
-            account_key,
-        ) {
-            return;
-        }
-        let Some(account) = self.state.configuration().account(account_key).cloned() else {
-            return;
-        };
-        let store = match &self.secret_store {
-            Ok(store) => Arc::clone(store),
-            Err(_) => {
-                crate::screens::host_workspace::report_discovery(
-                    context,
-                    tab,
-                    request,
-                    account_key,
-                    Err("Unlock secure storage and try again.".into()),
-                );
+            account.identifier(),
+        ) && self
+            .state
+            .configuration()
+            .account(account.identifier())
+            .is_some_and(|configured| configured == account)
+    }
+
+    /// Starts queued discoveries while at most [`MAX_PARALLEL_DISCOVERIES`]
+    /// run and one shared connection permit stays free for interactive
+    /// connects. Queued work waits for the next UI pass; it is never polled
+    /// on a timer.
+    fn start_queued_host_discoveries(&mut self, context: &egui::Context) {
+        while self.host_discovery.len() < MAX_PARALLEL_DISCOVERIES {
+            let Some(front) = self.host_discovery_queue.front() else {
                 return;
+            };
+            if !self.host_discovery_is_current(front.tab, front.request, &front.account, context) {
+                self.host_discovery_queue.pop_front();
+                continue;
             }
-        };
-        let permit = match ConnectionPermit::reserve(&self.state.host_client_budgets) {
-            Ok(permit) => permit,
-            Err(_) => {
-                crate::screens::host_workspace::report_discovery(
-                    context,
-                    tab,
-                    request,
-                    account_key,
-                    Err("Another connection is busy. Try again.".into()),
-                );
+            let store = match &self.secret_store {
+                Ok(store) => Arc::clone(store),
+                Err(_) => {
+                    let next = self.host_discovery_queue.pop_front().expect("queued");
+                    crate::screens::host_workspace::report_discovery(
+                        context,
+                        next.tab,
+                        next.request,
+                        next.account.identifier(),
+                        Err("Unlock secure storage and try again.".into()),
+                    );
+                    continue;
+                }
+            };
+            let Some(permit) = reserve_with_headroom(&self.state.host_client_budgets) else {
                 return;
-            }
-        };
-        if let Some(previous) = self.host_discovery.take() {
-            crate::screens::host_workspace::report_discovery(
-                context,
-                previous.tab,
-                previous.request,
-                previous.account.identifier(),
-                Err("Discovery cancelled.".into()),
-            );
-        }
-        let cancel = CancellationToken::new();
-        let work_cancel = cancel.clone();
-        let work_account = account.clone();
-        let wake = context.clone();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let spawned = std::thread::Builder::new().name("festerm-find-hosts".into()).spawn(move || {
+            };
+            let next = self.host_discovery_queue.pop_front().expect("queued");
+            let cancel = CancellationToken::new();
+            let work_cancel = cancel.clone();
+            let work_account = next.account.clone();
+            let wake = context.clone();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let spawned = std::thread::Builder::new().name("festerm-find-hosts".into()).spawn(move || {
             let _permit = permit;
             let result = (|| {
                 let _lease = super::tunnel_workflow::account_lease(Some(&work_account))
@@ -471,71 +529,69 @@ impl FesTermApp {
             })();
             if !work_cancel.is_cancelled() { let _ = sender.try_send(result); wake.request_repaint(); }
         });
-        if spawned.is_err() {
-            crate::screens::host_workspace::report_discovery(
-                context,
-                tab,
-                request,
-                account_key,
-                Err("Host discovery could not start.".into()),
-            );
-        } else {
-            self.host_discovery = Some(Discovery {
-                tab,
-                request,
-                account,
-                cancel,
-                receiver,
-            });
+            if spawned.is_err() {
+                crate::screens::host_workspace::report_discovery(
+                    context,
+                    next.tab,
+                    next.request,
+                    next.account.identifier(),
+                    Err("Host discovery could not start.".into()),
+                );
+            } else {
+                self.host_discovery.push(Discovery {
+                    tab: next.tab,
+                    request: next.request,
+                    account: next.account,
+                    cancel,
+                    receiver,
+                });
+            }
         }
     }
 
     pub(super) fn poll_host_discovery(&mut self, context: &egui::Context) {
-        let Some(discovery) = &self.host_discovery else {
-            return;
-        };
-        let current = self.state.tabs().iter().any(|tab| {
-            tab.id == discovery.tab
-                && matches!(tab.content, TabContent::Launcher | TabContent::Profiles)
-        }) && crate::screens::host_workspace::discovery_is_current(
-            context,
-            discovery.tab,
-            discovery.request,
-            discovery.account.identifier(),
-        ) && self
-            .state
-            .configuration()
-            .account(discovery.account.identifier())
-            .is_some_and(|account| account == &discovery.account);
-        if !current {
+        let mut index = 0;
+        while index < self.host_discovery.len() {
+            let discovery = &self.host_discovery[index];
+            if !self.host_discovery_is_current(
+                discovery.tab,
+                discovery.request,
+                &discovery.account,
+                context,
+            ) {
+                let discovery = self.host_discovery.remove(index);
+                crate::screens::host_workspace::report_discovery(
+                    context,
+                    discovery.tab,
+                    discovery.request,
+                    discovery.account.identifier(),
+                    Err(
+                        "Discovery cancelled because its account or screen changed. Refresh again."
+                            .into(),
+                    ),
+                );
+                continue;
+            }
+            let result = match discovery.receiver.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => {
+                    index += 1;
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err("Host discovery stopped. Try again.".into())
+                }
+            };
+            let discovery = self.host_discovery.remove(index);
             crate::screens::host_workspace::report_discovery(
                 context,
                 discovery.tab,
                 discovery.request,
                 discovery.account.identifier(),
-                Err(
-                    "Discovery cancelled because its account or screen changed. Find hosts again."
-                        .into(),
-                ),
+                result,
             );
-            self.host_discovery = None;
-            return;
         }
-        let result = match discovery.receiver.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Err("Host discovery stopped. Try again.".into())
-            }
-        };
-        let discovery = self.host_discovery.take().expect("polled discovery");
-        crate::screens::host_workspace::report_discovery(
-            context,
-            discovery.tab,
-            discovery.request,
-            discovery.account.identifier(),
-            result,
-        );
+        self.start_queued_host_discoveries(context);
     }
 
     pub(super) fn review_discovered_host(
@@ -680,6 +736,7 @@ impl FesTermApp {
             resolve_after_load: !unbound,
             profile_target: None,
             profile_create: false,
+            profile_label: None,
         });
         if !unbound {
             self.apply_host_review_action(Action::Load, context);
@@ -860,6 +917,52 @@ impl FesTermApp {
                         Err(error) => browser.feedback = Some(error),
                     }
                 }
+                Outcome::ProfileEnsured {
+                    session,
+                    disposition,
+                    attachment,
+                } => {
+                    if disposition == host_client::EnsureDisposition::Recreated {
+                        self.overlays.transient_notice = Some((
+                            "The host recreated this profile session. Previous shell state was not restored."
+                                .into(),
+                            Instant::now() + Duration::from_secs(12),
+                        ));
+                    }
+                    let result = browser.context().and_then(|approved| {
+                        ApprovedAttachment::from_profile_ensured(
+                            approved,
+                            completed_scope,
+                            session,
+                            disposition,
+                            attachment,
+                        )
+                        .map_err(|error| error.message().to_owned())
+                    });
+                    match result {
+                        Ok(attachment) => {
+                            let tab_id = browser.tab;
+                            let request = browser.request;
+                            let label = browser
+                                .profile_label
+                                .take()
+                                .unwrap_or_else(|| "Shared profile".into());
+                            crate::screens::host_workspace::set_connection_label(
+                                context, tab_id, request, label,
+                            );
+                            self.state.dispatch(
+                                AppCommand::OpenApprovedHostFromProfiles {
+                                    tab_id,
+                                    request,
+                                    attachment: Box::new(attachment),
+                                },
+                                context,
+                            );
+                            self.host_browser = None;
+                        }
+                        Err(error) => browser.feedback = Some(error),
+                    }
+                }
                 _ => {
                     browser.feedback =
                         Some("Unexpected inventory completion; no session was attached.".into())
@@ -872,6 +975,8 @@ impl FesTermApp {
     }
 
     pub(super) fn show_host_browser(&mut self, context: &egui::Context, escape: bool) {
+        use festerm_ui_egui::controls::{action_button_enabled, ActionButtonRole};
+
         if self
             .host_browser
             .as_ref()
@@ -996,6 +1101,35 @@ impl FesTermApp {
                                     action = Some(Action::Attach(session.target.clone()));
                                 }
                             });
+                        }
+                        if inventory.capabilities.profiles {
+                            ui.separator();
+                            ui.strong("Shared profiles");
+                            if inventory.profiles.is_empty() {
+                                ui.label("No profiles are enabled for this host.");
+                            }
+                            for profile in &inventory.profiles {
+                                ui.push_id(profile.logical.as_str(), |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(&profile.name);
+                                        if action_button_enabled(
+                                            ui,
+                                            inventory.capabilities.ensure_profile
+                                                && inventory.capabilities.attach,
+                                            ActionButtonRole::Accent,
+                                            "Connect / start",
+                                        )
+                                        .clicked()
+                                        {
+                                            action = Some(Action::EnsureProfile {
+                                                logical: profile.logical.clone(),
+                                                revision: profile.revision,
+                                                name: profile.name.clone(),
+                                            });
+                                        }
+                                    });
+                                });
+                            }
                         }
                     }
                 });
@@ -1144,6 +1278,36 @@ impl FesTermApp {
                                     }
                                 });
                             });
+                        }
+                        if inventory.capabilities.profiles {
+                            ui.separator();
+                            ui.strong("Shared profiles");
+                            if inventory.profiles.is_empty() {
+                                ui.label("No profiles are enabled for this host.");
+                            }
+                            for profile in &inventory.profiles {
+                                ui.push_id(profile.logical.as_str(), |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(&profile.name);
+                                        if !selection_mode
+                                            && action_button_enabled(
+                                                ui,
+                                                inventory.capabilities.ensure_profile
+                                                    && inventory.capabilities.attach,
+                                                ActionButtonRole::Accent,
+                                                "Connect / start",
+                                            )
+                                            .clicked()
+                                        {
+                                            action = Some(Action::EnsureProfile {
+                                                logical: profile.logical.clone(),
+                                                revision: profile.revision,
+                                                name: profile.name.clone(),
+                                            });
+                                        }
+                                    });
+                                });
+                            }
                         }
                         if let Some(target) = &browser.profile_target {
                             ui.separator();
@@ -1337,6 +1501,57 @@ impl FesTermApp {
         }
         let browser = self.host_browser.as_mut().expect("current browser");
         browser.feedback = None;
+        if let Action::EnsureProfile {
+            logical,
+            revision,
+            name,
+        } = &action
+        {
+            let selected = browser.inventory.as_ref().is_some_and(|inventory| {
+                browser.host_approved
+                    && inventory.capabilities.ensure_profile
+                    && inventory.capabilities.attach
+                    && inventory
+                        .profiles
+                        .iter()
+                        .any(|profile| &profile.logical == logical && profile.revision == *revision)
+            });
+            if !selected {
+                return;
+            }
+            let approved = match browser.context() {
+                Ok(approved) => approved,
+                Err(error) => {
+                    browser.feedback = Some(error);
+                    return;
+                }
+            };
+            let Some(generation) = browser.generation.checked_add(1) else {
+                browser.feedback = Some(
+                    "The foreground operation generation is exhausted. Reopen this review.".into(),
+                );
+                return;
+            };
+            browser.generation = generation;
+            browser.profile_label = Some(name.clone());
+            let scope = browser.scope(&approved);
+            let wake = context.clone();
+            match Worker::start(
+                approved,
+                scope,
+                host_client::Operation::EnsureProfile {
+                    logical: logical.clone(),
+                    revision: *revision,
+                    attachment: host_client::AttachmentId::new(),
+                },
+                &self.state.host_client_budgets,
+                Arc::new(move || wake.request_repaint()),
+            ) {
+                Ok(worker) => browser.worker = Some(worker),
+                Err(error) => browser.feedback = Some(error.message().into()),
+            }
+            return;
+        }
         if matches!(action, Action::Create) {
             if !browser.allows_creation() {
                 return;

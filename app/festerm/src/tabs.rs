@@ -3254,12 +3254,6 @@ pub enum AppCommand {
         profile: festerm_config::Profile,
         expose: bool,
         explicit_enable: bool,
-        account_selection: Option<egui::Id>,
-    },
-    #[cfg(feature = "experimental-dev-tunnels")]
-    BeginLocalHostAccount {
-        tab_id: TabId,
-        request: egui::Id,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     LocalTunnelHost {
@@ -5440,7 +5434,7 @@ impl AppState {
             | AppCommand::DeleteProfile { .. }
             | AppCommand::ReorderProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
-            AppCommand::LocalTunnelHost { .. } | AppCommand::BeginLocalHostAccount { .. } => {}
+            AppCommand::LocalTunnelHost { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::LocalTunnelCleanup { .. } => {}
         }

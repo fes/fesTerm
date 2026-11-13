@@ -53,6 +53,7 @@ struct ProfilesScreenState {
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) struct LocalHostView {
     pub enabled: bool,
+    pub legacy: bool,
     pub message: String,
     pub share: Option<String>,
     pub busy: bool,
@@ -2126,48 +2127,32 @@ pub(crate) fn show_profiles(
                             let eligible = draft.durable_session.persistence().ok().flatten()
                                 .is_some_and(|persistence| persistence.provider() == PersistenceProviderKind::FestermSessiond);
                             if eligible || draft.original_hosting.is_some() {
-                                ui.collapsing("Legacy advanced compatibility · per-profile hosting", |ui| {
                                 ui.add_space(10.0);
-                                ssh_section_heading(ui, "Legacy Dev Tunnel hosting");
-                                ui.small("Separate legacy protocol. This does not enable HOST sharing or migrate this shell.");
-                                if ui.add_enabled(eligible, egui::Checkbox::new(&mut draft.expose, "Expose via Dev Tunnel")).changed() {
+                                ssh_section_heading(ui, "Shared profile access");
+                                if ui.add_enabled(eligible, egui::Checkbox::new(&mut draft.expose, "Make this profile available on the computer's remote host")).changed() {
                                     draft.explicit_enable = draft.expose;
-                                    draft.account_verified = false;
                                     draft.account_selection = None;
-                                    if draft.expose {
-                                        let request = egui::Id::new(("local_host_account", tab_id))
-                                            .with(ui.ctx().cumulative_frame_nr());
-                                        draft.account_selection = Some(request);
-                                        command = Some(AppCommand::BeginLocalHostAccount { tab_id, request });
-                                    }
                                 }
                                 if !eligible {
                                     draft.expose = false;
                                     draft.account_selection = None;
-                                    draft.account_verified = false;
                                 }
-                                if draft.expose && draft.explicit_enable {
-                                    ssh_paragraph(ui, if draft.account_verified {
-                                        "GitHub account selected. Save to authorize hosting."
-                                    } else { "Choose a GitHub account before saving exposure." });
-                                    if ui.button("Choose GitHub account").clicked() {
-                                        let request = egui::Id::new(("local_host_account", tab_id))
-                                            .with(ui.ctx().cumulative_frame_nr());
-                                        draft.account_selection = Some(request);
-                                        draft.account_verified = false;
-                                        command = Some(AppCommand::BeginLocalHostAccount { tab_id, request });
-                                    }
+                                if hosting.legacy && draft.expose {
+                                    ssh_paragraph(ui, "This profile still has a legacy per-profile tunnel. Turn sharing off and Save to revoke it; then enable sharing again to register it with the computer-level host.");
+                                } else {
+                                    ssh_paragraph(ui, "Save registers only this profile's saved command in the protected host catalog. It does not start a shell or create a tunnel. Settings → Remote Access controls the single computer-level host and account; generic shell creation remains a separate permission.");
                                 }
-                                ssh_paragraph(ui, "Save can start the configured persistent command and authorize remote terminal access. Remote takeover is enabled and can displace a local tab. Closing fesTerm does not stop exposure; disable and Save to remove the tunnel, not the shell. File and observation access remain off.");
-                                if !hosting.message.is_empty() {
+                                if !hosting.message.is_empty() && hosting.legacy {
                                     ssh_paragraph(ui, &hosting.message);
                                 }
-                                if let Some(share) = &hosting.share {
-                                    if ui.button("Copy connection details").clicked() {
-                                        ui.ctx().copy_text(share.clone());
+                                if hosting.legacy && draft.original_id.is_some() {
+                                    ui.collapsing("Legacy per-profile tunnel status and cleanup", |ui| {
+                                    if let Some(share) = &hosting.share {
+                                        if ui.button("Copy legacy connection details").clicked() {
+                                            ui.ctx().copy_text(share.clone());
+                                        }
                                     }
-                                }
-                                if let Some(profile_id) = &draft.original_id {
+                                    if let Some(profile_id) = &draft.original_id {
                                     ui.horizontal_wrapped(|ui| {
                                         use crate::tabs::LocalHostAction;
                                         for (label, action, visible) in [
@@ -2186,8 +2171,9 @@ pub(crate) fn show_profiles(
                                             }
                                         }
                                     });
+                                    }
+                                    });
                                 }
-                                });
                             }
                         }
                         if let Some(error) = &draft.error {
@@ -2196,8 +2182,7 @@ pub(crate) fn show_profiles(
                         }
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(draft.pending_save.is_none()
-                                && (!draft.expose || !draft.explicit_enable || draft.account_verified),
+                            if ui.add_enabled(draft.pending_save.is_none(),
                                 egui::Button::new("Save")).clicked() {
                                 match draft.build() {
                                     Ok(profile) => {
@@ -2212,7 +2197,6 @@ pub(crate) fn show_profiles(
                                                 profile,
                                                 expose: draft.expose,
                                                 explicit_enable: draft.explicit_enable,
-                                                account_selection: draft.account_selection,
                                             });
                                         } else if let Err(error) = configuration
                                             .validate_hosted_session_name(
@@ -3042,7 +3026,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "experimental-dev-tunnels")]
-    fn local_host_checkbox_requires_explicit_save_and_dispatches_hosting_intent() {
+    fn shared_profile_checkbox_registers_without_per_profile_account_selection() {
         let mut harness = profiles_harness(festerm_config::Configuration::empty());
         harness.run_ok();
         open_new_profile(&mut harness, "Local");
@@ -3052,24 +3036,10 @@ mod tests {
         harness.get_by_label("Use a durable local session").click();
         harness.run_ok();
         harness
-            .get_by_label("Legacy advanced compatibility · per-profile hosting")
+            .get_by_label("Make this profile available on the computer's remote host")
             .click();
         harness.run_ok();
-        harness.get_by_label("Expose via Dev Tunnel").click();
-        harness.run_ok();
-        let Some(AppCommand::BeginLocalHostAccount { tab_id, request }) =
-            harness.state().command.as_ref()
-        else {
-            panic!("checking exposure must immediately request account selection");
-        };
-        let (tab_id, account_request) = (*tab_id, *request);
-        assert_eq!(
-            local_host_account_request(&harness.ctx, tab_id, account_request),
-            Some(None)
-        );
-        report_local_host_account(&harness.ctx, tab_id, account_request, Ok(true));
-        harness.state_mut().command = None;
-        harness.run_ok();
+        assert!(harness.state().command.is_none());
         harness.get_by_label("Save").scroll_to_me();
         harness.run_ok();
         harness.get_by_label("Save").click();

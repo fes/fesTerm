@@ -281,6 +281,30 @@ Implement equivalent client semantics on desktop, iOS and Android with the
 existing compact widgets, command model and mobile app-lock boundary. Mobile is
 a client here, not a desktop-style background host installer.
 
+The desktop's installed-profile exposure uses the same computer-level host
+service and its single host-level GitHub account/tunnel; it does not provision
+one tunnel or choose an account per local profile. Saving exposure registers
+that exact local persistent profile in a protected host-local catalog. Portable
+configuration expresses intent only and cannot reconstruct the registration.
+The host advertises enabled catalog entries even when no daemon generation is
+running. A profile-scoped grant permits only the registered recipe to be
+created on an explicit remote Connect; it does not depend on the independent
+host-wide permission for arbitrary ad-hoc shell creation. The client sends the
+stable profile identity, never an executable or recipe. The host resolves and
+revalidates the protected recipe, then uses the existing atomic sessiond
+Ensure journal. Saving, enabling the host, service restart and inventory never
+start a shell.
+
+Disabling a profile fences new profile creation and removes that profile from
+remote inventory without ending a locally running persistent shell or affecting
+other sessions. Disabling computer-level access fences the shared endpoint and
+remote attachments while retaining protected profile registrations for
+re-enable. Profile changes take effect on Save; a stale queued operation cannot
+publish or launch after the corresponding grant is disabled. Generic creation
+continues to require its separate host-wide creation permission. Existing
+per-profile bridge installations are legacy state: the new catalog neither
+adopts them from TOML nor treats their cloud identities as the shared host.
+
 ### 7. Desktop host setup and sharing
 
 Settings → Remote Access owns "Enable remote access", host name/status,
@@ -795,6 +819,16 @@ selection into that same unsaved draft; it does not open another save workflow.
 Desktop/iOS visual, actual-vault/browser/service/device evidence
 remains separate from deterministic source tests. The GUI graph, registry and
 manual inventory track these changes together; dark-only appearance is retained.
+
+### Shared computer-level profile catalog
+
+The local profile editor now grants a protected host-catalog entry, not a
+per-profile tunnel or GitHub account selection. `shared_profile_checkbox_registers_without_per_profile_account_selection`
+guards that UI contract. `shared_profile_catalog_is_advertised_while_stopped_and_fences_old_revisions`
+checks stopped-profile inventory, consent and revision fencing, generic-create
+denial, disable/re-enable, and that Ensure persists only the host-stored recipe.
+These source tests do not establish native HOST availability, live cloud routing,
+or installed-package/vault acceptance; those remain in HOST-01/02/04 evidence.
 
 Native terminal lease maintenance and Detached-receipt publication use the
 existing bounded 15-second admission wait for typed Busy only before an effect
