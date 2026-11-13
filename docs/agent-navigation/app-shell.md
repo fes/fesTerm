@@ -1,19 +1,19 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a697fa94a30381e08aa2935f07566656130be93195d5659a79b1a5a7ec912671"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8d8b5cc1c9ac0ccd36b90a7f795b253f6e7a54d48546ecf8768b0f4f110bc88d"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the desktop shell root, egui frame lifecycle, launcher/profile/settings surfaces, pane/session routing, and lifecycle diagnostics for fesTerm.
+Desktop shell root for fesTerm's egui app, including window policy, pane/session routing, screen actions, and durable lifecycle diagnostics.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## startup
 
-Use for: When the app boots, parses launch args, and creates the first window or restored workspace
+Use for: When the app boots, parses launch args, and creates the primary window or restored workspace
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap, worker modes, activation parsing, and eframe startup
-- [`FesTermApplication`](../../app/festerm/src/application.rs) — cross-window policy and primary window creation
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — cross-window app root and restored-window policy
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — proves app-owned session pumps and window lifecycle behavior
@@ -44,12 +44,12 @@ Caveats:
 
 Use for: When a user opens Launcher, profile editor, or settings and issues a connection action
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — saved profiles, forms, and profile save/connect commands
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — saved profiles, forms, and connect/save dispatch for profile flows
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — global settings, keyboard bindings, and automation preferences
 
 Evidence:
-- [`profiles_harness`](../../app/festerm/src/screens/profiles.rs) — renders editor state and captures save/command routing in tests
 - [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — describes the launcher, connection forms, and profile layout
+- [`profiles_harness`](../../app/festerm/src/screens/profiles.rs) — captures editor state and saved/connection command routing in tests
 
 Caveats:
 - Profile and settings actions are sent as AppCommand dispatches, not direct state mutation.
@@ -72,16 +72,16 @@ Caveats:
 - Pane actions are only active when the active group is composable and overlays allow input.
 - Close and dirty guards prevent stale pane edits from mutating the wrong document.
 
-## diagnostics
+## runtime diagnostics
 
 Use for: When debugging startup failures, exit intent, or automation configuration state
 
-- [`init`](../../app/festerm/src/diagnostics.rs) — initializes lifecycle journal and recovery artifacts
-- [`toggle_automation_preference`](../../app/festerm/src/app/automation.rs) — toggles automation features and fails closed on uncertain persistence
+- [`init`](../../app/festerm/src/diagnostics.rs) — initializes the lifecycle journal and any recovery artifacts
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — persists the application exit reason and shutdown context
 
 Evidence:
-- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — records lifecycle evidence for quit, restart, and smoke completion
 - [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — proves diagnostic recovery and artifact retention under partial writes
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — records lifecycle evidence for quit, restart, and smoke completion
 
 Caveats:
 - Diagnostics are journaled but cannot fix runtime logic; they only preserve evidence.

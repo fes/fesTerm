@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8936ba7efdccaad5359cbcd3d5e8a414778f85f3d05f70b9eaf5bf08c81acb3e"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "787297788bf6c22c119b27ddad4682c6f45ae3f2706582fe2864c057cbc1a867"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Shared mobile runtime, Android bridge, and offline-first SSH/files/document flows for iOS and Android.
+Mobile host app owns the shared native runtime, Android JNI bridge, and offline-first SSH/files/document flows for iOS and Android.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
@@ -16,7 +16,7 @@ Use for: When a mobile task starts in the app or needs the shared lifecycle, nat
 - [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal, documents, SSH state, and widget policy.
 
 Evidence:
-- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Explains offline default and opt-in live SSH prototype.
+- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Explains the offline default and opt-in live SSH prototype.
 
 Caveats:
 - Offline stays the default; live SSH remains prototype-only.
@@ -27,7 +27,7 @@ Caveats:
 
 Use for: When Android-only services, insets, gestures, or secrets touch the native boundary.
 
-- [`android_main`](../../app/festerm-android/src/lib.rs) — Starts the JNI bridge then runs the shared Rust app.
+- [`android_main`](../../app/festerm-android/src/lib.rs) — Starts the JNI bridge and hands off to the shared Rust host.
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
 
 Evidence:

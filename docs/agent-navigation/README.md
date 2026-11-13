@@ -7,18 +7,18 @@ in source; pages route to code, they do not authorize or instruct.
 | Page | Owns |
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Core terminal state, parser/queue boundaries, and golden-fixture assertions for a GUI-independent VT terminal model. |
-| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software rendering boundaries without session I/O. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and daemon-mediated recovery state for persistent terminal sessions. |
+| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software painting boundaries without session I/O. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and daemon-managed persistent terminal sessions. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI/text SFTP transfer stack used by remote file and session flows. |
-| [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, opaque native secret references, and private filesystem protections for config and workspace data. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns the application command bus, tab lifecycle, and keyboard-routing policy for terminal actions. |
+| [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML config, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
+| [Application commands, tabs, and input routing](app-commands.md) | Owns the app-level command bus, tab focus lifecycle, and keyboard-dispatch policy for terminal actions and singleton surfaces. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared text-document registry, Markdown parsing/rendering, and the editor/viewer routes that bind documents to app commands and syntax-aware UI. |
 | [Terminal recording and export](recording.md) | This domain owns private terminal capture, privacy-gated consent, synchronized export staging, and recoverable recording flows. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns dev-tunnel discovery, managed-host consent, enterprise and PowerShell session flows, host protocol inventory, and signed helper verification for remote desktop sessions. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns the desktop packaging, native smoke proof, and OS-level wake/privacy bridges that gate packaged app behavior. |
-| [Mobile hosts (iOS and Android)](mobile.md) | Shared mobile runtime, Android bridge, and offline-first SSH/files/document flows for iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | This domain owns the desktop shell root, egui frame lifecycle, launcher/profile/settings surfaces, pane/session routing, and lifecycle diagnostics for fesTerm. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns dev-tunnel discovery, managed-host consent and installation state, enterprise and PowerShell routing, and signed helper verification. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, native smoke proof, and OS wake/privacy integration for packaged app behavior. |
+| [Mobile hosts (iOS and Android)](mobile.md) | Mobile host app owns the shared native runtime, Android JNI bridge, and offline-first SSH/files/document flows for iOS and Android. |
+| [Desktop application shell and screens](app-shell.md) | Desktop shell root for fesTerm's egui app, including window policy, pane/session routing, screen actions, and durable lifecycle diagnostics. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

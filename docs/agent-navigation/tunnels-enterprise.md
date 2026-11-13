@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6b933af290b5e4b8c71341eb4f36ae46e0b9408ed9448523fe9f5ca8a30c365e"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ef63567a92741a916616f7ac2bdb362bd004a6132d2438bf06fc3d4cc1b93eba"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns dev-tunnel discovery, managed-host consent, enterprise and PowerShell session flows, host protocol inventory, and signed helper verification for remote desktop sessions.
+Owns dev-tunnel discovery, managed-host consent and installation state, enterprise and PowerShell routing, and signed helper verification.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -28,6 +28,7 @@ Caveats:
 Use for: When choosing a source address or validating SSH bind policy
 
 - [`LocalBindDraft`](../../app/festerm/src/local_bind.rs) — Resolves Automatic vs fixed source IP and persists the SSH bind policy.
+- [`parse_local_bind_address`](../../app/festerm/src/local_bind.rs) — Validates numeric IPv4 and IPv6 source addresses before a profile is used.
 
 Evidence:
 - [`malformed_and_scoped_source_addresses_are_rejected_before_connecting`](../../app/festerm/src/local_bind.rs) — Rejects wildcard, multicast, link-local, and mapped addresses before connect.
@@ -61,7 +62,7 @@ Use for: When adding host inventory, identity, or remote trust flows
 
 Evidence:
 - [`host_inventory_preserves_filtered_bounded_per_target_uncertainty`](../../crates/festerm-host-protocol/tests/contracts.rs) — Proves bounded, filtered unknown inventory is preserved and validated.
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Shows portable recipe metadata retains launch details and valid behaviors.
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Portable recipe metadata retains launch details and valid behaviors.
 
 Caveats:
 - Inventory filtering is authorization-aware; omission means uncertainty, not absence.
@@ -75,7 +76,7 @@ Use for: When adding enterprise Dev Center inventory or PSRP session flows
 - [`EnterpriseState`](../../app/festerm/src/enterprise.rs) — Dev Center auth and bounded inventory tab lifecycle during browser handoff.
 
 Evidence:
-- [`docs/powershell-enterprise.md`](../../docs/powershell-enterprise.md) — Documents the trust boundary between enterprise sign-in, remote SSH or sessiond selection, and consented takeover.
+- [`docs/powershell-enterprise.md`](../../docs/powershell-enterprise.md) — Documents the trust boundary between enterprise sign-in, remote session selection, and consented takeover.
 
 Caveats:
 - Worker-side data stays off the UI thread and budgets are enforced.
@@ -87,6 +88,7 @@ Caveats:
 Use for: When validating signed helper release archives before install or upgrade
 
 - [`Manifest`](../../crates/festerm-host-setup/src/artifacts.rs) — Signed metadata for exact package version, platform, architecture, and archive hash.
+- [`verify`](../../crates/festerm-host-setup/src/artifacts.rs) — Authenticates the manifest and archive before staged entries are trusted.
 
 Evidence:
 - [`python_produced_six_bundles_and_manifests_authenticate_in_rust`](../../crates/festerm-host-setup/src/artifacts.rs) — Proves repository fixtures verify under the pinned updater key.
@@ -94,4 +96,3 @@ Evidence:
 Caveats:
 - The manifest signature is over the exact JSON bytes, not a reserialized representation.
 - Archive verification enforces byte bounds before extraction or service switching.
-- Expected version, platform, and architecture must be caller-selected and downgrade-policy checked.
