@@ -5885,6 +5885,7 @@
         "end_confirmation_requires_fresh_policy_without_storing_observation",
         "end_confirmation_refuses_foreign_revoked_replaced_unbound_retired_or_missing_records",
         "end_confirmation_refuses_contended_or_corrupt_native_lease",
+        "committed_grant_sync_waits_out_bounded_daemon_lease_contention",
         "native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells",
         "local_observation_wait_retries_only_busy_and_preserves_exact_result",
         "local_observation_wait_refuses_every_non_busy_error_without_retry",
