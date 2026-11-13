@@ -80,6 +80,79 @@ pub(super) struct SignInFlow {
     pub(super) active: Option<SignIn>,
     pub(super) error: Option<String>,
     pub(super) resume: Resume,
+    pub(super) expected: Option<String>,
+    pub(super) effects: SignInEffects,
+}
+
+const VERIFICATION_URI: &str = "https://github.com/login/device";
+
+#[derive(Default)]
+pub(super) struct SignInEffects {
+    attempted: bool,
+    copied: Option<bool>,
+    opened: Option<bool>,
+    browser: Option<mpsc::Receiver<bool>>,
+}
+
+impl SignInEffects {
+    fn initial_with(
+        &mut self,
+        copy: impl FnOnce() -> bool,
+        open: impl FnOnce() -> mpsc::Receiver<bool>,
+    ) {
+        if self.attempted {
+            return;
+        }
+        self.attempted = true;
+        self.copied = Some(copy());
+        self.browser = Some(open());
+    }
+
+    pub(super) fn initial(&mut self, code: &str, ctx: &egui::Context) {
+        self.initial_with(
+            || festerm_ios_window::set_clipboard_text(code),
+            || Self::open(ctx),
+        );
+    }
+
+    fn open(ctx: &egui::Context) -> mpsc::Receiver<bool> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let ctx = ctx.clone();
+        festerm_ios_window::open_url_with_completion(VERIFICATION_URI, move |opened| {
+            let _ = sender.try_send(opened);
+            ctx.request_repaint();
+        });
+        receiver
+    }
+
+    pub(super) fn poll(&mut self) {
+        if let Some(receiver) = &self.browser {
+            match receiver.try_recv() {
+                Ok(opened) => {
+                    self.opened = Some(opened);
+                    self.browser = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.opened = Some(false);
+                    self.browser = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+    }
+
+    pub(super) fn handle(&mut self, action: SignInAction, code: &str, ctx: &egui::Context) {
+        match action {
+            SignInAction::CopyCode => {
+                self.copied = Some(festerm_ios_window::set_clipboard_text(code));
+            }
+            SignInAction::OpenBrowser if self.browser.is_none() => {
+                self.opened = None;
+                self.browser = Some(Self::open(ctx));
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(super) enum ConnectStage {
@@ -148,6 +221,7 @@ pub(super) fn describe_error(error: &TunnelError) -> String {
 pub(super) struct SignInView<'a> {
     pub(super) prompt: Option<&'a SignInPrompt>,
     pub(super) error: Option<&'a str>,
+    pub(super) effects: Option<&'a SignInEffects>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,6 +229,7 @@ pub(super) enum SignInAction {
     None,
     CopyCode,
     OpenBrowser,
+    Retry,
     Cancel,
 }
 
@@ -172,15 +247,15 @@ pub(super) fn sign_in_sheet(
         match (view.prompt, view.error) {
             (_, Some(error)) => {
                 ui.label(egui::RichText::new(error).color(color::DANGER));
+                if button(ui, ButtonKind::Primary, "Sign in again", true).clicked() {
+                    action = SignInAction::Retry;
+                }
             }
             (Some(prompt), None) => {
                 ui.label(
-                    egui::RichText::new(
-                        "Open GitHub, make sure the intended account is signed in, enter this \
-                         code, then return to fesTerm.",
-                    )
-                    .size(type_scale::CAPTION + 0.5)
-                    .color(color::TEXT_MUTED),
+                    egui::RichText::new("Authorize Microsoft Dev Tunnels on GitHub.")
+                        .size(type_scale::CAPTION + 0.5)
+                        .color(color::TEXT_MUTED),
                 );
                 card(ui, |ui| {
                     ui.add_space(space::LG);
@@ -193,24 +268,33 @@ pub(super) fn sign_in_sheet(
                                 .color(color::TEXT),
                         );
                         ui.label(
-                            egui::RichText::new(&prompt.verification_url)
+                            egui::RichText::new(VERIFICATION_URI)
                                 .size(type_scale::CAPTION)
                                 .color(color::ACCENT_TEXT),
                         );
                     });
                     ui.add_space(space::LG);
                 });
-                if button(ui, ButtonKind::Primary, "Open GitHub", true).clicked() {
+                match view.effects.and_then(|effects| effects.copied) {
+                    Some(true) => footnote(ui, "Code copied. Paste it into GitHub."),
+                    Some(false) => footnote(ui, "Could not copy. Enter the code above."),
+                    None => footnote(ui, "Enter this code on GitHub."),
+                }
+                match view.effects.and_then(|effects| effects.opened) {
+                    Some(true) => footnote(ui, "Browser opened."),
+                    Some(false) => footnote(ui, "Could not open browser. Try again."),
+                    None => footnote(ui, "Waiting for browser…"),
+                }
+                let browser_pending = view
+                    .effects
+                    .is_some_and(|effects| effects.browser.is_some());
+                if button(ui, ButtonKind::Primary, "Open browser", !browser_pending).clicked() {
                     action = SignInAction::OpenBrowser;
                 }
-                if button(ui, ButtonKind::Secondary, "Copy code", true).clicked() {
+                if button(ui, ButtonKind::Secondary, "Copy again", true).clicked() {
                     action = SignInAction::CopyCode;
                 }
-                footnote(
-                    ui,
-                    "Waiting for you to approve in the browser. fesTerm only receives access to \
-                     your Dev Tunnels.",
-                );
+                footnote(ui, "Waiting for sign-in…");
             }
             (None, None) => {
                 ui.label(
@@ -244,4 +328,46 @@ pub(super) fn progress_sheet(ctx: &egui::Context, bounds: Rect, title: &str, det
         }
     });
     cancel
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_in_attempts_once_and_keeps_copy_and_browser_results_independent() {
+        for (copied, opened) in [(true, true), (true, false), (false, true), (false, false)] {
+            let mut effects = SignInEffects::default();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            effects.initial_with(|| copied, || receiver);
+            effects.initial_with(
+                || panic!("duplicate clipboard attempt"),
+                || panic!("duplicate browser attempt"),
+            );
+            effects.poll();
+            assert_eq!(effects.copied, Some(copied));
+            assert_eq!(effects.opened, None, "dispatch is not completion");
+            sender.try_send(opened).unwrap();
+            effects.poll();
+            assert_eq!(effects.opened, Some(opened));
+        }
+    }
+
+    #[test]
+    fn canceled_sign_in_cannot_deliver_browser_result_to_its_replacement() {
+        let mut original = SignInEffects::default();
+        let (old_sender, old_receiver) = mpsc::sync_channel(1);
+        original.initial_with(|| true, || old_receiver);
+        drop(original);
+        let mut replacement = SignInEffects::default();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        replacement.initial_with(|| false, || receiver);
+        assert!(old_sender.try_send(true).is_err());
+        replacement.poll();
+        assert_eq!(replacement.copied, Some(false));
+        assert_eq!(replacement.opened, None);
+        sender.try_send(false).unwrap();
+        replacement.poll();
+        assert_eq!(replacement.opened, Some(false));
+    }
 }

@@ -7,11 +7,9 @@ use festerm_config::{
     EmojiPresentationPreference, ImageMemoryBudgetPreference, ScrollSpeedPreference,
     ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
 };
-use festerm_ui_egui::{
-    chrome::ChipLayout,
-    controls::{action_button, ActionButtonRole},
-    theme,
-};
+#[cfg(feature = "experimental-dev-tunnels")]
+use festerm_ui_egui::controls::{action_button, ActionButtonRole};
+use festerm_ui_egui::{chrome::ChipLayout, theme};
 
 use super::{ssh_paragraph, ssh_section_heading, AppCommand, CONTENT_SCROLLBAR_LANE};
 
@@ -41,7 +39,15 @@ pub(crate) struct SettingsViewModel {
     pub extend_dev_tunnel_lifetime: bool,
     pub show_running_dev_tunnels: bool,
     pub dev_tunnel_extension_days: u32,
-    /// `(key, login, profiles using it)` for each shared Dev Tunnel account.
+    /// Public account metadata and observations from explicit account operations.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub dev_tunnel_accounts: Vec<(
+        String,
+        String,
+        usize,
+        crate::app::tunnel_browser::AccountStatus,
+    )>,
+    #[cfg(not(feature = "experimental-dev-tunnels"))]
     pub dev_tunnel_accounts: Vec<(String, String, usize)>,
     pub customize_local_shell: bool,
     pub restore_workspace: bool,
@@ -687,42 +693,58 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         ui.add_space(12.0);
 
                         #[cfg(feature = "local-host-settings")]
-                        settings_card(ui, "Remote access · this device", |ui| {
+                        settings_card(ui, "Remote access", |ui| {
                             if let Some(action) = crate::app::desktop_remote_access::show(
                                 ui,
                                 &local_remote_access,
                                 &local_share_targets,
                             ) {
-                                command = Some(AppCommand::LocalRemoteAccess(action));
+                                command = Some(match action {
+                                    crate::app::desktop_remote_access::Action::SignInAccount => AppCommand::AddDevTunnelAccount,
+                                    action => AppCommand::LocalRemoteAccess(action),
+                                });
                             }
                         });
 
                         #[cfg(feature = "experimental-dev-tunnels")]
                         {
-                            settings_card(ui, "Dev Tunnel accounts", |ui| {
+                            settings_card(ui, "GitHub accounts", |ui| {
                                 ssh_paragraph(
                                     ui,
-                                    "GitHub accounts shared by Dev Tunnel profiles. Sign in once \
-                                     and every profile using the account connects without \
-                                     signing in again.",
+                                    "Shared by Dev Tunnel connections.",
                                 );
                                 if dev_tunnel_accounts.is_empty() {
                                     ssh_paragraph(ui, "No accounts yet.");
                                 }
-                                for (key, login, used_by) in &dev_tunnel_accounts {
+                                for (key, login, used_by, status) in &dev_tunnel_accounts {
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label(format!(
-                                            "GitHub · {login} · used by {used_by} profile{}",
+                                            "@{login} · used by {used_by} profile{}",
                                             if *used_by == 1 { "" } else { "s" }
                                         ));
-                                        if action_button(ui, ActionButtonRole::Secondary, &format!("Sign out {login}")).clicked() {
+                                        if status.needs_sign_in() {
+                                            ui.colored_label(theme::STATUS_ERROR, status.label());
+                                        } else {
+                                            ui.weak(status.label());
+                                        }
+                                        if action_button(ui, ActionButtonRole::Secondary, "Sign in again").clicked() {
+                                            command = Some(AppCommand::ReauthenticateDevTunnelAccount {
+                                                account: key.clone(),
+                                            });
+                                        }
+                                        if action_button(ui, ActionButtonRole::Secondary, &format!("Sign out @{login}")).clicked() {
                                             command = Some(AppCommand::RemoveDevTunnelAccount {
                                                 account: key.clone(),
                                             });
                                         }
                                     });
                                 }
-                                if action_button(ui, ActionButtonRole::Secondary, "Add GitHub account").clicked() {
+                                let sign_in_label = if dev_tunnel_accounts.is_empty() {
+                                    "Sign in with GitHub"
+                                } else {
+                                    "Add account"
+                                };
+                                if action_button(ui, ActionButtonRole::Secondary, sign_in_label).clicked() {
                                     command = Some(AppCommand::AddDevTunnelAccount);
                                 }
                             });

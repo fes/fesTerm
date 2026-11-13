@@ -1,7 +1,8 @@
 use festerm_config::{
     host_recipes::{
-        AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
-        PublicRecipe, Recipe, RecipeError, RecipeId, MAX_PORTABLE_BYTES, MAX_RECIPES,
+        AccountReference, ConnectionBehavior, DuplicatePolicy, HostHint, HostId, HostReference,
+        MetadataCommand, MetadataOutcome, PublicRecipe, Recipe, RecipeError, RecipeId,
+        MAX_PORTABLE_BYTES, MAX_RECIPES,
     },
     ConfigErrorKind, Configuration, Profile,
 };
@@ -134,6 +135,52 @@ destination_file = "public-destination.json"
     assert!(!serialized.contains("allow_remote_creation"));
     assert!(!serialized.contains("principal"));
     assert!(legacy.host_recipes().is_empty());
+}
+
+#[test]
+fn host_recipe_remote_name_and_saved_host_hint_are_strict_public_toml_metadata() {
+    let mut recipe = recipe();
+    recipe.behavior = ConnectionBehavior::ResumeOnly {};
+    recipe.session_name = Some("Remote project".into());
+    recipe.host_hint = Some(HostHint {
+        locator: "token-build.usw3".into(),
+        name: "Build workstation".into(),
+    });
+    let (saved, _) = Configuration::empty()
+        .with_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+        .unwrap();
+    let serialized = saved.to_toml().unwrap();
+    assert_eq!(Configuration::parse(&serialized).unwrap(), saved);
+    assert_eq!(toml::from_str::<Configuration>(&serialized).unwrap(), saved);
+    assert_eq!(
+        saved.host_recipes().get(&recipe.id).unwrap().session_name(),
+        "Remote project"
+    );
+    for (from, to) in [
+        ("session_name = \"Remote project\"", "session_name = \" \""),
+        (
+            "locator = \"token-build.usw3\"",
+            "locator = \"host.usw3.other\"",
+        ),
+        ("name = \"Build workstation\"", "name = \"\""),
+        (
+            "name = \"Build workstation\"",
+            "name = \"--password=not-a-secret\"",
+        ),
+        (
+            "[host_recipes.host_hint]",
+            "[host_recipes.host_hint]\ncredential_id = \"550e8400-e29b-41d4-a716-446655440000\"",
+        ),
+        (
+            "[host_recipes.host_hint]",
+            "[host_recipes.host_hint]\nonline = true",
+        ),
+    ] {
+        assert!(serialized.contains(from), "{from}");
+        let invalid = serialized.replace(from, to);
+        assert!(Configuration::parse(&invalid).is_err());
+        assert!(toml::from_str::<Configuration>(&invalid).is_err());
+    }
 }
 
 #[test]

@@ -2350,6 +2350,7 @@ name = "festerm"
 version = "0.17.0"
 dependencies = [
  "accesskit",
+ "arboard",
  "bytemuck",
  "cap-fs-ext",
  "cap-std",
@@ -2367,6 +2368,7 @@ dependencies = [
  "festerm-core",
  "festerm-document",
  "festerm-enterprise",
+ "festerm-host-protocol",
  "festerm-host-setup",
  "festerm-linux-power",
  "festerm-macos-window",
@@ -2413,6 +2415,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webbrowser",
  "winapi-util",
  "winresource",
  "zeroize",

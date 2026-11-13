@@ -14,7 +14,7 @@ use festerm_tunnel_client::{
     service::{self, TunnelSummary},
     Error, Https,
 };
-use festerm_ui_egui::controls::{action_button_monospace, ActionButtonRole};
+use festerm_ui_egui::controls::{action_button, ActionButtonRole};
 use festerm_ui_egui::theme;
 use tokio_util::sync::CancellationToken;
 
@@ -26,12 +26,183 @@ struct SignedAccount {
     secret: PendingSecret,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum AccountStatus {
+    #[default]
+    Unknown,
+    VerifiedAtSignIn,
+    LastOperationSucceeded,
+    Expired,
+    ApplicationChanged,
+}
+
+impl AccountStatus {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown until checked",
+            Self::VerifiedAtSignIn => "Verified at last sign-in",
+            Self::LastOperationSucceeded => "Previously checked successfully",
+            Self::Expired => "Sign-in expired. Sign in again.",
+            Self::ApplicationChanged => "Sign-in application changed. Sign in again.",
+        }
+    }
+
+    pub(crate) fn needs_sign_in(self) -> bool {
+        matches!(self, Self::Expired | Self::ApplicationChanged)
+    }
+}
+
+#[derive(Clone, Default)]
+struct AccountObservations(Vec<(DevTunnelAccount, AccountStatus)>);
+
+fn observations_id() -> egui::Id {
+    egui::Id::new("dev_tunnel_account_observations")
+}
+
+/// Only call for a typed failure of decoding/refreshing the stored identity.
+pub(super) fn credential_issue(error: Error) -> Option<AccountStatus> {
+    match error {
+        Error::Expired => Some(AccountStatus::Expired),
+        Error::IdentityChanged => Some(AccountStatus::ApplicationChanged),
+        _ => None,
+    }
+}
+
+pub(super) fn record_account_status(
+    context: &egui::Context,
+    current: &[DevTunnelAccount],
+    expected: &DevTunnelAccount,
+    status: AccountStatus,
+) {
+    context.data_mut(|data| {
+        let observations = data.get_temp_mut_or_default::<AccountObservations>(observations_id());
+        observations
+            .0
+            .retain(|(account, _)| current.contains(account));
+        if !current.contains(expected) {
+            return;
+        }
+        if let Some((_, known)) = observations
+            .0
+            .iter_mut()
+            .find(|(account, _)| account == expected)
+        {
+            *known = status;
+        } else {
+            observations.0.push((expected.clone(), status));
+        }
+    });
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(super) enum DeviceAction {
+    #[default]
+    None,
+    Copy,
+    OpenBrowser,
+}
+
+/// Owned by one authorization generation, never by the render loop.
+#[derive(Default)]
+pub(super) struct DeviceActions {
+    attempted: bool,
+    copied: Option<bool>,
+    opened: Option<bool>,
+    // On X11 the clipboard owner must remain alive while authorization waits.
+    clipboard: Option<arboard::Clipboard>,
+}
+
+impl DeviceActions {
+    fn initial_with(&mut self, copy: impl FnOnce() -> bool, open: impl FnOnce() -> bool) {
+        if self.attempted {
+            return;
+        }
+        self.attempted = true;
+        self.copied = Some(copy());
+        self.opened = Some(open());
+    }
+
+    pub(super) fn initial(&mut self, code: &str) {
+        let mut clipboard = None;
+        self.initial_with(
+            || match arboard::Clipboard::new() {
+                Ok(mut native) => {
+                    let copied = native.set_text(code).is_ok();
+                    clipboard = Some(native);
+                    copied
+                }
+                Err(_) => false,
+            },
+            || webbrowser::open(identity::VERIFICATION_URI).is_ok(),
+        );
+        if clipboard.is_some() {
+            self.clipboard = clipboard;
+        }
+    }
+
+    pub(super) fn handle(&mut self, action: DeviceAction, code: &str) {
+        match action {
+            DeviceAction::None => {}
+            DeviceAction::Copy => {
+                if self.clipboard.is_none() {
+                    match arboard::Clipboard::new() {
+                        Ok(clipboard) => self.clipboard = Some(clipboard),
+                        Err(_) => {
+                            self.copied = Some(false);
+                            return;
+                        }
+                    }
+                }
+                self.copied = Some(
+                    self.clipboard
+                        .as_mut()
+                        .is_some_and(|clipboard| clipboard.set_text(code).is_ok()),
+                );
+            }
+            DeviceAction::OpenBrowser => {
+                self.opened = Some(webbrowser::open(identity::VERIFICATION_URI).is_ok());
+            }
+        }
+    }
+
+    pub(super) fn show(&self, ui: &mut egui::Ui, code: &str) -> DeviceAction {
+        ui.label("Microsoft Dev Tunnels");
+        ui.monospace(code);
+        match self.copied {
+            Some(true) => ui.label("Code copied. Paste it into GitHub."),
+            Some(false) => {
+                ui.colored_label(theme::STATUS_ERROR, "Could not copy. Enter the code above.")
+            }
+            None => ui.label("Enter this code on GitHub:"),
+        };
+        match self.opened {
+            Some(true) => ui.label("Browser opened."),
+            Some(false) => {
+                ui.colored_label(theme::STATUS_ERROR, "Could not open browser. Try again.")
+            }
+            None => ui.label(identity::VERIFICATION_URI),
+        };
+        let mut action = DeviceAction::None;
+        ui.horizontal_wrapped(|ui| {
+            if action_button(ui, ActionButtonRole::Secondary, "Copy again").clicked() {
+                action = DeviceAction::Copy;
+            }
+            if action_button(ui, ActionButtonRole::Secondary, "Open browser").clicked() {
+                action = DeviceAction::OpenBrowser;
+            }
+        });
+        ui.label("Waiting for sign-in…");
+        action
+    }
+}
+
 enum Event {
     Device(DevicePrompt),
     /// A new sign-in finished and its credential is in the store.
     Signed(SignedAccount),
     Listed(Result<(String, Vec<TunnelSummary>), Error>),
     LocalRemoval(Result<festerm_config::LocalTunnelHosting, &'static str>),
+    AccountObservation(AccountStatus),
 }
 
 enum Stage {
@@ -52,6 +223,7 @@ pub(super) struct Browser {
     receiver: mpsc::Receiver<Event>,
     stage: Stage,
     focus_cancel: bool,
+    device: DeviceActions,
     store: Arc<dyn SecretStore>,
     account: Option<DevTunnelAccount>,
     _lease: Option<std::fs::File>,
@@ -74,6 +246,7 @@ impl Browser {
         context: &egui::Context,
         delete: Option<String>,
         rename: Option<(String, String)>,
+        reauthenticate: bool,
     ) -> Self {
         let cancel = CancellationToken::new();
         let (sender, receiver) = mpsc::sync_channel(2);
@@ -82,6 +255,7 @@ impl Browser {
             receiver,
             stage: Stage::Working,
             focus_cancel: true,
+            device: DeviceActions::default(),
             store: Arc::clone(&store),
             account: account.clone(),
             _lease: None,
@@ -132,7 +306,7 @@ impl Browser {
                             tokio::select! {
                                 _ = cancel.cancelled() => Err(Error::Cancelled),
                                 _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref(), rename.as_ref(), Some((cleanup_failure, context.clone()))) => value,
+                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref(), rename.as_ref(), Some((cleanup_failure, context.clone())), reauthenticate) => value,
                             }
                         })
                     });
@@ -166,6 +340,7 @@ pub(super) async fn list_for_account(
         None,
         None,
         None,
+        false,
     )
     .await?
     {
@@ -189,11 +364,18 @@ async fn run(
     delete: Option<&str>,
     rename: Option<&(String, String)>,
     cleanup: Option<(Arc<AtomicU16>, egui::Context)>,
+    reauthenticate: bool,
 ) -> Result<Outcome, Error> {
     let http = Https::new()?;
+    let expected = if reauthenticate {
+        Some(account.as_ref().ok_or(Error::AccountChanged)?.account_id())
+    } else {
+        None
+    };
+    let account = if reauthenticate { None } else { account };
     let Some(account) = account else {
         let (cleanup_failure, context) = cleanup.ok_or(Error::Store)?;
-        let identity = identity::sign_in(&http, client_id, None, cancel, |prompt| {
+        let identity = identity::sign_in(&http, client_id, expected, cancel, |prompt| {
             if !notify(Event::Device(prompt)) {
                 cancel.cancel();
             }
@@ -210,7 +392,7 @@ async fn run(
             context,
         );
         return DevTunnelAccount::new(
-            format!("github-{}", identity.account.login.to_ascii_lowercase()),
+            format!("github-{}", identity.account.id),
             AccountProvider::Github,
             identity.account.id,
             identity.account.login.clone(),
@@ -222,16 +404,29 @@ async fn run(
     let secret = store
         .get(account.credential_reference())
         .map_err(|_| Error::Store)?;
+    let observe = |error: &Error| {
+        if let Some(status) = credential_issue(*error) {
+            notify(Event::AccountObservation(status));
+        }
+    };
     let mut identity = secret
-        .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client_id))?;
-    if identity.needs_sign_in() {
-        identity = identity.refresh(&http, client_id, cancel).await?;
+        .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client_id))
+        .inspect_err(observe)?;
+    let refreshed = identity.needs_sign_in();
+    if refreshed {
+        identity = identity
+            .refresh(&http, client_id, cancel)
+            .await
+            .inspect_err(observe)?;
         store
             .update(
                 account.credential_reference(),
                 &SecretBytes::copy_from_slice(&identity.encode_private()?),
             )
             .map_err(|_| Error::Store)?;
+        notify(Event::AccountObservation(
+            AccountStatus::LastOperationSucceeded,
+        ));
     }
     if let Some(tunnel) = delete {
         service::delete(&identity, tunnel, cancel).await?;
@@ -240,11 +435,16 @@ async fn run(
         service::update_description(&identity, tunnel, friendly_name, cancel).await?;
     }
     let tunnels = service::list(&identity, cancel).await?;
+    if !refreshed {
+        notify(Event::AccountObservation(
+            AccountStatus::LastOperationSucceeded,
+        ));
+    }
     Ok(Outcome::Listed(identity.account.login.clone(), tunnels))
 }
 
 /// The name a tunnel is listed under.
-pub(super) fn display_name(summary: &TunnelSummary) -> String {
+pub(crate) fn display_name(summary: &TunnelSummary) -> String {
     summary
         .description
         .as_deref()
@@ -284,6 +484,7 @@ impl FesTermApp {
             context,
             None,
             None,
+            false,
         ));
         self.overlays.native_tunnel = true;
         context.request_repaint();
@@ -293,11 +494,22 @@ impl FesTermApp {
         let Some(browser) = self.tunnel_browser.as_mut() else {
             return;
         };
+        if browser.account.as_ref().is_some_and(|expected| {
+            self.state.configuration().account(expected.identifier()) != Some(expected)
+        }) {
+            self.tunnel_browser = None;
+            self.overlays.native_tunnel = false;
+            self.secure_storage_feedback = Some("Account changed. Sign-in cancelled.");
+            return;
+        }
         let mut signed = None;
         let mut local_removal = None;
         while let Ok(event) = browser.receiver.try_recv() {
             browser.stage = match event {
-                Event::Device(prompt) => Stage::Device(prompt),
+                Event::Device(prompt) => {
+                    browser.device.initial(&prompt.user_code);
+                    Stage::Device(prompt)
+                }
                 Event::Signed(account) => {
                     signed = Some(account);
                     continue;
@@ -311,6 +523,17 @@ impl FesTermApp {
                 Event::Listed(Err(error)) => Stage::Error(error),
                 Event::LocalRemoval(result) => {
                     local_removal = Some(result);
+                    continue;
+                }
+                Event::AccountObservation(status) => {
+                    if let Some(account) = &browser.account {
+                        record_account_status(
+                            context,
+                            self.state.configuration().accounts(),
+                            account,
+                            status,
+                        );
+                    }
                     continue;
                 }
             };
@@ -335,6 +558,31 @@ impl FesTermApp {
             let _reference = secret.release();
             self.save_signed_in_account(account, store, context);
         }
+    }
+
+    pub(super) fn reauthenticate_dev_tunnel_account(&mut self, key: &str, context: &egui::Context) {
+        if self.tunnel_browser.is_some() || self.native_tunnel.is_some() {
+            return;
+        }
+        let Some(account) = self.state.configuration().account(key).cloned() else {
+            self.secure_storage_feedback = Some("Account changed. Sign in again.");
+            return;
+        };
+        let Ok(store) = &self.secret_store else {
+            self.secure_storage_feedback = Some("Secure storage unavailable. Cannot sign in.");
+            return;
+        };
+        self.tunnel_browser = Some(Browser::start(
+            Some(account),
+            Arc::clone(store),
+            self.configuration_reloader.secret_cleanup_failure(),
+            context,
+            None,
+            None,
+            true,
+        ));
+        self.overlays.native_tunnel = true;
+        context.request_repaint();
     }
 
     /// Adds a freshly signed-in account, replacing the credential of an
@@ -390,6 +638,14 @@ impl FesTermApp {
             );
         }
         if let Some(key) = key.filter(|_| saved) {
+            if let Some(account) = self.state.configuration().account(&key) {
+                record_account_status(
+                    context,
+                    self.state.configuration().accounts(),
+                    account,
+                    AccountStatus::VerifiedAtSignIn,
+                );
+            }
             context.data_mut(|data| {
                 data.insert_temp(signed_in_account_id(), SignedInAccount(key));
             });
@@ -459,20 +715,36 @@ impl FesTermApp {
         }
     }
 
-    /// `(key, login, profiles using it)` for the Settings account list.
-    pub(super) fn dev_tunnel_account_rows(&self) -> Vec<(String, String, usize)> {
+    /// Public metadata and credential-snapshot-bound observations; no vault or network reads.
+    pub(super) fn dev_tunnel_account_rows(
+        &self,
+        context: &egui::Context,
+    ) -> Vec<(String, String, usize, AccountStatus)> {
         let configuration = self.state.configuration();
-        configuration
-            .accounts()
-            .iter()
-            .map(|account| {
-                (
-                    account.identifier().to_owned(),
-                    account.login().to_owned(),
-                    configuration.account_profile_count(account.identifier()),
-                )
-            })
-            .collect()
+        context.data_mut(|data| {
+            let observations =
+                data.get_temp_mut_or_default::<AccountObservations>(observations_id());
+            observations
+                .0
+                .retain(|(account, _)| configuration.accounts().contains(account));
+            configuration
+                .accounts()
+                .iter()
+                .map(|account| {
+                    let status = observations
+                        .0
+                        .iter()
+                        .find(|(known, _)| known == account)
+                        .map_or(AccountStatus::Unknown, |(_, status)| *status);
+                    (
+                        account.identifier().to_owned(),
+                        account.login().to_owned(),
+                        configuration.account_profile_count(account.identifier()),
+                        status,
+                    )
+                })
+                .collect()
+        })
     }
 
     pub(super) fn show_tunnel_browser(&mut self, context: &egui::Context, escape: bool) {
@@ -484,9 +756,17 @@ impl FesTermApp {
         let mut picked = None;
         let mut delete = None;
         let mut rename = None;
+        let mut device_action = DeviceAction::None;
+        let mut reauthenticate = false;
         egui::Modal::new(egui::Id::new("browse_dev_tunnels")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 520.0);
-            ui.heading("Dev Tunnels");
+            ui.heading(
+                if browser.account.is_none() || matches!(browser.stage, Stage::Device(_)) {
+                    "Sign in with GitHub"
+                } else {
+                    "Dev Tunnels"
+                },
+            );
             super::confirmations::confirmation_body(ui, |ui| match &mut browser.stage {
                 Stage::Working => {
                     ui.horizontal(|ui| {
@@ -495,19 +775,7 @@ impl FesTermApp {
                     });
                 }
                 Stage::Device(prompt) => {
-                    ui.label("Sign in to Microsoft Dev Tunnels");
-                    ui.label("Enter this code on GitHub:");
-                    ui.add_space(6.0);
-                    if action_button_monospace(ui, ActionButtonRole::Accent, &prompt.user_code)
-                        .on_hover_text("Copy code and open GitHub")
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(prompt.user_code.clone());
-                        ui.ctx()
-                            .open_url(egui::OpenUrl::new_tab(identity::VERIFICATION_URI));
-                    }
-                    ui.add_space(6.0);
-                    ui.label("Waiting for sign-in…");
+                    device_action = browser.device.show(ui, &prompt.user_code);
                 }
                 Stage::Pick {
                     login,
@@ -659,6 +927,9 @@ impl FesTermApp {
                 }
                 Stage::Error(error) => {
                     ui.colored_label(theme::STATUS_ERROR, error.to_string());
+                    if action_button(ui, ActionButtonRole::Accent, "Sign in again").clicked() {
+                        reauthenticate = true;
+                    }
                 }
             });
             ui.add_space(10.0);
@@ -677,6 +948,24 @@ impl FesTermApp {
             }
             dismiss |= cancel.clicked();
         });
+        if !dismiss {
+            if let Stage::Device(prompt) = &browser.stage {
+                browser.device.handle(device_action, &prompt.user_code);
+            }
+        }
+        if reauthenticate && !dismiss {
+            let key = browser
+                .account
+                .as_ref()
+                .map(|account| account.identifier().to_owned());
+            self.tunnel_browser = None;
+            if let Some(key) = key {
+                self.reauthenticate_dev_tunnel_account(&key, context);
+            } else {
+                self.begin_tunnel_browser(None, context);
+            }
+            return;
+        }
         if let Some(locator) = delete {
             let account = self.tunnel_browser.as_ref().and_then(|b| b.account.clone());
             let store = self.tunnel_browser.as_ref().map(|b| Arc::clone(&b.store));
@@ -690,6 +979,7 @@ impl FesTermApp {
                     context,
                     Some(locator),
                     None,
+                    false,
                 ));
             }
             return;
@@ -706,6 +996,7 @@ impl FesTermApp {
                     context,
                     None,
                     Some(rename),
+                    false,
                 ));
             }
             return;
@@ -795,6 +1086,176 @@ pub(crate) fn take_picked_tunnel(context: &egui::Context) -> Option<PickedTunnel
 mod tests {
     use super::*;
 
+    #[test]
+    fn account_status_is_observational_and_fenced_by_the_exact_credential_snapshot() {
+        let account = DevTunnelAccount::new(
+            "account",
+            AccountProvider::Github,
+            42,
+            "user",
+            festerm_secret_store::SecretReference::generate(),
+        )
+        .unwrap();
+        let configuration = festerm_config::Configuration::empty()
+            .with_account(account.clone())
+            .unwrap()
+            .0;
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let context = egui::Context::default();
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::Unknown
+        );
+        record_account_status(
+            &context,
+            app.state.configuration().accounts(),
+            &account,
+            AccountStatus::VerifiedAtSignIn,
+        );
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::VerifiedAtSignIn
+        );
+
+        let replacement = DevTunnelAccount::new(
+            "account",
+            AccountProvider::Github,
+            42,
+            "user",
+            festerm_secret_store::SecretReference::generate(),
+        )
+        .unwrap();
+        app.state.replace_configuration(
+            festerm_config::Configuration::empty()
+                .with_account(replacement.clone())
+                .unwrap()
+                .0,
+        );
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::Unknown
+        );
+        record_account_status(
+            &context,
+            app.state.configuration().accounts(),
+            &account,
+            AccountStatus::Expired,
+        );
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::Unknown
+        );
+        record_account_status(
+            &context,
+            app.state.configuration().accounts(),
+            &replacement,
+            AccountStatus::ApplicationChanged,
+        );
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::ApplicationChanged
+        );
+        record_account_status(
+            &context,
+            app.state.configuration().accounts(),
+            &replacement,
+            AccountStatus::LastOperationSucceeded,
+        );
+        assert_eq!(
+            app.dev_tunnel_account_rows(&context)[0].3,
+            AccountStatus::LastOperationSucceeded
+        );
+        app.state
+            .replace_configuration(festerm_config::Configuration::empty());
+        assert!(app.dev_tunnel_account_rows(&context).is_empty());
+        assert_eq!(
+            context.data_mut(|data| {
+                data.get_temp::<AccountObservations>(observations_id())
+                    .unwrap()
+                    .0
+                    .len()
+            }),
+            0
+        );
+    }
+
+    #[test]
+    fn account_credential_status_does_not_infer_expiry_from_generic_failures() {
+        assert_eq!(
+            credential_issue(Error::Expired),
+            Some(AccountStatus::Expired)
+        );
+        assert_eq!(
+            credential_issue(Error::IdentityChanged),
+            Some(AccountStatus::ApplicationChanged)
+        );
+        for error in [
+            Error::Network,
+            Error::Denied,
+            Error::Response,
+            Error::Cancelled,
+            Error::AccountChanged,
+        ] {
+            assert_eq!(credential_issue(error), None);
+        }
+    }
+
+    #[test]
+    fn account_sign_in_attempts_once_and_reports_copy_and_browser_independently() {
+        for (copied, opened) in [(true, true), (true, false), (false, true), (false, false)] {
+            let mut effects = DeviceActions::default();
+            effects.initial_with(|| copied, || opened);
+            effects.initial_with(
+                || panic!("duplicate clipboard attempt"),
+                || panic!("duplicate browser attempt"),
+            );
+            assert_eq!(effects.copied, Some(copied));
+            assert_eq!(effects.opened, Some(opened));
+        }
+    }
+
+    #[test]
+    fn account_change_discards_queued_sign_in_prompt_before_platform_effects() {
+        let context = egui::Context::default();
+        let store: Arc<dyn SecretStore> = Arc::new(festerm_secret_store::MemorySecretStore::new());
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"identity"))
+            .unwrap();
+        let account =
+            DevTunnelAccount::new("account", AccountProvider::Github, 42, "user", reference)
+                .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(
+            festerm_config::Configuration::new(Vec::new()).unwrap(),
+        );
+        let (sender, receiver) = mpsc::sync_channel(2);
+        sender
+            .try_send(Event::Device(DevicePrompt {
+                user_code: "ABCD-1234".into(),
+            }))
+            .ok()
+            .unwrap();
+        let cancel = CancellationToken::new();
+        app.tunnel_browser = Some(Browser {
+            cancel: cancel.clone(),
+            receiver,
+            stage: Stage::Working,
+            focus_cancel: false,
+            device: DeviceActions::default(),
+            store,
+            account: Some(account),
+            _lease: None,
+        });
+        app.overlays.native_tunnel = true;
+        app.poll_tunnel_browser(&context);
+        assert!(cancel.is_cancelled());
+        assert!(app.tunnel_browser.is_none());
+        assert!(!app.overlays.native_tunnel);
+        assert_eq!(
+            app.secure_storage_feedback,
+            Some("Account changed. Sign-in cancelled.")
+        );
+    }
+
     struct FailingDeleteStore(festerm_secret_store::MemorySecretStore);
     impl SecretStore for FailingDeleteStore {
         fn put(
@@ -859,6 +1320,7 @@ mod tests {
                 receiver,
                 stage: Stage::Working,
                 focus_cancel: false,
+                device: DeviceActions::default(),
                 store: Arc::clone(&store),
                 account: None,
                 _lease: None,

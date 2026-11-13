@@ -171,6 +171,14 @@ the entire owner/logical/recipe/lifetime intent and return conflict if it
 changed. Stage 2 implements the local journal/spawn algorithm below; remote dispatch
 and reviewed enrollment/channel integration remain prerequisites.
 
+`ListProfiles` returns only enabled entries from the host's protected local
+catalog; an entry remains discoverable while its shell is stopped. `EnsureProfile`
+carries only that stable logical ID, catalog revision and attachment ID. The host
+resolves and revalidates the saved recipe under the same journal boundary as
+ordinary Ensure. Portable client metadata is not registration authority, and
+generic Ensure/Create is denied for catalog-owned identities. Profile-scoped
+creation does not grant ad-hoc shell creation permission.
+
 The unreleased HOST envelope additionally carries `issuance_epoch` on
 Ensure/Create requests, which require it. All other requests must omit it;
 otherwise validation returns Malformed. `IssuedOperation { id, epoch }` captures

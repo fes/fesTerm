@@ -1095,6 +1095,14 @@ fn inspect_document_for_secret_material(value: &toml::Value) -> Result<(), Confi
                 };
                 inspect_table_for_secret_material(account, true, false, true)?;
             }
+        } else if key == "host_recipes" {
+            let toml::Value::Array(recipes) = value else {
+                inspect_value_for_secret_material(value, false)?;
+                continue;
+            };
+            for recipe in recipes {
+                inspect_host_recipe_for_secret_material(recipe)?;
+            }
         } else if key == "profiles" {
             let toml::Value::Array(profiles) = value else {
                 inspect_value_for_secret_material(value, false)?;
@@ -1104,6 +1112,29 @@ fn inspect_document_for_secret_material(value: &toml::Value) -> Result<(), Confi
                 inspect_profile_for_secret_material(profile)?;
             }
         } else {
+            inspect_value_for_secret_material(value, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn inspect_host_recipe_for_secret_material(value: &toml::Value) -> Result<(), ConfigError> {
+    let toml::Value::Table(recipe) = value else {
+        return inspect_value_for_secret_material(value, false);
+    };
+    for (key, value) in recipe {
+        if key == "host_hint" {
+            // Only the validated public locator grammar may contain names such
+            // as "token-build.usw3"; no sibling field gets a secret exemption.
+            let hint: host_recipes::HostHint = value.clone().try_into().map_err(parse_error)?;
+            hint.validate().map_err(ConfigError::from)?;
+            if let Some(name) = value.get("name") {
+                inspect_value_for_secret_material(name, false)?;
+            }
+        } else {
+            if is_secret_bearing_key(key) {
+                return Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretField));
+            }
             inspect_value_for_secret_material(value, false)?;
         }
     }

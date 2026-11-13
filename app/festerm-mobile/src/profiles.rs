@@ -374,12 +374,38 @@ impl Profiles {
 
     /// Profiles in the user's order, limited to kinds the shell can open.
     pub fn rows(&self, caps: Capabilities) -> Vec<model::Profile> {
-        self.store()
+        let rows = self
+            .store()
             .profiles()
             .iter()
             .filter_map(Self::row)
             .filter(|row| Self::visible(row.kind, caps))
-            .collect()
+            .collect::<Vec<_>>();
+        #[cfg(feature = "host-clients")]
+        let rows = {
+            let mut rows = rows;
+            if caps.dev_tunnel_profiles {
+                rows.extend(self.store().host_recipes().recipes().iter().map(|recipe| {
+                    model::Profile {
+                        id: recipe.id.as_str().to_owned(),
+                        name: recipe.name.clone(),
+                        kind: model::ProfileKind::DevTunnel,
+                        detail: model::profile_detail(
+                            model::ProfileKind::DevTunnel,
+                            recipe
+                                .host_hint
+                                .as_ref()
+                                .map(|hint| hint.name.as_str())
+                                .unwrap_or("Saved host"),
+                            "",
+                        ),
+                        last_used: None,
+                    }
+                }));
+            }
+            rows
+        };
+        rows
     }
 
     /// Most recently launched first, for "Continue working".

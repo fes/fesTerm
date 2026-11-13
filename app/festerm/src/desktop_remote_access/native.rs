@@ -501,6 +501,8 @@ impl Native {
                 consent.permissions.inventory = true;
                 consent.permissions.attach = true;
                 consent.permissions.detach = true;
+                consent.permissions.profiles = true;
+                consent.permissions.ensure_profile = true;
                 consent.permissions.ensure = request.draft.approve_creation;
                 consent.permissions.create = request.draft.approve_creation;
                 consent.permissions.creation_allowed = request.draft.approve_creation;

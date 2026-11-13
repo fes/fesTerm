@@ -328,8 +328,13 @@ jobs:
       - name: Check Windows policies and calibrate native test diagnostics without GPU work
         if: matrix.os == 'windows-latest'
         run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v
-      - if: matrix.os != 'windows-latest'
-        run: cargo test --workspace
+      - name: Test workspace with a private native runtime fixture root
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_runtime_root="$(mktemp -d "$RUNNER_TEMP/fes.XXXXXX")"
+          FESTERM_SESSIOND_TEST_RUNTIME_ROOT="$test_runtime_root" cargo test --workspace
       - name: Verify macOS standalone helper notices
         if: matrix.os == 'macos-latest'
         shell: bash

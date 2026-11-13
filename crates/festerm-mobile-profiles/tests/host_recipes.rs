@@ -2,8 +2,9 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use festerm_mobile_profiles::{
     host_recipes::{
-        AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
-        PublicRecipe, Recipe, RecipeError, RecipeId, MAX_PORTABLE_BYTES, MAX_RECIPES,
+        AccountReference, ConnectionBehavior, DuplicatePolicy, HostHint, HostId, HostReference,
+        MetadataCommand, MetadataOutcome, PublicRecipe, Recipe, RecipeError, RecipeId,
+        MAX_PORTABLE_BYTES, MAX_RECIPES,
     },
     AccountProvider, DestinationEndpoint, DestinationTarget, DevTunnelProfile, PathStyle,
     ProfileError, ProfileKind, ProfileStore, PublicDestination, SecretRef, SshProfile,
@@ -141,7 +142,13 @@ fn mobile_recipe_commands_preserve_legacy_generation_and_account_binding() {
 fn mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation() {
     let fixture = Fixture::new();
     let mut store = fixture.open();
-    let original = recipe();
+    let mut original = recipe();
+    original.behavior = ConnectionBehavior::ResumeOnly {};
+    original.session_name = Some("Remote project".into());
+    original.host_hint = Some(HostHint {
+        locator: "token-build.usw3".into(),
+        name: "Build workstation".into(),
+    });
     store
         .apply_host_recipe_command(MetadataCommand::Save(original.clone()))
         .unwrap();
@@ -167,6 +174,9 @@ fn mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation() {
             .logical_session,
         original.logical_session
     );
+    let duplicate = store.host_recipes().get(&duplicate_id).unwrap();
+    assert_eq!(duplicate.session_name, original.session_name);
+    assert_eq!(duplicate.host_hint, original.host_hint);
     let before_export = fs::read(fixture.0.join(PROFILES_FILE)).unwrap();
     let MetadataOutcome::Exported(text) = store
         .apply_host_recipe_command(MetadataCommand::Export(original.id.clone()))

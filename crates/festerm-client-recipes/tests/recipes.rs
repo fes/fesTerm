@@ -1,7 +1,7 @@
 use festerm_client_recipes::{
     AccountReference, BrowseRequest, BrowseScope, ConnectionBehavior, DuplicatePolicy,
-    GenerationId, HostBrowser, HostId, HostReference, Lifetime, MetadataCommand, MetadataOutcome,
-    PublicRecipe, Recipe, RecipeBook, RecipeError, RecipeId, MAX_PORTABLE_BYTES,
+    GenerationId, HostBrowser, HostHint, HostId, HostReference, Lifetime, MetadataCommand,
+    MetadataOutcome, PublicRecipe, Recipe, RecipeBook, RecipeError, RecipeId, MAX_PORTABLE_BYTES,
 };
 
 fn host() -> HostReference {
@@ -61,6 +61,154 @@ fn public_recipe_serialization_preserves_launch_and_four_behaviors() {
         book.recipes()[0].behavior,
         ConnectionBehavior::ResumeOrCreate
     );
+}
+
+#[test]
+fn resume_only_round_trips_without_changing_exact_generation_or_legacy_defaults() {
+    let mut recipe = recipe();
+    recipe.behavior = ConnectionBehavior::ResumeOnly {};
+    let text = recipe.export().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value["recipe"]["behavior"],
+        serde_json::json!({"kind": "resume_only"})
+    );
+    assert_eq!(PublicRecipe::import(&text).unwrap(), recipe);
+
+    let mut invalid = value.clone();
+    invalid["recipe"]["behavior"]["generation"] = serde_json::json!("123");
+    assert!(PublicRecipe::import(&invalid.to_string()).is_err());
+
+    let mut exact = value.clone();
+    exact["recipe"]["behavior"] = serde_json::json!({"kind": "attach_only", "generation": "123"});
+    let exact = PublicRecipe::import(&exact.to_string()).unwrap();
+    assert_eq!(exact.logical_session, recipe.logical_session);
+    assert_eq!(
+        exact.behavior,
+        ConnectionBehavior::AttachOnly {
+            generation: GenerationId::new(123).unwrap(),
+        }
+    );
+    invalid = value.clone();
+    invalid["recipe"]["behavior"] = serde_json::json!({"kind": "attach_only"});
+    assert!(PublicRecipe::import(&invalid.to_string()).is_err());
+
+    let mut legacy = value;
+    legacy["recipe"].as_object_mut().unwrap().remove("behavior");
+    assert_eq!(
+        PublicRecipe::import(&legacy.to_string()).unwrap().behavior,
+        ConnectionBehavior::ResumeOrCreate
+    );
+}
+
+#[test]
+fn remote_session_name_and_saved_host_hint_round_trip_with_legacy_fallback() {
+    let mut recipe = recipe();
+    let legacy = serde_json::to_value(&recipe).unwrap();
+    assert!(legacy.get("session_name").is_none());
+    assert!(legacy.get("host_hint").is_none());
+    assert_eq!(
+        serde_json::from_value::<PublicRecipe>(legacy).unwrap(),
+        recipe
+    );
+    // Loading an old profile must not apply the new protocol byte limit.
+    recipe.name = "界".repeat(200);
+    let loaded = PublicRecipe::import(&recipe.export().unwrap()).unwrap();
+    assert_eq!(loaded.session_name(), recipe.name);
+    let mut edited = loaded.clone();
+    edited.behavior = ConnectionBehavior::ResumeOnly {};
+    let (book, _) = saved(loaded)
+        .apply(MetadataCommand::Edit(edited.clone()))
+        .unwrap();
+    assert_eq!(book.get(&edited.id), Some(&edited));
+    assert!(edited.session_name.is_none());
+    assert_eq!(edited.session_name(), recipe.name);
+    recipe.session_name = Some("界".repeat(42) + "ab");
+    recipe.host_hint = Some(HostHint {
+        locator: "project-host.usw3".into(),
+        name: "Build workstation".into(),
+    });
+    let loaded = PublicRecipe::import(&recipe.export().unwrap()).unwrap();
+    assert_eq!(loaded, recipe);
+    assert_eq!(
+        loaded.session_name(),
+        recipe.session_name.as_deref().unwrap()
+    );
+    assert_ne!(loaded.session_name(), loaded.name);
+}
+
+#[test]
+fn new_public_metadata_rejects_invalid_names_locators_and_protected_hint_fields() {
+    let mut recipe = recipe();
+    for name in [
+        "".to_owned(),
+        " ".into(),
+        " project".into(),
+        "project ".into(),
+        "project\nshell".into(),
+        "project\u{7f}".into(),
+        "界".repeat(43),
+        "x".repeat(129),
+        "--password=not-a-secret".into(),
+    ] {
+        recipe.session_name = Some(name.clone());
+        assert_eq!(recipe.validate(), Err(RecipeError::Invalid));
+        let value = serde_json::to_value(&recipe).unwrap();
+        assert!(serde_json::from_value::<PublicRecipe>(value).is_err());
+        recipe.session_name = None;
+        recipe.host_hint = Some(HostHint {
+            locator: "project.usw3".into(),
+            name,
+        });
+        assert_eq!(recipe.validate(), Err(RecipeError::Invalid));
+        recipe.host_hint = None;
+    }
+    for locator in [
+        "".to_owned(),
+        " host".into(),
+        "Host".into(),
+        "-host".into(),
+        "host-".into(),
+        ".usw3".into(),
+        "host.".into(),
+        "host.usw3.other".into(),
+        "host\n.usw3".into(),
+        "https://host.usw3".into(),
+        "host.usw3?token=private".into(),
+        "x".repeat(101),
+        format!("host.{}", "x".repeat(101)),
+    ] {
+        recipe.host_hint = Some(HostHint {
+            locator,
+            name: "Workstation".into(),
+        });
+        assert_eq!(recipe.validate(), Err(RecipeError::Invalid));
+        assert!(
+            serde_json::from_value::<PublicRecipe>(serde_json::to_value(&recipe).unwrap()).is_err()
+        );
+    }
+    recipe.host_hint = Some(HostHint {
+        locator: format!("{}.{}", "x".repeat(100), "y".repeat(100)),
+        name: "x".repeat(128),
+    });
+    assert_eq!(
+        PublicRecipe::import(&recipe.export().unwrap()).unwrap(),
+        recipe
+    );
+    for field in [
+        "credential_id",
+        "token",
+        "trusted_host",
+        "online",
+        "allow_remote_creation",
+    ] {
+        let mut value = serde_json::to_value(&recipe).unwrap();
+        value["host_hint"][field] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<PublicRecipe>(value).is_err(),
+            "{field}"
+        );
+    }
 }
 
 #[test]
@@ -143,6 +291,11 @@ fn metadata_commands_edit_future_recipe_without_mutating_previous_snapshot() {
     let book = saved(original.clone());
     let mut edited = original.clone();
     edited.launch.cwd = Some("/remote/next-create".into());
+    edited.session_name = Some("Remote project".into());
+    edited.host_hint = Some(HostHint {
+        locator: "project.usw3".into(),
+        name: "Workstation".into(),
+    });
     let (next, outcome) = book.apply(MetadataCommand::Edit(edited.clone())).unwrap();
     assert_eq!(outcome, MetadataOutcome::Saved(original.id.clone()));
     assert_eq!(book.get(&original.id), Some(&original));
@@ -181,6 +334,11 @@ fn metadata_commands_edit_future_recipe_without_mutating_previous_snapshot() {
 #[test]
 fn duplicate_allocates_logical_identity_unless_explicit_generation_shortcut() {
     let mut original = recipe();
+    original.session_name = Some("Remote project".into());
+    original.host_hint = Some(HostHint {
+        locator: "project.usw3".into(),
+        name: "Workstation".into(),
+    });
     original.behavior = ConnectionBehavior::AttachOnly {
         generation: GenerationId::new(123).unwrap(),
     };
@@ -200,6 +358,8 @@ fn duplicate_allocates_logical_identity_unless_explicit_generation_shortcut() {
     assert_ne!(duplicate.logical_session, original.logical_session);
     assert_eq!(duplicate.host, original.host);
     assert_eq!(duplicate.launch, original.launch);
+    assert_eq!(duplicate.session_name, original.session_name);
+    assert_eq!(duplicate.host_hint, original.host_hint);
     assert_eq!(duplicate.behavior, ConnectionBehavior::ResumeOrCreate);
     let generation = GenerationId::new(456).unwrap();
     let (shortcuts, MetadataOutcome::Saved(shortcut_id)) = book
@@ -215,6 +375,8 @@ fn duplicate_allocates_logical_identity_unless_explicit_generation_shortcut() {
     let shortcut = shortcuts.get(&shortcut_id).unwrap();
     assert_ne!(shortcut.id, original.id);
     assert_eq!(shortcut.logical_session, original.logical_session);
+    assert_eq!(shortcut.session_name, original.session_name);
+    assert_eq!(shortcut.host_hint, original.host_hint);
     assert_eq!(
         shortcut.behavior,
         ConnectionBehavior::AttachOnly { generation }

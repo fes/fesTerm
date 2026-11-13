@@ -297,6 +297,7 @@ impl OwnerVerifier {
         let mut capabilities = self.policy.capabilities;
         if capabilities.issuance_epoch.is_none() {
             capabilities.ensure = false;
+            capabilities.ensure_profile = false;
             capabilities.create = false;
             capabilities.creation_allowed = false;
         }
@@ -474,11 +475,13 @@ impl VerifiedOwner {
         let allowed = match &request.body {
             Request::Capabilities {} => true,
             Request::List { .. } | Request::Lookup { .. } => caps.inventory,
+            Request::ListProfiles {} => caps.profiles,
             Request::Ensure { creation } => {
                 caps.ensure
                     && (creation.lifetime == (festerm_host_protocol::Lifetime::Persistent {})
                         || caps.temporary)
             }
+            Request::EnsureProfile { .. } => caps.ensure_profile,
             Request::Create { creation } => {
                 caps.create
                     && caps.creation_allowed
@@ -510,6 +513,7 @@ impl VerifiedOwner {
             Request::Ensure { creation } | Request::Create { creation } => {
                 (Some(creation.logical.clone()), None)
             }
+            Request::EnsureProfile { logical, .. } => (Some(logical.clone()), None),
             Request::Attach { target, .. }
             | Request::Detach { target, .. }
             | Request::ExplicitEnd { target } => {
@@ -542,6 +546,12 @@ impl VerifiedOwner {
             if matches!(request.body, Request::Ensure { .. })
                 && grant.state == LogicalState::Absent
                 && !caps.creation_allowed
+            {
+                return Err(ContractError::Denied);
+            }
+            if matches!(request.body, Request::EnsureProfile { .. })
+                && grant.state == LogicalState::Absent
+                && !caps.ensure_profile
             {
                 return Err(ContractError::Denied);
             }

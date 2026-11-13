@@ -261,6 +261,7 @@ pub enum Request {
     List {
         cursor: Option<Cursor>,
     },
+    ListProfiles {},
     Lookup {
         logical: LogicalSessionId,
     },
@@ -271,6 +272,13 @@ pub enum Request {
     /// Refuses any existing or uncertain reservation; not an ensure alias.
     Create {
         creation: Creation,
+    },
+    /// Resolve a saved, host-protected profile recipe and explicitly
+    /// resume-or-create its persistent session.
+    EnsureProfile {
+        logical: LogicalSessionId,
+        revision: Epoch,
+        attachment: AttachmentId,
     },
     Attach {
         target: Target,
@@ -291,7 +299,10 @@ pub enum Request {
 
 impl Validate for Request {
     fn issuance_epoch_required(&self) -> bool {
-        matches!(self, Self::Ensure { .. } | Self::Create { .. })
+        matches!(
+            self,
+            Self::Ensure { .. } | Self::Create { .. } | Self::EnsureProfile { .. }
+        )
     }
 
     fn issuance_epoch_allowed(&self) -> bool {
@@ -304,6 +315,7 @@ impl Validate for Request {
                 cursor: Some(cursor),
             } => cursor.validate(),
             Self::Ensure { creation } | Self::Create { creation } => creation.validate(),
+            Self::EnsureProfile { .. } => Ok(()),
             Self::Detach {
                 lease, lease_epoch, ..
             } if lease.is_some() != lease_epoch.is_some() => Err(ContractError::Malformed),
@@ -321,7 +333,11 @@ pub struct Capabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuance_epoch: Option<Epoch>,
     pub inventory: bool,
+    #[serde(default)]
+    pub profiles: bool,
     pub ensure: bool,
+    #[serde(default)]
+    pub ensure_profile: bool,
     pub create: bool,
     pub attach: bool,
     pub detach: bool,
@@ -338,10 +354,12 @@ impl Capabilities {
         match request {
             Request::Capabilities {} => true,
             Request::List { .. } | Request::Lookup { .. } => self.inventory,
+            Request::ListProfiles {} => self.profiles,
             Request::Ensure { creation } => {
                 self.ensure
                     && (!matches!(creation.lifetime, Lifetime::Temporary { .. }) || self.temporary)
             }
+            Request::EnsureProfile { .. } => self.ensure_profile,
             Request::Create { creation } => {
                 self.create
                     && (!matches!(creation.lifetime, Lifetime::Temporary { .. }) || self.temporary)
@@ -356,9 +374,10 @@ impl Capabilities {
     /// Wire capabilities still require `Validate`, including a current issuer
     /// when Ensure/Create are advertised.
     pub fn validate_permissions(&self) -> Result<(), ContractError> {
-        if (self.ensure || self.create || self.temporary) && !self.attach
+        if (self.ensure || self.ensure_profile || self.create || self.temporary) && !self.attach
             || self.temporary && !self.detach
             || self.creation_allowed && !(self.ensure || self.create)
+            || self.ensure_profile && !self.profiles
         {
             return Err(ContractError::Malformed);
         }
@@ -369,7 +388,7 @@ impl Capabilities {
 impl Validate for Capabilities {
     fn validate(&self) -> Result<(), ContractError> {
         self.validate_permissions()?;
-        if (self.ensure || self.create) && self.issuance_epoch.is_none() {
+        if (self.ensure || self.ensure_profile || self.create) && self.issuance_epoch.is_none() {
             return Err(ContractError::Malformed);
         }
         Ok(())
@@ -383,6 +402,23 @@ pub struct SessionSummary {
     pub name: String,
     pub lifetime: Lifetime,
     pub attached: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSummary {
+    pub logical: LogicalSessionId,
+    pub revision: Epoch,
+    pub name: String,
+}
+
+impl Validate for ProfileSummary {
+    fn validate(&self) -> Result<(), ContractError> {
+        if !text(&self.name, 128, false) {
+            return Err(ContractError::Malformed);
+        }
+        Ok(())
+    }
 }
 
 impl Validate for SessionSummary {
@@ -462,6 +498,9 @@ pub enum Response {
     Inventory {
         page: crate::InventoryPage,
     },
+    Profiles {
+        profiles: Vec<ProfileSummary>,
+    },
     Lookup {
         result: LookupResult,
     },
@@ -491,6 +530,20 @@ impl Validate for Response {
         match self {
             Self::Capabilities { capabilities } => capabilities.validate(),
             Self::Inventory { page } => page.validate(),
+            Self::Profiles { profiles } => {
+                if profiles.len() > MAX_SESSIONS
+                    || profiles.iter().any(|profile| profile.validate().is_err())
+                    || profiles
+                        .iter()
+                        .map(|profile| &profile.logical)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        != profiles.len()
+                {
+                    return Err(ContractError::Malformed);
+                }
+                Ok(())
+            }
             Self::Lookup { result } => result.validate(),
             Self::Ensured { session, lease, .. } => {
                 session.validate()?;
@@ -550,6 +603,7 @@ impl Envelope<Response> {
                         .as_ref()
                         .is_none_or(|next| usize::from(next.offset) == offset + PAGE_SIZE)
             }
+            (Request::ListProfiles {}, Response::Profiles { .. }) => true,
             (Request::Lookup { logical }, Response::Lookup { result }) => match result {
                 LookupResult::Running { session } => session.target.logical == *logical,
                 LookupResult::Absent {
@@ -573,6 +627,11 @@ impl Envelope<Response> {
                         || session.lifetime == creation.lifetime)
                     && (!matches!(request.body, Request::Create { .. })
                         || *disposition != EnsureDisposition::Resumed)
+            }
+            (Request::EnsureProfile { logical, .. }, Response::Ensured { session, lease, .. }) => {
+                session.target.logical == *logical
+                    && session.lifetime == (Lifetime::Persistent {})
+                    && lease.is_none()
             }
             (
                 Request::Attach {

@@ -47,6 +47,773 @@ fn mobile_host_open_is_offline_and_lock_callback_cancels_without_another_frame()
     assert!(app.sink.live.host.token(epoch).is_cancelled());
 }
 
+fn client_inventory(creation_allowed: bool) -> Inventory {
+    Inventory {
+        capabilities: Capabilities {
+            issuance_epoch: Some(festerm_host_protocol::Epoch::new(1).unwrap()),
+            inventory: true,
+            profiles: false,
+            ensure: true,
+            create: true,
+            attach: true,
+            ensure_profile: false,
+            detach: true,
+            explicit_end: true,
+            temporary: false,
+            creation_allowed,
+        },
+        sessions: Vec::new(),
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    }
+}
+
+fn client_recipe() -> PublicRecipe {
+    PublicRecipe::persistent(
+        "Local profile",
+        HostReference {
+            id: HostId::new(),
+            account: AccountReference::Github { account_id: 7 },
+        },
+        Recipe::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn mobile_host_profile_save_is_offline_permission_independent_and_separates_names() {
+    let profiles = crate::profiles::testing::profiles();
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    let recipe = client_recipe();
+    let logical = recipe.logical_session.clone();
+    app.hosts.selected = Some(recipe);
+    app.hosts.inventory = Some(client_inventory(false));
+    app.hosts.begin_profile_edit();
+    app.hosts.profile_name = "  Work profile  ".into();
+    app.hosts.session_name = "  build shell  ".into();
+    app.hosts.create_if_missing = true;
+    app.host_action(&egui::Context::default(), Action::SaveProfile)
+        .unwrap();
+    let saved = app.hosts.selected.as_ref().unwrap();
+    assert_eq!(saved.name, "Work profile");
+    assert_eq!(saved.session_name(), "build shell");
+    assert_eq!(saved.logical_session, logical);
+    assert!(matches!(saved.behavior, ConnectionBehavior::ResumeOrCreate));
+    assert!(matches!(
+        saved.lifetime,
+        festerm_host_protocol::Lifetime::Persistent {}
+    ));
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(app.hosts.originals.is_empty());
+    assert!(app
+        .profiles
+        .as_ref()
+        .unwrap()
+        .rows(crate::model::Capabilities::all())
+        .iter()
+        .any(|row| row.name == "Work profile"));
+}
+
+#[test]
+fn mobile_host_profile_existing_selection_keeps_exact_identity_without_creation_permission() {
+    let mut hosts = HostUi {
+        selected: Some(client_recipe()),
+        ..Default::default()
+    };
+    let target = host_client::Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(4).unwrap(),
+    };
+    let mut inventory = client_inventory(false);
+    inventory
+        .sessions
+        .push(festerm_host_protocol::SessionSummary {
+            target: target.clone(),
+            name: "Remote shell".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        });
+    hosts.inventory = Some(inventory);
+    hosts.begin_profile_edit();
+    hosts.create_if_missing = false;
+    hosts.existing_session = Some(0);
+    let recipe = hosts.profile_draft().unwrap();
+    assert_eq!(recipe.logical_session, target.logical);
+    assert_eq!(recipe.session_name(), "Remote shell");
+    assert!(
+        matches!(recipe.behavior, ConnectionBehavior::AttachOnly { generation } if generation == target.generation)
+    );
+    assert!(selected_target(Some(&recipe), &target).is_ok());
+    assert!(hosts.originals.is_empty());
+}
+
+#[test]
+fn mobile_host_existing_profile_rename_and_creation_off_round_trip_without_inventory() {
+    let profiles = crate::profiles::testing::profiles();
+    let mut recipe = client_recipe();
+    recipe.session_name = Some("remote shell".into());
+    let id = recipe.id.clone();
+    let logical = recipe.logical_session.clone();
+    profiles
+        .store_handle()
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    assert!(app.select_host_profile(id.as_str(), true));
+    app.hosts.profile_name = "Renamed local profile".into();
+    app.hosts.create_if_missing = false;
+    app.host_action(&egui::Context::default(), Action::SaveProfile)
+        .unwrap();
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    let stored = store.lock().unwrap();
+    let saved = stored.host_recipes().get(&id).unwrap();
+    assert_eq!(saved.name, "Renamed local profile");
+    assert_eq!(saved.session_name(), "remote shell");
+    assert_eq!(saved.logical_session, logical);
+    assert!(matches!(saved.behavior, ConnectionBehavior::ResumeOnly {}));
+    assert_eq!(stored.host_recipes().recipes().len(), 1);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_profile_rename_with_inventory_preserves_logical_resume_policy() {
+    for behavior in [
+        ConnectionBehavior::ResumeOnly {},
+        ConnectionBehavior::ResumeOrCreate,
+    ] {
+        let mut recipe = client_recipe();
+        recipe.behavior = behavior;
+        let logical = recipe.logical_session.clone();
+        let mut inventory = client_inventory(false);
+        inventory
+            .sessions
+            .push(festerm_host_protocol::SessionSummary {
+                target: host_client::Target {
+                    logical: logical.clone(),
+                    generation: GenerationId::new(4).unwrap(),
+                },
+                name: "Remote shell".into(),
+                lifetime: festerm_host_protocol::Lifetime::Persistent {},
+                attached: false,
+            });
+        let mut hosts = HostUi {
+            selected: Some(recipe),
+            inventory: Some(inventory),
+            ..Default::default()
+        };
+        hosts.begin_profile_edit();
+        hosts.profile_name = "Renamed profile".into();
+        hosts.create_if_missing = false;
+        let saved = hosts.profile_draft().unwrap();
+        assert_eq!(saved.name, "Renamed profile");
+        assert_eq!(saved.logical_session, logical);
+        assert!(matches!(saved.behavior, ConnectionBehavior::ResumeOnly {}));
+        assert!(selected_target(
+            Some(&saved),
+            &host_client::Target {
+                logical,
+                generation: GenerationId::new(5).unwrap(),
+            }
+        )
+        .is_ok());
+        assert!(hosts.originals.is_empty());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_saved_custom_launch_requires_explicit_review_before_creation() {
+    for custom in 0..4 {
+        let (_root, mut app, _account, _store) = recovery_fixture();
+        let recipe = app.hosts.selected.as_mut().unwrap();
+        match custom {
+            0 => recipe.launch.shell = Some("/bin/sh".into()),
+            1 => recipe.launch.args = vec!["-c".into(), "echo reviewed".into()],
+            2 => recipe.launch.cwd = Some("/tmp".into()),
+            _ => {
+                recipe.lifetime = festerm_host_protocol::Lifetime::Temporary {
+                    reconnect_grace_seconds: 60,
+                };
+            }
+        }
+        assert!(requires_launch_review(recipe));
+        app.hosts.launch = true;
+        app.hosts.saved_connect = Some(SavedConnect::Originals);
+        app.continue_saved_originals(&egui::Context::default())
+            .unwrap();
+        assert!(app.hosts.saved_connect.is_none());
+        assert!(!app.hosts.launch);
+        let error = app
+            .host_action(&egui::Context::default(), Action::Create)
+            .unwrap_err();
+        assert!(error.contains("Confirm the exact recipe"));
+        assert!(app.hosts.originals.is_empty());
+        assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    }
+}
+
+#[test]
+fn mobile_host_resume_only_accepts_new_authorized_generation_of_same_logical_never_creates() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let mut recipe = client_recipe();
+    recipe.behavior = ConnectionBehavior::ResumeOnly {};
+    let matching = host_client::Target {
+        logical: recipe.logical_session.clone(),
+        generation: GenerationId::new(32).unwrap(),
+    };
+    assert!(selected_target(Some(&recipe), &matching).is_ok());
+    let other = host_client::Target {
+        logical: LogicalSessionId::new(),
+        ..matching
+    };
+    assert!(selected_target(Some(&recipe), &other).is_err());
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.selected = Some(recipe.clone());
+    app.hosts.inventory = Some(client_inventory(true));
+    app.hosts.saved_connect = Some(SavedConnect::Inventory);
+    assert!(app
+        .continue_saved_inventory(&egui::Context::default())
+        .is_err());
+    assert!(app
+        .hosts
+        .creation_intent(&creation_context(), recipe, account)
+        .is_err());
+    assert!(app.hosts.originals.is_empty());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_saved_connect_loaded_receipt_continues_without_asserting_host_enrollment() {
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.enrolled = false;
+    app.hosts.trust = false;
+    app.hosts.launch = true;
+    app.hosts.saved_connect = Some(SavedConnect::Receipt);
+    let resolved = app.hosts.resolved.take();
+    assert!(matches!(
+        app.hosts.saved_receipt_loaded().unwrap(),
+        Some(Action::Resolve)
+    ));
+    assert!(app.hosts.saved_connect == Some(SavedConnect::Resolve));
+    assert!(!app.hosts.enrolled && !app.hosts.trust);
+    assert!(
+        app.hosts.context().is_err(),
+        "service resolution is still required"
+    );
+    app.hosts.resolved = resolved;
+    assert!(
+        app.hosts.context().is_ok(),
+        "only a protected owner-proof attempt is enabled"
+    );
+    app.hosts.saved_connect = None;
+    assert!(
+        app.hosts.context().is_err(),
+        "ordinary UI still requires explicit owner review"
+    );
+    app.hosts.saved_connect = Some(SavedConnect::Receipt);
+    app.hosts.receipt = None;
+    assert!(app.hosts.saved_receipt_loaded().is_err());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_saved_connect_never_automatically_retries_retained_original() {
+    let (_root, mut app, account, _store) = recovery_fixture();
+    let recipe = app.hosts.selected.clone().unwrap();
+    let context = app.hosts.context().unwrap();
+    app.hosts
+        .creation_intent(&context, recipe, account)
+        .unwrap();
+    app.hosts.saved_connect = Some(SavedConnect::Originals);
+    let error = app
+        .continue_saved_originals(&egui::Context::default())
+        .unwrap_err();
+    assert!(error.contains("original action is retained"));
+    assert!(app.hosts.saved_connect.is_none());
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_selecting_another_host_clears_saved_recipe_and_trust_but_preserves_originals() {
+    let (_root, mut app, account, _store) = recovery_fixture();
+    let context = app.hosts.context().unwrap();
+    let recipe = app.hosts.selected.clone().unwrap();
+    app.profiles
+        .as_ref()
+        .unwrap()
+        .store_handle()
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+        .unwrap();
+    let original = app
+        .hosts
+        .creation_intent(&context, recipe, account)
+        .unwrap();
+    app.hosts.saved = true;
+    app.hosts.locator = "first.test".into();
+    app.hosts.prerequisite = Zeroizing::new("first host owner binding".into());
+    app.hosts.hosts = vec![TunnelSummary {
+        locator: "second.test".into(),
+        name: Some("Other host".into()),
+        description: None,
+        active: true,
+    }];
+    app.host_action(&egui::Context::default(), Action::SelectHost(0))
+        .unwrap();
+    assert_eq!(app.hosts.locator, "second.test");
+    assert!(app.hosts.selected.is_none() && !app.hosts.saved);
+    assert!(app.hosts.receipt.is_none() && app.hosts.fingerprint.is_empty());
+    assert!(app.hosts.prerequisite.is_empty());
+    assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
+    assert!(Arc::ptr_eq(&app.hosts.originals[0].intent, &original));
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_connection_notices_distinguish_authoritative_dispositions() {
+    use host_client::EnsureDisposition;
+    assert_eq!(
+        super::view::creation_notice(EnsureDisposition::Created),
+        "Started a new shell."
+    );
+    assert_eq!(
+        super::view::creation_notice(EnsureDisposition::Resumed),
+        "Resumed the existing session."
+    );
+    assert_eq!(
+        super::view::creation_notice(EnsureDisposition::Recreated),
+        "Previous session ended. Started a new shell."
+    );
+    let hosts = HostUi {
+        inventory: Some(client_inventory(true)),
+        ..Default::default()
+    };
+    assert!(
+        hosts.connection_notice.is_none(),
+        "inventory emptiness is not a restart signal"
+    );
+}
+
+#[test]
+fn mobile_host_quick_create_requires_name_and_preserves_original_intent_after_failure() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let mut recipe = client_recipe();
+    recipe.host.id = context.binding().host().clone();
+    let mut hosts = HostUi {
+        selected: Some(recipe),
+        quick_new: true,
+        inventory: Some(client_inventory(true)),
+        quick_name: "   ".into(),
+        ..Default::default()
+    };
+    assert!(hosts.freeze_quick_recipe(&account).is_err());
+    assert!(hosts.originals.is_empty());
+    hosts.quick_name = "  build  ".into();
+    hosts.freeze_quick_recipe(&account).unwrap();
+    let recipe = hosts.selected.clone().unwrap();
+    let original = hosts
+        .creation_intent(&context, recipe, account.clone())
+        .unwrap();
+    assert_eq!(original.creation().name.as_deref(), Some("build"));
+    assert!(matches!(
+        original.creation().lifetime,
+        festerm_host_protocol::Lifetime::Persistent {}
+    ));
+    hosts.error = Some("Host unavailable".into());
+    hosts.freeze_quick_recipe(&account).unwrap();
+    let retry = hosts
+        .creation_intent(&context, hosts.selected.clone().unwrap(), account.clone())
+        .unwrap();
+    assert!(Arc::ptr_eq(&original, &retry));
+    assert_eq!(hosts.quick_name, "  build  ");
+    hosts.quick_name = "replacement".into();
+    assert!(hosts.freeze_quick_recipe(&account).is_err());
+    assert_eq!(hosts.originals.len(), 1);
+    hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .creation_allowed = false;
+    assert!(!hosts.quick_creation_allowed());
+    assert!(hosts.freeze_quick_recipe(&account).is_err());
+}
+
+#[test]
+fn mobile_host_settings_sign_out_is_per_account_and_opening_saved_editor_is_offline() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let first = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let second = festerm_mobile_tunnels::testing::seed_account(&store, 8, "other", false);
+    let mut recipe = client_recipe();
+    recipe.host_hint = Some(HostHint {
+        locator: "fixture.test".into(),
+        name: "Build host".into(),
+    });
+    let id = recipe.id.as_str().to_owned();
+    store
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(recipe))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    app.edit_profile(&id);
+    assert!(app.hosts.editing && app.hosts.open);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.apply_shell_actions(
+        &egui::Context::default(),
+        vec![crate::shell::ShellAction::SignOutTunnelAccount(first)],
+    );
+    let accounts = app.tunnel_accounts();
+    assert_eq!(accounts, vec![(second, "other".into())]);
+    assert!(app.hosts.originals.is_empty());
+}
+
+#[test]
+fn mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_results() {
+    use egui_kittest::kittest::{By, Queryable};
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.hosts = vec![TunnelSummary {
+        locator: "fixture.test".into(),
+        name: Some("Build host".into()),
+        description: None,
+        active: true,
+    }];
+    app.hosts.discovered = true;
+    app.hosts.error = Some("Host timed out; no absence inferred.".into());
+    app.host_action(&egui::Context::default(), Action::SelectHost(0))
+        .unwrap();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    harness.get(By::new().label("Find hosts · @sample"));
+    harness.get(By::new().label("Collapse Build host"));
+    assert_eq!(harness.state().hosts.hosts.len(), 1);
+    assert!(harness.state().hosts.error.is_some());
+    assert!(harness.state().hosts.pending.is_none());
+    assert!(harness.state().hosts.worker.is_none());
+    assert!(harness.state().hosts.selected.is_none());
+    assert!(harness.state().hosts.receipt.is_none());
+}
+
+#[test]
+fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
+    use egui_kittest::kittest::{By, Queryable};
+    for width in [390.0, 834.0] {
+        for editing in [false, true] {
+            let mut app = app();
+            app.open_hosts();
+            if editing {
+                app.hosts.selected = Some(client_recipe());
+                app.hosts.begin_profile_edit();
+            }
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(width, 844.0))
+                .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+            harness.run_steps(3);
+            let done = harness.get(By::new().label("Done")).rect();
+            let title = harness
+                .get(By::new().label(if editing {
+                    "Dev Tunnel profile"
+                } else {
+                    "Find & connect"
+                }))
+                .rect();
+            assert!(done.width() <= 80.0 && done.height() >= 44.0, "{done:?}");
+            assert!(
+                title.left() >= done.right() && !title.intersects(done),
+                "{done:?} {title:?}"
+            );
+            assert!(
+                title.right() <= width - 8.0 && title.height() > 0.0,
+                "{title:?}"
+            );
+            assert!(done.left() >= ((width - 560.0) / 2.0).max(8.0), "{done:?}");
+            assert!(title.right() - done.left() <= 560.0, "{done:?} {title:?}");
+            assert!(harness.state().hosts.pending.is_none());
+        }
+    }
+}
+
+#[test]
+fn mobile_host_disclosure_is_a_painted_triangle_inside_its_touch_target() {
+    for expanded in [false, true] {
+        let context = egui::Context::default();
+        let mut target = None;
+        let mut rendered = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(390.0, 844.0),
+                )),
+                ..Default::default()
+            },
+            |ui| target = Some(super::view::host_disclosure(ui, "Build host", expanded, true).rect),
+        );
+        let target = target.unwrap();
+        let triangle = rendered
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Path(path) if path.closed && path.points.len() == 3 => {
+                    Some(&path.points)
+                }
+                _ => None,
+            })
+            .expect("disclosure must be vector geometry, independent of a font glyph");
+        assert!(triangle.iter().all(|point| target.contains(*point)));
+        assert!(target.height() >= 44.0);
+        if expanded {
+            assert!(triangle[2].y > triangle[0].y && triangle[0].y == triangle[1].y);
+        } else {
+            assert!(triangle[2].x > triangle[0].x && triangle[0].x == triangle[1].x);
+        }
+        rendered.textures_delta.clear();
+    }
+}
+
+#[test]
+fn mobile_host_valid_quick_create_shows_enabled_primary_without_opening_protected_history() {
+    use egui_kittest::kittest::{By, Queryable};
+    let mut app = app();
+    app.open_hosts();
+    app.hosts.quick_new = true;
+    app.hosts.quick_name = "build".into();
+    app.hosts.selected = Some(client_recipe());
+    app.hosts.inventory = Some(client_inventory(true));
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    harness.get(
+        By::new()
+            .label("Create and connect")
+            .predicate(|node| !node.is_disabled()),
+    );
+    assert!(harness.state().hosts.pending.is_none());
+    assert!(harness.state().hosts.worker.is_none());
+    assert!(harness.state().hosts.original_store.is_none());
+    assert!(harness.state().hosts.quick_check.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_profile_form_displays_bound_host_and_account_without_retargeting() {
+    use egui_kittest::kittest::{By, Queryable};
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    let recipe = app.hosts.selected.as_mut().unwrap();
+    recipe.host_hint = Some(HostHint {
+        locator: "fixture.test".into(),
+        name: "Build host".into(),
+    });
+    let host = recipe.host.id.clone();
+    app.hosts.begin_profile_edit();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    harness.get(By::new().label("Host · Build host"));
+    harness.get(By::new().label("@mobile"));
+    assert_eq!(
+        harness.state().hosts.selected.as_ref().unwrap().host.id,
+        host
+    );
+    assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
+}
+
+#[cfg(unix)]
+fn quick_check_fixture() -> (tempfile::TempDir, MobileApp, TunnelAccount) {
+    let (root, mut app, account, store) = recovery_fixture();
+    app.hosts.quick_new = true;
+    app.hosts.quick_name = " build ".into();
+    app.hosts.inventory = Some(client_inventory(true));
+    app.hosts.freeze_quick_recipe(&account).unwrap();
+    app.hosts.original_store = Some(store);
+    let receipt = app.hosts.receipt.as_ref().unwrap();
+    app.hosts.quick_check = Some(QuickCheck {
+        recipe: app.hosts.selected.clone().unwrap(),
+        account: account.clone(),
+        epoch: app.hosts.epoch,
+        generation: app.hosts.generation,
+        owner: receipt.binding().clone(),
+        reference: receipt.reference(),
+    });
+    app.hosts.launch = false;
+    (root, app, account)
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_explicit_quick_create_history_continuation_keeps_frozen_draft_and_authority() {
+    let (_root, mut app, account) = quick_check_fixture();
+    let selected = app.hosts.selected.clone();
+    assert!(matches!(
+        app.hosts.finish_quick_check(&account).unwrap(),
+        Action::Create
+    ));
+    assert_eq!(app.hosts.selected, selected);
+    assert_eq!(app.hosts.quick_name, " build ");
+    assert!(app.hosts.launch && app.hosts.quick_check.is_none());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    for changed in 0..7 {
+        let (_root, mut app, account) = quick_check_fixture();
+        match changed {
+            0 => app.hosts.quick_name = "other shell".into(),
+            1 => app.hosts.epoch += 1,
+            2 => {
+                app.hosts
+                    .inventory
+                    .as_mut()
+                    .unwrap()
+                    .capabilities
+                    .creation_allowed = false
+            }
+            3 => app.hosts.selected.as_mut().unwrap().logical_session = LogicalSessionId::new(),
+            4 => app.hosts.original_store = None,
+            5 => app
+                .hosts
+                .quick_check
+                .as_mut()
+                .unwrap()
+                .account
+                .login
+                .push_str("-changed"),
+            _ => {
+                app.hosts.quick_check.as_mut().unwrap().reference =
+                    festerm_secret_store::SecretReference::generate()
+            }
+        }
+        assert!(app.hosts.finish_quick_check(&account).is_err());
+        assert!(app.hosts.quick_check.is_none() && !app.hosts.launch);
+        assert!(app.hosts.originals.is_empty());
+        assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_quick_create_history_continuation_requires_review_of_retained_original() {
+    let (_root, mut app, account) = quick_check_fixture();
+    let context = app.hosts.context().unwrap();
+    let recipe = app.hosts.selected.clone().unwrap();
+    let original = app
+        .hosts
+        .creation_intent(&context, recipe, account.clone())
+        .unwrap();
+    let error = app.hosts.finish_quick_check(&account).err().unwrap();
+    assert!(error.contains("original action is retained"));
+    assert!(!app.hosts.launch && app.hosts.quick_check.is_none());
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(Arc::ptr_eq(&original, &app.hosts.originals[0].intent));
+    assert!(app
+        .host_action(&egui::Context::default(), Action::QuickCreate)
+        .is_err());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[cfg(unix)]
+impl MobileApp {
+    pub(crate) fn configure_host_gallery(&mut self, state: &str) {
+        let (_root, mut fixture, _, _) = recovery_fixture_with_login("sample-dev");
+        fixture.hosts.locator = "fixture.test".into();
+        fixture.hosts.hosts = vec![
+            TunnelSummary {
+                locator: "fixture.test".into(),
+                name: Some("Build Mac".into()),
+                description: None,
+                active: true,
+            },
+            TunnelSummary {
+                locator: "second.test".into(),
+                name: Some("Linux workstation".into()),
+                description: None,
+                active: false,
+            },
+        ];
+        fixture.hosts.discovered = true;
+        let mut inventory = client_inventory(true);
+        for (index, name) in ["build", "notes"].into_iter().enumerate() {
+            inventory
+                .sessions
+                .push(festerm_host_protocol::SessionSummary {
+                    target: host_client::Target {
+                        logical: LogicalSessionId::new(),
+                        generation: GenerationId::new(index as u128 + 1).unwrap(),
+                    },
+                    name: name.into(),
+                    lifetime: festerm_host_protocol::Lifetime::Persistent {},
+                    attached: false,
+                });
+        }
+        fixture.hosts.inventory = Some(inventory);
+        fixture.surface = Surface::Tabs;
+        fixture.shell.tab = crate::shell::Tab::Profiles;
+        fixture.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+        match state {
+            "hosts-before-discovery" => {
+                fixture.hosts.clear_review();
+                fixture.hosts.hosts.clear();
+                fixture.hosts.discovered = false;
+            }
+            "hosts-found" => {
+                fixture.hosts.clear_review();
+            }
+            "hosts-unavailable" => {
+                fixture.hosts.error = Some("Host timed out. Try again.".into());
+            }
+            "hosts-new" => {
+                fixture.hosts.quick_new = true;
+                fixture.hosts.quick_name = "release".into();
+            }
+            "hosts-profile" => {
+                fixture.hosts.begin_profile_edit();
+                fixture.hosts.profile_name = "Daily development".into();
+                fixture.hosts.session_name = "work".into();
+                fixture.hosts.create_if_missing = true;
+            }
+            _ => {}
+        }
+        *self = fixture;
+    }
+}
+
 #[test]
 fn mobile_host_suspend_fences_pending_work_and_never_arms_automatic_creation() {
     let mut app = app();
@@ -633,6 +1400,7 @@ fn recovery_fixture_with_login(
             ..Capabilities::default()
         },
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     });
     assert!(app.host_foreground() && app.host_recipe_current());

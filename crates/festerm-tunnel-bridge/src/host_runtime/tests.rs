@@ -477,6 +477,7 @@ fn native_end_outcome_diagnostic(
         Outcome::Ended { .. } => "ended-other-target".into(),
         Outcome::Inventory(_) => "inventory".into(),
         Outcome::Created(_) => "created".into(),
+        Outcome::ProfileEnsured { .. } => "profile-ensured".into(),
         Outcome::Snapshot(_) => "snapshot".into(),
         Outcome::Attached(_) => "attached".into(),
     }
@@ -1607,6 +1608,7 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
     let mut targets = Vec::new();
     for label in ["A", "B"] {
         let mut creation = native.creation();
+        creation.name = Some(format!("owned routing fixture {label}"));
         creation.recipe.args = vec![
             format!("emit:ready-{label}"),
             "read-line".into(),

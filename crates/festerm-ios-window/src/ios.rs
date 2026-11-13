@@ -904,6 +904,28 @@ pub fn open_url(url: &str) -> bool {
     true
 }
 
+/// Reports UIKit's asynchronous result, rather than successful command dispatch.
+pub fn open_url_with_completion(url: &str, completion: impl Fn(bool) + Send + Sync + 'static) {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        completion(false);
+        return;
+    };
+    if !url.starts_with("https://") {
+        completion(false);
+        return;
+    }
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) else {
+        completion(false);
+        return;
+    };
+    let application = UIApplication::sharedApplication(main_thread);
+    let callback = RcBlock::new(move |opened: objc2::runtime::Bool| completion(opened.as_bool()));
+    // SAFETY: UIKit copies the completion block and calls it with the OS result.
+    unsafe {
+        application.openURL_options_completionHandler(&url, &NSDictionary::new(), Some(&callback));
+    }
+}
+
 /// Class name referenced by `UISceneDelegateClassName` in the iOS Info.plist.
 pub const SCENE_DELEGATE_CLASS: &str = "FesTermSceneDelegate";
 

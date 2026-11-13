@@ -484,6 +484,8 @@ fn all_capabilities() -> Capabilities {
         explicit_end: true,
         temporary: true,
         creation_allowed: true,
+        profiles: false,
+        ensure_profile: false,
         issuance_epoch: Some(Epoch::new(1).unwrap()),
     }
 }
@@ -1437,6 +1439,7 @@ pub(crate) mod native_routes {
             match response {
                 Response::Capabilities { .. } => ("capabilities", None),
                 Response::Inventory { .. } => ("inventory", None),
+                Response::Profiles { .. } => ("profiles", None),
                 Response::Lookup { .. } => ("lookup", None),
                 Response::Ensured { .. } => ("ensured", None),
                 Response::Attached { .. } => ("attached", None),

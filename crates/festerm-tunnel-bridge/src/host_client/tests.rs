@@ -193,6 +193,65 @@ async fn selected_host_inventory_preserves_unknowns_and_original_request_without
 }
 
 #[tokio::test]
+async fn selected_host_inventory_fetches_enabled_shared_profiles_after_sessions() {
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let budgets = Budgets::default();
+    let expected = festerm_host_protocol::ProfileSummary {
+        logical: LogicalSessionId::new(),
+        revision: Epoch::new(4).unwrap(),
+        name: "shared-shell".into(),
+    };
+    let expected_profile = expected.clone();
+    let server = tokio::spawn(async move {
+        let capabilities = Capabilities {
+            inventory: true,
+            profiles: true,
+            ensure_profile: true,
+            attach: true,
+            issuance_epoch: Some(Epoch::new(2).unwrap()),
+            ..Capabilities::default()
+        };
+        let request = reply(&mut peer, &budgets, Response::Capabilities { capabilities }).await;
+        assert!(matches!(request.body, Request::Capabilities {}));
+        let request = reply(
+            &mut peer,
+            &budgets,
+            Response::Inventory {
+                page: InventoryPage {
+                    snapshot: OperationId::new(),
+                    authorization_epoch: Epoch::new(2).unwrap(),
+                    sessions: Vec::new(),
+                    unknown: Vec::new(),
+                    next: None,
+                },
+            },
+        )
+        .await;
+        assert_eq!(request.body, Request::List { cursor: None });
+        let request = reply(
+            &mut peer,
+            &budgets,
+            Response::Profiles {
+                profiles: vec![expected_profile.clone()],
+            },
+        )
+        .await;
+        assert_eq!(request.body, Request::ListProfiles {});
+    });
+
+    let inventory = inventory_authenticated(
+        &mut client(stream),
+        OperationId::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(inventory.sessions.is_empty());
+    assert_eq!(inventory.profiles, vec![expected]);
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn selected_host_inventory_collects_current_pages_with_the_original_request_and_unknowns() {
     let (stream, mut peer) = tokio::io::duplex(32768);
     let operation = OperationId::new();

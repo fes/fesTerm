@@ -2,6 +2,7 @@
 //! authority, and background replies never change either.
 
 #[path = "profile_hosting_account.rs"]
+#[allow(dead_code)]
 mod account;
 #[path = "profile_hosting_stage.rs"]
 mod staging;
@@ -10,10 +11,12 @@ use super::{screens, FesTermApp};
 use crate::tabs::{LocalHostAction, TabId};
 use eframe::egui;
 use festerm_config::{Configuration, LocalTunnelHosting, PersistenceProviderKind, Profile};
+#[cfg(test)]
+use festerm_tunnel_bridge::profile_hosting::HostedLaunch;
 use festerm_tunnel_bridge::{
     profile_hosting::{
-        self, BindExistingRequest, Consent, Failure, HostedLaunch, ManagedHostStatus,
-        ManagementOperation, ManagementReply, ManagementRequest, Origin, Phase, Store, Target,
+        self, BindExistingRequest, Consent, Failure, ManagedHostStatus, ManagementOperation,
+        ManagementReply, ManagementRequest, Origin, Phase, Store, Target,
     },
     setup_storage,
 };
@@ -37,13 +40,13 @@ pub(super) struct LocalProfileEdit {
     pub profile: Profile,
     pub expose: bool,
     pub explicit_enable: bool,
-    pub account_selection: Option<egui::Id>,
 }
 
 #[derive(Clone)]
 enum Work {
     Ensure(Box<Profile>, usize),
     FreshAfterExit(Box<Profile>, usize, Target),
+    Suspend(LocalTunnelHosting),
     Remove(LocalTunnelHosting),
     Status(LocalTunnelHosting),
     Login(Box<Work>),
@@ -62,6 +65,7 @@ impl Work {
         match (self, other) {
             (Self::Ensure(..), Self::Ensure(..))
             | (Self::FreshAfterExit(..), Self::FreshAfterExit(..))
+            | (Self::Suspend(_), Self::Suspend(_))
             | (Self::Remove(_), Self::Remove(_))
             | (Self::Status(_), Self::Status(_)) => true,
             (Self::Login(next), Self::Login(other)) => next.same_operation(other),
@@ -73,7 +77,7 @@ impl Work {
         match self {
             Self::Ensure(profile, _) | Self::FreshAfterExit(profile, ..) => binding(profile),
             Self::Login(next) => next.binding(),
-            Self::Remove(binding) | Self::Status(binding) => Some(binding),
+            Self::Suspend(binding) | Self::Remove(binding) | Self::Status(binding) => Some(binding),
         }
     }
 
@@ -81,8 +85,21 @@ impl Work {
         match self {
             Self::Ensure(profile, _) | Self::FreshAfterExit(profile, ..) => Some(profile),
             Self::Login(next) => next.profile(),
-            Self::Remove(_) | Self::Status(_) => None,
+            Self::Suspend(_) | Self::Remove(_) | Self::Status(_) => None,
         }
+    }
+
+    fn requires_host_access(&self) -> bool {
+        match self {
+            Self::Ensure(..) | Self::FreshAfterExit(..) => true,
+            Self::Login(next) => next.requires_host_access(),
+            Self::Suspend(_) | Self::Remove(_) | Self::Status(_) => false,
+        }
+    }
+
+    fn fences_activation(&self) -> bool {
+        matches!(self, Self::Suspend(_) | Self::Remove(_))
+            || matches!(self, Self::Login(next) if next.fences_activation())
     }
 }
 
@@ -102,9 +119,8 @@ impl Drop for Pending {
 
 #[derive(Default)]
 pub(super) struct Controller {
-    accounts: account::Chooser,
     enabled: bool,
-    initialized: bool,
+    master_access: Option<bool>,
     queue: VecDeque<Work>,
     pending: Option<Pending>,
     helpers: Option<staging::Helpers>,
@@ -143,6 +159,67 @@ fn store(binding: &LocalTunnelHosting) -> io::Result<Store> {
         binding.installation(),
         false,
     )
+}
+
+fn catalog_control() -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
+    let root = super::desktop_remote_access::Controller::state_root()
+        .ok_or("Remote-access storage is unavailable on this system.")?
+        .join("daemon");
+    festerm_sessiond::host_control::SessionControl::existing_only(&root)
+        .map_err(|_| "The protected remote profile catalog is unavailable.")
+}
+
+fn catalog_recipe(profile: &Profile) -> Result<festerm_host_protocol::Recipe, &'static str> {
+    let local = profile.as_local().ok_or("Select a local profile.")?;
+    let cwd = local
+        .working_directory()
+        .map(|path| {
+            path.to_str()
+                .map(str::to_owned)
+                .ok_or("The profile working directory is not valid UTF-8.")
+        })
+        .transpose()?;
+    Ok(festerm_host_protocol::Recipe {
+        shell: Some(local.executable().to_owned()),
+        args: local.arguments().to_vec(),
+        cwd,
+    })
+}
+
+fn catalog_status(
+    profile: &Profile,
+) -> Result<Option<(festerm_host_protocol::Epoch, bool)>, &'static str> {
+    let Some(binding) = binding(profile) else {
+        return Ok(None);
+    };
+    let logical = binding
+        .installation()
+        .to_owned()
+        .try_into()
+        .map_err(|_| "The local profile identity is invalid.")?;
+    catalog_control()?
+        .profile_status(&logical, binding.consent())
+        .map_err(|_| "The protected remote profile catalog could not be verified.")
+}
+
+fn sync_profile_catalog(profile: &Profile, enabled: bool) -> Result<(), &'static str> {
+    let binding = binding(profile).ok_or("The profile has no remote-access identity.")?;
+    let logical = binding
+        .installation()
+        .to_owned()
+        .try_into()
+        .map_err(|_| "The local profile identity is invalid.")?;
+    let recipe = catalog_recipe(profile)?;
+    catalog_control()?
+        .set_profile(
+            logical,
+            binding.consent(),
+            profile.identifier(),
+            recipe,
+            enabled,
+        )
+        .map_err(|_| "The protected remote profile catalog could not be updated.")?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -247,6 +324,7 @@ fn legacy_session_in(root: &Path, name: &str) -> Result<Option<Target>, String> 
         }))
 }
 
+#[cfg(all(test, unix))]
 fn initial_hosted_launch(name: &str) -> Result<HostedLaunch, &'static str> {
     let legacy =
         festerm_sessiond::runtime_root().map_err(|_| "Private hosting storage is unavailable.")?;
@@ -256,6 +334,7 @@ fn initial_hosted_launch(name: &str) -> Result<HostedLaunch, &'static str> {
     initial_hosted_launch_in(&legacy, hosted, name)
 }
 
+#[cfg(test)]
 fn initial_hosted_launch_in(
     legacy: &Path,
     hosted: PathBuf,
@@ -272,7 +351,7 @@ fn initial_hosted_launch_in(
     })
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn verify_hosted_endpoint_capacity(root: &Path) -> Result<(), &'static str> {
     let generation = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -285,11 +364,6 @@ fn verify_hosted_endpoint_capacity(root: &Path) -> Result<(), &'static str> {
     std::os::unix::net::SocketAddr::from_pathname(endpoint)
         .map(|_| ())
         .map_err(|_| "Private hosting storage is too long for a session socket. Use a shorter XDG_STATE_HOME and retry; no session was stopped.")
-}
-
-#[cfg(not(unix))]
-fn verify_hosted_endpoint_capacity(_root: &Path) -> Result<(), &'static str> {
-    Ok(())
 }
 
 pub(crate) fn connect_profile(
@@ -690,9 +764,9 @@ impl Controller {
             return;
         };
         let id = binding.installation().to_owned();
-        if !work.is_removal()
+        if !work.fences_activation()
             && self.queue.iter().any(|queued| {
-                queued.is_removal()
+                queued.fences_activation()
                     && queued
                         .binding()
                         .is_some_and(|binding| binding.installation() == id)
@@ -700,6 +774,7 @@ impl Controller {
         {
             return;
         }
+
         if matches!(work, Work::Status(_))
             && self.queue.iter().any(|queued| {
                 queued
@@ -710,7 +785,7 @@ impl Controller {
             return;
         }
         self.published = None;
-        if matches!(work, Work::Remove(_)) {
+        if work.fences_activation() {
             if let Some(pending) = &self.pending {
                 if pending
                     .work
@@ -742,6 +817,11 @@ impl Controller {
         }
     }
 
+    pub(super) fn set_master_access(&mut self, configuration: &Configuration, enabled: bool) {
+        self.master_access = Some(enabled);
+        self.reconcile_master_access(configuration, enabled);
+    }
+
     /// Called before configuration mutation, including writes that later fail.
     pub(super) fn fence_changes(
         &mut self,
@@ -758,6 +838,9 @@ impl Controller {
                 .any(|new| preserves_binding(previous, new))
             {
                 continue;
+            }
+            if old.enabled() && catalog_status(previous)?.is_some() {
+                sync_profile_catalog(previous, false)?;
             }
             if let Some(grant) = revocation_grant(grant(old))? {
                 store(old)
@@ -777,7 +860,7 @@ impl Controller {
         previous: Option<&Profile>,
         expose: bool,
         explicit_enable: bool,
-        selected_account: Option<&str>,
+        _selected_account: Option<&str>,
     ) -> Result<(Profile, bool), &'static str> {
         if !self.enabled {
             return Err("Hosting is unavailable in this application context.");
@@ -802,75 +885,55 @@ impl Controller {
                 .map_err(|_| "Invalid local profile.");
         }
         let local = profile.as_local().ok_or("Select a local profile.")?;
-        let persistence = local
+        local
             .persistence()
             .filter(|persistence| {
                 persistence.provider() == PersistenceProviderKind::FestermSessiond
             })
-            .ok_or("Dev Tunnel hosting requires the fesTerm session daemon.")?;
-        let fingerprint = fingerprint(&profile)?;
-        if let Some(existing) = previous.and_then(binding) {
-            if let Ok(grant) = grant(existing) {
-                if grant.phase.allows_hosting()
-                    || matches!(grant.phase, Phase::Prepared | Phase::CloudMissing)
-                {
-                    if grant.spawn_fingerprint != fingerprint
-                        || grant.session_name != persistence.session_name()
-                    {
-                        return Err("Disable exposure and Save before changing the command or persistent session name.");
+            .ok_or("Remote profile sharing requires the fesTerm session daemon.")?;
+        if let Some(previous_profile) = previous {
+            if let Some(existing) = binding(previous_profile) {
+                match catalog_status(previous_profile)? {
+                    Some((_, true)) => {
+                        let metadata = LocalTunnelHosting::new(
+                            existing.installation(),
+                            existing.consent(),
+                            true,
+                        )
+                        .map_err(|_| "Invalid hosting metadata.")?;
+                        return profile
+                            .with_local_tunnel_hosting(Some(metadata))
+                            .map(|profile| (profile, false))
+                            .map_err(|_| "Invalid hosting metadata.");
                     }
-                    if let Some(selected) = selected_account {
-                        let recorded = grant.selected_account.as_deref().or_else(|| {
-                            grant
-                                .cloud_reservation
-                                .as_ref()
-                                .map(|reservation| reservation.account.as_str())
-                        });
-                        if recorded.is_some_and(|recorded| recorded != selected) {
-                            return Err("This exposure belongs to its recorded GitHub account. Restore that sign-in or disable and remove it before choosing another account.");
-                        }
-                        if recorded.is_none() {
-                            let _account = profile_hosting::account_lease(false)
-                                .map_err(|_| "Account sign-in is busy. Retry shortly.")?;
-                            store(existing)
-                                .and_then(|store| {
-                                    store.select_account(existing.consent(), selected)
-                                })
-                                .map_err(|_| {
-                                    "The hosting account changed. Verify the account again."
-                                })?;
-                        }
+                    Some((_, false)) if explicit_enable => {
+                        return profile
+                            .with_local_tunnel_hosting(Some(
+                                LocalTunnelHosting::new(
+                                    existing.installation(),
+                                    existing.consent(),
+                                    true,
+                                )
+                                .map_err(|_| "Invalid hosting metadata.")?,
+                            ))
+                            .map(|profile| (profile, false))
+                            .map_err(|_| "Invalid hosting metadata.");
                     }
-                    return profile
-                        .with_local_tunnel_hosting(Some(existing.clone()))
-                        .map(|profile| (profile, grant.phase == Phase::Prepared))
-                        .map_err(|_| "Invalid hosting metadata.");
+                    Some((_, false)) => {
+                        return Err("This profile is not currently registered for remote access. Turn sharing off and on, then Save to renew its local permission.");
+                    }
+                    None if existing.enabled() => {
+                        return Err("This is a legacy per-profile tunnel, not the computer-level remote host. Disable and Save it before enabling shared remote access.");
+                    }
+                    None => {}
                 }
             }
         }
         if !explicit_enable {
-            return Err("This exposure is not authorized on this host. Turn the checkbox off and on, then Save.");
+            return Err("This profile is not authorized for remote access. Turn sharing off and on, then Save.");
         }
-        let namespace =
-            staging::initialize().map_err(|_| "Private hosting storage is unavailable.")?;
-        let account = selected_account.ok_or("Choose a GitHub account before enabling hosting.")?;
-        let _account = profile_hosting::account_lease(false)
-            .map_err(|_| "Account sign-in is busy. Retry shortly.")?;
         let installation = uuid::Uuid::new_v4().to_string();
         let consent = uuid::Uuid::new_v4().to_string();
-        let launch = initial_hosted_launch(persistence.session_name())?;
-        profile_hosting::prepare_hosted_installation_in(
-            &namespace,
-            profile_hosting::HostedPreparation {
-                installation: &installation,
-                consent: &consent,
-                spawn_fingerprint: &fingerprint,
-                session_name: persistence.session_name(),
-                launch,
-                account,
-            },
-        )
-        .map_err(|_| "The hosting consent could not be prepared.")?;
         let metadata = LocalTunnelHosting::new(installation, consent, true)
             .map_err(|_| "Invalid hosting metadata.")?;
         profile
@@ -881,6 +944,13 @@ impl Controller {
 
     fn start_pending(&mut self, configuration: &Configuration, context: &egui::Context) {
         if self.pending.is_some() {
+            return;
+        }
+        if self
+            .queue
+            .front()
+            .is_some_and(|work| work.requires_host_access() && self.master_access != Some(true))
+        {
             return;
         }
         let Some(work) = self.queue.pop_front() else {
@@ -935,7 +1005,12 @@ impl Controller {
         });
     }
 
-    fn poll(&mut self, configuration: &Configuration, context: &egui::Context) {
+    fn poll(
+        &mut self,
+        configuration: &Configuration,
+        master_access: Option<bool>,
+        context: &egui::Context,
+    ) {
         if !self.enabled {
             return;
         }
@@ -949,24 +1024,14 @@ impl Controller {
                 pending.cancel.cancel();
             }
         }
-        if !self.initialized {
-            self.initialized = true;
-            for profile in configuration.profiles() {
-                if binding(profile).is_some_and(|binding| {
-                    binding.enabled()
-                        && grant_view(binding).is_ok_and(|grant| {
-                            grant.phase.allows_hosting() && deferred_restart(&grant).is_none()
-                        })
-                }) {
-                    self.enqueue(Work::Ensure(
-                        Box::new(profile.clone()),
-                        configuration
-                            .interface_settings()
-                            .scrollback_limit()
-                            .bytes(),
-                    ));
-                }
+        if let Some(master_access) = master_access {
+            if self.master_access != Some(master_access) {
+                self.master_access = Some(master_access);
+                self.reconcile_master_access(configuration, master_access);
             }
+        }
+        if self.master_access == Some(false) {
+            self.queue.retain(|work| !work.requires_host_access());
         }
         self.poll_inventory(context);
         if let Some(pending) = &self.pending {
@@ -1022,7 +1087,26 @@ impl Controller {
             self.refresh = Some(Instant::now());
             for metadata in configuration.profiles().iter().filter_map(binding) {
                 if grant_view(metadata).is_ok_and(|grant| deferred_restart(&grant).is_none()) {
-                    self.enqueue(Work::Status(metadata.clone()));
+                    if self.master_access == Some(true)
+                        && metadata.enabled()
+                        && grant_view(metadata).is_ok_and(|grant| grant.phase.allows_hosting())
+                    {
+                        if let Some(profile) = configuration
+                            .profiles()
+                            .iter()
+                            .find(|profile| binding(profile) == Some(metadata))
+                        {
+                            self.enqueue(Work::Ensure(
+                                Box::new(profile.clone()),
+                                configuration
+                                    .interface_settings()
+                                    .scrollback_limit()
+                                    .bytes(),
+                            ));
+                        }
+                    } else {
+                        self.enqueue(Work::Status(metadata.clone()));
+                    }
                 }
             }
         }
@@ -1030,6 +1114,40 @@ impl Controller {
         self.publish(configuration, context);
         if self.pending.is_some() {
             context.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
+    fn reconcile_master_access(&mut self, configuration: &Configuration, enabled: bool) {
+        let scrollback = configuration
+            .interface_settings()
+            .scrollback_limit()
+            .bytes();
+        for profile in configuration.profiles() {
+            let Some(metadata) = binding(profile).filter(|metadata| metadata.enabled()) else {
+                continue;
+            };
+            let Ok(grant) = grant_view(metadata) else {
+                continue;
+            };
+            if enabled {
+                if grant.phase.allows_hosting() || grant.phase == Phase::Suspended {
+                    self.enqueue(Work::Ensure(Box::new(profile.clone()), scrollback));
+                }
+            } else if grant.phase.allows_hosting()
+                || (grant.phase == Phase::Suspended && !grant.worker_stopped)
+            {
+                if grant.phase.allows_hosting()
+                    && store(metadata)
+                        .and_then(|store| store.suspend(metadata.consent()))
+                        .is_err()
+                {
+                    self.errors.insert(
+                        metadata.installation().to_owned(),
+                        "profile_host.suspend_failed".into(),
+                    );
+                }
+                self.enqueue(Work::Suspend(metadata.clone()));
+            }
         }
     }
 
@@ -1101,6 +1219,36 @@ impl Controller {
             let Some(binding) = binding(profile) else {
                 continue;
             };
+            match catalog_status(profile) {
+                Ok(Some((_, enabled))) => {
+                    views.insert(
+                        profile.identifier().to_owned(),
+                        screens::LocalHostView {
+                            enabled: binding.enabled() && enabled,
+                            message: if enabled {
+                                "Registered in the protected remote profile catalog. This does not start a shell; computer-level remote access is controlled in Settings."
+                            } else {
+                                "This profile is not exposed remotely. Save an explicit enable to restore its catalog entry."
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    views.insert(
+                        profile.identifier().to_owned(),
+                        screens::LocalHostView {
+                            message: "The protected remote profile catalog is unavailable. Exposure is unknown, not disabled."
+                                .into(),
+                            ..Default::default()
+                        },
+                    );
+                    continue;
+                }
+                Ok(None) => {}
+            }
             let grant = match grant_view(binding) {
                 Ok(grant) => grant,
                 Err(failure) => {
@@ -1110,7 +1258,7 @@ impl Controller {
                         message: if failure == GrantReadFailure::Unavailable {
                             "Private hosting state is unavailable. Exposure is unknown, not disabled; retry when it can be verified."
                         } else {
-                            "Not authorized on this host. Enable and Save to grant access."
+                            "Not registered for remote access. Enable sharing and Save to add this profile."
                         }.into(),
                         ..Default::default()
                     },
@@ -1129,6 +1277,7 @@ impl Controller {
                     .is_some_and(|pending| pending.installation() == binding.installation())
             });
             let mut view = screens::LocalHostView {
+                legacy: true,
                 enabled: binding.enabled()
                     && (grant.phase.allows_hosting()
                         || matches!(grant.phase, Phase::Prepared | Phase::CloudMissing)),
@@ -1332,14 +1481,12 @@ fn cloud_candidate(grant: &Consent, locator: &str) -> bool {
 }
 
 fn preserves_binding(previous: &Profile, next: &Profile) -> bool {
-    let (Some(previous), Some(next)) = (previous.as_local(), next.as_local()) else {
+    let (Some(previous), Some(next)) = (binding(previous), binding(next)) else {
         return false;
     };
-    previous.tunnel_hosting() == next.tunnel_hosting()
-        && previous.executable() == next.executable()
-        && previous.arguments() == next.arguments()
-        && previous.working_directory() == next.working_directory()
-        && previous.persistence() == next.persistence()
+    previous.installation() == next.installation()
+        && previous.consent() == next.consent()
+        && previous.enabled() == next.enabled()
 }
 
 fn phase_message(grant: &Consent) -> &'static str {
@@ -1359,6 +1506,7 @@ fn phase_message(grant: &Consent) -> &'static str {
         Phase::Prepared => "Prepared, not exposed. Save again to authorize starting.",
         Phase::Requested | Phase::Provisioning => "Starting. Connection details appear only after verified readiness.",
         Phase::Exposed => "Exposed. Closing the tab or app does not disable this service.",
+        Phase::Suspended => "Paused by computer-level remote access. The cloud tunnel and profile consent are retained.",
         Phase::Revoking => "Stopping exposure. The persistent shell is retained.",
         Phase::CleanupPending => "Local exposure stopped; cloud cleanup is pending. Sign in with the recorded account and Retry.",
         Phase::Revoked => "Exposure revoked. A new explicit enable is required.",
@@ -1472,7 +1620,12 @@ async fn execute_in(
         Work::Ensure(profile, scrollback) => {
             let binding = binding(&profile).ok_or("profile_host.binding")?;
             let store = store(binding).map_err(|_| "profile_host.binding")?;
-            let grant = grant(binding).map_err(|_| "profile_host.binding")?;
+            let mut grant = grant(binding).map_err(|_| "profile_host.binding")?;
+            if grant.phase == Phase::Suspended {
+                grant = store
+                    .resume(binding.consent())
+                    .map_err(|_| "profile_host.resume_failed")?;
+            }
             if !grant.phase.allows_hosting() {
                 return Err("profile_host.consent_not_active".into());
             }
@@ -1577,6 +1730,10 @@ async fn execute_in(
             installation: binding.installation().to_owned(),
             consent: Some(binding.consent().to_owned()),
         },
+        Work::Suspend(binding) => ManagementOperation::Suspend {
+            installation: binding.installation().to_owned(),
+            consent: binding.consent().to_owned(),
+        },
         Work::Status(binding) => ManagementOperation::Status {
             installation: binding.installation().to_owned(),
         },
@@ -1599,7 +1756,7 @@ async fn request_management(
         .map_err(|_| "profile_host.request_storage")?;
     let name = format!("{}.json", uuid::Uuid::new_v4());
     let request = ManagementRequest {
-        version: 1,
+        version: 2,
         operation,
     };
     let bytes = serde_json::to_vec(&request).map_err(|_| "profile_host.request_encode")?;
@@ -1652,6 +1809,16 @@ pub(super) fn revoke_cloud_browser_host(
 }
 
 impl FesTermApp {
+    fn master_host_access(&self) -> Option<bool> {
+        #[cfg(feature = "local-host-settings")]
+        {
+            self.local_remote_access.view().access_status()
+        }
+        #[cfg(not(feature = "local-host-settings"))]
+        {
+            Some(true)
+        }
+    }
     pub(super) fn queue_cloud_browser_host_removal(&mut self, binding: LocalTunnelHosting) {
         self.local_hosting.enqueue(Work::Remove(binding));
         self.secure_storage_feedback = Some("Local exposure revoked; owned teardown is queued. The persistent shell is retained. Pending cleanup is available in Profiles.");
@@ -1669,7 +1836,6 @@ impl FesTermApp {
             profile,
             expose,
             explicit_enable,
-            account_selection,
         } = edit;
         let previous = original_id
             .as_deref()
@@ -1682,73 +1848,27 @@ impl FesTermApp {
             expose,
         )
         .and_then(|_| {
-            let account = if expose && explicit_enable {
-                Some(self.local_hosting.accounts.take(
-                    context,
-                    tab_id,
-                    account_selection,
-                    original_id.as_deref(),
-                )?)
-            } else {
-                None
-            };
-            self.local_hosting.prepare(
-                profile,
-                previous.as_ref(),
-                expose,
-                explicit_enable,
-                account.as_deref(),
-            )
+            self.local_hosting
+                .prepare(profile, previous.as_ref(), expose, explicit_enable, None)
         });
         let outcome = match plan {
             Err(message) => Err(message.to_owned()),
-            Ok((profile, prepared)) => {
+            Ok((profile, _prepared)) => {
                 let replacement = self
                     .state
                     .configuration()
                     .with_edited_profile(original_id.as_deref(), profile.clone());
-                let saved = self.apply_configuration_save(
+                if self.apply_configuration_save(
                     replacement,
                     super::ConfigurationStartupStatus::ProfileSaveFailure,
                     super::ConfigurationReloader::save_profile,
-                );
-                if saved {
-                    let commit = match (prepared, binding(&profile)) {
-                        (true, Some(binding)) => store(binding)
-                            .and_then(|store| store.commit_requested(binding.consent()))
-                            .map(Some),
-                        (true, None) => Err(io::Error::other("profile_host.binding")),
-                        (false, _) => Ok(None),
-                    };
-                    if let Ok(committed) = commit {
-                        if expose {
-                            let effective = committed.or_else(|| {
-                                binding(&profile).and_then(|binding| grant(binding).ok())
-                            });
-                            match effective {
-                                Some(grant) if deferred_restart(&grant).is_some() => {
-                                    self.secure_storage_feedback = Some(MANUAL_RESTART_MESSAGE);
-                                }
-                                Some(_) => self.local_hosting.enqueue(Work::Ensure(
-                                    Box::new(profile),
-                                    self.state.scrollback_limit().bytes(),
-                                )),
-                                None => {
-                                    self.secure_storage_feedback = Some("The profile was saved, but its hosting state is unavailable. No hosting action was started; retry after verifying the private state.");
-                                }
-                            }
-                        }
-                        Ok(())
+                ) {
+                    if expose {
+                        sync_profile_catalog(&profile, true).map_err(str::to_owned)
                     } else {
-                        Err("The profile was saved, but exposure is not authorized yet. Save again to complete the request.".into())
+                        Ok(())
                     }
                 } else {
-                    if prepared {
-                        if let Some(binding) = binding(&profile) {
-                            let _ = store(binding)
-                                .and_then(|store| store.cancel_prepared(binding.consent()));
-                        }
-                    }
                     Err(self.configuration_status.settings_message().to_owned())
                 }
             }
@@ -1757,13 +1877,12 @@ impl FesTermApp {
     }
 
     pub(super) fn poll_local_hosts(&mut self, context: &egui::Context) {
-        let selecting_account = self
-            .local_hosting
-            .accounts
-            .poll(context, self.state.active());
+        let master_access = self.master_host_access();
         if let Some(profile) = self.state.take_completed_hosted_profile() {
-            if self.state.configuration().profile(profile.identifier()) == Some(&profile)
+            if master_access == Some(true)
+                && self.state.configuration().profile(profile.identifier()) == Some(&profile)
                 && binding(&profile).is_some_and(LocalTunnelHosting::enabled)
+                && matches!(catalog_status(&profile), Ok(None))
             {
                 self.local_hosting.enqueue(Work::Ensure(
                     Box::new(profile),
@@ -1771,7 +1890,8 @@ impl FesTermApp {
                 ));
             }
         }
-        self.local_hosting.poll(self.state.configuration(), context);
+        self.local_hosting
+            .poll(self.state.configuration(), master_access, context);
         if self
             .local_hosting
             .errors
@@ -1779,9 +1899,6 @@ impl FesTermApp {
             .any(|error| error == "profile_host.restart_required")
         {
             self.secure_storage_feedback = Some(MANUAL_RESTART_MESSAGE);
-        }
-        if selecting_account {
-            return;
         }
         let focus_cancel = std::mem::take(&mut self.local_hosting.focus_confirmation);
         if let Some(binding) = self.local_hosting.cleanup_confirmation.clone() {
@@ -1819,6 +1936,7 @@ impl FesTermApp {
                     self.secure_storage_feedback = Some(message);
                 }
             }
+
             return;
         }
         let Some((profile_id, binding, action)) = self.local_hosting.confirmation.clone() else {
@@ -1853,13 +1971,9 @@ impl FesTermApp {
         }
     }
 
-    pub(super) fn begin_local_host_account(
-        &mut self,
-        tab: TabId,
-        request: egui::Id,
-        context: &egui::Context,
-    ) {
-        self.local_hosting.accounts.begin(context, tab, request);
+    pub(super) fn suspend_profile_hosting(&mut self) {
+        self.local_hosting
+            .set_master_access(self.state.configuration(), false);
     }
 
     pub(super) fn confirm_hosted_takeover(
@@ -2528,7 +2642,10 @@ mod tests {
             .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
             .unwrap();
         let configuration = Configuration::new(vec![profile.clone(), ordinary]).unwrap();
-        let mut controller = Controller::default();
+        let mut controller = Controller {
+            master_access: Some(true),
+            ..Controller::default()
+        };
         controller.enqueue(Work::Ensure(Box::new(profile.clone()), 1024));
         controller.start_pending(&configuration, &egui::Context::default());
         assert!(controller.pending.is_none());

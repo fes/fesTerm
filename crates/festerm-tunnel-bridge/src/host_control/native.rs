@@ -11,7 +11,7 @@ use festerm_host_protocol::{
     UnknownInventoryEntry, CONTROL_DEADLINE_SECONDS,
 };
 use festerm_sessiond::host_control::{
-    AdmissionState, ControlError, Effect, EndOutcome, Lookup, SessionControl,
+    AdmissionState, ControlError, Effect, EndOutcome, Lookup, ProfileEnsureRequest, SessionControl,
 };
 use std::{
     sync::Arc,
@@ -113,7 +113,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         let verifier = projected.as_ref().unwrap_or(guard.verifier());
         if matches!(
             request.body,
-            Request::Ensure { .. } | Request::Create { .. }
+            Request::Ensure { .. } | Request::Create { .. } | Request::EnsureProfile { .. }
         ) {
             let issued = request.issued_operation().map_err(control_error)?;
             if state
@@ -164,6 +164,14 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                 }
                 provisional = Some(SessionGrant {
                     logical: creation.logical.clone(),
+                    owner: admission.principal().clone(),
+                    remote_access: true,
+                    state: LogicalState::Absent,
+                    revision: Epoch::new(1).map_err(control_error)?,
+                });
+            } else if let Request::EnsureProfile { logical, .. } = &request.body {
+                provisional = Some(SessionGrant {
+                    logical: logical.clone(),
                     owner: admission.principal().clone(),
                     remote_access: true,
                     state: LogicalState::Absent,
@@ -313,6 +321,15 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                 })
             }
             Request::List { cursor } => self.inventory(request, admission, cursor.as_ref()),
+            Request::ListProfiles {} => {
+                let profiles = self
+                    .sessions
+                    .profiles(admission.principal(), |state| {
+                        self.admit(admission, state, request)
+                    })
+                    .map_err(refusal)?;
+                Ok(Response::Profiles { profiles })
+            }
             Request::Lookup { logical } => {
                 let mut authorization_epoch = None;
                 let result = self
@@ -347,6 +364,43 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                             .map_err(refusal)?,
                         creation,
                         matches!(request.body, Request::Create { .. }),
+                        &admission.cancelled,
+                        |state| self.admit(admission, state, request),
+                    )
+                    .map_err(refusal)?;
+                if result.cancelled {
+                    return Err(Refusal::OutcomeUncertain);
+                }
+                Ok(Response::Ensured {
+                    session: result.summary,
+                    disposition: if result.recreated {
+                        EnsureDisposition::Recreated
+                    } else if result.created {
+                        EnsureDisposition::Created
+                    } else {
+                        EnsureDisposition::Resumed
+                    },
+                    lease: result.lease,
+                })
+            }
+            Request::EnsureProfile {
+                logical,
+                revision,
+                attachment,
+            } => {
+                let result = self
+                    .sessions
+                    .ensure_profile(
+                        admission.principal(),
+                        &request
+                            .issued_operation()
+                            .map_err(control_error)
+                            .map_err(refusal)?,
+                        ProfileEnsureRequest {
+                            logical: logical.clone(),
+                            revision: *revision,
+                            attachment: attachment.clone(),
+                        },
                         &admission.cancelled,
                         |state| self.admit(admission, state, request),
                     )

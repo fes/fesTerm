@@ -83,6 +83,62 @@ struct Scenario {
 }
 fn scenarios() -> Vec<Scenario> {
     let mut scenarios = vec![
+        #[cfg(feature = "experimental-dev-tunnels")]
+        Scenario {
+            id: "dev-tunnel-hosts",
+            section: "dev-tunnels",
+            title: "Explicit account-scoped host discovery",
+            caption: "Synthetic last-listed host metadata. Opening does not query the service or assert online availability.",
+            capture: || capture_host_workspace(false, false),
+        },
+        #[cfg(feature = "experimental-dev-tunnels")]
+        Scenario {
+            id: "dev-tunnel-hosts-narrow",
+            section: "dev-tunnels",
+            title: "Narrow host discovery",
+            caption: "The same production host choices at 360 logical points, with synthetic account identity only.",
+            capture: || capture_host_workspace(true, false),
+        },
+        #[cfg(feature = "experimental-dev-tunnels")]
+        Scenario {
+            id: "dev-tunnel-hosts-error",
+            section: "dev-tunnels",
+            title: "Host discovery with retained results",
+            caption: "A synthetic explicit-discovery failure retains useful previous metadata; no native or real-service acceptance.",
+            capture: || capture_host_workspace(false, true),
+        },
+        #[cfg(feature = "experimental-dev-tunnels")]
+        Scenario {
+            id: "dev-tunnel-profile",
+            section: "dev-tunnels",
+            title: "Offline host profile editor",
+            caption: "Production editor with synthetic saved public host hints; no discovery or authentication.",
+            capture: || capture_host_profile(false),
+        },
+        #[cfg(feature = "experimental-dev-tunnels")]
+        Scenario {
+            id: "dev-tunnel-profile-narrow",
+            section: "dev-tunnels",
+            title: "Narrow offline host profile editor",
+            caption: "The production editor at 360 logical points; no native keyboard qualification.",
+            capture: || capture_host_profile(true),
+        },
+        #[cfg(feature = "local-host-settings")]
+        Scenario {
+            id: "dev-tunnel-host-settings-off",
+            section: "dev-tunnels",
+            title: "Host access off",
+            caption: "Production hosting controls with an absent synthetic host. Identity and creation controls remain hidden.",
+            capture: || capture_host_settings(false),
+        },
+        #[cfg(feature = "local-host-settings")]
+        Scenario {
+            id: "dev-tunnel-host-settings-requested",
+            section: "dev-tunnels",
+            title: "Host access requested",
+            caption: "Requested intent is not readiness. Synthetic account selection grants no host credentials or authority.",
+            capture: || capture_host_settings(true),
+        },
         Scenario {
             id:"desktop-panes-four",
             section:"desktop-panes",
@@ -629,6 +685,111 @@ fn scenarios() -> Vec<Scenario> {
     scenarios
 }
 
+#[cfg(feature = "experimental-dev-tunnels")]
+fn capture_host_workspace(narrow: bool, unavailable: bool) -> image::RgbaImage {
+    let account = festerm_config::DevTunnelAccount::new(
+        "github-fixture",
+        festerm_config::AccountProvider::Github,
+        424242,
+        "developer",
+        festerm_secret_store::SecretReference::generate(),
+    )
+    .expect("synthetic account");
+    let (configuration, _) = Configuration::empty()
+        .with_account(account)
+        .expect("fixture account");
+    let tab = AppState::for_test().active();
+    let mut harness = gallery_harness(
+        egui::vec2(if narrow { 360.0 } else { 752.0 }, 516.0),
+        move |ui, initialized: &mut bool| {
+            if !*initialized {
+                screens::host_workspace::install_gallery_state(ui.ctx(), tab, unavailable);
+                *initialized = true;
+            }
+            ui.heading("Connect to a host");
+            let _ = screens::host_workspace::show(ui, tab, &configuration);
+        },
+        false,
+    );
+    harness.run();
+    harness.render().expect("render synthetic host workspace")
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+fn capture_host_profile(narrow: bool) -> image::RgbaImage {
+    use festerm_config::host_recipes::{
+        AccountReference, HostHint, HostReference, MetadataCommand, PublicRecipe, Recipe,
+    };
+    let mut recipe = PublicRecipe::persistent(
+        "Build shortcut",
+        HostReference {
+            id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+            account: AccountReference::Github { account_id: 424242 },
+        },
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None,
+        },
+    )
+    .unwrap();
+    recipe.host_hint = Some(HostHint {
+        locator: "fixture.use".into(),
+        name: "Build workstation".into(),
+    });
+    recipe.session_name = Some("build".into());
+    let (configuration, _) = Configuration::empty()
+        .with_host_recipe_command(MetadataCommand::Save(recipe))
+        .unwrap();
+    let tab = AppState::for_test().active();
+    let mut harness = gallery_harness(
+        egui::vec2(if narrow { 360.0 } else { 752.0 }, 516.0),
+        move |ui, initialized: &mut bool| {
+            let pending = (!*initialized).then_some(NewProfileKind::DevTunnel);
+            *initialized = true;
+            let _ = screens::show_profiles(
+                ui,
+                tab,
+                &configuration,
+                None,
+                pending,
+                festerm_config::PersistenceProviderKind::FestermSessiond,
+            );
+        },
+        false,
+    );
+    harness.run();
+    harness.render().expect("render synthetic host profile")
+}
+
+#[cfg(feature = "local-host-settings")]
+fn capture_host_settings(requested: bool) -> image::RgbaImage {
+    use crate::app::desktop_remote_access::{self, Draft, HostAccount, Scope, View};
+    let view = View {
+        accounts: vec![HostAccount {
+            account_id: 424242,
+            login: "developer".into(),
+        }],
+        access_requested: Some(requested),
+        scope: Scope::Absent,
+        draft: Draft {
+            account: "424242".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = gallery_harness(
+        egui::vec2(752.0, 516.0),
+        move |ui, ()| {
+            ui.heading("Remote access");
+            let _ = desktop_remote_access::show(ui, &view, &[]);
+        },
+        (),
+    );
+    harness.run();
+    harness.render().expect("render synthetic host settings")
+}
+
 fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, String> {
     let scenes = scenarios();
     let Some(selection) = selection else {
@@ -661,7 +822,11 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
-    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 139);
+    assert_eq!(
+        selected_gallery_scenarios(None).unwrap().len(),
+        139 + 5 * usize::from(cfg!(feature = "experimental-dev-tunnels"))
+            + 2 * usize::from(cfg!(feature = "local-host-settings"))
+    );
     assert_eq!(
         selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
             .unwrap()
@@ -853,7 +1018,14 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(gallery.len(), 50 + 52 + 10 + 27);
+    assert_eq!(
+        gallery.len(),
+        50 + 52
+            + 10
+            + 27
+            + 5 * usize::from(cfg!(feature = "experimental-dev-tunnels"))
+            + 2 * usize::from(cfg!(feature = "local-host-settings"))
+    );
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()

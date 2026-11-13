@@ -37,12 +37,15 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
     )?;
     let request: ManagementRequest =
         serde_json::from_slice(&bytes).map_err(|_| refused("profile_host.request_decode"))?;
-    if request.version != 1 {
+    if !matches!(request.version, 1 | 2)
+        || matches!(&request.operation, ManagementOperation::Suspend { .. }) && request.version != 2
+    {
         return Err(refused("profile_host.request_version"));
     }
     let installation = match &request.operation {
         ManagementOperation::BindExisting(request) => Some(request.installation.clone()),
         ManagementOperation::Status { installation }
+        | ManagementOperation::Suspend { installation, .. }
         | ManagementOperation::Remove { installation, .. } => Some(installation.clone()),
         ManagementOperation::Inventory => None,
     };
@@ -51,6 +54,10 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
             bind_existing(*request).await.map(|row| vec![row])
         }
         ManagementOperation::Status { installation } => status(&installation).map(|row| vec![row]),
+        ManagementOperation::Suspend {
+            installation,
+            consent,
+        } => suspend(&installation, &consent).await.map(|row| vec![row]),
         ManagementOperation::Remove {
             installation,
             consent,
@@ -649,6 +656,7 @@ async fn remove(installation: &str, consent: &str) -> io::Result<ManagedHostStat
             super::super::service_install::uninstall(&previous, &service(&record, &state))?;
             Some(record)
         }
+
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let grant = store.read()?;
             if grant.cloud.is_some() || !grant.worker_stopped {
@@ -724,6 +732,42 @@ async fn remove(installation: &str, consent: &str) -> io::Result<ManagedHostStat
             store.complete_deletion(consent)?;
         }
     }
+    status(installation)
+}
+
+async fn suspend(installation: &str, consent: &str) -> io::Result<ManagedHostStatus> {
+    let state = profile_hosting::installation_path(installation)?;
+    let store = Store::open(&state, installation, false)?;
+    store.suspend(consent)?;
+    let directory = setup_storage::private_directory(&state, false)?;
+    let installer = lock(&directory, "installer.lock")?;
+    installer
+        .try_lock_exclusive()
+        .map_err(|_| refused("profile_host.operation_busy"))?;
+    match read_json::<Installation>(&directory, CONFIG) {
+        Ok(record) => {
+            validate_desktop_entry(&record, installation)?;
+            let previous: Vec<_> = record
+                .upgrading_from
+                .iter()
+                .map(|executable| super::super::service_install::ServiceSpec {
+                    id: record.id.clone(),
+                    executable: executable.clone(),
+                    state: state.clone(),
+                })
+                .collect();
+            super::super::service_install::uninstall(&previous, &service(&record, &state))?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let grant = store.read()?;
+            if !grant.worker_stopped {
+                return Err(refused("profile_host.missing_installation"));
+            }
+        }
+        Err(error) => return Err(error),
+    }
+    wait_stopped(&directory).await?;
+    store.mark_suspended_stopped(consent)?;
     status(installation)
 }
 

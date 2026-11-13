@@ -150,6 +150,8 @@ impl EnrollmentSnapshot {
             .collect();
         let mut capabilities = self.capabilities;
         capabilities.creation_allowed &= installation.settings.allow_creation;
+        capabilities.profiles = capabilities.inventory && capabilities.attach;
+        capabilities.ensure_profile = capabilities.profiles;
         let policy = OwnerPolicy {
             host: self.binding.host.clone(),
             principal: self.binding.principal.clone(),

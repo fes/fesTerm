@@ -41,6 +41,8 @@ use crate::tabs::{
 };
 
 mod destination;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) mod host_workspace;
 mod path_autocomplete;
 mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
@@ -50,6 +52,8 @@ pub(crate) use profiles::clear_profiles_screen_state;
 pub(crate) use profiles::install_host_recipe_request_for_test;
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::report_local_profile_save_outcome;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::select_host_for_profile;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
@@ -64,6 +68,8 @@ pub(crate) use profiles::{
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};
+#[cfg(feature = "local-host-settings")]
+pub(crate) use profiles::{set_local_remote_access_view, LocalRemoteAccessView};
 mod settings;
 use settings::toggle_switch;
 pub(crate) use settings::{show_settings, SettingsViewModel};
@@ -4061,25 +4067,26 @@ pub fn show_launcher(
                         }
                         ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new("Connect to a Dev Tunnel")
+                            egui::RichText::new("Connect to a host")
                                 .size(24.0)
                                 .color(theme::TEXT_PRIMARY),
                         );
-                        ui.label(
-                            egui::RichText::new(
-                                "Connecting does not save a profile unless you choose to.",
-                            )
-                            .size(11.0)
-                            .color(theme::TEXT_SECONDARY),
-                        );
                         if !back_clicked {
-                            command = show_dev_tunnel_form(
-                                ui,
-                                tab_id,
-                                &mut state.tunnel,
-                                configuration,
-                                running_tunnels,
-                            );
+                            #[cfg(feature = "experimental-dev-tunnels")]
+                            {
+                                command = host_workspace::show(ui, tab_id, configuration);
+                            }
+                            ui.collapsing("Legacy single-session tunnel", |ui| {
+                                if let Some(legacy) = show_dev_tunnel_form(
+                                    ui,
+                                    tab_id,
+                                    &mut state.tunnel,
+                                    configuration,
+                                    running_tunnels,
+                                ) {
+                                    command = Some(legacy);
+                                }
+                            });
                         }
                     });
                 });
@@ -4087,6 +4094,8 @@ pub fn show_launcher(
         });
         if back_clicked || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             state.tunnel_open = false;
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_workspace::cancel(ui.ctx(), tab_id);
         }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
@@ -7491,12 +7500,12 @@ mod tests {
             .click();
         harness.run();
         assert!(harness.state().command.is_none());
-        assert!(harness.query_by_label("Connect to a Dev Tunnel").is_some());
-        assert!(harness.query_by_label("Connect").is_some());
+        assert!(harness.query_by_label("Connect to a host").is_some());
+        assert!(harness.query_by_label("Tunnel name or id").is_none());
 
         harness.key_press(egui::Key::Escape);
         harness.run();
-        assert!(harness.query_by_label("Connect to a Dev Tunnel").is_none());
+        assert!(harness.query_by_label("Connect to a host").is_none());
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -7507,6 +7516,8 @@ mod tests {
         harness
             .get_by_label_contains("Dev Tunnel · Experimental")
             .click();
+        harness.run();
+        harness.get_by_label("Legacy single-session tunnel").click();
         harness.run();
         assert!(
             harness.query_by_label("Profile name").is_none(),
@@ -7533,6 +7544,8 @@ mod tests {
         harness
             .get_by_label_contains("Dev Tunnel · Experimental")
             .click();
+        harness.run();
+        harness.get_by_label("Legacy single-session tunnel").click();
         harness.run();
         harness
             .get_by_label("Tunnel name or id")
@@ -7569,6 +7582,8 @@ mod tests {
         harness
             .get_by_label_contains("Dev Tunnel · Experimental")
             .click();
+        harness.run();
+        harness.get_by_label("Legacy single-session tunnel").click();
         harness.run();
         harness.get_by_label("build-box").click();
         harness.run();

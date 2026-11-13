@@ -41,6 +41,8 @@ fn imported_record(binding: &Binding) -> Result<Record, ControlError> {
             endpoint: binding.identity.endpoint.clone(),
         }),
         artifacts_retired: false,
+        profile_revision: None,
+        profile_enabled: true,
         binding: Some(ImportedBinding {
             binding: binding.clone(),
             lease_reserved: false,
@@ -589,6 +591,8 @@ mod tests {
                 activated: active,
                 released: false,
             }),
+            profile_revision: None,
+            profile_enabled: true,
         };
         if lease {
             LeaseGuard::reserve(root, record.generation)

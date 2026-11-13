@@ -558,9 +558,7 @@ fn native_auth_dialog_keeps_instructions_on_one_line_and_within_the_viewport() {
                 .shapes
                 .iter()
                 .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text)
-                        if text.galley.job.text == "Sign in to Microsoft Dev Tunnels" =>
-                    {
+                    egui::Shape::Text(text) if text.galley.job.text == "Microsoft Dev Tunnels" => {
                         Some(text)
                     }
                     _ => None,
@@ -572,7 +570,7 @@ fn native_auth_dialog_keeps_instructions_on_one_line_and_within_the_viewport() {
 }
 
 #[test]
-fn native_auth_device_code_button_copies_and_opens_github_only_on_explicit_activation() {
+fn native_auth_waiting_render_never_dispatches_unacknowledged_platform_commands() {
     for width in [1000.0, 360.0] {
         let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
         let mut app = FesTermApp::for_test_with_configuration(
@@ -613,13 +611,12 @@ fn native_auth_device_code_button_copies_and_opens_github_only_on_explicit_activ
                 egui::Shape::Text(text) if text.galley.job.text == "ABCD-1234" => {
                     assert!(text.galley.job.sections.iter().all(|section| {
                         section.format.font_id.family == egui::FontFamily::Monospace
-                            && section.format.color == festerm_ui_egui::theme::TEXT_ON_ACCENT
                     }));
                     Some(text.galley.rect.translate(text.pos.to_vec2()).center())
                 }
                 _ => None,
             })
-            .expect("the code button is visible");
+            .expect("the code is visible");
         let button = |pressed| egui::Event::PointerButton {
             pos: code,
             button: egui::PointerButton::Primary,
@@ -629,14 +626,15 @@ fn native_auth_device_code_button_copies_and_opens_github_only_on_explicit_activ
         let pressed = render(vec![egui::Event::PointerMoved(code), button(true)]);
         assert!(pressed.platform_output.commands.is_empty());
         let output = render(vec![button(false)]);
-        assert_eq!(output.platform_output.commands.len(), 2);
-        assert!(
-            matches!(&output.platform_output.commands[0], egui::OutputCommand::CopyText(text) if text == "ABCD-1234")
-        );
-        assert!(
-            matches!(&output.platform_output.commands[1], egui::OutputCommand::OpenUrl(url)
-                if url.url == identity::VERIFICATION_URI && url.new_tab)
-        );
+        assert!(output.platform_output.commands.is_empty());
+        for label in ["Copy again", "Open browser", "Cancel"] {
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label)
+                }),
+                "missing recovery action {label}"
+            );
+        }
         assert!(render(Vec::new()).platform_output.commands.is_empty());
         assert!(matches!(
             app.native_tunnel.as_ref().unwrap().stage,
@@ -711,11 +709,59 @@ fn workflow(profile: Profile, receiver: mpsc::Receiver<Event>) -> Workflow {
         ephemeral: false,
         takeover: true,
         focus_cancel: true,
+        device: crate::app::tunnel_browser::DeviceActions::default(),
         ready: None,
         reconnect: None,
         automatic: None,
         _slot: None,
     }
+}
+
+#[test]
+fn native_auth_account_rotation_cancels_before_consuming_a_device_prompt() {
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let old = DevTunnelAccount::new(
+        "account",
+        AccountProvider::Github,
+        42,
+        "user",
+        SecretReference::generate(),
+    )
+    .unwrap();
+    let replacement = DevTunnelAccount::new(
+        "account",
+        AccountProvider::Github,
+        42,
+        "user",
+        SecretReference::generate(),
+    )
+    .unwrap();
+    let configuration = Configuration::new(vec![profile.clone()])
+        .unwrap()
+        .with_account(replacement)
+        .unwrap()
+        .0;
+    let mut app = FesTermApp::for_test_with_configuration(configuration);
+    let (sender, receiver) = mpsc::sync_channel(2);
+    sender
+        .try_send(Event::Device(DevicePrompt {
+            user_code: "ABCD-1234".into(),
+        }))
+        .ok()
+        .unwrap();
+    let mut pending = workflow(profile, receiver);
+    let cancel = pending.cancel.clone();
+    pending.account = Some(old);
+    app.native_tunnel = Some(pending);
+    app.overlays.native_tunnel = true;
+    app.poll_native_tunnel(&egui::Context::default());
+    assert!(cancel.is_cancelled());
+    assert!(app.native_tunnel.is_none());
+    assert!(!app.overlays.native_tunnel);
+    assert_eq!(
+        app.secure_storage_feedback,
+        Some("Account changed. Sign-in cancelled.")
+    );
 }
 fn ready_event(
     profile: &Profile,

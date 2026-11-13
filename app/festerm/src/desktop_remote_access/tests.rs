@@ -37,6 +37,152 @@ fn drain(controller: &mut Controller, context: &egui::Context) {
     }
 }
 
+fn provisioned_scope() -> Scope {
+    use festerm_host_setup::lifecycle::{Binding, Origin, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let store = Store::create(
+        &root.path().join("desktop"),
+        Origin::Desktop,
+        Draft::default().settings(),
+    )
+    .unwrap();
+    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                cloud_incarnation: "synthetic-incarnation".into(),
+                host_key_fingerprint: "synthetic-public-pin".into(),
+            },
+        )
+        .unwrap();
+    Scope::Present(store.snapshot().unwrap().into())
+}
+
+#[test]
+fn desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1200.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: Scope::Absent,
+                    accounts: vec![HostAccount {
+                        account_id: 42,
+                        login: "verified-owner".into(),
+                    }],
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    harness.run();
+    assert!(harness.query_by_label("GitHub account").is_none());
+    assert!(harness
+        .query_by_label("Allow remote clients to create shell sessions")
+        .is_none());
+    assert!(harness
+        .query_by_label("Owner public key · 64 hex characters")
+        .is_none());
+    harness
+        .get_by_label("Allow remote access to this computer")
+        .click();
+    harness.run();
+    assert!(matches!(
+        harness.state().1,
+        Some(Action::RequestAccess(true))
+    ));
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("checking intent cannot perform setup");
+    })));
+    controller.view = harness.state().0.clone();
+    controller.action(harness.state().1.clone().unwrap(), &harness.ctx);
+    assert_eq!(controller.view.review, None);
+    assert!(!controller.view.busy);
+    harness.state_mut().0 = controller.view();
+    harness.run();
+    harness.get_by_label("GitHub account");
+    harness.get_by_label("Allow remote clients to create shell sessions");
+    assert!(harness
+        .query_by_label("GitHub numeric account ID (verified during sign-in)")
+        .is_none());
+    assert!(!harness.state().0.observation_label().contains("Ready"));
+}
+
+#[test]
+fn desktop_remote_access_disable_review_preserves_draft_and_exact_local_shell_target() {
+    let target = private_share_target();
+    let expected = provisioned_scope();
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let calls = recorded.clone();
+    let before = expected.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            assert_eq!(request.expected, before);
+            assert!(
+                request.sharing.is_none(),
+                "Disable is not a session-end operation"
+            );
+            calls.lock().unwrap().push(request.operation);
+            let Scope::Present(snapshot) = &request.expected else {
+                unreachable!()
+            };
+            let mut disabled = snapshot.as_ref().clone();
+            disabled.phase = Phase::Disabled;
+            Ok(Report {
+                scope: Scope::Present(disabled.into()),
+                ..Report::default()
+            })
+        },
+    )));
+    controller.view.scope = expected;
+    controller.view.draft.account = "42".into();
+    controller.view.draft.allow_creation = true;
+    controller.observe_share_targets(vec![target.clone()]);
+    let context = egui::Context::default();
+    controller.action(Action::RequestAccess(false), &context);
+    assert!(recorded.lock().unwrap().is_empty());
+    assert_eq!(controller.view.review, Some(Operation::Disable));
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(*recorded.lock().unwrap(), [Operation::Disable]);
+    assert_eq!(*controller.share_targets.lock().unwrap(), [target]);
+    assert_eq!(controller.view.draft.account, "42");
+    assert!(controller.view.draft.allow_creation);
+    assert!(!controller.view.access_enabled());
+}
+
+#[test]
+fn desktop_remote_access_public_account_selection_never_rebinds_existing_host() {
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("account editing has no credential authority");
+    })));
+    controller.view.scope = provisioned_scope();
+    controller.view.draft.account = "42".into();
+    let mut changed = controller.view.draft.clone();
+    changed.account = "43".into();
+    controller.action(Action::Edit(changed), &egui::Context::default());
+    assert_eq!(controller.view.failure, Some(Failure::ScopeChanged));
+    assert_eq!(controller.view.draft.account, "42");
+    assert!(!controller.view.owner_approved);
+    let mut creation = controller.view.draft.clone();
+    creation.allow_creation = true;
+    controller.action(Action::Edit(creation), &egui::Context::default());
+    assert!(matches!(
+        sharing_button(&controller.view, "Review Disable to change host settings…"),
+        Action::Review(Operation::Disable)
+    ));
+}
+
 #[test]
 fn desktop_remote_access_metadata_and_unreviewed_commands_are_inert() {
     let backend = Arc::new(Fake(|_: Request, _: &CancellationToken| {
@@ -100,6 +246,27 @@ fn desktop_remote_access_refresh_cannot_retarget_an_existing_confirmation() {
     controller.action(Action::Confirm, &context);
     assert_eq!(*calls.lock().unwrap(), [Operation::Refresh]);
     assert!(controller.view.review.is_none());
+}
+
+#[test]
+fn desktop_remote_access_startup_observation_is_single_and_read_only() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            recorded.lock().unwrap().push(request.operation);
+            Ok(Report {
+                scope: Scope::Absent,
+                ..Report::default()
+            })
+        },
+    )));
+    let context = egui::Context::default();
+    controller.ensure_startup_observation(&context);
+    controller.ensure_startup_observation(&context);
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [Operation::Refresh]);
+    assert_eq!(controller.view.scope, Scope::Absent);
 }
 
 #[test]
@@ -257,6 +424,21 @@ fn sharing_button(view: &View, label: &str) -> Action {
             (view.clone(), None),
         );
     harness.run();
+    harness.get_by_label("Advanced / Recovery").click();
+    harness.run();
+    if let Some(disclosure) = harness.query_by_label("Session sharing / Recovery") {
+        disclosure.click();
+        harness.run();
+    }
+    for label in [
+        "Reviewed session / Recovery",
+        "Sharing operation / Recovery",
+    ] {
+        if let Some(disclosure) = harness.query_by_label(label) {
+            disclosure.click();
+            harness.run();
+        }
+    }
     harness.get_by_label(label).click();
     harness.run();
     harness.state().1.clone().expect("explicit sharing button")
@@ -280,10 +462,11 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         )));
         let context = egui::Context::default();
         controller.view.scope = Scope::Absent;
+        controller.view.access_requested = Some(true);
         controller.view.draft.allow_creation = initially_enabled;
         controller.view.draft.startup_at_sign_in = initially_enabled;
         for label in [
-            "Allow remote creation (separate owner approval still required)",
+            "Allow remote clients to create shell sessions",
             "Start at my sign-in (only where the native policy is qualified)",
         ] {
             controller.action(Action::Review(Operation::Enable), &context);

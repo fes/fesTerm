@@ -55,14 +55,16 @@ mod speech;
 mod ios;
 #[cfg(target_os = "ios")]
 pub use ios::{
-    attach_window, clipboard_text, open_url, register_scene_delegate, set_clipboard_text,
-    KeyboardBridge, SCENE_DELEGATE_CLASS,
+    attach_window, clipboard_text, open_url, open_url_with_completion, register_scene_delegate,
+    set_clipboard_text, KeyboardBridge, SCENE_DELEGATE_CLASS,
 };
 
 #[cfg(target_os = "android")]
 mod android;
 #[cfg(target_os = "android")]
-pub use android::{clipboard_text, open_url, set_clipboard_text, KeyboardBridge};
+pub use android::{
+    clipboard_text, open_url, open_url_with_completion, set_clipboard_text, KeyboardBridge,
+};
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub struct KeyboardBridge;
@@ -127,4 +129,10 @@ pub fn set_clipboard_text(_text: &str) -> bool {
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn open_url(_url: &str) -> bool {
     false
+}
+
+/// Reports whether the OS accepted the browser invocation, not page load or authorization.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub fn open_url_with_completion(_url: &str, completion: impl Fn(bool) + Send + Sync + 'static) {
+    completion(false);
 }

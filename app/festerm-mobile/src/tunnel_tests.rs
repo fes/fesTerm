@@ -864,9 +864,9 @@ fn adding_a_github_account_keeps_the_first_and_selects_the_new_identity() {
     assert_eq!(rig.app.editor.tunnel_account.as_ref(), Some(&added));
     assert!(rig.app.editor.tunnel_name.is_empty());
     assert!(rig.app.editor.session_name.is_empty());
-    assert_eq!(
-        rig.app.tunnel.list.as_ref().map(|list| &list.account),
-        Some(&added)
+    assert!(
+        rig.app.tunnel.list.is_none(),
+        "sign-in must not discover hosts"
     );
     let profiles = rig.app.profiles.as_ref().unwrap();
     assert_eq!(

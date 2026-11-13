@@ -1,5 +1,35 @@
 # Milestone Progress Narrative
 
+## Making host-based Dev Tunnels task-oriented
+
+The host foundations exposed protected operations through a recipe-management
+detour and a verbose Settings console. The November UI handoff separates central
+GitHub accounts, this-computer exposure, eligible local-session sharing and
+outgoing host/session connection. Explicit account discovery now has a launcher
+home, while session-name and saved-host hints remain public recipe metadata.
+
+The smaller controls do not replace authority: host trust and owner approval,
+private Bind followed by explicit Switch, native-vault fencing and same-original
+Ensure/Create retries remain separate. New quick forms use named durable shells;
+existing advanced recipes and legacy installations retain compatibility. The
+approved dark theme remains unchanged. Source tests and synthetic captures are
+not signed-host, actual-vault, physical-iOS or three-platform visual acceptance.
+
+Independent UI and reliability passes found two important workflow seams:
+discovery must fill the existing profile draft, not open a second editor, and
+turning creation off must preserve logical identity without manufacturing a
+generation. The typed selection completion and additive `resume_only` policy
+resolve those cases. Local controls now reserve at least 24 logical points;
+new/edit headings, grouped fields and contextual recovery keep ordinary states
+quiet. App-wide accent/control contrast debt remains a separate design-system
+issue, not a reason to silently replace the approved theme.
+
+The final independent security pass caught a saved mobile connection treating
+host approval as permission to execute imported custom launch settings. Custom
+commands, directories and temporary lifetimes now stop for explicit launch
+review, while protected retry originals remain intact. A companion regression
+keeps a renamed logical-resume profile from silently acquiring a generation pin.
+
 ## Composing reviewed recovery with candidate evidence delivery
 
 The initial normal merge `2c00fbc6` composes reviewed #730 `6605011e` with exact #692 evidence
@@ -15610,3 +15640,29 @@ evidence. The revised ADR 0084 plan prioritizes qualifying and publishing
 existing HOST recovery before further framework work. It does not call
 network recovery equivalent to process-crash restart, lower lab resource
 limits, waive native/release gates, or change the project's acceptance status.
+
+## Choosing Dev Tunnel hosts and sessions without a detour
+
+The first Dev Tunnel profile editor asked users to expand **Find hosts**, press
+one discovery button per GitHub account, and type a session name that silently
+created a new session even when one with that name already existed on the host.
+A user signed in with two accounts saw a flat list with no indication of which
+account owned each host.
+
+Opening a new profile now refreshes every signed-in account in the background
+and fills one **Host** dropdown grouped by `@login`. One **Refresh** button
+replaces the per-account buttons. Discovery runs up to three accounts at once
+from the shared four-connection client budget, always leaving one permit for an
+interactive connection; further accounts queue in order. A failed refresh keeps
+the last successful list and says so in red, rather than replacing it with an
+empty dropdown. **Session name** is an editable dropdown: choosing a listed
+session, or typing a name that uniquely matches one, binds that exact
+session; any other name is a new session created on first connect. Duplicate
+names never auto-bind. Editing a saved profile keeps its session identity.
+
+The same change replaced per-profile tunnel installations with one
+computer-level host catalog (ADR 0084): **Allow remote access to this
+computer** is the master switch, every profile shared from the profile editor
+is advertised even while stopped and started on connect, and disabling host
+access withdraws the whole catalog. Revisions fence stale connections when a
+profile is toggled or edited.

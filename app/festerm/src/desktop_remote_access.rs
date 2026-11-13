@@ -7,6 +7,7 @@ mod tests;
 #[path = "desktop_remote_access/view.rs"]
 mod view;
 pub(crate) use view::show;
+pub(crate) use view::show_session_sharing;
 
 use eframe::egui;
 use festerm_host_setup::{
@@ -166,6 +167,8 @@ impl Operation {
 #[derive(Clone, Debug)]
 pub enum Action {
     Edit(Draft),
+    SignInAccount,
+    RequestAccess(bool),
     Refresh,
     Review(Operation),
     Confirm,
@@ -205,6 +208,34 @@ pub enum Failure {
 }
 
 impl Failure {
+    pub fn notice(self) -> &'static str {
+        match self {
+            Self::SignIn => {
+                "Host account verification is required. Review access settings to sign in."
+            }
+            Self::NativeVault => "Unlock the credential store, then retry.",
+            Self::RefreshFirst | Self::ScopeChanged => "Refresh local status, then review again.",
+            Self::OwnerApproval => "Review owner approval in Advanced / Recovery.",
+            Self::Busy | Self::Cancelled => {
+                "Revocation may still be draining. Wait before retrying."
+            }
+            Self::ShareCapability => "This running shell does not support HOST sharing.",
+            Self::SessionChanged => "The running session changed. Review it again.",
+            Self::BundleNotPublished => "The signed host bundle for this build is not published.",
+            Self::AcquisitionUnavailable => "Host component download failed. Retry explicitly.",
+            Self::SignedBundle => "Host component verification failed. Nothing was installed.",
+            Self::CloudUncertain | Self::Reconciliation => {
+                "Cleanup is incomplete. Keep access off and review Recovery."
+            }
+            Self::PrivateStorage => "Protected host storage is unavailable. Review Recovery.",
+            Self::PlatformPrerequisite => {
+                "Host setup is not qualified for this startup policy or platform."
+            }
+            Self::NoNativeObservation => "No native host registration was observed.",
+            Self::InvalidDraft => "Check the host settings before reviewing.",
+        }
+    }
+
     pub fn message(self) -> &'static str {
         match self {
             Self::Busy => "An operation is still draining. Retry after it actually finishes.",
@@ -216,7 +247,7 @@ impl Failure {
             Self::BundleNotPublished => "The exact current-version native host bundle is not published. Genuine schema-2 release assets remain unqualified. Nothing is installed; retry explicitly after publication. No older/latest/schema-1 fallback.",
             Self::AcquisitionUnavailable => "Authenticated bundle acquisition is unavailable or exceeded its bounded deadline. Nothing is installed; retry explicitly. No automatic manual-path, older-version or unsigned fallback.",
             Self::NativeVault => "Unlock the native credential store and retry. There is no file-credential fallback.",
-            Self::SignIn => "Foreground sign-in or account verification is required. Review the numeric account ID and retry explicitly.",
+            Self::SignIn => "Sign in to the selected GitHub account and retry. Your settings and sharing choice are retained.",
             Self::OwnerApproval => "Review the public owner key and its independently confirmed fingerprint. Access and creation permissions require separate approval.",
             Self::PlatformPrerequisite => "The signed native helper or selected startup policy is not qualified on this platform. Do not bypass admission or enable a different OS service.",
             Self::Reconciliation => "Cleanup or revocation is incomplete. Keep access fenced; refresh and retry the exact installation. Do not delete resources from an uncertain receipt.",
@@ -231,6 +262,9 @@ impl Failure {
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
+    /// Public identity only; these accounts never supply host credentials.
+    pub accounts: Vec<HostAccount>,
+    pub access_requested: Option<bool>,
     pub draft: Draft,
     pub scope: Scope,
     pub review: Option<Operation>,
@@ -248,6 +282,12 @@ pub struct View {
     pub sharing: Option<ShareStatus>,
     pub share_operation_input: String,
     pub bundle_status: BundleStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostAccount {
+    pub account_id: u64,
+    pub login: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -285,6 +325,33 @@ impl BundleStatus {
 }
 
 impl View {
+    pub fn access_enabled(&self) -> bool {
+        matches!(&self.scope, Scope::Present(snapshot) if matches!(
+            snapshot.phase, Phase::EnableRequested | Phase::Provisioned | Phase::Reconciling
+        ))
+    }
+
+    pub fn access_status(&self) -> Option<bool> {
+        match &self.scope {
+            Scope::Unobserved => None,
+            Scope::Absent => Some(false),
+            Scope::Present(snapshot) => Some(matches!(
+                snapshot.phase,
+                Phase::EnableRequested | Phase::Provisioned | Phase::Reconciling
+            )),
+        }
+    }
+
+    fn bound_account(&self) -> Option<&str> {
+        match &self.scope {
+            Scope::Present(snapshot) if snapshot.phase != Phase::Removed => snapshot
+                .binding
+                .as_ref()
+                .and_then(|binding| binding.account.strip_prefix("github:")),
+            _ => None,
+        }
+    }
+
     pub fn observation_label(&self) -> &'static str {
         match &self.scope {
             Scope::Unobserved => "Not observed. No readiness assertion.",
@@ -394,15 +461,14 @@ pub(crate) struct Controller {
     share_request: Option<ShareTask>,
     share_epoch: Option<Arc<AtomicU64>>,
     share_review_epoch: Option<u64>,
+    startup_observation_attempted: bool,
 }
 
 impl Controller {
     pub fn native() -> Self {
         static SLOTS: OnceLock<Arc<AtomicU8>> = OnceLock::new();
-        let root = directories::ProjectDirs::from("com", "fes", "fesTerm")
-            .map(|dirs| dirs.data_local_dir().join("remote-access-desktop-v1"));
         Self::new(
-            root,
+            Self::state_root(),
             Arc::new(native::Native),
             SLOTS.get_or_init(|| Arc::new(AtomicU8::new(0))).clone(),
         )
@@ -423,11 +489,28 @@ impl Controller {
             share_request: None,
             share_epoch: None,
             share_review_epoch: None,
+            startup_observation_attempted: false,
         }
+    }
+
+    pub(crate) fn state_root() -> Option<PathBuf> {
+        directories::ProjectDirs::from("com", "fes", "fesTerm")
+            .map(|dirs| dirs.data_local_dir().join("remote-access-desktop-v1"))
     }
 
     pub fn view(&self) -> View {
         self.view.clone()
+    }
+
+    pub fn ensure_startup_observation(&mut self, context: &egui::Context) {
+        if !self.startup_observation_attempted && matches!(self.view.scope, Scope::Unobserved) {
+            self.startup_observation_attempted = true;
+            self.start(Operation::Refresh, false, context);
+        }
+    }
+
+    pub fn observe_accounts(&mut self, accounts: Vec<HostAccount>) {
+        self.view.accounts = accounts;
     }
 
     pub fn reject_changed_session(&mut self) {
@@ -474,7 +557,26 @@ impl Controller {
         }
         self.view.failure = None;
         match action {
+            Action::SignInAccount => self.view.failure = Some(Failure::SignIn),
+            Action::RequestAccess(requested) => {
+                self.view.access_requested = Some(requested);
+                self.view.share_review = None;
+                self.view.review = None;
+                if matches!(self.view.scope, Scope::Unobserved) {
+                    self.view.failure = Some(Failure::RefreshFirst);
+                } else {
+                    self.view.review = (!requested).then_some(Operation::Disable);
+                }
+            }
             Action::Edit(draft) => {
+                if self
+                    .view
+                    .bound_account()
+                    .is_some_and(|account| account != draft.account)
+                {
+                    self.view.failure = Some(Failure::ScopeChanged);
+                    return;
+                }
                 if [
                     &draft.friendly_name,
                     &draft.account,
@@ -496,6 +598,12 @@ impl Controller {
                 self.view.share_review = None;
             }
             Action::Dismiss => {
+                if matches!(
+                    self.view.review,
+                    Some(Operation::Enable | Operation::Disable)
+                ) {
+                    self.view.access_requested = None;
+                }
                 self.view.review = None;
                 self.view.share_review = None;
             }
@@ -860,6 +968,11 @@ impl Drop for Controller {
 
 impl super::FesTermApp {
     pub(crate) fn dispatch_local_remote_access(&mut self, action: Action, context: &egui::Context) {
+        if matches!(&action, Action::Confirm)
+            && self.local_remote_access.view().review == Some(Operation::Disable)
+        {
+            self.suspend_profile_hosting();
+        }
         let target = match &action {
             Action::ReviewShare(target) | Action::Share(target) | Action::Unshare(target) => {
                 Some(target)

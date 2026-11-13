@@ -45,6 +45,74 @@ fn host_issued_operation_requires_captured_epoch_and_correlates_responses() {
 }
 
 #[test]
+fn shared_profile_responses_require_matching_request_kinds_and_persistent_targets() {
+    let profile = ProfileSummary {
+        logical: id(2),
+        revision: Epoch::new(4).unwrap(),
+        name: "shared-shell".into(),
+    };
+    let list_request = Envelope::new(id(1), id(3), Request::ListProfiles {});
+    Envelope::new(
+        id(1),
+        id(3),
+        Response::Profiles {
+            profiles: vec![profile],
+        },
+    )
+    .validate_for(&list_request)
+    .unwrap();
+    assert!(Envelope::new(
+        id(1),
+        id(3),
+        Response::Inventory {
+            page: InventoryPage {
+                snapshot: id(8),
+                authorization_epoch: Epoch::new(1).unwrap(),
+                sessions: Vec::new(),
+                unknown: Vec::new(),
+                next: None,
+            },
+        },
+    )
+    .validate_for(&list_request)
+    .is_err());
+
+    let operation = IssuedOperation {
+        id: id(3),
+        epoch: Epoch::new(7).unwrap(),
+    };
+    let request = Envelope::issued(
+        id(1),
+        &operation,
+        Request::EnsureProfile {
+            logical: id(2),
+            revision: Epoch::new(4).unwrap(),
+            attachment: id(4),
+        },
+    );
+    let response = Envelope::issued(
+        id(1),
+        &operation,
+        Response::Ensured {
+            session: session(2),
+            disposition: EnsureDisposition::Created,
+            lease: None,
+        },
+    );
+    response.validate_for(&request).unwrap();
+    let wrong_target = Envelope::issued(
+        id(1),
+        &operation,
+        Response::Ensured {
+            session: session(5),
+            disposition: EnsureDisposition::Created,
+            lease: None,
+        },
+    );
+    assert!(wrong_target.validate_for(&request).is_err());
+}
+
+#[test]
 fn host_inventory_preserves_filtered_bounded_per_target_uncertainty() {
     let snapshot = AuthorizedInventory::capture_with_unknowns(
         id(1),

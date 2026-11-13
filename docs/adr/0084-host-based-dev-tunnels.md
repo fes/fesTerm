@@ -180,9 +180,12 @@ Only eligible native persistent local profiles/sessions can be shared. Do not
 silently replace a nonpersistent running shell to make it eligible. Explain the
 prerequisite and offer a deliberate persistent launch.
 
-An optional name defaults to a generated label such as "Shell 3". A generated
-name is not an ephemeral lifetime. "Keep running after disconnect" defaults on.
-Off creates a temporary session with an explicit session-level cleanup policy.
+The protocol and existing advanced recipes permit an optional generated label
+such as "Shell 3" and persistent or explicitly temporary lifetimes. The November
+2026 desktop/iOS quick-create and ordinary profile UI instead requires a
+nonblank session name and creates durable sessions only. This narrows the new
+forms, not the backend's lifetime support or existing saved recipes. Generated
+names never imply temporary lifetime.
 
 For temporary sessions, intentional disconnect ends the owning lease's session;
 unexpected transport loss starts a bounded reconnection grace period. A proposed
@@ -261,9 +264,10 @@ Selecting a host explicitly connects, verifies trust and fetches only its
 authorized session inventory. Expanding/selecting is a clear network action;
 no fan-out connection to every discovered host.
 
-Under a host show accessible running sessions and "New shell" when permitted.
-New shell offers optional name, default-on persistence and expandable shell/cwd
-options. Saving as a profile is optional. A host that disallows creation displays
+Under a host show accessible running sessions and "+ New session" when permitted.
+Quick creation requires a session name, is durable, and acts only on
+"Create and connect". Advanced existing recipes retain their shell/cwd and
+lifetime contracts. Saving as a profile is optional. A host that disallows creation displays
 a concise explanation rather than a misleading working create control.
 Refresh is explicit and bounded; no periodic launcher polling. Network workers
 never run on the GUI frame thread. Cancellation/account switches fence results.
@@ -277,6 +281,30 @@ Implement equivalent client semantics on desktop, iOS and Android with the
 existing compact widgets, command model and mobile app-lock boundary. Mobile is
 a client here, not a desktop-style background host installer.
 
+The desktop's installed-profile exposure uses the same computer-level host
+service and its single host-level GitHub account/tunnel; it does not provision
+one tunnel or choose an account per local profile. Saving exposure registers
+that exact local persistent profile in a protected host-local catalog. Portable
+configuration expresses intent only and cannot reconstruct the registration.
+The host advertises enabled catalog entries even when no daemon generation is
+running. A profile-scoped grant permits only the registered recipe to be
+created on an explicit remote Connect; it does not depend on the independent
+host-wide permission for arbitrary ad-hoc shell creation. The client sends the
+stable profile identity, never an executable or recipe. The host resolves and
+revalidates the protected recipe, then uses the existing atomic sessiond
+Ensure journal. Saving, enabling the host, service restart and inventory never
+start a shell.
+
+Disabling a profile fences new profile creation and removes that profile from
+remote inventory without ending a locally running persistent shell or affecting
+other sessions. Disabling computer-level access fences the shared endpoint and
+remote attachments while retaining protected profile registrations for
+re-enable. Profile changes take effect on Save; a stale queued operation cannot
+publish or launch after the corresponding grant is disabled. Generic creation
+continues to require its separate host-wide creation permission. Existing
+per-profile bridge installations are legacy state: the new catalog neither
+adopts them from TOML nor treats their cloud identities as the shared host.
+
 ### 7. Desktop host setup and sharing
 
 Settings → Remote Access owns "Enable remote access", host name/status,
@@ -286,12 +314,12 @@ On first enable, shared setup code stages missing verified components, guides
 foreground sign-in, registers the background host and reports readiness. It does
 not create a shell. No copy/paste installer or connection JSON is required.
 
-Enabling sharing from a local persistent profile/session when hosting is absent
-offers "Enable remote access on this computer to share this session" and
-"Enable and continue". Successful setup returns to the originating draft and
-completes the explicit sharing action. Cancel/failure preserves unrelated edits,
-leaves sharing off and records any partial setup accurately. If setup completed
-but later sharing failed, do not falsely report the host as uninstalled.
+When hosting is absent, an eligible local persistent profile offers a short
+"Enable remote access in Settings to share this session" link rather than
+launching a wizard. Navigating away preserves unrelated edits. Setup success
+does not complete sharing: the exact-generation protected sharing action is
+separate. Cancel/failure records partial setup accurately; a later sharing
+failure never reports the host as uninstalled.
 An outgoing remote profile never triggers local host installation.
 
 Profile Save/import and ordinary session creation remain metadata/private
@@ -777,6 +805,30 @@ boot-start, temporary-lease or upgrade behavior. No live credentials or service
 changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
+
+The November 2026 client redesign refines HOST-01--04 and TUNNEL-07: explicit
+per-account discovery, central account presentation, once-per-sign-in truthful
+clipboard/browser attempts, conditional desktop host controls, protected
+profile sharing and named durable-only new forms. Public session-name/host hints
+remain metadata, not authority; existing logical identities, protected first
+trust/owner approval, Bind/Switch, atomic Ensure and original-operation retries
+are unchanged. Disabling create-if-missing uses `resume_only`: attach the saved
+logical identity at an authorized generation without Ensure or creation, rather
+than inventing an exact generation. Discovery from a profile editor returns a
+selection into that same unsaved draft; it does not open another save workflow.
+Desktop/iOS visual, actual-vault/browser/service/device evidence
+remains separate from deterministic source tests. The GUI graph, registry and
+manual inventory track these changes together; dark-only appearance is retained.
+
+### Shared computer-level profile catalog
+
+The local profile editor now grants a protected host-catalog entry, not a
+per-profile tunnel or GitHub account selection. `shared_profile_checkbox_registers_without_per_profile_account_selection`
+guards that UI contract. `shared_profile_catalog_is_advertised_while_stopped_and_fences_old_revisions`
+checks stopped-profile inventory, consent and revision fencing, generic-create
+denial, disable/re-enable, and that Ensure persists only the host-stored recipe.
+These source tests do not establish native HOST availability, live cloud routing,
+or installed-package/vault acceptance; those remain in HOST-01/02/04 evidence.
 
 Native terminal lease maintenance and Detached-receipt publication use the
 existing bounded 15-second admission wait for typed Busy only before an effect
