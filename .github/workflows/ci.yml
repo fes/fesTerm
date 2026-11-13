@@ -21,6 +21,11 @@ on:
         type: boolean
         required: false
         default: false
+      traceability_base:
+        description: PR base commit for the changed-range traceability check (used by bot-dispatched runs)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -144,8 +149,10 @@ jobs:
       - name: Check warmed terminal scroll allocations
         run: cargo bench --locked -p festerm-core --bench scroll_allocations -- --check
       - run: python scripts/build_ui_state_doc.py --check
-      - if: github.event_name == 'pull_request'
-        run: python scripts/check_validation_traceability.py --base ${{ github.event.pull_request.base.sha }}
+      - if: github.event_name == 'pull_request' || inputs.traceability_base != ''
+        env:
+          TRACEABILITY_BASE: ${{ github.event.pull_request.base.sha || inputs.traceability_base }}
+        run: python scripts/check_validation_traceability.py --base "$TRACEABILITY_BASE"
 
   helper-signature-compatibility:
     name: pinned helper signer compatibility

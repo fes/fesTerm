@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "model": "mai-code-1.1-flash",
+  "page_budget_bytes": 6000,
+  "index_budget_bytes": 3500,
+  "glossary_budget_bytes": 12000,
+  "state_models": [
+    {
+      "id": "session-lifecycle",
+      "title": "Session lifecycle",
+      "domain": "sessions",
+      "path": "crates/festerm-session/src/lib.rs",
+      "enum": "SessionLifecycle",
+      "docs": ["docs/adr/0018-ssh-liveness-reconnect-and-persistent-session-recovery.md"]
+    }
+  ],
+  "coverage_roots": ["app/", "crates/"],
+  "domains": [
+    {
+      "id": "terminal-core",
+      "title": "Terminal core and fixtures",
+      "paths": ["crates/festerm-core/**", "crates/festerm-test-support/**", "tests/fixtures/**", "fuzz/**"],
+      "docs": ["tests/fixtures/README.md", "docs/standards-and-implementation-notes.md"],
+      "focus": "Parser to TerminalOp to Terminal::ingest; InputEvent encoding via handle_input and drain_input; single logical writer per presented terminal; golden fixtures and assert_fixture."
+    },
+    {
+      "id": "terminal-ui",
+      "title": "Terminal presentation and rendering",
+      "paths": [
+        "crates/festerm-ui-egui/**",
+        "crates/festerm-windows-direct2d/**",
+        "app/festerm/src/direct2d/**",
+        "app/festerm/src/direct2d*.rs",
+        "app/festerm/src/software_background.rs",
+        "app/festerm/src/surface_performance.rs",
+        "app/festerm/src/performance_fixtures.rs"
+      ],
+      "docs": ["docs/ui-test-plan.md", "docs/gui-design.md"],
+      "focus": "TerminalView and TerminalRenderCache; route_input into an application-owned EncodedInputSink; the UI performs no session I/O; Direct2D and software rendering paths."
+    },
+    {
+      "id": "sessions",
+      "title": "Sessions, PTY, serial, and persistence daemon",
+      "paths": [
+        "crates/festerm-session/**",
+        "crates/festerm-pty/**",
+        "crates/festerm-pty-test-child/**",
+        "crates/festerm-serial/**",
+        "crates/festerm-sessiond/**",
+        "crates/festerm-windows-runtime/**",
+        "crates/festerm-windows-job/**",
+        "app/festerm/src/session_controller.rs",
+        "app/festerm/src/multiplexer_*.rs",
+        "app/festerm/src/screen_process.rs",
+        "app/festerm/src/local_command.rs"
+      ],
+      "docs": ["ARCHITECTURE.md"],
+      "focus": "Session, SessionEvent and SessionLifecycle contract; backend implementations; sessiond mirror_terminal_output is the intentional backend-owned recovery terminal; SessionController and pump_session_events; terminal_replies_owned_by_backend prevents duplicate replies."
+    },
+    {
+      "id": "ssh-sftp",
+      "title": "SSH transport, trust, and SFTP",
+      "paths": [
+        "crates/festerm-ssh/**",
+        "crates/festerm-sftp/**",
+        "tests/openssh/**",
+        "app/festerm/src/sftp_file_manager.rs",
+        "app/festerm/src/remote_files.rs"
+      ],
+      "docs": ["docs/sftp-ui-design.md"],
+      "focus": "SshSession and host-key trust policy; TransferManager owns the SFTP queue; integration and interop evidence."
+    },
+    {
+      "id": "config-secrets",
+      "title": "Configuration, workspace, and secrets",
+      "paths": [
+        "crates/festerm-config/**",
+        "crates/festerm-secret-store/**",
+        "crates/festerm-unix-security/**",
+        "crates/festerm-windows-security/**",
+        "app/festerm/src/configuration_startup.rs",
+        "app/festerm/src/environment.rs",
+        "app/festerm/src/terminal_paths.rs",
+        "app/festerm/src/owned_fixture_paths.rs"
+      ],
+      "docs": ["docs/configuration.md", "docs/adr/0008-versioned-toml-configuration.md", "docs/adr/0016-native-secret-store-boundary.md"],
+      "focus": "Config and workspace store metadata and opaque CredentialReference values only; SecretStore owns secrets; file-security helpers."
+    },
+    {
+      "id": "app-commands",
+      "title": "Application commands, tabs, and input routing",
+      "paths": [
+        "app/festerm/src/tabs.rs",
+        "app/festerm/src/tabs/**",
+        "app/festerm/src/tabs_*.rs",
+        "app/festerm/src/keyboard.rs",
+        "app/festerm/src/vi_command.rs",
+        "app/festerm/src/overlay_state.rs",
+        "app/festerm/src/search.rs",
+        "app/festerm/src/desktop_panes.rs",
+        "app/festerm/src/inspector.rs"
+      ],
+      "docs": ["docs/application-command-model.md", "docs/gui-action-graph.md", "docs/keyboard-shortcuts.md"],
+      "focus": "AppCommand, dispatch and AppState are the canonical action route; widgets must not hold product policy; keyboard capture and bindings."
+    },
+    {
+      "id": "automation",
+      "title": "Automation, workflows, and MCP",
+      "paths": ["crates/festerm-automation*/**", "crates/festerm-admission/**", "app/festerm/src/automation/**", "app/festerm/tests/automation_*.rs"],
+      "docs": ["docs/automation-design.md"],
+      "focus": "Broker owns automation authority; FrozenInvocation binds workflow inputs; MCP Machine owns protocol state, not transport or authorization; a connection is not a grant; staged qualification."
+    },
+    {
+      "id": "documents",
+      "title": "Documents, editor, and Markdown",
+      "paths": [
+        "crates/festerm-document/**",
+        "crates/festerm-markdown/**",
+        "crates/festerm-syntax/**",
+        "app/festerm/src/markdown*",
+        "app/festerm/src/markdown_viewer/**",
+        "app/festerm/src/text_editor.rs",
+        "app/festerm/src/text_compare.rs",
+        "app/festerm/src/document*.rs",
+        "app/festerm/src/documents/**",
+        "app/festerm/src/save_as.rs"
+      ],
+      "docs": ["docs/text-editor-design.md", "docs/markdown-viewer-design.md"],
+      "focus": "TextDocument owns shared document state; Markdown loading and projection; syntax highlighting bounds; UI actions route through AppCommand."
+    },
+    {
+      "id": "recording",
+      "title": "Terminal recording and export",
+      "paths": ["crates/festerm-recording*/**", "app/festerm/src/recording_*.rs", "app/festerm/src/application/recording*.rs"],
+      "docs": ["docs/terminal-recording-design.md", "docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md"],
+      "focus": "Recorder capture, ExportBackend workers, platform encoders, and recording privacy."
+    },
+    {
+      "id": "tunnels-enterprise",
+      "title": "Dev tunnels, enterprise, and PowerShell",
+      "paths": [
+        "crates/festerm-tunnel-*/**",
+        "crates/festerm-host-setup/**",
+        "crates/festerm-host-protocol/**",
+        "crates/festerm-client-recipes/**",
+        "app/festerm-host/**",
+        "crates/festerm-enterprise/**",
+        "crates/festerm-powershell/**",
+        "app/festerm/src/tunnel_*.rs",
+        "app/festerm/src/profile_hosting*.rs",
+        "app/festerm/src/running_tunnels.rs",
+        "app/festerm/src/local_bind.rs",
+        "app/festerm/src/enterprise.rs",
+        "app/festerm/src/powershell.rs",
+        "app/festerm/src/remote_sessions.rs",
+        "app/festerm/src/discovery.rs"
+      ],
+      "docs": ["docs/dev-tunnels-experiment.md", "docs/dev-tunnel-files-protocol.md", "docs/remote-observation-protocol.md", "docs/powershell-enterprise.md", "docs/host-release-artifacts.md", "docs/adr/0084-host-based-dev-tunnels.md"],
+      "focus": "HOST protocol, identity, inventory, and client recipes; tunnel discovery and HostBinding; rooted FileService and Filesystem; distinct trust and consent boundaries; helper artifact Manifest verification; gated qualification."
+    },
+    {
+      "id": "desktop-platform",
+      "title": "Desktop platform integration and packaging",
+      "paths": [
+        "crates/festerm-macos-window/**",
+        "crates/festerm-windows-power/**",
+        "crates/festerm-linux-power/**",
+        "packaging/**",
+        "app/festerm/build.rs",
+        "app/festerm/src/updates.rs",
+        "app/festerm/src/font_downloads.rs",
+        "app/festerm/src/native_smoke.rs",
+        "app/festerm/tests/windows_*.rs"
+      ],
+      "docs": ["docs/native-smoke-policy.md", "docs/signing-and-release.md", "docs/manual-validation.md"],
+      "focus": "macOS window and menu integration, power and resume notifications, updater and packaging, native smoke evidence; platform paths are not interchangeable."
+    },
+    {
+      "id": "mobile",
+      "title": "Mobile hosts (iOS and Android)",
+      "paths": ["app/festerm-mobile/**", "app/festerm-android/**", "crates/festerm-android-platform/**", "crates/festerm-ios-*/**", "crates/festerm-mobile-*/**"],
+      "docs": ["app/festerm-mobile/README.md", "app/festerm-android/README.md", "docs/mobile-port-plan.md"],
+      "focus": "Shared mobile runtime host; offline-by-default fixture and opt-in live SSH prototype; native evidence gates; Android JNI boundary."
+    },
+    {
+      "id": "app-shell",
+      "title": "Desktop application shell and screens",
+      "paths": ["app/festerm/**"],
+      "docs": ["docs/gui-design.md", "docs/ui-state-narrative.md"],
+      "focus": "Application startup, the egui app loop, screens and panes, diagnostics, and how the shell wires sessions, commands, and rendering together."
+    }
+  ]
+}

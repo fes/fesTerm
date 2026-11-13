@@ -1,0 +1,188 @@
+name: Agent navigation
+
+# Regenerates the AI retrieval map (docs/agent-navigation/) for every
+# non-draft same-repository PR. Only stale pages are regenerated, by a
+# read-only Copilot CLI agent (view/grep/glob only) in a job without write
+# access; the script validates its JSON and renders the Markdown, and a
+# separate publish job commits the result. See
+# docs/agent-navigation/evaluation.md and scripts/agent_navigation.py.
+# A monthly run also refreshes the glossary and state models, which track only
+# the files they cite, and opens a PR with the result.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 9 1 * *'
+  workflow_dispatch:
+    inputs:
+      refresh_coverage:
+        description: Also regenerate the glossary and state models
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-navigation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: regenerate agent navigation
+    # Fork PRs cannot receive a write token; they get the check job instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+       !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    # The model runs here, so this job holds no repository write access.
+    permissions:
+      contents: read
+      copilot-requests: write
+    outputs:
+      status: ${{ steps.regenerate.outputs.status }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot@1.0.109
+      - name: Regenerate stale pages
+        id: regenerate
+        env:
+          # Personal repositories need a fine-grained PAT with only the "Copilot
+          # Requests" permission; organization repositories can use GITHUB_TOKEN.
+          COPILOT_GITHUB_TOKEN: ${{ secrets.AGENT_NAVIGATION_COPILOT_TOKEN || github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          REFRESH: ${{ (github.event_name == 'schedule' || inputs.refresh_coverage) && '--refresh-coverage' || '' }}
+        run: |
+          set +e
+          python scripts/agent_navigation.py regenerate --jobs 4 --time-budget 2100 $REFRESH ${BASE:+--base "$BASE"}
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: agent-navigation
+          path: docs/agent-navigation/*.md
+          retention-days: 3
+
+  publish:
+    name: publish agent navigation
+    needs: generate
+    # Commits pages that regenerated even if another domain failed; the final
+    # check then fails the job so the gap is visible.
+    if: always() && needs.generate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: write
+    env:
+      BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: agent-navigation
+          path: ${{ runner.temp }}/agent-navigation
+      - name: Commit and push regenerated pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          for page in "$RUNNER_TEMP"/agent-navigation/*.md; do
+            name=$(basename "$page")
+            if [[ "$name" =~ ^[a-z0-9-]+\.md$ ]]; then cp "$page" "docs/agent-navigation/$name"; fi
+          done
+          python scripts/agent_navigation.py index
+          git add docs/agent-navigation
+          if git diff --cached --quiet; then
+            echo "Agent navigation map is already current."
+            exit 0
+          fi
+          base_branch=""
+          if [ "$BRANCH" = "${{ github.event.repository.default_branch }}" ]; then
+            if [ "${{ github.event_name }}" = pull_request ]; then
+              echo "::error::Protected ${BRANCH} cannot take bot pushes."
+              exit 1
+            fi
+            # Scheduled or dispatched runs on the default branch publish to a
+            # new branch and open a PR instead of pushing to protected main.
+            base_branch="$BRANCH"
+            remote_head=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${base_branch}" | cut -f1)
+            BRANCH="agent-navigation/refresh-${GITHUB_RUN_ID}"
+          else
+            remote_head=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${BRANCH}" | cut -f1)
+          fi
+          if [ "$remote_head" != "$EXPECTED_HEAD" ]; then
+            echo "::notice::${BRANCH} moved during regeneration; the newer run will regenerate."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -F - <<'MSG'
+          docs: regenerate agent navigation map
+
+          Validation-Impact: none - generated AI retrieval index; no runtime behavior changes
+          MSG
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          if [ -n "$base_branch" ]; then
+            BASE="$EXPECTED_HEAD"
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$base_branch" --head "$BRANCH" \
+              --title "docs: refresh agent navigation map" \
+              --body "Scheduled refresh of the generated glossary and state models (see docs/agent-navigation/evaluation.md). Review the diff like code; close it if nothing useful changed."
+          fi
+          # Pushes made with GITHUB_TOKEN do not trigger workflows, so start CI
+          # for the new head explicitly, keeping the PR-range traceability check.
+          gh workflow run ci.yml --ref "$BRANCH" ${BASE:+-f traceability_base="$BASE"}
+      - name: Verify the map
+        env:
+          STATUS: ${{ needs.generate.outputs.status }}
+        run: |
+          python scripts/agent_navigation.py check
+          if [ "$STATUS" != 0 ]; then
+            echo "::error::Some domains failed to regenerate (exit $STATUS); see the generate job log. Rerun this workflow."
+            exit 1
+          fi
+
+  check:
+    name: check agent navigation
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - name: Verify the map
+        run: |
+          if ! python scripts/agent_navigation.py check; then
+            if [ "${{ github.event_name }}" = pull_request ]; then
+              echo "::warning::Fork PRs cannot regenerate the map; a maintainer branch will refresh it after merge."
+            else
+              echo "::error::The map on main is stale. Run the Agent navigation workflow on a branch from main and open a PR."
+              exit 1
+            fi
+          fi
