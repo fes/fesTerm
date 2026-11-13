@@ -5811,6 +5811,7 @@
         "protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal",
         "protected_owner_compact_anchor_supports_all_64_history_entries_in_2560_byte_vault",
         "protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback",
+        "headless_lease_is_released_while_a_concurrent_spawn_inherits_it",
         "protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure",
         "reserved_secret_creation_never_replaces_existing_authority",
         "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
