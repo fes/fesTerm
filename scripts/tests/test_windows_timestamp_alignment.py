@@ -107,18 +107,21 @@ class TimestampAlignmentContracts(unittest.TestCase):
 
     def test_default_windows_quality_step_precedes_heavy_workspace_work(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        quality = workflow.split("\n  quality:\n", 1)[1]
+        workspace = re.search(
+            r"(?ms)^  workspace:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            workflow,
+        ).group(1)
         step = re.search(
             r"(?ms)^      - name: Require exact Windows timestamp alignment memory regression\n"
-            r"(.*?)(?=^      - |\Z)", quality,
+            r"(.*?)(?=^      - |\Z)", workspace,
         )
         self.assertIsNotNone(step)
         self.assertIn("if: matrix.os == 'windows-latest'", step.group(1))
         self.assertIn("run: python scripts/run_windows_timestamp_alignment_test.py", step.group(1))
         self.assertNotIn("inputs.", step.group(1))
         self.assertNotIn("continue-on-error", step.group(1))
-        self.assertLess(step.start(), quality.index("run: cargo clippy --workspace"))
-        self.assertLess(quality.index("python-version: '3.12'"), step.start())
+        self.assertLess(step.start(), workspace.index("run: cargo clippy --workspace"))
+        self.assertLess(workspace.index("python-version: '3.12'"), step.start())
         self.assertNotIn("run_windows_timestamp_alignment_test.py",
                          workflow.split("\n  windows-native-pki:\n", 1)[1].split(
                              "\n  windows-sampler-diagnostics:\n", 1

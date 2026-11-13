@@ -451,9 +451,16 @@ class WorkflowContracts(unittest.TestCase):
         for action in re.findall(r"uses: ([^\s]+)", job):
             self.assertRegex(action, r"@[a-f0-9]{40}$")
         for name in ("checks", "helper-signature-compatibility", "conformance",
-                     "windows-security-privileged", "quality"):
-            body = workflow.split(f"  {name}:", 1)[1].split("    steps:", 1)[0]
-            self.assertIn("if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki", body)
+                     "windows-security-privileged", "workspace", "slices", "native",
+                     "quality-gate"):
+            body = re.search(
+                rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                workflow,
+            ).group(1)
+            self.assertIn(
+                "github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki",
+                body,
+            )
         self.assertIn("inputs.windows_sampler_diagnostics && !inputs.windows_native_pki", workflow)
 
     def test_optional_single_suite_returns_before_unrelated_native_or_gui_work(self):

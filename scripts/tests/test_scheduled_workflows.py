@@ -18,6 +18,16 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(headless_vulkan)
 
 
+def workflow_job(workflow, name):
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    if match is None:
+        raise AssertionError(f"workflow job {name!r} is missing")
+    return match.group(1)
+
+
 @unittest.skipIf(os.name == "nt", "Linux CI registration uses a Unix Bash shell")
 class LogindRegistrationWorkflowTests(unittest.TestCase):
     SELECTOR = (
@@ -27,18 +37,21 @@ class LogindRegistrationWorkflowTests(unittest.TestCase):
 
     def step(self):
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        quality = ci.split("\n  quality:\n", 1)[1]
-        step = quality.split(f"      - name: {self.STEP}\n", 1)[1].split(
+        slices = workflow_job(ci, "slices")
+        step = slices.split(f"      - name: {self.STEP}\n", 1)[1].split(
             "\n      - ", 1
         )[0]
-        return quality, step, textwrap.dedent(step.split("        run: |\n", 1)[1])
+        return ci, slices, step, textwrap.dedent(step.split("        run: |\n", 1)[1])
 
-    def test_linux_registration_is_explicit_and_precedes_workspace_work(self):
-        quality, step, script = self.step()
+    def test_linux_registration_is_explicit_and_precedes_feature_slice_work(self):
+        ci, slices, step, script = self.step()
         self.assertIn("        if: matrix.os == 'ubuntu-latest'\n", step)
         self.assertIn("        shell: bash\n", step)
-        self.assertLess(quality.index(self.STEP), quality.index("cargo clippy --workspace"))
-        self.assertLess(quality.index(self.STEP), quality.index("cargo test --workspace"))
+        self.assertLess(
+            slices.index(self.STEP),
+            slices.index("Validate authenticated helper artifacts"),
+        )
+        self.assertIn("cargo clippy --workspace --all-targets", workflow_job(ci, "workspace"))
         self.assertIn(f"selector={self.SELECTOR}", script)
         self.assertEqual(script.count("cargo test"), 1)
         self.assertIn("cargo test --locked -p festerm-host-setup", script)
@@ -48,7 +61,7 @@ class LogindRegistrationWorkflowTests(unittest.TestCase):
         subprocess.run(["bash", "-n"], input=script, text=True, check=True)
 
     def test_exact_one_guard_refuses_zero_duplicates_and_preserves_cargo_failure(self):
-        _, _, script = self.step()
+        _, _, _, script = self.step()
         mock = (
             'cargo() { printf "%s" "$FIXTURE_LISTING"; return "$FIXTURE_EXIT"; }\n'
         )
@@ -79,14 +92,14 @@ class LogindRegistrationWorkflowTests(unittest.TestCase):
 class HeadlessVulkanWorkflowTests(unittest.TestCase):
     def test_linux_validation_disables_only_optional_vulkan_debugging(self):
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        quality = ci.split("\n  quality:\n", 1)[1]
+        workspace = workflow_job(ci, "workspace")
         self.assertIn(
             "      - name: Avoid optional Vulkan object naming in headless tests\n"
             "        if: matrix.os == 'ubuntu-latest'\n"
             "        run: |\n"
             '          echo "WGPU_DEBUG=0" >> "$GITHUB_ENV"\n'
             '          echo "WGPU_VALIDATION=1" >> "$GITHUB_ENV"',
-            quality,
+            workspace,
         )
 
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -99,7 +112,7 @@ class HeadlessVulkanWorkflowTests(unittest.TestCase):
         select_driver = (
             'run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"'
         )
-        self.assertIn(select_driver, quality)
+        self.assertIn(select_driver, workspace)
         self.assertIn(select_driver, validate)
 
     def test_only_the_packaged_software_icd_is_selected_without_replacing_other_environment(self):
@@ -139,19 +152,17 @@ class HeadlessVulkanWorkflowTests(unittest.TestCase):
 
 
 class PortableHostReceiptWorkflowTests(unittest.TestCase):
-    def test_quality_runs_all_four_portable_receipt_regressions_without_relay_on_unix(self):
+    def test_native_job_runs_all_four_portable_receipt_regressions_without_relay(self):
         root = WORKFLOWS.parents[1]
-        quality = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8").split(
-            "\n  quality:\n", 1
-        )[1]
+        native = workflow_job((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"), "native")
         command = (
             "cargo test --locked -p festerm-tunnel-bridge "
             "--no-default-features --features host-routing --lib portable_receipt"
         )
-        steps = [step for step in re.split(r"(?m)^      - ", quality) if command in step]
+        steps = [step for step in re.split(r"(?m)^      - ", native) if command in step]
         self.assertEqual(len(steps), 1)
-        self.assertIn("if: matrix.os != 'windows-latest'\n", steps[0])
         self.assertIn(f"run: {command}\n", steps[0])
+        self.assertIn("os: [ubuntu-latest, macos-latest]", native)
         self.assertNotIn("continue-on-error", steps[0])
         names = set()
         for name in ("approval_storage.rs", "approval_tests.rs"):
@@ -165,6 +176,50 @@ class PortableHostReceiptWorkflowTests(unittest.TestCase):
             "selected_host_portable_receipt_abandoned_staging_recovers_exactly_one_key",
             "selected_host_portable_receipt_malformed_final_remains_storage_without_key_creation",
         })
+
+
+class QualityWorkflowSplitTests(unittest.TestCase):
+    def test_required_check_names_are_preserved_by_the_per_os_gate(self):
+        workflow = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        gate = workflow_job(workflow, "quality-gate")
+        self.assertIn("name: ${{ matrix.os }}", gate)
+        self.assertIn("needs: [workspace, slices, native]", gate)
+        self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", gate)
+        self.assertIn("always() &&", gate)
+        self.assertIn("WORKSPACE_RESULT: ${{ needs.workspace.result }}", gate)
+        self.assertIn("SLICES_RESULT: ${{ needs.slices.result }}", gate)
+        self.assertIn("NATIVE_RESULT: ${{ needs.native.result }}", gate)
+        self.assertIn('!= success', gate)
+
+    def test_nextest_is_limited_to_unix_and_doctests_and_windows_wrapper_remain(self):
+        workflow = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        workspace = workflow_job(workflow, "workspace")
+        self.assertIn(
+            "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
+            workspace,
+        )
+        self.assertIn("if: matrix.os != 'windows-latest'", workspace)
+        self.assertIn(
+            "cargo nextest run --workspace --profile ci",
+            workspace,
+        )
+        self.assertIn("cargo test --workspace --doc", workspace)
+        self.assertIn(
+            r".\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')",
+            workspace,
+        )
+        self.assertNotIn("run: cargo test --workspace", workspace)
+        nextest_config = (WORKFLOWS.parents[1] / ".config/nextest.toml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[profile.ci]", nextest_config)
+        self.assertIn("fail-fast = false", nextest_config)
+        self.assertIn('slow-timeout = { period = "60s", terminate-after = 5 }', nextest_config)
+        self.assertIn(
+            'path = "junit.xml"',
+            nextest_config,
+        )
+        self.assertIn("name: nextest-junit-${{ matrix.os }}", workspace)
 
 
 class ScheduledWorkflowTests(unittest.TestCase):
