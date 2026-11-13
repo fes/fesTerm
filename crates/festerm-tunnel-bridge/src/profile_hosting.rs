@@ -1279,8 +1279,7 @@ mod tests {
 
     #[test]
     fn suspended_profile_hosting_resumes_without_reviving_revoked_consent() {
-        let state =
-            std::env::temp_dir().join(format!("festerm-profile-suspend-{}", uuid::Uuid::new_v4()));
+        let state = crate::test_support::private_directory("festerm-profile-suspend");
         let installation = uuid::Uuid::new_v4().to_string();
         let consent = uuid::Uuid::new_v4().to_string();
         let store = Store::open(&state, &installation, true).unwrap();
