@@ -367,7 +367,10 @@ class StateModelTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "lib.rs").write_text(self.ENUM, encoding="utf-8")
         (self.root / "a.rs").write_text(
-            "fn start() { set(Life::Running); }\nfn stop() { set(Life::Stopped); }\n", encoding="utf-8"
+            "fn start() { set(Life::Running); }\nfn stop() { set(Life::Stopped); }\n"
+            "fn resume() { set(Life::Running); }\nfn noted() { /* Life::Failed */ } // Life::Failed\n"
+            "pub struct Holder;\n#[cfg(test)]\nmod tests {\n    fn sneaky() { set(Life::Failed); }\n}\n",
+            encoding="utf-8"
         )
         (self.root / "b.rs").write_text("fn other() {}\n", encoding="utf-8")
         (self.root / "tests").mkdir()
@@ -393,7 +396,10 @@ class StateModelTests(unittest.TestCase):
         emitters = nav.state_emitters(self.root, self.model, self.files)
         raw = {"transitions": [
             {"from": "Starting", "to": "Running", "trigger": "spawn ok", "evidence": [{"path": "./a.rs", "symbol": "start"}]},
-            {"from": "Starting", "to": "Running", "trigger": "dup", "evidence": [{"path": "a.rs", "symbol": "stop"}]},
+            {"from": "Starting", "to": "Running", "trigger": "dup", "evidence": [{"path": "a.rs", "symbol": "stop"}, {"path": "a.rs", "symbol": "resume"}]},
+            {"from": "Running", "to": "Failed", "trigger": "test only", "evidence": [{"path": "a.rs", "symbol": "sneaky"}]},
+            {"from": "Running", "to": "Failed", "trigger": "type", "evidence": [{"path": "a.rs", "symbol": "Holder"}]},
+            {"from": "Running", "to": "Failed", "trigger": "comment", "evidence": [{"path": "a.rs", "symbol": "noted"}]},
             {"from": "Running", "to": "Stopped", "trigger": "close", "evidence": [{"path": "a.rs", "symbol": "stop"}]},
             {"from": "Running", "to": "Failed", "trigger": "error", "evidence": [{"path": "a.rs", "symbol": "start"}]},
             {"from": "Running", "to": "Failed", "trigger": "error", "evidence": [{"path": "tests/t.rs", "symbol": "t"}]},
@@ -405,7 +411,7 @@ class StateModelTests(unittest.TestCase):
         transitions, warnings = nav.validate_state_output(self.root, raw, self.model, states, emitters)
         pairs = [(t["from"], t["to"]) for t in transitions]
         self.assertEqual(pairs, [("Starting", "Running"), ("Running", "Stopped"), ("Stopped", "Running")])
-        self.assertEqual(len(transitions[0]["evidence"]), 2)
+        self.assertEqual([e["symbol"] for e in transitions[0]["evidence"]], ["start", "resume"])
         self.assertTrue(any("ungrounded" in w for w in warnings))
         with self.assertRaises(nav.GenerationError):
             nav.validate_state_output(self.root, {"transitions": raw["transitions"][:1]}, self.model, states, emitters)

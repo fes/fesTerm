@@ -690,7 +690,7 @@ def fit_glossary_budget(
         dropped += 1
 
 
-STATE_VERSION = "1"
+STATE_VERSION = "2"
 STATE_PROMPT = """\
 You are mapping the runtime transitions of the Rust enum {enum} in fesTerm for
 an AI retrieval map. Use only view, grep, and glob. Read the emitting files;
@@ -708,7 +708,8 @@ Rules:
   other, such as by assigning, sending, or returning the new state after the
   old one. Include recovery, reconnect, and failure paths you can confirm.
 - Evidence path must be one of the files listed above; symbol must be the Rust
-  fn in that file that performs or emits the transition. Give 1-2 evidence items.
+  fn in that file whose body names {enum}::<to state> (not a test or a type).
+  Give 1-2 evidence items.
 - trigger: max 120 chars, describes the event or guard, no instructions.
 - Do not invent transitions to make the model look complete; omit unconfirmed ones.
 - At most 30 transitions; from and to must be listed states and must differ.
@@ -744,6 +745,40 @@ def terminal_variants(source: str, name: str) -> list[str]:
     return sorted(set(re.findall(rf"(?:Self|{re.escape(name)})::([A-Z][A-Za-z0-9_]*)", fn.group(1)))) if fn else []
 
 
+def matching_brace(source: str, start: int) -> int:
+    """Index just past the brace block opening at ``start`` (approximate: ignores braces in literals)."""
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(source)
+
+
+def production_rust(source: str) -> str:
+    """Drops comments and ``#[cfg(test)]`` items so test code cannot ground a transition."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    source = re.sub(r"(?m)//.*$", "", source)
+    while (match := re.search(r"#\[cfg\(test\)\]", source)):
+        brace, semi = source.find("{", match.end()), source.find(";", match.end())
+        end = semi + 1 if semi != -1 and (brace == -1 or semi < brace) else matching_brace(source, brace) if brace != -1 else len(source)
+        source = source[: match.start()] + source[end:]
+    return source
+
+
+def rust_fn_bodies(source: str, symbol: str) -> list[str]:
+    modifiers = r'(?:(?:pub(?:\([^)]*\))?|async|unsafe|const|extern(?:\s+"[^"]+")?)\s+)*'
+    bodies = []
+    for match in re.finditer(rf"(?m)^\s*{modifiers}fn\s+{re.escape(symbol)}\b", source):
+        brace, semi = source.find("{", match.end()), source.find(";", match.end())
+        if brace != -1 and (semi == -1 or brace < semi):
+            bodies.append(source[brace: matching_brace(source, brace)])
+    return bodies
+
+
 def state_emitters(root: Path, model: StateModel, files: list[str]) -> list[str]:
     marker = f"{model.enum}::"
     found = []
@@ -751,7 +786,9 @@ def state_emitters(root: Path, model: StateModel, files: list[str]) -> list[str]
         if not path.endswith(".rs") or STATE_TEST_PATH_RE.search(path):
             continue
         text = (root / path).read_text(encoding="utf-8", errors="replace")
-        if marker in text or (path == model.path and "Self::" in text):
+        if (marker in text or path == model.path) and (
+            marker in (text := production_rust(text)) or (path == model.path and "Self::" in text)
+        ):
             found.append(path)
     return found
 
@@ -813,9 +850,9 @@ def validate_state_output(
                 warnings.append(f"dropped evidence outside emitting files: {path!r}")
                 continue
             if path not in sources:
-                sources[path] = (root / path).read_text(encoding="utf-8", errors="replace")
-            emits = f"{model.enum}::{target}" in sources[path] or (path == model.path and f"Self::{target}" in sources[path])
-            if not has_rust_declaration(sources[path], symbol) or not emits:
+                sources[path] = production_rust((root / path).read_text(encoding="utf-8", errors="replace"))
+            needles = [f"{model.enum}::{target}"] + ([f"Self::{target}"] if path == model.path else [])
+            if not any(n in body for body in rust_fn_bodies(sources[path], symbol) for n in needles):
                 warnings.append(f"dropped ungrounded evidence {path}::{symbol} for -> {target}")
                 continue
             evidence.append({"path": path, "symbol": symbol})
@@ -883,7 +920,7 @@ def render_state_page(
         "",
         f"> Generated candidate model of `{model.path}::{model.enum}`. States and the",
         "> terminal set are parsed from source; transitions are model-proposed and kept",
-        "> only if the cited function's file names the target state. Not checked",
+        "> only if the cited function's body names the target state. Not checked",
         "> against runtime traces; verify in source.",
         "",
         f"Domain: [{domain_titles.get(model.domain, model.domain)}]({model.domain}.md). States: {', '.join(labels)}.",

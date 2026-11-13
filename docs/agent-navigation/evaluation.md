@@ -50,15 +50,17 @@ fesTerm's token use or improves its answers.
 - The glossary is refreshed when its cited source files or the manifest
   settings change. A state model's states and terminal set are parsed from the
   enum and its `is_terminal`; the model proposes transitions, and a transition
-  is kept only if its cited function is declared in a production file that
-  names the target state. Graph property checks (reachability, no exits from
+  is kept only if its cited symbol is a non-test function in a production
+  file whose own body names the target state (comments and `#[cfg(test)]`
+  items are ignored). Graph property checks (reachability, no exits from
   terminal states, no dead ends, a path to a terminal state) are computed by
   the script, not the model. A FAIL is a lead for review, not proof of a bug,
   and no state model is checked against runtime traces. A state page is stale
   when the enum, its cited files, or any production line naming a variant
   changes.
-- Glossary and state pages hash only what they cite, so vocabulary or emitters
-  added elsewhere do not trigger regeneration. A monthly scheduled run (or a
+- The glossary hashes only the files it cites, so vocabulary added elsewhere
+  does not trigger regeneration; a state page misses transition logic that
+  changes without touching a line naming a variant. A monthly scheduled run (or a
   dispatch with `refresh_coverage`) regenerates them with
   `regenerate --refresh-coverage` and opens a PR from an
   `agent-navigation/refresh-*` branch. This requires the repository setting
@@ -85,4 +87,42 @@ fesTerm's token use or improves its answers.
 One simple answer rubric is 0 for an incorrect anchor or boundary, 1 for a
 partly correct answer missing important evidence or constraints, and 2 for
 correct anchors, neighboring evidence, and relevant caveats. Report quality
-and cost independently; no fesTerm A/B result is claimed here.
+and cost independently.
+
+## Pilot result (2026-11-12)
+
+[`scripts/agent_navigation_eval.py`](../../scripts/agent_navigation_eval.py)
+ran a paired file-localization pilot at snapshot `d383f618`: 40 merged PRs
+from September to November 2026 across all 12 domains, each changing at most
+four non-test Rust source files. A separate model wrote each question from the
+PR description without paths or identifiers, and the gold answer was the
+files the PR changed. Arm A had `docs/agent-navigation` removed; arm B had the
+map plus the pointer now in `AGENTS.md`. Both used `gemini-4-argon` with view,
+grep, and glob only, three fresh repeats per task, in random order (240 runs,
+0 errors). Scoring was deterministic and blind to the arm. Tasks, gold
+answers, and raw results were kept outside the repository.
+
+| Metric | No map | Map |
+| --- | --- | --- |
+| Top-1 file is a gold file | 92.5% | 93.3% |
+| Gold-file recall | 92.7% | 91.4% |
+| Precision | 55.5% | 58.4% |
+| Median input tokens | 56,546 | 45,100 |
+| Median output tokens | 1,673 | 1,232 |
+| Median seconds | 119 | 108 |
+| Premium requests per run | 1 | 1 |
+
+Per task, the map arm used fewer input plus output tokens on 28 of 40 tasks
+(sign test p = 0.017). The geometric-mean ratio was 0.80 (bootstrap 95% CI
+0.73 to 0.88), and total tokens including cache reads were 27% lower. Recall
+tied on 36 tasks and was slightly lower with the map on 4 (mean -1.3 points).
+
+Pre-set gates: routing +10 points failed, because the baseline was already at
+92.5%; a quality drop of at most 5 points passed; cost per success not rising
+passed. Verdict: **keep and refine**. On localization questions of this
+difficulty, the map saves tokens and time without measurably improving
+answers. Billed premium requests are unchanged under per-request pricing, and
+maintenance costs about one request per stale page per PR. Next, test harder,
+cross-boundary tasks (mobile and terminal-core were the weakest), measure
+amortized maintenance cost, and remove the map if token savings fall below
+its maintenance cost.
