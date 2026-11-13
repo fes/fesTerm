@@ -42,7 +42,7 @@ export FESTERM_UI_GALLERY_OUT="$output_directory"
 # re-download into the throwaway directory.
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}
 export RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}
-isolated_home="$PWD/target/ui-gallery-capture-homes/capture-${BASHPID}-$(date +%s)"
+isolated_home="$PWD/target/ui-gallery-capture-homes/capture-${BASHPID:-$$}-$(date +%s)"
 if [ -e "$isolated_home" ]; then
     printf 'Capture home already exists; retain it and use a fresh attempt: %s\n' "$isolated_home" >&2
     exit 1
@@ -50,10 +50,19 @@ fi
 mkdir -p "$isolated_home"
 trap 'status=$?; if [ "$status" -eq 0 ]; then rm -rf "$isolated_home"; else printf "Retained failed capture home: %s\n" "$isolated_home" >&2; fi' EXIT
 export HOME="$isolated_home"
+export XDG_CONFIG_HOME="$HOME/config"
+export XDG_DATA_HOME="$HOME/data"
+export XDG_CACHE_HOME="$HOME/cache"
+export XDG_RUNTIME_DIR="$HOME/runtime"
+export FESTERM_CONFIG_PATH="$XDG_CONFIG_HOME/festerm/config.toml"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
 
+python3 scripts/ui_capture_provenance.py begin "$isolated_home/capture.json"
 cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact
 
 manifest_path="$FESTERM_UI_GALLERY_OUT/manifest.json"
+python3 scripts/ui_capture_provenance.py finish "$isolated_home/capture.json" --manifest "$manifest_path"
 scenario_count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['scenarios']))" "$manifest_path")
 
 echo "Captured $scenario_count scenario(s) into $FESTERM_UI_GALLERY_OUT"

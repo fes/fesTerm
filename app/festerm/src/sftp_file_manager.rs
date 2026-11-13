@@ -1827,6 +1827,9 @@ struct TransferDrawerSummary {
     header_action: TransferDrawerHeaderAction,
 }
 
+#[cfg(test)]
+pub(crate) mod gallery;
+
 #[derive(Clone, Debug)]
 pub(crate) struct SftpCollisionDialogState {
     pub(crate) collision: SftpCollision,

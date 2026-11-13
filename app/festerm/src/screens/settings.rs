@@ -1974,6 +1974,263 @@ fn automation_settings(
     command
 }
 
+#[cfg(test)]
+impl crate::automation::SettingsSnapshot {
+    pub(crate) fn gallery_show(ui: &mut Ui, scene: &str) {
+        use crate::application::WindowId;
+        use crate::automation::{
+            javascript::{InputView, Monitoring, RunView},
+            presentation::DirectActionDisplay,
+            ControllerArmedControl, ControllerInputView, ControllerMetadataView,
+            ControllerSelectionView, WorkflowStatus, WorkflowView,
+        };
+        let window = WindowId::PRIMARY;
+        let (mut snapshot, _, _, target, _, enrollment) = Self::with_controller_for_test();
+        snapshot.status = "Synthetic local MCP presentation. No adapter is listening.";
+        snapshot.targets = vec![(target, "Synthetic build · exact terminal attachment".into())];
+        if !scene.starts_with("controller-") {
+            snapshot.controllers.clear();
+        } else {
+            let row = &mut snapshot.controllers[0];
+            row.label = "Synthetic untrusted controller".into();
+            let controller_scene = match scene {
+                "controller-choose-empty"
+                | "controller-choose-incomplete"
+                | "controller-choose-foreign" => "controller-choose",
+                "controller-associate-missing" | "controller-associate-foreign" => {
+                    "controller-associate"
+                }
+                "controller-metadata-stale"
+                | "controller-metadata-missing"
+                | "controller-metadata-foreign" => "controller-metadata-review",
+                "controller-input-stale"
+                | "controller-input-missing"
+                | "controller-input-foreign"
+                | "controller-input-submit" => "controller-input-review",
+                "controller-submitting-not-admitted" => "controller-submitting",
+                _ => scene,
+            };
+            match controller_scene {
+                "controller-choose" => {
+                    row.selection = ControllerSelectionView::Choosing { token: 17, window }
+                }
+                "controller-associate" => {
+                    row.selection = ControllerSelectionView::Reviewing {
+                        token: 17,
+                        window,
+                        target,
+                    }
+                }
+                "controller-metadata" | "controller-metadata-granted" => {
+                    row.associated_target = Some(target);
+                    row.metadata = ControllerMetadataView::Idle {
+                        enrollment,
+                        window,
+                        target,
+                        granted: scene == "controller-metadata-granted",
+                    };
+                }
+                "controller-metadata-review" => {
+                    row.associated_target = Some(target);
+                    row.set_metadata_review_for_test(31, window, target);
+                }
+                "controller-input-request" => {
+                    row.associated_target = Some(target);
+                    row.set_input_requested_for_test(53, window, target);
+                }
+                "controller-input-review" => {
+                    row.associated_target = Some(target);
+                    row.set_input_review_for_test(
+                        53,
+                        window,
+                        target,
+                        DirectActionDisplay::Text {
+                            escaped: "printf 'synthetic review\\\\n'".into(),
+                            submit: scene == "controller-input-submit",
+                        },
+                        vec!["Explicit metadata source · synthetic build".into()],
+                    );
+                }
+                "controller-keys-review" => {
+                    row.associated_target = Some(target);
+                    row.set_input_review_for_test(
+                        53,
+                        window,
+                        target,
+                        DirectActionDisplay::Keys(vec!["Ctrl+C".into()]),
+                        Vec::new(),
+                    );
+                }
+                "controller-preparing" => {
+                    row.input = ControllerInputView::Preparing { token: 53, window }
+                }
+                "controller-submitting" => {
+                    row.input = ControllerInputView::Submitting {
+                        token: 53,
+                        window,
+                        may_be_admitted: scene != "controller-submitting-not-admitted",
+                    }
+                }
+                "controller-cancelling" => row.input = ControllerInputView::Cancelling,
+                "controller-metadata-cancelling" => {
+                    row.metadata = ControllerMetadataView::Cancelling
+                }
+                "controller-metadata-revoking" => row.metadata = ControllerMetadataView::Revoking,
+                "controller-armed" => {
+                    row.associated_target = Some(target);
+                    row.control = Some(ControllerArmedControl {
+                        token: 53,
+                        window,
+                        target,
+                    });
+                }
+                "controller-idle" | "controller-optin" => {}
+                _ => unreachable!("unknown controller scene"),
+            }
+            if matches!(
+                scene,
+                "controller-choose-empty"
+                    | "controller-associate-missing"
+                    | "controller-metadata-missing"
+                    | "controller-input-missing"
+            ) {
+                snapshot.controller_targets.clear();
+            }
+            if scene == "controller-choose-incomplete" {
+                snapshot.controller_targets_incomplete = true;
+            }
+            let other = WindowId::for_test(2);
+            match scene {
+                "controller-optin" => {
+                    snapshot.controllers.clear();
+                    snapshot.controller_opted_in = false;
+                    snapshot.controller_opt_in_available = true;
+                }
+                "controller-choose-foreign" => {
+                    snapshot.controllers[0].selection = ControllerSelectionView::Choosing {
+                        token: 17,
+                        window: other,
+                    }
+                }
+                "controller-associate-foreign" => {
+                    snapshot.controllers[0].selection = ControllerSelectionView::Reviewing {
+                        token: 17,
+                        window: other,
+                        target,
+                    }
+                }
+                "controller-metadata-foreign" => {
+                    snapshot.controllers[0].set_metadata_review_for_test(31, other, target)
+                }
+                "controller-input-foreign" => snapshot.controllers[0].set_input_review_for_test(
+                    53,
+                    other,
+                    target,
+                    DirectActionDisplay::Keys(vec!["Ctrl+C".into()]),
+                    Vec::new(),
+                ),
+                "controller-metadata-stale" | "controller-input-stale" => snapshot.disable(),
+                _ => {}
+            }
+        }
+        if scene == "direct-verify" {
+            snapshot.direct_verification =
+                Some(crate::automation::verification::View::for_test(window));
+        }
+        if scene == "observation-granted" {
+            snapshot.channels[0].approved = true;
+            snapshot.channels[0].approved_targets = vec![target];
+        }
+        if scene.starts_with("workflow-") {
+            use festerm_automation_js::snapshot::{
+                ApprovedBundle, Capability, Manifest, SourceSnapshot,
+            };
+            use std::collections::{BTreeMap, BTreeSet};
+            snapshot.channels.clear();
+            match scene {
+                "workflow-capturing" => snapshot.workflow.status = WorkflowStatus::Capturing,
+                "workflow-waiting" => snapshot.workflow.status = WorkflowStatus::Waiting,
+                "workflow-failed" => snapshot.workflow.status = WorkflowStatus::Failed(
+                    "Synthetic preview refusal: the selected bundle failed validation. No access granted.".into(),
+                ),
+                "workflow-cancelling" => snapshot.workflow.status = WorkflowStatus::Cancelling,
+                "workflow-preview" | "workflow-source" | "workflow-monitoring" | "workflow-ready"
+                | "workflow-capabilities" | "workflow-parameters" | "workflow-source-modules"
+                | "workflow-source-page2" | "workflow-source-last" | "workflow-parameters-invalid" | "workflow-parameters-reviewed"
+                | "workflow-ready-no-target" => {
+                    use festerm_automation_js::snapshot::ParameterType;
+                    let rich = matches!(scene, "workflow-capabilities" | "workflow-parameters" | "workflow-source-modules"
+                        | "workflow-source-page2" | "workflow-source-last" | "workflow-parameters-invalid" | "workflow-parameters-reviewed");
+                    let modules = if rich {
+                        BTreeMap::from([
+                            ("helper.js".into(), "export const synthetic = true;".into()),
+                            ("main.js".into(), format!("import 'helper.js';\n{}export default async function(ctx) {{ return 'synthetic'; }}", "// synthetic captured source line\n".repeat(150))),
+                        ])
+                    } else {
+                        BTreeMap::from([("main.js".into(), "export default async function(ctx) { return 'synthetic'; }".into())])
+                    };
+                    let parameters = if rich {
+                        BTreeMap::from([
+                            ("count".into(), ParameterType::Integer { min: 1, max: 10 }),
+                            ("confirm".into(), ParameterType::Boolean {}),
+                            ("label".into(), ParameterType::Text { max_bytes: 32 }),
+                            ("terminal".into(), ParameterType::Target {}),
+                        ])
+                    } else { BTreeMap::new() };
+                    let bundle = ApprovedBundle::new(SourceSnapshot {
+                        manifest: Manifest {
+                            version: 1, api_version: 1, name: "synthetic-build-review".into(),
+                            entry: "main.js".into(), modules: modules.keys().cloned().collect(),
+                            parameters,
+                            capabilities: BTreeSet::from([Capability::ReadScreen, Capability::SendText]),
+                        },
+                        modules,
+                    }).unwrap();
+                    if rich {
+                        let form = WorkflowRunForm {
+                            target: Some(target), reviewed: scene == "workflow-parameters-reviewed",
+                            text: BTreeMap::from([
+                                ("count".into(), if scene == "workflow-parameters-invalid" { "99".into() } else { "3".into() }),
+                                ("label".into(), if scene == "workflow-parameters-invalid" { "x".repeat(40) } else { "synthetic".into() }),
+                            ]),
+                            booleans: BTreeMap::from([("confirm".into(), true)]),
+                        };
+                        ui.data_mut(|data| data.insert_temp(egui::Id::new(("workflow-run-form", bundle.digest())), form));
+                    }
+                    snapshot.workflow = WorkflowView::captured_for_test(bundle);
+                    if scene == "workflow-ready" || scene == "workflow-ready-no-target" || rich {
+                        snapshot.javascript.monitoring = Monitoring::Ready;
+                        if scene != "workflow-ready-no-target" {
+                            snapshot.javascript.targets = vec![(target, "Synthetic build · exact attachment".into())];
+                        }
+                    }
+                    if scene == "workflow-monitoring" {
+                        snapshot.javascript.monitoring = Monitoring::Starting;
+                    }
+                }
+                "workflow-running" | "workflow-input" | "workflow-sending" | "workflow-starting" | "workflow-input-queued" => {
+                    snapshot.javascript.run = Some(RunView {
+                        token: 17, name: "Synthetic build review".into(),
+                        target: "Synthetic build · exact attachment".into(), starting: scene == "workflow-starting",
+                        input: matches!(scene, "workflow-input" | "workflow-sending" | "workflow-input-queued").then(|| InputView {
+                            token: 53, target: "Synthetic build".into(),
+                            description: "Text: printf 'synthetic review\\\\n' · do not submit".into(),
+                            bytes: 29, approved: scene == "workflow-sending",
+                        }),
+                        queued_inputs: if scene == "workflow-input-queued" { 3 } else { 1 },
+                        notice: (scene == "workflow-input-queued").then(|| "Synthetic input refusal: review the retained exact input before any new admission.".into()),
+                    });
+                }
+                "workflow-empty" => {}
+                _ => unreachable!("unknown workflow scene"),
+            }
+            let _ = workflow_settings(ui, &snapshot, true);
+        } else {
+            let _ = automation_settings(ui, &snapshot, scene != "disabled", window);
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct DirectComparisonInput {
     generation: u64,

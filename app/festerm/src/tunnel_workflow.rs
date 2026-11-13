@@ -221,6 +221,71 @@ impl Drop for Workflow {
     }
 }
 
+#[cfg(test)]
+impl FesTermApp {
+    pub(crate) fn gallery_tunnel_connect(scene: &str) -> Self {
+        let mut app = Self::for_test_with_configuration(festerm_config::Configuration::empty());
+        let (_, receiver) = mpsc::channel();
+        let stage = match scene {
+            "working" => Stage::Working,
+            "device" => Stage::Device(DevicePrompt {
+                user_code: "DEMO-CODE".into(),
+            }),
+            "host" | "changed-host" | "save-account" => Stage::Host {
+                account: Account {
+                    id: 42,
+                    login: "synthetic-devuser".into(),
+                },
+                host: DevTunnelHost {
+                    tunnel_id: "review-build".into(),
+                    cluster: "use".into(),
+                    host_id: "synthetic-host".into(),
+                    public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
+                    port: 2222,
+                },
+                approval: None,
+            },
+            "error" => Stage::Error(Error::Store),
+            _ => unreachable!("unknown tunnel connect scene"),
+        };
+        let mut expected =
+            Profile::named_dev_tunnel("Synthetic build host", "review-build.use").unwrap();
+        if scene == "changed-host" {
+            expected = expected
+                .with_tunnel_account(
+                    "synthetic-github",
+                    SecretReference::generate(),
+                    DevTunnelHost {
+                        tunnel_id: "review-build".into(),
+                        cluster: "use".into(),
+                        host_id: "previous-synthetic-host".into(),
+                        public_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".into(),
+                        port: 2222,
+                    },
+                )
+                .unwrap();
+        }
+        app.native_tunnel = Some(Workflow {
+            expected,
+            account: None,
+            cancel: CancellationToken::new(),
+            receiver,
+            stage,
+            connect: scene != "save-account",
+            remember: true,
+            ephemeral: false,
+            takeover: false,
+            focus_cancel: true,
+            device: super::tunnel_browser::DeviceActions::default(),
+            ready: None,
+            reconnect: None,
+            automatic: None,
+            _slot: None,
+        });
+        app
+    }
+}
+
 fn host_metadata(binding: &service::HostBinding) -> DevTunnelHost {
     DevTunnelHost {
         tunnel_id: binding.tunnel_id.clone(),

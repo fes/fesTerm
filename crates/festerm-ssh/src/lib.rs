@@ -8,6 +8,8 @@ mod sftp;
 mod sftp_input;
 mod sftp_planning;
 mod sftp_transfer;
+#[cfg(feature = "test-support")]
+pub use sftp_transfer::gallery_transfer_events;
 
 use std::{
     collections::VecDeque,

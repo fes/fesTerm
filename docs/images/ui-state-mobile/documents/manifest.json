@@ -1,0 +1,2973 @@
+{
+  "capture_method": "actual MobileApp widgets through egui_kittest/headless wgpu",
+  "fixture": "repository-owned source bytes and refusing non-iOS native stub; no Files grant or native I/O",
+  "images": [
+    {
+      "image": "phone-launcher.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "d3041b553f2d39bf39cb2f3ffad225be9c90c0eb5f24e2c44bb022117dc6302d",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "launcher",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-source.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "73f0c9488a73f4c760b95115d0491c3633ef7171b995093a649e11e165e042c7",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "source",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dirty.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "7c13992550789e6b33eb076ff2185c2c9ba321215e1f507fcd98b9ccce2ee4a0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-read-only.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "195f402ecb9b351c738ee56c4a07c66bc5dc7c5dbc57c9837c0c1a82ca3e94c8",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "read-only",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-conflict.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "1919c72fe2a3154d2614c79c0049336b097bfdac81247203c3ed3602dbfa4d4e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "conflict",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-preview.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "2ef2664a9daf7ba71eba22f9413649d1e8cc016e4e3e6bff112f5315017c4059",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-contents.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "6e3c8b651b2556f74e0a4cfc9b6ce617c004ad97e377d245d9b3c5c041cb7fc1",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "contents",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-custom-source.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "03c7ae5f210a34f074da020e2330415f37587b4600297492132fa38ab11c7cbe",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "custom-source",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-listening.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "8b61e35ce22fef97cdeccc851c408057e36690a61d531f1b504397521840e488",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-listening",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-finishing.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "23f3857bf0035350b7f421e07d0e3422d0b842aebc6408ae9b7e8dc9c47c39c5",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-finishing",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-review.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "28a5f4f1ccc4a8ebb36f7d702104cbe212d1b8877cf0c90dfbad874764413979",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-review",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-tab-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "be3c216634c38256c0da022d1ddcd95860fb48bb4afde57025989fd4a08dac6f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "tab-menu",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-wide-preview.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "7b0f3e0cfd1b506a6fe22f3f38a432b2591c301703ea9dd5d7def0513f6760b0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "wide-preview",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-long.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "9d2a18fbf995e369b5d914afe3d9e5245edcfc2e35203f6041f6825aeb3e6a38",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-long",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-native.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "e9a325b4c21b69005e45dd80f71d437b3ca96ddb95dfed3d3892154e7a08c043",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-native",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dictation-failed.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "b6484710ab55690b6d7b5832dc14b984f842d1d0c9b07b743ef7e4bfe3c5426a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-failed",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-profiles.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "26f79eca2c2715759c65f1ef3dde5b0579db375cea6bd79463c0832b0e09cad4",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "profiles",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-sessions.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "b20caf96bd2e8b3c02afa7c873c5fa0ef0d3dccad15a351e41e58e7a5cfeac18",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "sessions",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-terminal-dictation.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "330bc3cca63b2937268a31db72b43b19423ca63ae53c1435c422aa220bf8fa8b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "terminal-dictation",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-preview-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "df7519ca167d1fcb22edcf9a2c1c3ba748774053206e7d3be660fb00cfb82255",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-menu",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-preview-selected.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "c4d1d161313c68c01a006496594a900c8af343baaf87b8b93fbd4633c6d90ea3",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-selected",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-dirty-close.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "e9a489d888f290d8c04975920de36c8bea8e8a107e6c7dffee393ecba6fad605",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty-close",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-unavailable.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "2a7419a2eea55163ec67436c0d5d8fdf871583b8f0d12c2c106228c4eef8c025",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "unavailable",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-document-error.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "ecea131817b6a1ac1c963c5c50685754525b278311aab2e217ba9ab53e669e3a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-error",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-document-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "02999b4e94e3189e73bc162f83e8dcc1768992f5ee57718476374c068b96b764",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-menu",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-narrow-launcher.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "fddb289f90922b5721477d863d5005cf0fa1e1701718adc6a951dfae0dd308e0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "launcher",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-source.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "a26a5b060bd446ce881639a00dd1497d40570a61d847c83269b304aa4d07b0ab",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "source",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dirty.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "0fbd4ce2a91e01a7133039ced91018e4775bdfd898b424699eae7e508754636e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-read-only.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "9aa92bb5b457f95e8668f5195c739454a27e25a074309f138f004147a421857b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "read-only",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-conflict.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "099b533998d0b932a9af88b02cfcb5ff6861b73f41e69fdfe838ca8cbb6aaef0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "conflict",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-preview.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "94c0af098162eba68b105843158445a3c461edb949955f1c4795258c168c734b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-contents.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "fad4991b2fdb176215b92108a4ee9559e25900e72d3a9e0e6e1828a0b37a5672",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "contents",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-custom-source.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "6352e47a82c5d4788ae642006f7be8169a85c1d0202118652f1a8ec2badb7df1",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "custom-source",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-listening.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "14daf981d8573cb1e0d998a538003b65468f341f9b38d15d35cdf100acfc84c3",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-listening",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-finishing.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "dcd179a1803351cc8c6f4ffff9d8ce1565a320a1f6fd0ce0507a6ea9ec27ff08",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-finishing",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-review.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "781819f8387a340d46bef63cb255341ec11619a0d76a7e97be610059b230bb15",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-review",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-tab-menu.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "3100f80339cd5bbb18a30c004363f66a47d2ef214cbbc1c258f3767a13df7e74",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "tab-menu",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-wide-preview.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "ff7614ac1c16727363f73eaf42c5785a9606e7f86eec5f2c733a06e2a3fc2a23",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "wide-preview",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-long.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "a2bda5b27a0ca90971e5a41ea7a5d3c1a5646dd76ec6cd5267f567d4322ea240",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-long",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-native.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "96fcac7bcbadb5ba1adab9484863b7b51bfcce591b0d7c0dbeac936faeff16df",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-native",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dictation-failed.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "d38cf0b4d85cf0df31be9481c08dc2c8d193ded402b83632ab41ef395c1215ee",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-failed",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-profiles.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "d51e02d5c3371abcd431fd72deedacbe6273b919ebb947a21667ab7090c8cfce",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "profiles",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-sessions.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "eb2e22e753646ce485ab76102a813bcb1d6270ebc6a3776955a221787dd84c92",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "sessions",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-terminal-dictation.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "6f756a4702fc4acd96c44262464d7991f1d99b4d370112c0e99900aa9bbfaaf4",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "terminal-dictation",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-preview-menu.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "127c03d2918a65149aa37daba592cbcf8a2eb35e6384a608e930da8dc966b993",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-menu",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-preview-selected.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "ec47db009f3352a7c2aab8b2e58b9ed642f4c6243714e8298eba918ef2684fdc",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-selected",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-dirty-close.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "41fbd5bb97e672804f79da0ec0a2c8da621adee45a9d788124448788cb36e77d",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty-close",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-unavailable.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "f458f8252ee39d70428ef8fdfac5ba5482ed8405882d0414235cf1f349fc4195",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "unavailable",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-document-error.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "d854f082d36d110beb118bc4607976c1f208a33451b56d451b4c3a3ad16ae819",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-error",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-narrow-document-menu.png",
+      "logical_size": [
+        320.0,
+        568.0
+      ],
+      "pixel_size": [
+        320,
+        568
+      ],
+      "sha256": "3a2d071faf11fb90df8dbb678774e439f4c07831a15e32e775b5a69dc860e4e6",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-menu",
+      "viewport_class": "phone-narrow"
+    },
+    {
+      "image": "phone-keyboard-launcher.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "d3041b553f2d39bf39cb2f3ffad225be9c90c0eb5f24e2c44bb022117dc6302d",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "launcher",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-source.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "8ed28f3984b6c57432d9477eaf87fde76ae3713a10af81278e8de8cb102409d1",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "source",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dirty.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "0bf5c8baf7308217c52e40fa9271b54dd436bae111e72d9e739fa266e2f1dd49",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dirty",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-read-only.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "195f402ecb9b351c738ee56c4a07c66bc5dc7c5dbc57c9837c0c1a82ca3e94c8",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "read-only",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-conflict.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "a1385af8e2d1a913ebae01dd603ceb1a7fd0355595044d1f5c93bd26ff0bf1a0",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "conflict",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-preview.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "9b373b288778b72dae38fd1647bd585218776743aee757de304702e6e2deee2d",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-contents.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "7f5b98defe417055e8f2682f44a5559a9c907075f6751d986de3c8b8af9c5bab",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "contents",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-custom-source.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "03c7ae5f210a34f074da020e2330415f37587b4600297492132fa38ab11c7cbe",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "custom-source",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-listening.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "8b61e35ce22fef97cdeccc851c408057e36690a61d531f1b504397521840e488",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-listening",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-finishing.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "23f3857bf0035350b7f421e07d0e3422d0b842aebc6408ae9b7e8dc9c47c39c5",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-finishing",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-review.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "28a5f4f1ccc4a8ebb36f7d702104cbe212d1b8877cf0c90dfbad874764413979",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-review",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-tab-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "9f25d946119c833b680a9a7a335f2d972e2edba6227f14773bf1799dfae86b06",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "tab-menu",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-wide-preview.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "f9d52d8844e5867d13e8f695ccf43a86e4dcdfdd55f23351e9c946d0ff55351e",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "wide-preview",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-long.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "9d2a18fbf995e369b5d914afe3d9e5245edcfc2e35203f6041f6825aeb3e6a38",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-long",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-native.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "a1b98a3d83da7fd81da45aa137f27f2ac4ef841e425b5ae27c79792fe2d63df9",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dictation-native",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dictation-failed.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "b6484710ab55690b6d7b5832dc14b984f842d1d0c9b07b743ef7e4bfe3c5426a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-failed",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-profiles.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "c2d9b9670592ebefadd825e2d015aad42eeeb924451b9a474862856f24ce7e39",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "profiles",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-sessions.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "b12334e11c9d6082fb89a75da8f7cbe11ee45a0d207c2376ed4f32c5c66fa06d",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "sessions",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-terminal-dictation.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "330bc3cca63b2937268a31db72b43b19423ca63ae53c1435c422aa220bf8fa8b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "terminal-dictation",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-preview-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "88e2b5ad3fd9495f761385a6ee597f53982638618211e2370de10d7b9b6c87ab",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview-menu",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-preview-selected.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "08244aa08fa4ee1e9615afbcf50f276ba0ee72e770945a26bdbd820d637405da",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview-selected",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-dirty-close.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "edb3db89ecefa6a544da34df095c35c837bad6bd5609d1aa3d27944324d19a7b",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dirty-close",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-unavailable.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "84e071e677f5a8342db59c2f3574c97f505187f77e882cb716fea91943d789d0",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "unavailable",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-document-error.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "ff54cdc24e55f1230526b00e8eb5474a4ab4b829f871a065912bb8c5f5a21826",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "document-error",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "phone-keyboard-document-menu.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "ee9f4237202e95f5203adc00e5be2da11ea2384f053c0ee44f5e5596c42cd2de",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "document-menu",
+      "viewport_class": "phone-keyboard"
+    },
+    {
+      "image": "landscape-launcher.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "d1471313e142850c8e500475500ba4f0811b4caee6a9868d0075a1c6aaade8fa",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "launcher",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-source.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "ed1df9f0b182f26be17572c56f782ea1475697bbab92f192a474ebe758432408",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "source",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dirty.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "c108132fc8b78bde43f410f10b705c4544c6b112125d8213fc8b2ade49a03231",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dirty",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-read-only.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "d514a183133327b06fc0817d8c4b667e2f26b48c85083a5ea899a768e9c537f2",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "read-only",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-conflict.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "40f9e9ebedec282e22da94b136c1ef86e34d132406ad740a9897e3adc2b7f098",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "conflict",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-preview.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "5e0e6cfe71a6ff5ce070590a8b951fdc7ec3fe2da10cbcde0f5d67c7fc55e1f8",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-contents.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "52d93d4b3b88d010f484f1572251d23aceeb4c7aebd937559e9baa7bc3bd2bce",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "contents",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-custom-source.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "b974c12508dc696f07b92a8b0e2a3602e17eb67729445ad055ae75326e2ef664",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "custom-source",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-listening.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "77c68e2421e2599742f73a3460a8fa0614241889df62a4038ae18628b6aac492",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-listening",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-finishing.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "a303d208e1bd7e41103355736080583002de4f67bd7cee5b7d471d53a57efe71",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-finishing",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-review.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "ba636bab747d6f3a74829cbe5f4bbdfa67cc3951814d423f90ac080e18c7673f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-review",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-tab-menu.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "1a00a30c1781d9a0d214297f429f7954f4f2c6790e8bd5b0ab5bbda0d9b6a87a",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "tab-menu",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-wide-preview.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "854e286b76a321625b1aa279d67d789698f9d6b23115fa6c716beaa4bfea24c4",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "wide-preview",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-long.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "021433990691a36ce842e7d71f65112b230d2118a5b69f765fcd77e442e20c49",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-long",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-native.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "2d08b9af82355e4f3fe6c09e297db0b4d003d9221ab6d7a9aa0160b5ddfaf01d",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dictation-native",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dictation-failed.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "32e179e079f4130ad551745e77456f29f2ded74e8c5dc7c2f899eb762a7d3399",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-failed",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-profiles.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "220cfa8b30cfc38338fa3c734aa53a051d2b47122d3ec1fc01d46cf6d7114933",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "profiles",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-sessions.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "251fc2a03270b06c107b985b5e26352620cb581a0696ce04f8f9846ea6fbbbc2",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "sessions",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-terminal-dictation.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "d65f7bb978e44101a335c615f4e34ba4a09735f04042c9ca5164840fb0a11054",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "terminal-dictation",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-preview-menu.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "4e4f1d9ad57cbfcafd785b54008e01a33e303c1a3c8b9d26d7f73ee86fbbe33c",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview-menu",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-preview-selected.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "9e025f27d9bb6806c38bd3de30e74b08da96b560179a4c00e15e7b6b2cdb8ea7",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "preview-selected",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-dirty-close.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "748f870b5441987841e4619eebc3a7efd820c57ab67164860840c0b3646bb237",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "dirty-close",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-unavailable.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "b2579c2d47337980a66e01d949fc3cd843be0cb2874d19527dd967c86961580b",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "unavailable",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-document-error.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "537b17a3eb86fce80482cd82e8a916324cdfe93d660ed04f46c8dcbc6166e41e",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "document-error",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "landscape-document-menu.png",
+      "logical_size": [
+        844.0,
+        390.0
+      ],
+      "pixel_size": [
+        844,
+        390
+      ],
+      "sha256": "2b9193ca4338361efae1fb209e55f2f4b82a45bdf37957c2cd7a3b3dcee70a92",
+      "simulated_keyboard_occlusion_fraction": 0.3499999940395355,
+      "state": "document-menu",
+      "viewport_class": "landscape"
+    },
+    {
+      "image": "tablet-launcher.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "6e723ece9517a4bad538b9f0a8a0547caffd404121acab99d43823b30d167ac1",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "launcher",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-source.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "5173b1def9d8e4980bd38a14763bd6babdcdbb87a8933dd056444b4defd71176",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "source",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dirty.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "682d0cd56435cb23be8aa2f37e77e0943af55ccbae60b85d6d09cea2493d6c4e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-read-only.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "0027a88ccc58588b70a84ff121c6fb12df9a173c0b06f7a55c74be2047cad1af",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "read-only",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-conflict.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "8431b16535c611a911a3214459cc7a4e190f7c51a5399d05a7152c41599c8402",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "conflict",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-preview.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "d54998f02e9f4824aa433a1857bef58245b5793b9fda6098bce5827befb606d4",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-contents.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "d54998f02e9f4824aa433a1857bef58245b5793b9fda6098bce5827befb606d4",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "contents",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-custom-source.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "914537bea79fa7eb317ea1205bdf22264da16e22c2762ff8c11f7f7f1d9e542e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "custom-source",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-listening.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "6b15439b35281731bf2ce91a5720e893153f744efdfecf32f168ae02d3f588ed",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-listening",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-finishing.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "207acc7f162c52a869c6e5034623948cef29e6ac844b902e1a3e57d814919bb0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-finishing",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-review.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "ad1630c974225f45a327ef727de91ba5a50979fe9dfc750d41323511661140aa",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-review",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-tab-menu.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "0a672d7d135044f55ac16411cbfe64e3898083e0857b5e0f5b535fad3940806c",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "tab-menu",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-wide-preview.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "904cceda21cd09ab62a106f32a0ed86e5d5ac2c4d57d6e706fcf9249ed5cbfbc",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "wide-preview",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-long.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "f859619b9f5ba325d17e0614b8fc3c941cecabc8573b522734a5de9c9c758647",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-long",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-native.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "98435d937ddc9cf1dc529324c9a15b5fb2fd9ce7944682edc62d68d198142ae8",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-native",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dictation-failed.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "536a29c8e6b722f18677496f3864adfe4a99c63dd2b1c1e5afebe12a49f06abf",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dictation-failed",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-profiles.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "a127d94713281230a47ce39d240c7cd01661b974030b0c5997e1f6174f70ef43",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "profiles",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-sessions.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "c9cd9f565e01716708051e244b263772fc54eaa6ac18a5d966f47d94aed58605",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "sessions",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-terminal-dictation.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "eb45eb0b9cade809882ffd098de16543dcf3cb22dbe4f115db1a70fa6fc7a029",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "terminal-dictation",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-preview-menu.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "01cadd0cef50fee007868115e799dd35d07e1b18bfd21d4e2b94a3d7c177240f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-menu",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-preview-selected.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "9116372adc5ee68a1371414f9a1bd9fc2c99ccf553dd48caefd9397774fe516f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "preview-selected",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-dirty-close.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "339b3400c3028439b227291702600bf73854c96abf43e9fde519972797728bec",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "dirty-close",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-unavailable.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "f89b6f5f00ccd2ea5ba133e2d2d64432d9bf52318048b2dd8be12231ccac5d2a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "unavailable",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-document-error.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "53c478ca06a5a98fd505d646e3147b2a5f7a53696035b441483932c42043803b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-error",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-document-menu.png",
+      "logical_size": [
+        1194.0,
+        834.0
+      ],
+      "pixel_size": [
+        1194,
+        834
+      ],
+      "sha256": "cc32556e230b52c3577dab29bff10b277bf0e1a0a4bfff9852435c80319929e7",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "document-menu",
+      "viewport_class": "tablet"
+    }
+  ],
+  "native_ios": false,
+  "native_keyboard_rendered": false,
+  "native_validation": "not-run",
+  "source_commit": "6784386549df785c90cd4f9bd6f658b0b20641fc",
+  "source_dirty": true,
+  "captured_at_utc": "2026-11-13T19:37:20.164834+00:00",
+  "native_android": false,
+  "features": [
+    "host-clients"
+  ],
+  "source_files_sha256": {
+    "Cargo.lock": "f40940d07b9a22d5e9bd3261c2ac03de4c2562eb863ab3d53b2f7f1807961b0c",
+    "Cargo.toml": "d22aa83f842c31dc4adc4333cd369e02a4c1eab1ff391a56d3904bd5646f469f",
+    "app/festerm-mobile/Cargo.toml": "271d94bdbebb4702847be118c623f20d232bdb20cf97ff918ce2bcff4d86c6e2",
+    "app/festerm-mobile/src/accessibility.rs": "5cacb87758a5f5b251e2e221e9458b1ec7434322d6731fe70eafc27965f61af7",
+    "app/festerm-mobile/src/app_lock.rs": "62e1fdc753a1623418b574dac5fce8e80ea0748544083dda6f0415f35c5d1a10",
+    "app/festerm-mobile/src/dictation.rs": "16a98aa8a0358703efca9bb6f95d87669a8fd4ed2b4d0f5af9a2e89fa3ebb2fc",
+    "app/festerm-mobile/src/document_preview.rs": "c57c06ecb638aa3ae8797e30abc277138018368d84048b00a68e96c410e319fe",
+    "app/festerm-mobile/src/documents.rs": "1af5ce217dc9dc4e8d90db388ab1ee35237c5a90247496d9fa4219284b301244",
+    "app/festerm-mobile/src/documents_tests.rs": "0ef33925aac1f3a19cd54d42640a30772c8bf7e73f39c2b25c841d62b170af82",
+    "app/festerm-mobile/src/files.rs": "3001413ff5e40aa5ed81ca495b7b668655b16b09677fbf38271f65b9b96056e5",
+    "app/festerm-mobile/src/files_fixture.rs": "88bdd8559409f7885af274a63e44210bdf81ecd1f891636dcafa0c62d9e95e9e",
+    "app/festerm-mobile/src/files_shell.rs": "6c0fdcdd6c712cbc49c50f180355590b7352d43af41833f846327af8ef664a88",
+    "app/festerm-mobile/src/files_ui.rs": "d08314b8cc82b8096bb64d3dcc45346eb8765730aa098d43146fd260d501f7de",
+    "app/festerm-mobile/src/forms.rs": "785a28fadbcdc227f9b6d21ef4b0deaca2308419dc4bb6f2df234a53831f40c5",
+    "app/festerm-mobile/src/host_clients.rs": "dd284fc8667155628df5f9186e66fa4c7426dff67d26ff2e027fcba70353a9b5",
+    "app/festerm-mobile/src/host_clients_tests.rs": "6dbb7527cd51466f96158570dae07f0a6f667fca82292d50c4388d93c2fc9621",
+    "app/festerm-mobile/src/host_clients_view.rs": "e881b837627ec1bfc5b50206b5a1a3fe899f8673355b3bf1bf97c598181ac1be",
+    "app/festerm-mobile/src/host_setup.rs": "b1a0deb65ba89db641d65e87da6c8d8d1aef9979684f106c4bebb586e7828bed",
+    "app/festerm-mobile/src/key_press.rs": "561fe2c1704db48de8c3cb893000b73a5aa9591e30c3312c9eab8dc46a60db3e",
+    "app/festerm-mobile/src/lib.rs": "65dc6e7010f01c6b36278121c98a4505985187808774da3af1ad279d9129ecbd",
+    "app/festerm-mobile/src/live_ssh.rs": "e9bf3b99756726405653e7eca96e94fc16bb78d20ea277166095baec1e9dce8b",
+    "app/festerm-mobile/src/live_ssh/loopback_tests.rs": "0a9ddfb46cd79db7a3192fe616455d98b869b15f047c5378dc047a50cd231202",
+    "app/festerm-mobile/src/local_input.rs": "6935b0c99e89ed95abbbcc274de2af6ac96f05e2ecaad3d3d40ee500beb0a33f",
+    "app/festerm-mobile/src/main.rs": "3c37dc1025cf39c8dfac6c10688a0cdc720bcbf798254905886238cc4b49b6a7",
+    "app/festerm-mobile/src/model.rs": "57fde7fa5586c70a3eab5632d546dd3377657bf9aa96cb6d8424e452932ffb4d",
+    "app/festerm-mobile/src/password_buffer.rs": "33cfe50c3087865508f5972ff8c1f84c9e15ba88e5ee2c553893102b2332448f",
+    "app/festerm-mobile/src/profiles.rs": "c0dbacf32cc1626a8ec66f37a571bd9074e33ea57199584c0a77100636238400",
+    "app/festerm-mobile/src/recording_draft.rs": "b278eb93952c76c8f21264861a3d5c713440b5aaf9d1cdf5d94a14648da04905",
+    "app/festerm-mobile/src/recording_library_ui.rs": "c102a2ad83319bdec5c34d8e9703723d9d05d9d1f4f49e18c70a11514cfcb0e8",
+    "app/festerm-mobile/src/recording_storage.rs": "bb07772c0b9d76bfb282f64a76216c6230ff0063fc9ec1d129f19e25118db50b",
+    "app/festerm-mobile/src/recording_tasks.rs": "78bf7e6ff3f0eac83c7c582a8b44275f177445a4577989afe9c2455853e0e876",
+    "app/festerm-mobile/src/recording_ui.rs": "beda855e212d8ef2abc82e4b8f0bb9ef6a026f8798490e79a8e4f5b1a239fe61",
+    "app/festerm-mobile/src/runtime.rs": "5dd4bb765114be3774f28e6c7647c369396895e8052c9ece6fb713d08e95b650",
+    "app/festerm-mobile/src/session_close_tests.rs": "f66e4c591037ea9a33d9f3db42f27266be9f07b47b66af4638c830cb911a3686",
+    "app/festerm-mobile/src/sftp_link.rs": "0000509e6bb4adf794cbcda0d3b40b6dab2ca7394ab2e96f9f06ba6d20798fa8",
+    "app/festerm-mobile/src/shell.rs": "0b91ede6cf7a4ac1d7a56b751144ae935b2b20baa0adf1d307a4a2e610afc98e",
+    "app/festerm-mobile/src/tabs.rs": "b65a782432a191ccfdf03bc7198b9db42995d62cd5fcfd1bc605b2adc634da42",
+    "app/festerm-mobile/src/terminal_chrome.rs": "81300dd0c1669834bf81a8c3a467c71bc1294192255d3285a316883af0a739c0",
+    "app/festerm-mobile/src/terminal_gesture.rs": "ff3b0c91558ac8ade3c12c9cf43a1d42cefb3da1e2598ab9f1879c7ca4861335",
+    "app/festerm-mobile/src/terminal_keyboard.rs": "80183487ab7d80c8585cd3d2d3151527fc5c59f47928efafeb50a980207889dc",
+    "app/festerm-mobile/src/terminal_keyboard_tests.rs": "f499417c02d4e660658ca8f1429142f167028b0d905aee6f5d8e8e8c907867a0",
+    "app/festerm-mobile/src/theme.rs": "6947d9ec69fed1be0ac5647df39da1579d563cd2c47ea9700e9143c0a72e2309",
+    "app/festerm-mobile/src/tunnel_link.rs": "d2a57eafa7f466e1e80492e7336ec7f69fb2d54ee988d6de7450b0f10676cc39",
+    "app/festerm-mobile/src/tunnel_shell.rs": "69473b149d42744b290bc82d932391cdcb25b23a4ba13c0409239b08093f1336",
+    "app/festerm-mobile/src/tunnel_tests.rs": "502020ea1affd058320476c61fd3c0e657e89b359f38538316709692c37f44fb",
+    "app/festerm-mobile/src/ui_gallery.rs": "084728e044a22e14b23485ddfa52b88d92d9d807c9fac8bf64d3fdd8a51cc842",
+    "app/festerm-mobile/src/widgets.rs": "b91287b349e2cdc6d1bec45acf77679b40fd49aa3b53fbb9e31836e8d5f20305",
+    "app/festerm-mobile/src/workspaces.rs": "249337d9f65872d6d1834c10122b8a60631f9813293725d082770d37b9deee53",
+    "assets/app-icon/README.md": "78cdd193619802aea1ebcfc4fc9ef27467f97c002096ba254f25f4bc7a962086",
+    "assets/app-icon/app-icon-1024.png": "d245bd09377b9b70d4b82514a2b4b2f547cf9b45624ac85e34a42346e4dd0e28",
+    "assets/app-icon/app-icon-128.png": "de80c060b8204bfc424e04ae5851846d8f4efac208918816fde5a5b3ed5f9c83",
+    "assets/app-icon/app-icon-16.png": "89c535bf3433ef7dd992d212d5c403b99cfd83ee7abe91349085da434e2b5ece",
+    "assets/app-icon/app-icon-256.png": "edee71461faef548a45b62134446c10bc3c1701f5805e7bed7392cd7de9f0384",
+    "assets/app-icon/app-icon-32.png": "90870fc1a093f8a2b217fb562f429cc58fd5be497afad1c3d77b8f609ec4a9c7",
+    "assets/app-icon/app-icon-512.png": "1e14d1a6d0da865ac532decfd5cf909170b322d32643a4cfd50d9c47a21b95a9",
+    "assets/app-icon/app-icon-64.png": "e067dcfebb5b39474673ffc729c1eaa0bce20139926ab8a2a536bc2ae441fe09",
+    "assets/app-icon/app-icon.svg": "02cb6d11153bbdad6fd383e91da2006205f6cc0cc0ffaa6518d92679feb628fb",
+    "assets/app-icon/festerm.ico": "c6f6901111df67997241f289057ed30d87e85103b005841e51067ecafbc8c2a5",
+    "assets/fonts/iosevka-term/FesTermIosevka-Bold.ttf": "8a4a0c54d5fcddd4315237beccbdf91413c4ada73a7da771573386b6eb3cff48",
+    "assets/fonts/iosevka-term/FesTermIosevka-BoldItalic.ttf": "734df9f006f467eb8219b36996fe943d57e062ca4a838494591be610e78dbc35",
+    "assets/fonts/iosevka-term/FesTermIosevka-Italic.ttf": "5dc7b2cbcb48553aaa81507f71b38694aac2a7bd372219cd15fabec8d1ab5723",
+    "assets/fonts/iosevka-term/FesTermIosevka-Regular.ttf": "28cd676e448b62bbf7944c3888c574ecc61ae7d2adcd49ddd67b0edaad38c23b",
+    "assets/fonts/iosevka-term/LICENSE.md": "4ba53c7c1cb39279aae5f8d7d22054c485c71169920e5a36ed098b115e2e3c5d",
+    "assets/fonts/iosevka-term/README.md": "049b900b83d39cf285b25f6dcf651cbab63c9b6fc182bd3a59f710bfd814d99a",
+    "assets/fonts/iosevka-term/manifest.json": "f07c2bca4ad7d07003ae026d516f90785731c0e26bd3b94068fded52786d376c",
+    "assets/fonts/iosevka-term/private-build-plans.toml": "a9c1773bcad8ce4817e4856476c372670a16936d0b5344c4c6121b43032bac7e",
+    "assets/fonts/jetbrains-mono/AUTHORS.txt": "33f99c94ef0a0909d7584a5d4bde1fb9b1630daa620f5a788c28c43327e79412",
+    "assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf": "5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb",
+    "assets/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf": "4039d5ce0ed225bf9c8b2c8c6436290ae2f356b7e90d70fa666227238324aa3b",
+    "assets/fonts/jetbrains-mono/JetBrainsMono-Italic.ttf": "9d0a1f7a708e6af183f1193b7e81d40da294f5c67682c085d8401c60aac8ded4",
+    "assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
+    "assets/fonts/jetbrains-mono/JetBrainsMonoNL-Bold.ttf": "0198e841824025f8876e5c297f0b9b497ee8d6eb9969710a3328e1303f996ec3",
+    "assets/fonts/jetbrains-mono/JetBrainsMonoNL-BoldItalic.ttf": "6c2716f2e85101f4109a8c16916061eb38176b3b10342834858d6221ec2fda1b",
+    "assets/fonts/jetbrains-mono/JetBrainsMonoNL-Italic.ttf": "c7392a134293e1af1d36fbf04940dd844f632afbf97f8325d1591d3af5096cb8",
+    "assets/fonts/jetbrains-mono/JetBrainsMonoNL-Regular.ttf": "fb3b2575d7b0657359707993288f12a7360344d39387bb26050e276d61f6bd2a",
+    "assets/fonts/jetbrains-mono/OFL.txt": "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad",
+    "assets/fonts/jetbrains-mono/README.md": "894a7159d4a17d487e5a8c5eee3edcc2e178d17b698b6cdb1d393e727836f8f0",
+    "assets/fonts/jetbrains-mono/manifest.json": "03344dd337be3e981f1568c9f8498749e4100361891a5878b7cf0772df759ef3",
+    "assets/fonts/julia-mono/JuliaMono-Bold.ttf": "a886d817cbd02fb7b646c3eb722de572bf6819ad223d66d64dbef33207964fea",
+    "assets/fonts/julia-mono/JuliaMono-BoldItalic.ttf": "a3f09c2216eeca9d35f967fe9b096419a2f0a5da6d38280e934a708f84064cf3",
+    "assets/fonts/julia-mono/JuliaMono-Regular.ttf": "40a07da0d1601215eb6b89312eb44128a3e2f36675d3e1f518264bd391fc7023",
+    "assets/fonts/julia-mono/JuliaMono-RegularItalic.ttf": "35260252fa576b3e2ae6cda538475e6fa78a053eade7784518b53f0a5dbaa526",
+    "assets/fonts/julia-mono/LICENSE": "bae3beff9e15f1a680c2764c4bbdb25b995b9bf539aeaf8467482a495c75ad0c",
+    "assets/fonts/julia-mono/README.md": "dfea4a41aa2c860f0e2ad4b71505a634e6f025897508a71724639b779e576287",
+    "assets/fonts/julia-mono/manifest.json": "5eb85b72dd09c85c64ce835da1539235f4fb41546024e88ae6497d28b4157206",
+    "assets/fonts/maple-mono/LICENSE.txt": "eb2d28d2e565a0757e3d64e34ebb452e75a0cad87c0ab3faf4e08ba7596de902",
+    "assets/fonts/maple-mono/MapleMono-Bold.ttf": "e0623db6219886ce8906f440b9668acc7fab96b94e4036ac7a27809cd4bb72d7",
+    "assets/fonts/maple-mono/MapleMono-BoldItalic.ttf": "c9d6a8f203c86409aa63eb2b5716bd854819e481a8bdbe0bba1f7a476e59080f",
+    "assets/fonts/maple-mono/MapleMono-Italic.ttf": "fde2a23a7062923761ac0e3c718718c181bdb9865325430175819eb55a495e90",
+    "assets/fonts/maple-mono/MapleMono-Regular.ttf": "369583f0b555f33bdb6fdbcc2a6840a7a61a1d72c008a57a665baa36d7d5adf6",
+    "assets/fonts/maple-mono/README.md": "1bc3962271e285034babc57fee0b70e47c0e280b345da9692d2a5f7c7d17d9a4",
+    "assets/fonts/maple-mono/manifest.json": "da65fd775ba2f4268e6a4af45b8fce358dabe7fcf4f39cce90fee1cca04c39fc",
+    "assets/fonts/noto-emoji/NotoColorEmoji.ttf": "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+    "assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf": "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+    "assets/fonts/noto-emoji/OFL.txt": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+    "assets/fonts/noto-emoji/README.md": "e78136cdaa5881321ce68cec1bbb65b0c93e48067f7003b62a534fa7c1a13b27",
+    "assets/fonts/noto-emoji/manifest.json": "55eca079832f9b4cae997c80a5e3d2fafd840a6887e0ef3e90f0b302ce07ae56",
+    "assets/icons/icon-sheet.svg": "4cd0e529cb9d2cd2b93fc1da08096ce55f63a16a389298294f0907a23d77c19d",
+    "assets/icons/source/account.svg": "62de4cb6d910e90fcd91ee4cf35c1c6330d18e0559847f927f18d6153c1e00ca",
+    "assets/icons/source/activate.svg": "ad8236408b6367f6b2060b41049c7300d5753769a28121631b5a9f5455f94808",
+    "assets/icons/source/app-mark.svg": "71e7c9616eff57298f41065dcce30d3dd2665dfb296c5dd10d0edee01d75b809",
+    "assets/icons/source/auth-required.svg": "9475c6f3808eec7f2da43c1bfe86b70f9526785621758608c7a673a1baf8bacb",
+    "assets/icons/source/back.svg": "b069c85164c750ef03ef132c4f558a0cb748ca4c1a9cd5ef7f11482f287998c8",
+    "assets/icons/source/clear.svg": "7e962eae80952de62973ff0b7ec741fe8487e554b0fedeaf96cd1b537153e5ae",
+    "assets/icons/source/close.svg": "be801b803240dd46c15f62b99326783f6551448e40e4cccb016e7b1763791a97",
+    "assets/icons/source/command-palette.svg": "9c853fe6f41b78da26db1930b5b8d24b813dafcc9fe16ea094dafd4929e4178a",
+    "assets/icons/source/copy.svg": "7f8a52262d8f2f202a352eda57b236e9eddffb21350857d2844c4cd907f9dec5",
+    "assets/icons/source/dev-tunnel.svg": "a3fa15ad83475c5864a956fc7310fa0e5736b7a44d7765f1b185e0a0b3d6efe6",
+    "assets/icons/source/diagnostics.svg": "f9dcef7a6f44b0d9b241ea7bfb1935479df766566e8ca03d69e82f280c22ced0",
+    "assets/icons/source/disclosure.svg": "e5702ee4ae1c8033e1b33ab00d6db4f830deb47365cd5e3fc8b9a6341b1a417a",
+    "assets/icons/source/disconnect.svg": "dfb6573b937958c5bb46fe1604928bc28ac5cae6d6b01ee18309825bb03bd2b9",
+    "assets/icons/source/edit.svg": "7396651ab204a8d3d64d041c562759141c1c2660fc2d8aca84c9350fe3ba7151",
+    "assets/icons/source/error.svg": "4dfa26de91bd57eb6598986b4b81c484bb2886f5376dd833c3f0245162d3cceb",
+    "assets/icons/source/external-link.svg": "bb0ac24e4149cb652a896ca540bb324738e2c67f607919dfdceba98e2d63b50c",
+    "assets/icons/source/file-transfer.svg": "8dc8d3e6245fe4a2715d5ce29dd4960a84ed238a19433bb190d4e737ac626122",
+    "assets/icons/source/home-directory.svg": "15e66fcb5c4ea73c923fa1d81b8ddade747abd8d80db80c9c6e88b8230646696",
+    "assets/icons/source/host-key-verification.svg": "3dfb57d0242621c510f9704066df467fa5357cf87732238647d4db52d7e0f505",
+    "assets/icons/source/keyboard-shortcuts.svg": "4259f2a0c076763728bdd654c16869a0c9d9ba24f15750c2d897d549c7a09714",
+    "assets/icons/source/local-terminal.svg": "ee3006f855c2a2372ab4547ad1dc3f1d088fac925bfb07945e6bd9c9ffd8700c",
+    "assets/icons/source/markdown-document.svg": "379d39836275408d83480ec9c189d5c1a218117229b95de2e6997e8aaf153545",
+    "assets/icons/source/maximize.svg": "00420bbeeb3a2bd7378434fcfd0f2b184ebd745a5d4158f6d511a3bd36a466f2",
+    "assets/icons/source/microphone.svg": "69213ad5139e03bf45d96abb6e8a2db8cb428dfeefabec12833f4def75af301d",
+    "assets/icons/source/minimize.svg": "00ea69e21ca968e4f63d9f4986968abc46cd8de2aca409307c44d14cfc1c9b81",
+    "assets/icons/source/new-profile.svg": "67fb8199f03eb20c8c04e517a0942538a01ed993abf57c285a2251fcdfc537db",
+    "assets/icons/source/new-session.svg": "52d9f98fbcf27268458962cc0db99604d35d10f9d53d2405a7232486a5c1300e",
+    "assets/icons/source/next-match.svg": "040ab00a042b3d5b27cd3fa8ccd83d07ffc358446ba12d1f7ee601a75ce76432",
+    "assets/icons/source/outline.svg": "9eb9da38c0e34c97495c3adfdcda668560a5e5b3ac567938037b1faab2c0a1b5",
+    "assets/icons/source/overflow-vertical.svg": "009f87d1a68f135fdb3cc05a78234ef9e4270ef1c4186541f966edfcc6453f6b",
+    "assets/icons/source/overflow.svg": "f407baf5efbcd470b9bcbc26895c4998f6bb17b9a4e9f51a5de15962995208a2",
+    "assets/icons/source/pane-handle.svg": "ee63afafa1dae76cafc61f92e4387ec7c824febe8a9b28fe17d0e279f324e84c",
+    "assets/icons/source/parent-directory.svg": "ac1b0ebaf09f4fb92277a3f07dd0b5be539073b22b94860adc5c6658bc1cb1c8",
+    "assets/icons/source/paste.svg": "4a21d0cfdcf781fc08596f3e5330c62042d9bccbb7821db587920f248c6bc454",
+    "assets/icons/source/previous-match.svg": "891f7b3b4b98a415536687a18aefff037737e162357c2cd8a5f11b54bac9c09f",
+    "assets/icons/source/proceed.svg": "8f52ef8117ec120e7b2120e352b5c019c9dab3ee48460f5fe57e3d610ead363a",
+    "assets/icons/source/profile.svg": "ae388d837845a3d54214e033ea21071a5076caaabebc11155171b6c207957814",
+    "assets/icons/source/reattach.svg": "5df1d9571f15638cbde9200c815eb04d0b864a7cef0697facb551d47b633affe",
+    "assets/icons/source/reconnect.svg": "eecd5d643537a34ce72a602e911e5d5a707ccdd7c376edf6f4386a02fa4aa04e",
+    "assets/icons/source/redo.svg": "7693ccc38af654915ee3813ee14103edc8cc04a6f7ee7242fd2e082deaa24f2a",
+    "assets/icons/source/refresh.svg": "5b7794c2bf6a0bb977761d5513398a2922142ca074c69b70cb3e7dbd7d56454f",
+    "assets/icons/source/remote-globe.svg": "2e46a8104650948dc435030b7cac5dd51ebc183845bcd4918526f45e35645e06",
+    "assets/icons/source/remote-tunnel.svg": "afc35231dbb6d324f8cd6257d71a3dac554fcb7d612597dea31aacd1a2aaa69e",
+    "assets/icons/source/rendered-view.svg": "99f18d707d3ad2ce37487b4f7e90989d4626614858d0ddba0abd480df96bfbb8",
+    "assets/icons/source/restore.svg": "46a1be05c7c78e4846ae81808b857b55187ef0afbedeff55a3214a4b8b071b12",
+    "assets/icons/source/running-sessions.svg": "185d1f0e57d4e3f49102a6791c1dc553ff56e0462e053c8b706520ccafbd72f3",
+    "assets/icons/source/save.svg": "eb53ac39e7f285db1657aca04a081f57b49fc659a14ba7aac1cac70e044eb818",
+    "assets/icons/source/saved-profiles.svg": "4a9b551a963a23c8a5378083e96fd1463fb10556f9cee8564c4b25351e6f42be",
+    "assets/icons/source/search.svg": "847959679239072ff60e9dcfb65b8b0ebd063a326205f1e5c6450e1a85d66821",
+    "assets/icons/source/secret-storage.svg": "325edc9c5c35ac875d14035646f5b727c81c2bbaa645805ea1f5b8012e1a7436",
+    "assets/icons/source/section-collapsed.svg": "ad8236408b6367f6b2060b41049c7300d5753769a28121631b5a9f5455f94808",
+    "assets/icons/source/section-expanded.svg": "040ab00a042b3d5b27cd3fa8ccd83d07ffc358446ba12d1f7ee601a75ce76432",
+    "assets/icons/source/serial.svg": "cc1e870c5d11743682dbbc7269daf2ae068125e7577c646e0a2160945a0fc6d4",
+    "assets/icons/source/session-inspector.svg": "397535068599d251d124bfcd1d59ef39143da871105d887443f1ca82b896650a",
+    "assets/icons/source/settings.svg": "5217140fb54a23a794ad046358081e16a02819ea00e33078170d0dd5e635d641",
+    "assets/icons/source/sort-order.svg": "e2f6136d68ec8299836c4c72090cb83a227ceca05756302c8cabbee64a87f282",
+    "assets/icons/source/source-view.svg": "58efdea1d6727a4ddf3065f87294e58d18e0ac68abdf74bc4a8f5edf7458800f",
+    "assets/icons/source/ssh-remote.svg": "69d276d36598855845926a72a095768215936ab16c58e4a9353f3f11a6a9c878",
+    "assets/icons/source/theme-appearance.svg": "0c6b04db9affd49ae72616a029cc82bb10dd4059bd30048a6131a30046002343",
+    "assets/icons/source/typography-font.svg": "d17180e7a90f12a0176e028a9b7dedd4938d676fdf9c0f90a51143909f462774",
+    "assets/icons/source/undo.svg": "7dbe04897c1391d1d433c2e65150aa92f9abe023fbdb53ba34aac0ff6ee478a5",
+    "assets/icons/source/warning.svg": "2a38cbc32465943f61f06e14b4318976aa0fcbf6b0a5dd8887c111871c75c9cc",
+    "assets/icons/source/workspace.svg": "3ea1ce75edc6e2068c89e7fdb3ed2222f45c8e77f0c5cc6c1fa4a682406038bb",
+    "crates/festerm-admission/Cargo.toml": "16af4558c76087d2dbcc4a33e2c7f12d0fea46d07df8360ace1a7595dc1edd9d",
+    "crates/festerm-admission/src/lib.rs": "65fa465d1a9acc4b0f9f85a26aa69d8ac4fd6628e87dca8a07fa5d59bed6983e",
+    "crates/festerm-android-platform/Cargo.toml": "aab2dde4ef457dd1ac8fde5d05a2bf620961e43160873891d47872cd1bc109ea",
+    "crates/festerm-android-platform/src/lib.rs": "f0042ed86c4099d838d3e4a8f95e70e5bd8bc2b2931331cf64f1bc38b4bbdd7f",
+    "crates/festerm-android-platform/src/native.rs": "85d633dd487f396766cbdf59b8ec5acbce4abdd936ea97e85c993c3a153ba02c",
+    "crates/festerm-automation-js/Cargo.toml": "c46e193ea3f5e97f578e1eecc957c93feff100196bfe5868ec89d4940d5788af",
+    "crates/festerm-automation-js/src/bin/festerm-automation-js-worker.rs": "01521af3b60712eb6866dd9e0a77f6270a0b7779d3b85ba64818cff2131a1122",
+    "crates/festerm-automation-js/src/engine.rs": "2a946d57ff13d73fd6c76ef0c2f7d80cdb965b041e01a5237d9be3aa7027c9f7",
+    "crates/festerm-automation-js/src/lib.rs": "2473c601d6464a97acf782ca68e7abcd9c8e950e7f5ac17817fbd91fa50833f1",
+    "crates/festerm-automation-js/src/platform.rs": "423defd60e42083525793b3e4d88c7a06a5379ae205e4c16b5d24627ffc3ee9d",
+    "crates/festerm-automation-js/src/protocol.rs": "7e1894c68383705cf69022ad5c59c07e8cc1391b3a20126a5b52b7d4a2a23690",
+    "crates/festerm-automation-js/src/snapshot.rs": "3995477abed9ca51e8c024e63fdc0eb18f24bfd5a662d67a3bf1959aba6c7ef9",
+    "crates/festerm-automation-js/src/stdio.rs": "95145c0480dc223fec1fbd990ff35b67bd68f062044146e718b07b1fb6c5f697",
+    "crates/festerm-automation-js/src/supervisor.rs": "37d817bdad8a5fd844d4d09bd0461b9fe2faa2084230823e2ae69ba86d4c4b3d",
+    "crates/festerm-automation-js/src/windows.rs": "27568c5a81075a99c80ae83a4c87da0bfdaa1d30d19eae5ab4f83e0da3a8f7de",
+    "crates/festerm-automation-js/src/worker.rs": "352e9caed69fec40a97adce09a97ffabb2d0abca121caefef162b0ca647179a7",
+    "crates/festerm-automation-js/tests/supervised_worker.rs": "583c64f9aa2d7868bc8e3867b62af8655949fe023a2091da04e5948da33c8273",
+    "crates/festerm-automation-mcp-client/Cargo.toml": "10bdfa22a4b4d0a710e11fa3c03f1581c29ce85d126582e76e809445978eed88",
+    "crates/festerm-automation-mcp-client/src/direct.rs": "1c0583255517aab6d250ed5b06411b63f7148981b21b959f8b046fc2712b6494",
+    "crates/festerm-automation-mcp-client/src/lib.rs": "4b81b6fd2ba9b6b001e49e3fd38e85dfce3ba9aea7c63d0884033f0e185a0231",
+    "crates/festerm-automation-mcp-client/tests/direct.rs": "1f160947af81187f172f23c61f3eff75a23bd3cbb534ad309f9e8c67d47f5909",
+    "crates/festerm-automation-mcp/Cargo.toml": "3e97130496abff63478071ec060f9a00a976986cb9bef37b1d942cb4b8395d5b",
+    "crates/festerm-automation-mcp/src/direct_input.rs": "ef7dbf94841e992a1ece96b60c3b0ce0ec7f0c86031d8a60eeae8c8ef458ee6d",
+    "crates/festerm-automation-mcp/src/identity.rs": "0c2f2c87648eca1c94d123ebf518c5adcde63248c12c196f4aa23e8acd9fc033",
+    "crates/festerm-automation-mcp/src/lib.rs": "0b8130e4f2ea18aec5372b4f5715cb19795081b895526b2c6cee274acb954090",
+    "crates/festerm-automation-mcp/src/presentation.rs": "0f445c2df0db4c15a71be5588065532668de4b273f7b78e91142eca1414f3f36",
+    "crates/festerm-automation-mcp/src/schema.rs": "c83dcb29ced4c0020e3337e410b710720808ed7f4f05085d290a5813b7886e5f",
+    "crates/festerm-automation-mcp/src/secure_channel.rs": "c58ae709a46c19cdd9404954df58bccba9ce80ee7fa5da4027fcad676daf6e5e",
+    "crates/festerm-automation-mcp/src/secure_handshake_io.rs": "9bbedac9d1420044f27058ceb9054a21882d71ab0d9904d18d59843dc00a837e",
+    "crates/festerm-automation-mcp/src/secure_record_io.rs": "ee39802f7e3a26c0150f60b6d177bf4e2a7efc24930efdad4bc608a796f5a8d9",
+    "crates/festerm-automation-mcp/src/secure_transport.rs": "fcd7d6829aa25e646aca3cd7a01b71fb036a875ec8b9b521628b5dd20c6cf86a",
+    "crates/festerm-automation-mcp/tests/direct_socket.rs": "cafa311800b59d577f37ad47df1b92e8cc703c24d4cf943363ef351a1515ebc5",
+    "crates/festerm-automation-mcp/tests/protocol.rs": "0f3575ca9fee2a8cf8bf6ac9ddaa76eed23c9e87ff47c105a25efcfd05582f37",
+    "crates/festerm-automation-mcp/tests/secure_handshake_io.rs": "a9ef3a2fb24aaa453718d85a7153a551913352cc766887c2f18ba3979c6320f1",
+    "crates/festerm-automation-mcp/tests/secure_transport.rs": "c4c487466c7a1f2df8dd01dda999832d32d5ae3cba35be92268d6deee1c4f6c5",
+    "crates/festerm-automation-workflow/Cargo.toml": "080ef6b459a6f0f7d57e83275f660c0c37770b8d2521b75c4aacdb0a374449d6",
+    "crates/festerm-automation-workflow/src/intake.rs": "88689b9ee0af5fc8b0a963622ea56ca14e83786658f508d76d5f501bad4aee05",
+    "crates/festerm-automation-workflow/src/lib.rs": "2fc953c241e4202b21e403fc28e0ac24762148812fd97f59f695e5c984b3b147",
+    "crates/festerm-automation-workflow/src/terminal_input.rs": "8261374e0b91dcc41b1f453ddebd0b6e4cce9ca2279e1ef7528577ecfc4d831c",
+    "crates/festerm-automation/Cargo.toml": "010c7268809f8c669698f933a357760e37a0b3ce0b25d7197d6650d7b74693b2",
+    "crates/festerm-automation/src/broker.rs": "cf539212e94ea00f69deb2de88975d51ff31770d96bd53d918178cdc395bac33",
+    "crates/festerm-automation/src/enrollment_metadata.rs": "a26302c045ce25f18d51ee6be77b5433358a8836352ca80a759f72e61b707e1b",
+    "crates/festerm-automation/src/lib.rs": "a5921f954f755ae2b1e966dd8ef99406ad6cfe996964b6f7cefe5e992fb866f8",
+    "crates/festerm-automation/src/outbound.rs": "a0713d901c48daea9462c02a6cb5faf741f49e2b87ceb0d4271bf3205773fd0a",
+    "crates/festerm-automation/src/presentation.rs": "41512e419194b54b8ef276d3d163d0f25139466d2850f851fcf290876cf459a2",
+    "crates/festerm-automation/src/tests.rs": "5bff264d032ce4f6350be460ee5da377819ed3688548bd2d9728d69b9df97fdc",
+    "crates/festerm-automation/src/types.rs": "28b07e1d946cc0b3c14aa81bd9789c3570ca86af4cee587756925edaa3f44cbc",
+    "crates/festerm-automation/tests/shared_admission.rs": "f744740982f481c0fb25b4f79ad75cb4802f22f5d060287b281abe4467c32077",
+    "crates/festerm-client-recipes/Cargo.toml": "a660787ec81aba98f3d5fbf25cdfc9b655bc1e64518acf9dbd91d303dc4c2527",
+    "crates/festerm-client-recipes/src/browsing.rs": "85967919a0c7b333c8b9465bbb88fa1b9cc704f31355d82a11196af4f6354b51",
+    "crates/festerm-client-recipes/src/lib.rs": "4d3f079af2b4dd488800788859b26dba8f55ea85d69e692912c85f309f6f16c2",
+    "crates/festerm-client-recipes/src/model.rs": "edd75897bc8b9c2f2203372848cc85aa2381aa2aaa940217c67a7012040e8919",
+    "crates/festerm-client-recipes/tests/recipes.rs": "2f655dd61f37c185f2cd362f1fb3feb44d5f0b386aacc016ca4bb96b25616eb4",
+    "crates/festerm-config/Cargo.toml": "84fbb8a585cd756c137ddf9de24a637f2565646f9c3d7708adbd89b0800ae6d9",
+    "crates/festerm-config/src/errors.rs": "c715262f07901a00acd15069ad6a47c8ab90e08720194909ee305780c184dd96",
+    "crates/festerm-config/src/file_io.rs": "ce15120460c99c1cf765bd2af61bc2eb6d21e25a3522191ee0f44bdfda5a3514",
+    "crates/festerm-config/src/keyboard.rs": "46cfe5b92281efca1c3cfefcdc6aa2fd521d4cab24e469edd3909d5e5c92a365",
+    "crates/festerm-config/src/lib.rs": "2b36d9ffed42f67d93065580f0cc87fbdab6cd05f6c452dc0db7717deb9ffd18",
+    "crates/festerm-config/src/panes.rs": "de2cf8ea6469f5fd21e7f3126e093f1ff65ae1e752e090807845f370790e21a0",
+    "crates/festerm-config/src/profiles.rs": "baf95a067e85ce35c7b96d8f46d8a7436f8c4cce7e6ec15f8c8bd34ee6fca070",
+    "crates/festerm-config/src/session_names.rs": "a969716a549f3c6b15cb146b4b649ac8f6bbb745e2ac46a3a6cd16085eb9030c",
+    "crates/festerm-config/src/settings.rs": "386d2f04130d40311dc4f6b4956b9f37c54f042f1ac5c8c94da021772876bef5",
+    "crates/festerm-config/src/snapshot.rs": "e4152e02846db83e3462cf2443d773b4373beac1905d40a8fbb1285fb38ffef3",
+    "crates/festerm-config/src/workspace.rs": "25529beffc14e5572782fbd4273338703e00396d0c30a3ff907a057fa264476b",
+    "crates/festerm-config/tests/host_recipes.rs": "cfd77ee07876454ca725145f59324b9bd94f5c913153e9af7b84705882d232af",
+    "crates/festerm-core/Cargo.toml": "7e8a1721fe00ece212236ff49323da10cec05d006dae4498ea4ff6e1df5946ea",
+    "crates/festerm-core/benches/cell_density.rs": "2a3dc9763086f53861ba1362dea911736fa06f0dd13fa34e28b00bae7ab4af15",
+    "crates/festerm-core/benches/interaction.rs": "c89c8f66dc2884d55def71e69d887351c041cb12d3019cca2cecd4d863b57a7d",
+    "crates/festerm-core/benches/scroll_allocations.rs": "ae6d1b572c6229cd768c16c4a2170ae94ebde8b823caf30a598925c5076e45be",
+    "crates/festerm-core/benches/sustained_output.rs": "0a3d34a2c66913f067f10a18c88187a41f073ed9738e9ad663696f976db7d708",
+    "crates/festerm-core/examples/esctest-host.rs": "982f1ff6f9f83cd5d134aaea1bc678a7033810b6a62577771271d481b2955e38",
+    "crates/festerm-core/src/cell.rs": "3a2a80d13eb0fba4aaf591b2e90d49c527c7a6fe7be51b34d5f9e9609cf66d77",
+    "crates/festerm-core/src/colors.rs": "df1a948cf7cd70965e949890144edbc35d0039fd53c59d9ef174bb4236e38917",
+    "crates/festerm-core/src/history.rs": "191fbd88778b5af6964e12303987a2cbd52f2df9df90f891610966099f08b287",
+    "crates/festerm-core/src/hyperlink.rs": "dbae2f29d3687340157de33cb18cf38dc7f1d79e0f139cc8ec88fcec10970b62",
+    "crates/festerm-core/src/input.rs": "375382ea344be0afdcc0d7ec257abb5a7715d3e08d9573c6e056716abab1ddab",
+    "crates/festerm-core/src/lib.rs": "88efc6438959d2b10635f64ebbd9526c39a58c78604a269b1966f573bc6929a8",
+    "crates/festerm-core/src/model_tests.rs": "7c32bda784995e3f62fa4c41d4d6b35b0b4e31c6fd38a246dae52e7e81b702fc",
+    "crates/festerm-core/src/modes.rs": "70c6add99f59e42eddf791cbaceed0f153042652370fc98ffd7e9ff4491052db",
+    "crates/festerm-core/src/parser.rs": "0c2f3a052e277c299561586dc3dc27a73cbad6958169e140407bfe4f147fd64c",
+    "crates/festerm-core/src/replies.rs": "d33e1d3487bbdc02968f43dd1edde2ecfcd96e2683ab9f10c18a63e55dbef75c",
+    "crates/festerm-core/src/screen.rs": "f0284d9a915df1a24dd948d7b3e60e16c4410f61db0213453a2663830d54c115",
+    "crates/festerm-core/src/terminal.rs": "188fb8cacf7dba5adf428a3513563f57440ddef577f36315ef4b4473c8952ce5",
+    "crates/festerm-core/src/unicode.rs": "4ac9da16197dc263c288aee95de9380f6dc543ab0a2487ed902fd480909351dd",
+    "crates/festerm-core/tests/character_input_allocations.rs": "9b6ff18ea92e9e948c228dd604e0383f0f312de21cbc938dd5c379c2c619e1b5",
+    "crates/festerm-core/tests/copilot_cli_capture.rs": "15cfcb1685b3fdaedf313b0f035b39e57e05b793cad6530080f5220f9b3f960b",
+    "crates/festerm-core/tests/parser_properties.rs": "ef0063a4d8393b91717ed525eceabdf56a840ae3a5bef4a15353d05be017df6d",
+    "crates/festerm-core/tests/sgr_conformance.rs": "d4badc6a516154d2c9c1c40ff5f6cbdc85872388d0abeb1e58f2ff692bca0317",
+    "crates/festerm-core/tests/tui_capture.rs": "cdbcef70a103f1a24d90ab9af8de7709b46e6d0cfa697541592ad7d482794f7e",
+    "crates/festerm-document/Cargo.toml": "0326078bb4354d9c08779fe926fca8308a91c4d745564a947544918884296cbd",
+    "crates/festerm-document/src/bounds.rs": "54fbb3fb7e59f4b2d6ece5da80a6d2ed0f3ccb3d42ee467a5ea55bc5001cb1ce",
+    "crates/festerm-document/src/diff.rs": "d04bf0b61b671b5d5cbe2535120319721386f7c75b4da4361ff67cff3c68651b",
+    "crates/festerm-document/src/identity.rs": "cdad77837817a1a48e8dc51c5b537fe7c8382333029d34d19ba01980f5910f72",
+    "crates/festerm-document/src/lib.rs": "0f5824d8a04f830df3a45f51f5bc6a25fb95c36f79542359ea4b6e7e2d9db7d8",
+    "crates/festerm-document/src/search.rs": "6903ee8980ee7e519e964f7e606caffd37596f486f4b898ac420ac5351be6f0f",
+    "crates/festerm-document/src/status.rs": "afcc0e318784e84673938b456947ac4ec937234ca1f953a8c71a17f1b43f2f03",
+    "crates/festerm-document/src/substitute.rs": "4c5c7a73e753986e8042509a536f1ad187c420e461f1a0fe43c7375604d9a03a",
+    "crates/festerm-document/src/text.rs": "0fdd5657e276c6fb09c7804d29d3c7b456df73f552d44933e10e9fc795aa45f5",
+    "crates/festerm-document/src/undo.rs": "10260e2a113e379bfe5bd67ab2cbe1ef8e6dcc9ebb6509560f60559a22bbe5c4",
+    "crates/festerm-document/src/vi.rs": "d4f5e3f08f736b999d31492fe1dc06f9eb905062c5d8b7d9a96b5f95ab6f8bb7",
+    "crates/festerm-enterprise/Cargo.toml": "f06ca618875cd209b81eb0b9304e4d707d68e5eb608b0c44becb5473feea89ed",
+    "crates/festerm-enterprise/examples/devbox-discovery.rs": "b7ae3bcc2fd41d14f0a9d8778a5aff76323dc82700067144a9f1b4a35248086c",
+    "crates/festerm-enterprise/src/auth.rs": "6895ae92392604a6b69620c07b67d304a637e0737fbdb31beeaa01e7e3ad3e49",
+    "crates/festerm-enterprise/src/devcenter.rs": "101649ce1b8bd2a186803e6ea4286c8ee840186e0e86777e64b1fba042f8953b",
+    "crates/festerm-enterprise/src/http.rs": "9e9c8b5aa6493a5e0e60153aef0900df48338a62974da615efb7669fd65f5497",
+    "crates/festerm-enterprise/src/lib.rs": "a3d0452d9882a515d07b103e25e8feddb3fed2723054574ce113a8f8f117e1ac",
+    "crates/festerm-host-protocol/Cargo.toml": "171f1ab1a734325c3160e4ddd2028e06bbf33a7de7c2c7c3b5f755a85c0817e3",
+    "crates/festerm-host-protocol/src/identity.rs": "0bfe29f2d7b3ece8a12757103150d625e5a22276f3033ce104fdc0804940026b",
+    "crates/festerm-host-protocol/src/inventory.rs": "8d82b00e67c3652e51aeb5765c1ea7435ce2079daacfa3aeb624efaa44da9be9",
+    "crates/festerm-host-protocol/src/lib.rs": "32c6f0d30fe1f4bb814d674c24e09c802167231af6705ba859612b558c4c6439",
+    "crates/festerm-host-protocol/src/resources.rs": "356110d367f68dc8cf7168dd68c0b50a613b67b67c8057ede6555c92f64a8c00",
+    "crates/festerm-host-protocol/src/wire.rs": "073debc22365df766e4a616aa60000f74b1af94933191dc655bf002ec1b04ffc",
+    "crates/festerm-host-protocol/tests/contracts.rs": "48930f4872a5bc8508b7653122dbb8f993f7a16de6a43e107363fcae221e21fd",
+    "crates/festerm-host-setup/Cargo.toml": "a8120fbb420d1de087349411cfc8563f36a415e951c08b7ab9dd82dc87c57908",
+    "crates/festerm-host-setup/src/acquisition.rs": "24a10efd67008dc7598623935454b2e50ee85e406616bba64f94e72aef830fff",
+    "crates/festerm-host-setup/src/acquisition/host_bundle.rs": "23be3aafe32032d398d41d92f39de534b2c61da7bed81899343e5a0bb75c289a",
+    "crates/festerm-host-setup/src/acquisition/host_bundle/tests.rs": "5cbff7a1f52ed90cfd2ad30e2690295a0b68d27cfdc15b37f9b7b1d5203b25b5",
+    "crates/festerm-host-setup/src/artifacts.rs": "7e568772a5d03d394af6caf301943a689e5731ecdbb6b57104f9e477549d03a1",
+    "crates/festerm-host-setup/src/bin/festerm-host-service-test-child.rs": "8e0692a5d30604e959aa9dc61381a536d287f7549d4ced2e4c0bd6bd1afe764c",
+    "crates/festerm-host-setup/src/bin/festerm-verify-artifact.rs": "ecebc1b26ad1a008aa042674ff2f9732534aa2517308269e0826872558f87132",
+    "crates/festerm-host-setup/src/cloud.rs": "a75a0e95e9919aa0344aa076bd1be3052bc8ff9d87d062bffbc90380b359d776",
+    "crates/festerm-host-setup/src/controller.rs": "187c77a1d11ea71cdbb7b699a47d5252727c4514a0b3d2c0bbf10d0a19864ff9",
+    "crates/festerm-host-setup/src/controller/linux_login.rs": "f7844ae9fc522fc88431b55be23aab1360502dae1d0d6827160233ac822e5017",
+    "crates/festerm-host-setup/src/controller/managed.rs": "68e9652b1db2af059c23a08189f0fb83378a2dd47ac5b3f77dd63a4c72c13391",
+    "crates/festerm-host-setup/src/enrollment.rs": "bfd28f93d315d833728bf514d23870b2cbc58e42282648701c1183f93fc93953",
+    "crates/festerm-host-setup/src/lib.rs": "7c59c89a65f8f7b123f80ffd38ef60f2c781311afae10cf5dbb22c0dd3e786a7",
+    "crates/festerm-host-setup/src/lifecycle.rs": "e55d4a8a2d20de31ad3015ac563ee1c57e86c352f8de7c545085fa8f2d60751e",
+    "crates/festerm-host-setup/src/owned_migration.rs": "97267cbe7ceab569cb82864cc292f8a822a8eb4fe48b6709df49dacd54cc18a3",
+    "crates/festerm-host-setup/src/owned_migration/binding.rs": "05cc8182c8940a79abf9ab294db1453da81a1ba1cefc99a1857924ccfab95106",
+    "crates/festerm-host-setup/src/owned_migration/tests.rs": "a719e97800e3bd34601af9f81568ecdb5a6f09fd1e62e3561a027d1f09615a53",
+    "crates/festerm-host-setup/src/private_session_sharing.rs": "879326e17176ae5331bf5ade31cb06214673bc8ec799f0cdd502152a33abaf1d",
+    "crates/festerm-host-setup/src/private_session_sharing_tests.rs": "69493a242a25c6c204b9ea179a1ae8adefebdf1624a1cbfcf6e105e765efdd78",
+    "crates/festerm-host-setup/src/protected_state.rs": "0afb19bf6cf5fba5ec7055b044a27b945a7d46c619ff4ec4a2ccb7b503eea268",
+    "crates/festerm-host-setup/src/run_exit.rs": "f28261718f059890b655f366f2d884552d04bfc48d570609c95e59e51f655808",
+    "crates/festerm-host-setup/src/services.rs": "3743e0a721445c0f351bb6ad7a45622d02a6ce89a92de4bdfc158b39283f569a",
+    "crates/festerm-host-setup/src/services/definitions.rs": "f5b21e237ff7e9c01cdae49060e9d72b1d64cb99bc842d47b9a40f28c2df1a7a",
+    "crates/festerm-host-setup/src/services/native.rs": "88dccf83f08831c0dfbd60e7b9a99d5eeaba667253f412a1a83aa7da416c18ea",
+    "crates/festerm-host-setup/src/services/replacement.rs": "00d40f83c54f28924fbedf36e12c35fcfc2b0619727c9f124ac72434f0edce7a",
+    "crates/festerm-host-setup/src/services/replacement/tests.rs": "9801ef7ea7d28c5fe03fa3dd49878003261c55be9b976c59b13d83d9d4e749f4",
+    "crates/festerm-host-setup/src/services/replacement/windows_tests.rs": "4f3870da7cb7971afcfe37ca1f1b887236abf6013fb501a17988f58ae793438f",
+    "crates/festerm-host-setup/src/services/tests.rs": "a2aa170ca005c2d53fce49d81cae1bce08b9a07b978b31c85e42025e07b429fc",
+    "crates/festerm-host-setup/src/services/trusted.rs": "3218a57ff26b5376b53bc9ea668af1cd4bb74da0dd941abaee83e517d22f0d7f",
+    "crates/festerm-host-setup/src/staging.rs": "0cf3d5261d0ecea035627925c2b74612d86253bfed29e25c6c73fa15c8e4ef57",
+    "crates/festerm-ios-lock/Cargo.toml": "7e2f2bf6f59f9e5c70465379f36e6e956faa945eec372e70ac15cefacfe8d787",
+    "crates/festerm-ios-lock/examples/lock_host.rs": "2480d2d75ce171cc2dae41f44212d5bc6527e2029ed2edfda7cae40e27cea8c9",
+    "crates/festerm-ios-lock/src/android.rs": "6bce37dab9fa44c7ba54651427ca13425eadaa65f0794dee019f53e2e96d1911",
+    "crates/festerm-ios-lock/src/applock.rs": "6159710af08eae8677d1f1250ba09ebdcfdd9d9734cd3eca6d738c3b69b0f5f4",
+    "crates/festerm-ios-lock/src/clock.rs": "51df00aa3953953801f4e8ac074532669cf068c8680ba2bff68563b6aedc3036",
+    "crates/festerm-ios-lock/src/ios.rs": "64cea0c4d1c83dee02cf3077937233e9346b89aedcaf26664513be7e1c9e117b",
+    "crates/festerm-ios-lock/src/lib.rs": "face9b4b25033d202fdd9e945d5bfe2ed25a496557a1cf62f6fe87952ae17e63",
+    "crates/festerm-ios-lock/src/locker.rs": "83a21fffaf256760b340079f9257c54259960e0ff9269f18e54fcdd3fb072106",
+    "crates/festerm-ios-lock/src/policy.rs": "77006e9bd025da086af4638a5f0ba4d2b7d1bedc3822a014e2c4f169be7ac9fd",
+    "crates/festerm-ios-lock/src/store.rs": "5d5455666826c1390896f6c146110e89818d4fb4b11f93d81f8f5fa03b7f98ed",
+    "crates/festerm-ios-lock/src/ui_model.rs": "6ba0ad50bea29d2d11d5462a13716583c0c64e39195fd91f3ccbbe6a1f529597",
+    "crates/festerm-ios-lock/tests/lock.rs": "41789ff115c548316f598419ae4c839a28d06c9021730f66d3f5d66695419d56",
+    "crates/festerm-ios-window/Cargo.toml": "9af8cb7e614e8cad8603fc04aea7c8bedc380165ec46c5f10473afac773c13d3",
+    "crates/festerm-ios-window/src/accessibility.rs": "ac453d2beb63022fe01959bd1062b9fd7d5a511ed5212d1f43c0cd25e793ece2",
+    "crates/festerm-ios-window/src/android.rs": "bfced487cbd96bb7edc383c0f66c87bca3d3ef4d12fa034410aabe0849958a19",
+    "crates/festerm-ios-window/src/dictation.rs": "2ca339c737067ed36d90d5028ba946646a75a64725516bb6f0dca556e9ac445c",
+    "crates/festerm-ios-window/src/document.rs": "8b01a986b101cde7f77ab8ac6d4703497a5f8103bf0e3414fff039b9746f5924",
+    "crates/festerm-ios-window/src/document_android.rs": "f0ba2208ca707c4da89a55a5461d3993b93e47dbd8345171ba0af0ee765fe286",
+    "crates/festerm-ios-window/src/document_ios.rs": "dcef5e8c328d5f1a2eea253d474e79a5d27dd80c58707e2d1a5f76e93d1533ab",
+    "crates/festerm-ios-window/src/document_smoke.rs": "2f1a9ae1638f21577d4e3e27c441bad07933d213076466ca5475ec9707c57a03",
+    "crates/festerm-ios-window/src/document_writer.rs": "9e7ae0e1473c983c1df45513523214ea5d62394e769feb49c48b4b132bee55b7",
+    "crates/festerm-ios-window/src/field.rs": "806c20a2793275eae1be0a565cf126e9cd3f1bd6143f963884afdb65a5cd460b",
+    "crates/festerm-ios-window/src/ios.rs": "455961400723554e19c6df0a56f9458d145c84733292b200dec5369f763f37ce",
+    "crates/festerm-ios-window/src/lib.rs": "9a8909f512c698e27cb07e9f37ea6b676e0c3768e989bcff15c3cbe04f4d9d1f",
+    "crates/festerm-ios-window/src/recording_folder_ios.rs": "b5e8f02eddef5f52d09c2ef4483b65c3ce2286006c1fe3e8e8d75807f43989e5",
+    "crates/festerm-ios-window/src/speech.rs": "0c93db905963ca4aaae2a941b2182f456ad57321888903a751f3c0d23de7ab90",
+    "crates/festerm-ios-window/src/speech_android.rs": "e3e68f49dc3f1a165d7488e98fa8a15a1fea493a59ef3b68262c44d8cbb42158",
+    "crates/festerm-linux-power/Cargo.toml": "d0ef699ef6b07f85660dd48c6997e3cb75a22273df231f275932aa6dd5d5b5ca",
+    "crates/festerm-linux-power/src/lib.rs": "441f96cc5a72d94c9c97080498dc45844d094c28e642eaea527b529e06892ea9",
+    "crates/festerm-linux-power/src/privacy.rs": "e1c28eeb48e9dddbf558498d9e46b20acbc0b57f56b5f99b3c901643184a3ed7",
+    "crates/festerm-linux-power/src/privacy/gnome.rs": "f6ddd2d886e962938cf31cafc97ca9aa3fa8554bce5d46d4074e76f882cf22a1",
+    "crates/festerm-macos-window/Cargo.toml": "6a5100d9328ed5d58665e88cc37578b59d319ba126430ed00b1158b1e2152325",
+    "crates/festerm-macos-window/src/lib.rs": "e096a4f07640dbeed4100bbff2009a2962f36521facd7827480cfd598dfd99ca",
+    "crates/festerm-macos-window/src/privacy.rs": "d88e51c474fb39be666793b0cf0d1e9640a8e13c0f9fd56cb825abae9c407906",
+    "crates/festerm-macos-window/tests/open_document_appleevent.rs": "548005d1cbfcb280eb5910f45006981779fe07ed0168322fbb71e6d24d550ce1",
+    "crates/festerm-markdown/Cargo.toml": "00196b75837f3764a08849ac22dc13f8c6477955a0d4cd930b48ad1ae3036d10",
+    "crates/festerm-markdown/src/html.rs": "451e7d1fc0a4fd85b9849dee24d95df27c8d9c30bda6ee0726c530ebadf45b7e",
+    "crates/festerm-markdown/src/lib.rs": "12fa533d4bd96a6ffee5fa1ae13cc1e28eade241b86af0a49a037ef7c72373fd",
+    "crates/festerm-mobile-docs/Cargo.toml": "94f911358174cf5fecd32182c3a17cdb988eb1aaa2714ed69542cfb4cfeb0a3b",
+    "crates/festerm-mobile-docs/src/editor.rs": "8b76b837677b1358dc4187739a265f94b24c2b24d3cb62c5ea41b45d8423e223",
+    "crates/festerm-mobile-docs/src/lib.rs": "ce0b32d920e039ae9171e0160449c8ffa3ffa6274501e16832249d29af6c33b7",
+    "crates/festerm-mobile-docs/src/paths.rs": "35b8f7ce140942e962680e87723cca1f44fd9edc01edb1a4a8ad2737220763d5",
+    "crates/festerm-mobile-docs/src/render.rs": "bfe0c5b6341093e78c80abf0df46cc99a39e9e3590e6f5664921e1cad6fba796",
+    "crates/festerm-mobile-docs/tests/viewer.rs": "9e9511d21078f79bdd04a59aa3cc8aecabbd52e43839d0c173a768d22253c5ce",
+    "crates/festerm-mobile-profiles/Cargo.toml": "eca985eedf00921fcd85d09dfdc6b1d5e563a7313eda94cfed899f3cb5aeda50",
+    "crates/festerm-mobile-profiles/src/clock.rs": "f1c5936d42b60b3fbe17c8529682145e6202432abd13f81ca79e5d450ddfabeb",
+    "crates/festerm-mobile-profiles/src/document.rs": "eeec3dadf869f8387551084df07914b885ffebae67372eb8ce6cc843021755c6",
+    "crates/festerm-mobile-profiles/src/error.rs": "fa2ae438e87e524ad0f490651cf59c2aee64a1fea308bbaebab8df5ef4146163",
+    "crates/festerm-mobile-profiles/src/hosts.rs": "a8e90e71ae8c030d058ac529a7f5a76200d6d3c9f446d277786efbd41cd19e87",
+    "crates/festerm-mobile-profiles/src/keys.rs": "dd98747c6210be9e700d3d599429cd8950dd8209eaaac07470fd3803abbf6eee",
+    "crates/festerm-mobile-profiles/src/lib.rs": "a8a11d06bf337bb93a77c659da697779da5e37a98eaf6097853f6a227dd2a87a",
+    "crates/festerm-mobile-profiles/src/model.rs": "86854f11fa9582872ebb307cd72011ac02906be1e575af8b404140b43eef6f49",
+    "crates/festerm-mobile-profiles/src/store.rs": "79280172ed56df05abc6e0e66afa90433b7dee57557fa65106fa86697c3d9bf7",
+    "crates/festerm-mobile-profiles/src/tunnel_import.rs": "5b184494c1358a665bde7bda7042f8465695a27887669edf89829e875e454c88",
+    "crates/festerm-mobile-profiles/tests/host_recipes.rs": "d0cfaaf7479b83a940f50c2bb0500c5cc59f7b771639b35b36622b26687f931f",
+    "crates/festerm-mobile-profiles/tests/mobile_profiles.rs": "420cb053e21ce513633cef8ac79db12a23809936b937e06d4ef8a7ce1010ea16",
+    "crates/festerm-mobile-tunnels/Cargo.toml": "aa3c741b32e2bdb951dedb230ae5c0fcfb67762ccf50c6d46854fc6ddc5f5216",
+    "crates/festerm-mobile-tunnels/src/error.rs": "cddf46cbd508086725d25e16298451ed9f11aed7bb9f0e06f6e70f67b300e2b1",
+    "crates/festerm-mobile-tunnels/src/lib.rs": "4c57bfb3dfaee3c78847403c3d62de7a8443d0977218a911d51d7a5b06d5a42a",
+    "crates/festerm-mobile-tunnels/src/testing.rs": "b81f423231bf5b3bc08adcad1394d4b218ef86a72dc1f43d1f4095f419068f20",
+    "crates/festerm-mobile-tunnels/tests/api.rs": "0a21fb308f0d4d3813786ac4f66deb52f1f2c1f84c3b19c7c3736fdfd1f1709b",
+    "crates/festerm-powershell/Cargo.toml": "71bfb614ec76ac6d739bcb77cf986cde34a36fa0bfccbe01a85ab9dd97e32392",
+    "crates/festerm-powershell/examples/psrp-shell.rs": "dff762f0af2eca81525bc24e354b395d7664db367f60948e1474665c7380d8b9",
+    "crates/festerm-powershell/examples/psrp-ssh-shell.rs": "835b33ddce7650d8992db6c67f484f91ea49ac1c2f245fa845bb48cb80c7245e",
+    "crates/festerm-powershell/src/lib.rs": "9351e5b1f8ce13ac7dc26684fd684329c91c287975eabd659b07490624ab85ba",
+    "crates/festerm-powershell/tests/psrp_interop.rs": "49c93817274279eb74a8f2f61a78985cebbca2b8ff8c23909aca973834a01051",
+    "crates/festerm-powershell/tests/psrp_ssh_pwsh.rs": "739006a045568f76eb5ad801972a6c848ae1ea56c8a0eb44e9bd8b2858791100",
+    "crates/festerm-pty-test-child/Cargo.toml": "cc2ae5525744a92261af4cf407b4a9a1176a01698a2aa0f56f3ca056568b8394",
+    "crates/festerm-pty-test-child/src/main.rs": "713358082882d9193c0a58a6e054181371b83bf234010e76d79e307b083aae9d",
+    "crates/festerm-pty-test-child/tests/input_acknowledgment.rs": "54f8ff9552ce13273717140f9bcfb36bcbc37c2ca58c01f9c274b3ee193ddd0d",
+    "crates/festerm-pty-test-child/tests/tui_workload.rs": "76f82c8328ea4a1fcbbfeb1a8033f3e619b4ac22291d4f8582abc87d41a74ded",
+    "crates/festerm-pty/Cargo.toml": "6f7cfa14022c1cd1431997a0da962b1119f4534fb3387ec29bcc0a1c21585bca",
+    "crates/festerm-pty/benches/blocked_output.rs": "1da84563879fbfd3f7309ebf13711800d7b501f214a925f062d886557028550a",
+    "crates/festerm-pty/src/lib.rs": "c048149f5650371a7801287dd53336fbeec0ad12776304315a9fceed521c70f2",
+    "crates/festerm-recording-apple/Cargo.toml": "41de46e97088fa619339e005d0a5187eaa85d7a2b9475af9d00aab5846893e43",
+    "crates/festerm-recording-apple/build.rs": "12952bd95c5ea8708762eec802a24d4f65b99cdd362ea346b507da7c75773f3a",
+    "crates/festerm-recording-apple/src/apple.rs": "669718be9355bde988db9f544f112b57ee497606489fc919c4943780bf4fca0b",
+    "crates/festerm-recording-apple/src/lib.rs": "a943353cf093d47b311b866dadef615d554c9b3723b0bc7c3d970e93844390d1",
+    "crates/festerm-recording-apple/src/storage.rs": "0af8737ecf1b6966caef6179b97a1c77536a2bde1fd83fe860ab9c692c5c7300",
+    "crates/festerm-recording-export/Cargo.toml": "bf75aca62bd6f24179d16f1301df7eecfdb927babe122cdc7aa0d4163e31a21a",
+    "crates/festerm-recording-export/src/appearance.rs": "bf4cfa017c84986f46c66575ff4a4df8e13090a3024fc80270b985e7976c34fd",
+    "crates/festerm-recording-export/src/lib.rs": "61a52467f59c266f399cee67cfd72bfd29b27d8bc767c73df0c304461295d43f",
+    "crates/festerm-recording-export/src/library.rs": "4d4a74f9a880b2fd20e83e030746ef78d9dccda9a6f835c28f954088e6b7841d",
+    "crates/festerm-recording-export/src/prepare.rs": "fda3c87d6685e9f3706f95bb34a8a1281a04227cf622684e453aefeb1df3d608",
+    "crates/festerm-recording-export/src/provider_journal.rs": "8ce2f98c1fe59a5e26e1ac37bb35248e284679333922b8f98a33585a11154fbe",
+    "crates/festerm-recording-export/src/publish_android.rs": "e1c8f390c4444efe5f04a111aa6fe9a6912aad3c3216fc3a5bf05cad138c6454",
+    "crates/festerm-recording-export/src/publish_provider.rs": "6bde8b55ca9cd3c0e8749e14816867cd74c496214df950860ba64f4b91996515",
+    "crates/festerm-recording-export/src/publish_unix.rs": "f383aa44fbd0bb172a3662d0be9376d1f5dd99e854feeaf205774277728873ef",
+    "crates/festerm-recording-export/src/publish_windows.rs": "bd69ff3bb90fbf25f015a778d11d890e917b54cb451fb6f0105986fc47dee75c",
+    "crates/festerm-recording-export/src/source_unix.rs": "9c4bbbd292510cce84ad7c62c56b2c2fd227c1ea909d47dca03e8e81f7d494bd",
+    "crates/festerm-recording-export/src/source_windows.rs": "c962e536300adb00a17eabcdb19dc24b63ec6e7616a413489d08a4097c81f102",
+    "crates/festerm-recording-export/src/staging_unix.rs": "8fd497f56ddd033ff34a69eb1c4865d7d8039ccc7c8b925c264985bfc99457c3",
+    "crates/festerm-recording-export/src/staging_windows.rs": "c7f25bd90170edc1e0f73a91f8d7db9b0952bdccafa99d4fb13599745ebeb42b",
+    "crates/festerm-recording-export/src/worker.rs": "fa5fd2580023b9bcd1831f4cba74cea93b0e758a4e688d11e1f2cf97dc50437e",
+    "crates/festerm-recording-export/tests/export.rs": "c3e7fc7acf186576a3b1376199377e8334b7bc73eaab215b811b9d41aaa27f77",
+    "crates/festerm-recording-linux/Cargo.toml": "f3e80c7311c77ba136ebfc76ac0e4c61d982c2438bc2727031ef03a02bdfcc02",
+    "crates/festerm-recording-linux/src/lib.rs": "71ed427591f84a7ed20eb8281442db457a84c1cf5938109681e5199c5c6b73ba",
+    "crates/festerm-recording-linux/src/linux.rs": "7a716200f9b5c43e6a269667a587510d88a60133e56d905a0a822b034b050fd5",
+    "crates/festerm-recording-windows/Cargo.toml": "9646f419a2546dc1706eefc83429e0c91149987d11ab9f78dc9077f0438d28e8",
+    "crates/festerm-recording-windows/src/lib.rs": "c477228c7192e1d692b369837df687c98cace9ad439f357dcc1b1bf29a659e7f",
+    "crates/festerm-recording-windows/src/windows.rs": "fa0cf3d8601dd0e93fe904b3afba4e0cdbd9b712428c3c9b40e16660c8b5992a",
+    "crates/festerm-recording/Cargo.toml": "72a127f8ced59955dd89151c34f30ec7167bc338fa106a60ac2504730ab9953e",
+    "crates/festerm-recording/src/advanced_pacing.rs": "dd2b38d5a7df8ee6d30fd310ed89ee78b66e08c48b8bccfabe8148776afa0ef4",
+    "crates/festerm-recording/src/artifact.rs": "bb4e9eba8fab77fd549af0fed1e51f8d2c29dc7b2ac22f7557c47a6894e48672",
+    "crates/festerm-recording/src/capture.rs": "6d125ca132bc76616e60a41063e3f95d99139af9a7d4f270a09d3a06fe8d8985",
+    "crates/festerm-recording/src/lib.rs": "04e53f8119d83a418adc605f1a75b376071fb3813618939ec596f56e0e6abd77",
+    "crates/festerm-recording/src/naming.rs": "fa46421497cde6e0c45f412d8a055fdb2d1cedae426ba13eadca527a85d5e0ef",
+    "crates/festerm-recording/src/playback.rs": "895068de54530b8754a6cc989dcdcd2d6e1ba7bc9d18ffb2f2332b5baa0c70da",
+    "crates/festerm-recording/src/replay.rs": "97be8c49dd67c5bace0860863ec6fc34db464657df6e467f2c33b9f338846eb4",
+    "crates/festerm-recording/src/settings.rs": "f54426c50ac0b9afa376ae78e85dae3cb328683b424b217325db134b675dfca0",
+    "crates/festerm-recording/src/settings_store.rs": "bb266944c008109230b89c19603c35f4307547fe6395c9b6f6796661b649f4ad",
+    "crates/festerm-recording/src/settings_store/catalog.rs": "1fa0d8eb4bd4e833e8224dd8b67275e1539519bb71e6ad007885b4f9ffd1247e",
+    "crates/festerm-recording/src/settings_store/lease.rs": "12fefa4bf44a4916394ad7e2c7cf92325dc0c0c3e4d22339ebf08347d6fbe4b9",
+    "crates/festerm-recording/src/settings_store/sources.rs": "5f97134ef6e682d70a239fc91c280950e5fc1815dca96504184bd46db1fa16b0",
+    "crates/festerm-recording/src/shared.rs": "ec7556d4a049fe7cf47db07e216ff134c1a99ca5628aa38bf12c15b3b096dbc2",
+    "crates/festerm-recording/src/source_unix.rs": "6888b52d4092ff382e68c2a79794da45ac5ff918edf9dcddcdefcee46277e12a",
+    "crates/festerm-recording/src/source_windows.rs": "2f579c363cda01b7edbcb6a725fc4579441ea0390d6ad86ed8e8952231f195c0",
+    "crates/festerm-recording/tests/capture.rs": "1adf928525e2e2a953f40dd9f16945e8d974febe3ecea34f1e74d1da3ea40a0d",
+    "crates/festerm-secret-store/Cargo.toml": "ea8bb34be8a9a32b358bc2e00992ac37bc3c2652859c20d6742b3993bfa2e92f",
+    "crates/festerm-secret-store/src/android.rs": "4908d0bbe40d15f4196ce644c3f8133a1b37f4c1b52065315996c6b77aed0bf7",
+    "crates/festerm-secret-store/src/lib.rs": "6a69f8e1fd7276e03f269d7c500ecfb63122a54ec7669adc601c116cea08c2ba",
+    "crates/festerm-secret-store/src/native_root.rs": "db9d632fe9402c4015cb58650269e9c4732abf431c672bf4ffaf4409fe4faf57",
+    "crates/festerm-secret-store/tests/native_secret_store.rs": "570e1e324cbbebf67cbc8eb2d6515d5d91beb56a3ec1d67f3adad5d91df3f1ad",
+    "crates/festerm-serial/Cargo.toml": "2f83441b897da9723044e60674c996f7b4f9f6b70857d517192787444b2825be",
+    "crates/festerm-serial/src/lib.rs": "17a5ac7819c89793a2173dc45582dbdcae1bb5ee9a06521039d1960105cfc2de",
+    "crates/festerm-serial/tests/socat_loopback.rs": "f5ebda8f97992205c910b7c51ac0508dd04bb555570b7ffa89a7fadd78ef54fc",
+    "crates/festerm-session/Cargo.toml": "40b57f5b538dac80a573b3b141680869a22e748b85dd74f6691b83fb224bc3d0",
+    "crates/festerm-session/src/automation_input.rs": "97e04646e1cb5bebb960ccc59211cb826e6032c2a44c7ab7be0de385a2e342b0",
+    "crates/festerm-session/src/lib.rs": "48620a2253e9bd3ae48d6598029fb7ca20984d66e1606eb657fc3519c5e36624",
+    "crates/festerm-sessiond/Cargo.toml": "c44112942b154af8cd065f11d79095c344c895ca32ba31a2dcad09f281c1f08c",
+    "crates/festerm-sessiond/examples/remote-sessiond.rs": "cb6b6747b3e95845da2941789151e07f3be37fe8c12f2c22c993ce1512cda9f8",
+    "crates/festerm-sessiond/src/detached.rs": "8638c7980c7c5ac62e4695fd4c759884073925e3f5de80226f49d1c0d1d7affc",
+    "crates/festerm-sessiond/src/host_binding.rs": "3f01a1b945e63d2f46e1741cad7e91199b158811ee5c68faa55e22eac8b41dd4",
+    "crates/festerm-sessiond/src/host_control.rs": "5455c968307b119796bd582df8b3fb4259e449dd6d781d992ad3b609cd570b77",
+    "crates/festerm-sessiond/src/host_lease.rs": "196257486e6d72a1cbfb91c19cf825542dc9ba53a1219724cb95fe6e087d4b4d",
+    "crates/festerm-sessiond/src/lib.rs": "c7a3df599fa28941e19d0dda30aafe1dce5f726d47662b7fc256b1deb9c94b92",
+    "crates/festerm-sessiond/src/lifecycle.rs": "b0f8f5f0199e26deb28e68b99ee8ca91c8303403d7aa20c9cd47d32afce79173",
+    "crates/festerm-sessiond/src/main.rs": "a65b0e8765a7096e98400b538d1747f56fa97b5afb11b506120851048e309c36",
+    "crates/festerm-sessiond/src/native_binding.rs": "0f55382127a6045c177f88736fc672df5adbb53d7987819584f82b02478664e6",
+    "crates/festerm-sessiond/src/private_storage.rs": "7b91484eab03ea64e3a0cc975cc0e5e8535683bde4ae03af80049c2e4781afa7",
+    "crates/festerm-sessiond/src/remote.rs": "4c3fb06dce8a60b671579bc45dcd41d8f9238994d653b392595f6bc128bf0af0",
+    "crates/festerm-sessiond/tests/detached_native.rs": "587535bef94ca2794e619a9baebdba3459e61cdad8f26207e203ab7d280b5635",
+    "crates/festerm-sessiond/tests/host_control.rs": "9871710b10d455c2e376042231843fda1088c3499c1d7f10e780e58b85576987",
+    "crates/festerm-sessiond/tests/mobile_tunnel_loopback.rs": "2011178aa5047f4647d677e334db46f77d0f36547d4da90e02a5c77975fe7525",
+    "crates/festerm-sessiond/tests/native_daemon.rs": "d289bb238f305112f3e2953cb3693a813a433b34c32d73124799e69a8cb7a810",
+    "crates/festerm-sessiond/tests/remote_ssh.rs": "90eaa035f0578082f7d01930d576e4a3b428f8b1794e4635e5a762cd9663a628",
+    "crates/festerm-sftp/Cargo.toml": "0e671b3ac260e1d7c98673fa50b04ef7d4d5761ae645183af19806835c659230",
+    "crates/festerm-sftp/src/cancel.rs": "605bef586a3c0bbf3ea03d84488983095fbad9340f812e9a0782084a23f282f2",
+    "crates/festerm-sftp/src/conflict.rs": "8b0c710e118116da1f9bcc5cda883ac8158f1c2a9f582e3f50d3a2d47ec49f2d",
+    "crates/festerm-sftp/src/error.rs": "54680aecf63d295589255fa828e82d21dff34df9f497675d8e738ee33929bb6e",
+    "crates/festerm-sftp/src/fs.rs": "943260d41957d2a27dc18b37e3905584884405a29e9f01f37f625cf596ff65c7",
+    "crates/festerm-sftp/src/lib.rs": "1581ed2656c05ebc287eb859a398b57ea062f4a5ee26e2d50a993ac14c546b60",
+    "crates/festerm-sftp/src/local.rs": "bda0d394593b26934da3f2ed12b7611b932e95702071d4272a40497288197023",
+    "crates/festerm-sftp/src/model.rs": "450fde35f5db8fedbf43dd9cf68ffb5d2d03e89e61739cd648d7ac3a2cb0423e",
+    "crates/festerm-sftp/src/path.rs": "490d982292810bd9fe1db9ad452eb6292f7b0fe88d7c9e9009ddfc4f151574a5",
+    "crates/festerm-sftp/src/remote.rs": "1582492274867f0ce190658e7cddab7fd10bea6f21b3498a52f059a979446e1b",
+    "crates/festerm-sftp/src/transfer.rs": "11e151b15c86a5c2ad0510511f6a2430a9505d2fb1cc85e328ed19197a5d1a09",
+    "crates/festerm-sftp/tests/sftp_integration.rs": "52076b92fccc0c3fe691d4684a5451bca3f625383ca9501260c368f561f1e6bd",
+    "crates/festerm-ssh/Cargo.toml": "640986e90caa8adf234bb9361b180ba19c399f54de1fb47a6e3d1c89fdbb8a0f",
+    "crates/festerm-ssh/src/decision_gate.rs": "8a41af487463e88560a346d022887e9e8e7075a26412947dcc0dfdb37adf1d84",
+    "crates/festerm-ssh/src/exec.rs": "28de6b0d698f75c30ea29ac0ed87ae765d57fca07382bf491bc7118876b8b375",
+    "crates/festerm-ssh/src/lib.rs": "232a6def94510acc476f8e43470b0d8d31aa64e9fc4ace1e095a23680dc56e33",
+    "crates/festerm-ssh/src/openssh_config.rs": "8d2dca404cb0bdc6099e41b1249990600a41fdf17215439e077df74481c0418e",
+    "crates/festerm-ssh/src/port_forward.rs": "85c4dbb5549f5de7bab95f98e832826cfa8416a06a92b8fdfd619b5b42dbfed6",
+    "crates/festerm-ssh/src/sftp.rs": "2c8471ed2b24ac527d1ec417556aab99ef0aef407baa4516ad450f1ad2008d6c",
+    "crates/festerm-ssh/src/sftp_input.rs": "0b06992b71005c8f108a78cb0ef0c61dd5a58cebf4978e16cdd54f4c96c8ca54",
+    "crates/festerm-ssh/src/sftp_planning.rs": "cd47eaf9464ec6d1b32cb0c82c25dbf3c5ff1f4e07b485aac84c4be666194f48",
+    "crates/festerm-ssh/src/sftp_transfer.rs": "fd8e084277cf07417c56bd065bf9984bbfb583f728dddaf12f9e06f8612ce178",
+    "crates/festerm-ssh/tests/global_requests.rs": "11ab921a4f8014a11b35846ae88b331e9dadfec99be8f8502ff89a3fc6bdd3d3",
+    "crates/festerm-ssh/tests/inbound_pressure.rs": "b47fc085710ee4c5e6a4bb8f4d9f5649d5e1805a83ec15f02a83a945cc371e97",
+    "crates/festerm-ssh/tests/live_remote_files.rs": "6f170acadb010500741c830306e68f2613e65db96a8037136d35d950e3dc4fb5",
+    "crates/festerm-ssh/tests/openssh_interop.rs": "29d5c5745670010605200ca94d58c77d7adbff2ebbb961d8ed0aa77069e297f9",
+    "crates/festerm-syntax/Cargo.toml": "353f444ddb65d222e11c5dab71a9e3456aa37b9ab363c524d207324104bbca24",
+    "crates/festerm-syntax/src/lib.rs": "c391f4bc2d6d1e62991537eaa6431e308641f5db3674b07da079bd2b31d04d43",
+    "crates/festerm-test-support/Cargo.toml": "ca9c1398ed7ca92ea7e8525ed3414f7601c3d93502a4e2834824d00db930d1f3",
+    "crates/festerm-test-support/src/captures.rs": "077b24717f3f248c64572a2c26a5c3becaa4caaca9d002aba0aa170252666369",
+    "crates/festerm-test-support/src/lib.rs": "e2d3442a5ea26a9f7b2d6436624521b7a7382706ca5d08fd1df1c3f15fead97a",
+    "crates/festerm-test-support/src/powershell.rs": "5de360735374cfc2b104ea05cfe768b994098d44aa4182f06d667e33f6e5e034",
+    "crates/festerm-test-support/src/pty_child.rs": "50ddc02b6990e7aa740f076ef8363d1e3e907e07aa6cbfc23d53d6a0660cde79",
+    "crates/festerm-test-support/src/replies.rs": "0a22ee34cbb65e2748f383a07233df00eb4ed74a4526a29a0db151f54cfbe4eb",
+    "crates/festerm-test-support/src/tui_workload.rs": "32ace9d954a5af70aaef15565529369df3cc4e04e73cf32ba08ef997ffc3d661",
+    "crates/festerm-test-support/tests/fixtures.rs": "7dd0a40f3436874d500b9ff1c243865c5b41e27e03dd4704a22e49d3be88fd64",
+    "crates/festerm-tunnel-bridge/Cargo.toml": "7e24a3d75b826f8e1ace79a1c38cab835e1cde5d132a9e70a24dbfdb41a5903f",
+    "crates/festerm-tunnel-bridge/build.rs": "85dfe759148772743700d55d7b0a6ec043bce1f167ef258cd81913a2ee95cd37",
+    "crates/festerm-tunnel-bridge/src/cli_pins.rs": "3c51a267f4c6ff530451d773a5234069f1be67f96143858990c50b81635d6d6a",
+    "crates/festerm-tunnel-bridge/src/file_protocol.rs": "2b3bb0e78346fa2ad2fe60d27838e00a2e129daf772bc051471822c035a1d8fd",
+    "crates/festerm-tunnel-bridge/src/files.rs": "d8eccc6013b4cf5dc53281bab25961ad864f509d17920b50751921de0c68dc2a",
+    "crates/festerm-tunnel-bridge/src/filesystem.rs": "37223eb3fde76cb48180d02a58cf53c79ee64ddc7fe5e418fe7d4a91a8656e8c",
+    "crates/festerm-tunnel-bridge/src/host_client.rs": "f07639340391bbed011144cb8374fb0313f74b0807039985abdb94f2cf2484dc",
+    "crates/festerm-tunnel-bridge/src/host_client/approval_storage.rs": "3a51e90ff57db489a010890b8672aa73f71028ac6795efc1ea5d6284c3ed5d46",
+    "crates/festerm-tunnel-bridge/src/host_client/approval_tests.rs": "5cadd38ba244c3790484525c47ff63e62a2c2ec7c603bf46c0e1b2f8a709b0f6",
+    "crates/festerm-tunnel-bridge/src/host_client/approvals.rs": "ac60bfc804cc435347171d257e9c445122a4876fe4f763bbf30dcf7aa151065d",
+    "crates/festerm-tunnel-bridge/src/host_client/creation.rs": "db0fec4267153d9516fa8d07291a64a1a9db53960d785e4632b6d2923875da9e",
+    "crates/festerm-tunnel-bridge/src/host_client/creation_tests.rs": "96d02eac7535fcefdf9ed94af2e26abd2f56e34f31927915e011698df5eb3f16",
+    "crates/festerm-tunnel-bridge/src/host_client/ending.rs": "a13f631c438e4724952664d38acb3b72a9110b9d2c33ba0f701d293b06191e09",
+    "crates/festerm-tunnel-bridge/src/host_client/originals.rs": "8fa9e292c16d5814a06eaaf46b31b87d1f947ef8009da1e20f4af00f1a51e4eb",
+    "crates/festerm-tunnel-bridge/src/host_client/originals_native_index_validation.rs": "0c4989fa40e5f446628ffd3697aaf1f2674cf8e18658874e56bfacd9883d9861",
+    "crates/festerm-tunnel-bridge/src/host_client/originals_tests.rs": "6dbfb8ada64ba553e1c6c0db5e1dd67d9b402d39fd002573e1489bb227aa7644",
+    "crates/festerm-tunnel-bridge/src/host_client/session.rs": "5b8852f5240c94be632e0669119a2e59d1cae5834435996cb9b9e7f71157d2d1",
+    "crates/festerm-tunnel-bridge/src/host_client/session_tests.rs": "e40a7c63158df47bebe68af61c35dc2d6ceb1d5bbeb5c6ac5a72fca2198c5f63",
+    "crates/festerm-tunnel-bridge/src/host_client/tests.rs": "03019e1a1ca0816b02da77a525a8444089d57751e3a2614ea4304dac81c4d51e",
+    "crates/festerm-tunnel-bridge/src/host_control.rs": "21001f4c19c48fc586856f9e94088d9e13281cbb9b535b35998c530915b5db1b",
+    "crates/festerm-tunnel-bridge/src/host_control/native.rs": "b2a0e5dfbcf829cf5e547d2398b501b9e81fd1cf4f9f46de55c3bed6cfb2635a",
+    "crates/festerm-tunnel-bridge/src/host_control_tests.rs": "80d1e1cb19b74a72d4fa791bd9429a40387bacaaea23ed1efd334d52661474bb",
+    "crates/festerm-tunnel-bridge/src/host_identity.rs": "fce877b0a2a31594224b6b6be0827211133c4520f6ba2371e30191ad94f65c73",
+    "crates/festerm-tunnel-bridge/src/host_runtime.rs": "02dde416cd7d2bda8577602e5791d4c310d650d14853f9aceea0f946692fbe67",
+    "crates/festerm-tunnel-bridge/src/host_runtime/tests.rs": "73dec204fd42feccc1e18f6a2593c53973713387b0be22a044cd54695cb465c5",
+    "crates/festerm-tunnel-bridge/src/host_terminal.rs": "8f8280764492181fcb07d026597e82d2dd55f93355abd352c1fc7e58ffac9159",
+    "crates/festerm-tunnel-bridge/src/host_terminal/client.rs": "72c0f94af92c52b8dd284cec69ee51c1caf8ab2765c093cf58a89bb713b30df7",
+    "crates/festerm-tunnel-bridge/src/host_terminal/native.rs": "460f4b7ca037d327b49214a22f3d30396e1a0193c3891644a1419d734108d286",
+    "crates/festerm-tunnel-bridge/src/host_terminal_tests.rs": "b291b86b8d50cb3268890a373e901f92c2a45fded8566c568e12cc99082834a4",
+    "crates/festerm-tunnel-bridge/src/lib.rs": "cbd37b6660c745ae7eeafbdf615849a93a435decf6d8839ac07a152fd6341315",
+    "crates/festerm-tunnel-bridge/src/main.rs": "e57ae9baa44d7af926fdb9f583fed04bc38397e780ae84dcdf391cb58328091a",
+    "crates/festerm-tunnel-bridge/src/managed_setup.rs": "0c0eb906eaf7780a9ec09994f5b5016ced25473a9e23045e5b4994b21bd2b2f8",
+    "crates/festerm-tunnel-bridge/src/managed_setup/management.rs": "d46284b115dc6e0ddc185cd8ac524e605673415bc105ce7613f8ca026529bcf6",
+    "crates/festerm-tunnel-bridge/src/managed_setup/profile.rs": "46baea20e74702b75f357b0fccd99a46ed87b150371ad958cea3f8c47285edd2",
+    "crates/festerm-tunnel-bridge/src/mobile.rs": "5bd6e59cf06150c5fc256268217118c48634d05cc29bb7d274d74bb3f0bdd0cd",
+    "crates/festerm-tunnel-bridge/src/observation.rs": "be542976a5ab8fa86569c04f3cc1667e6bcf48b92d2ceb873c2d824ea0b86d77",
+    "crates/festerm-tunnel-bridge/src/observation_client.rs": "bc9e00c606614e3dec44d61267183cb0bf047ad3e93df9a6ef6e33da66fa846b",
+    "crates/festerm-tunnel-bridge/src/observation_protocol.rs": "422fe178807ff3835adca7f5d1e6939aa7f6403e247ea0e6c10add35bb8aeb3e",
+    "crates/festerm-tunnel-bridge/src/owner_auth.rs": "3ed8d27d6edd22f46c37e73f73c353f1df2ae1365f3a2e157fde73aea7b7f9c9",
+    "crates/festerm-tunnel-bridge/src/owner_auth/channel.rs": "9499bbc3b51c879388e664366947558d9560a0b45c9dbf0b5868889063763ea5",
+    "crates/festerm-tunnel-bridge/src/owner_auth/headless_store.rs": "61a5e5a76757e051b8cc46ca9371e9413e0c90b15b5e462b59d3c7078497ad9f",
+    "crates/festerm-tunnel-bridge/src/owner_auth/vault.rs": "4b3055138b610dbe763e7fda4290f2c7773f341930a509f8caf4d1b3182031b3",
+    "crates/festerm-tunnel-bridge/src/profile_hosting.rs": "621de90f9ef773ac9bf0852e5b0b2696ce98fc4c42faaf9c68967d8ed64d51ab",
+    "crates/festerm-tunnel-bridge/src/protocol.rs": "fbf0b1b673304401b38c6f4ca769a398e6d67939bad4569b3767b18d52981d93",
+    "crates/festerm-tunnel-bridge/src/relay.rs": "0dba65d6c4dfd4d9987fccdf9fd20811fdd47d0b39758c5e23b3ffad59ee5071",
+    "crates/festerm-tunnel-bridge/src/relay_host.rs": "aecd7d9449597890f6bf6332bc2a9c0de3a8fcfb946b3a8f4dfd47f08173527e",
+    "crates/festerm-tunnel-bridge/src/service_install.rs": "cdad9bdb6f53f5494f28322f2126cbfdda94a9eacbfc3b7b69916553d4ed3cd8",
+    "crates/festerm-tunnel-bridge/src/setup.rs": "2f583288ca409a6d228fee962c4301fa7ba132e529fdeee3f4e76d669af0f341",
+    "crates/festerm-tunnel-bridge/src/setup_storage.rs": "b674beb7a911aa942b0426282ff9457aca853646fcf7df1133107337096ca1d2",
+    "crates/festerm-tunnel-bridge/src/test_support.rs": "4ed1be9a975559f7c5efbb8915fba5343872518aa3c34426f44736c2877258d8",
+    "crates/festerm-tunnel-bridge/src/transport.rs": "6613764db486ea85cae80be24f9e839e0c93dd44a7040b1dfdc33bc6f11974a4",
+    "crates/festerm-tunnel-bridge/src/wire.rs": "105ba86a9a34fb71d6d34c14e4d4986bc801a6f988c910f7bf8b59ba9b91be9d",
+    "crates/festerm-tunnel-bridge/src/worker.rs": "fa629d15c2e575b034ad485d5b48d92512c5c5bfaafe8fa72a64a35fffca2a1b",
+    "crates/festerm-tunnel-bridge/src/worker_log.rs": "ca9f8b22807c1590dda7f3ff09a872bcc95cc250feb02ce8ce8ab0da3daa0a15",
+    "crates/festerm-tunnel-bridge/tests/relay_tls.rs": "dcf3797fc41abf139958fa38b0760b4a85f487a2143c7c8837ffe1fcdbd42970",
+    "crates/festerm-tunnel-bridge/tests/service_install.rs": "73b6ab87313c752f9b9d88fd3707f0835d4859fec7f4048aa8b82d9bd4727a72",
+    "crates/festerm-tunnel-bridge/tests/setup_launcher.rs": "716c6d79ac89cd341ea5180bff98c10870ab4a5344ab909b4dad0a781c9b8698",
+    "crates/festerm-tunnel-bridge/tests/windows_setup.rs": "9e51d0d264f629aac001e9155f4ecb1028390335a77e74abe08b8508d89b6815",
+    "crates/festerm-tunnel-client/Cargo.toml": "73e7b0486002836cd50439b126f41d4432787eb260b1d19c8884d0751c821f55",
+    "crates/festerm-tunnel-client/src/host.rs": "e45dadcc07b6a7721c68eadce4d130a412cfefe7762b6c763c0a0507a44fcae4",
+    "crates/festerm-tunnel-client/src/host_control.rs": "670741dfefa438fa6317d7d489f7c38dcfa04e0443fe2ea3df8014f9b0549a48",
+    "crates/festerm-tunnel-client/src/host_control/checkpoint.rs": "4124afe8dfe2f9d28ec4de986e71d2d7c9f8a65bc9700bb99e5a1fece5c032f6",
+    "crates/festerm-tunnel-client/src/identity.rs": "263d60d70e601df389387becf71213870624dda182c21222874240179c6ed4cc",
+    "crates/festerm-tunnel-client/src/lib.rs": "0a013b418e4630403f31ad3cd72febe2645dce9f8e0d9c871251e4eb2d2730c4",
+    "crates/festerm-tunnel-client/src/service.rs": "4d3c7bfc0487a0e6ac956ac25ca705a9947594f5e171035464658f3defd54d7d",
+    "crates/festerm-tunnel-client/src/tests.rs": "42bbcc3a375433eede3dcce7dfbffc6afe84ae534ed84783c77c6cf1184c1a8d",
+    "crates/festerm-ui-egui/Cargo.toml": "b27d35576a03ff084e58d8d82f0b82acb0ca5e0413b5995ca10ddf1aa7f04b1b",
+    "crates/festerm-ui-egui/benches/dirty_row_cpu.rs": "c74ef3b6fdd483ac7affd2bf2e40f15389eaee1fb3ce90c94a0dd5acf48182c1",
+    "crates/festerm-ui-egui/benches/interaction_rendering.rs": "1a94095ab60a6cae074f8154b54554b746a1ddd8d46b9df0edb67bead044b4b6",
+    "crates/festerm-ui-egui/benches/render_cache_allocations.rs": "933aeb36c112036b8f38ccaad7103884dcb36413e2b2b3071bb66c096d9842ea",
+    "crates/festerm-ui-egui/benches/routed_input.rs": "1b04669b41942f0c44f298c4a384d9754bd0250feea02d3a764fd6f6848a05fa",
+    "crates/festerm-ui-egui/src/background.rs": "49c86282d32f52460220242d65aff71629a89d9581befa0fa497c028cf3919f9",
+    "crates/festerm-ui-egui/src/cache.rs": "a9d1633e0d4f7d61b72a036c7534ec576857697eb9649334d91f779825bece87",
+    "crates/festerm-ui-egui/src/chrome.rs": "1e0059f2bec76437da21ca1db886d2def119a9fa0f4537b2c0e11aac32a5f4c1",
+    "crates/festerm-ui-egui/src/chrome/chip.rs": "23c393a9208680d80735dbec0f967cb4f09946b0d40b3b79bc7f672413d98ad8",
+    "crates/festerm-ui-egui/src/chrome/controls.rs": "b8054545289ec8d1926105852c354fb69ebef72e976d68b12ede4c5d4def3765",
+    "crates/festerm-ui-egui/src/chrome/tab_drag.rs": "20047d2d18704edc56ab28f168d5689c7fc0427ab4263226e89c02cfbdffa078",
+    "crates/festerm-ui-egui/src/controls.rs": "e1b316e9b5833bf983cb28cee1d70ea4c683e5d2c4b2ecde0cc032bcf45907c7",
+    "crates/festerm-ui-egui/src/fonts.rs": "3e19bc910dcf450bb98840e138d7a1783def03cbbe5b352504401cf158fbff22",
+    "crates/festerm-ui-egui/src/geometry.rs": "1b5289dbd1db33ef2437d87520c8856f3e875bba4f10c9032f6ad3ce8551c338",
+    "crates/festerm-ui-egui/src/icon.rs": "9a76d24e0d116b908dca86ce818b08c728142af8a04d1b08f6961d6d078f5f5d",
+    "crates/festerm-ui-egui/src/icon_geometry.rs": "5406eb0d5a28933671e6ceeaa58699e422df0b653fd71b1f65f9bfe82b580907",
+    "crates/festerm-ui-egui/src/input.rs": "778234dbc6d573a73c6b95cec08ce8be4981d1ce588b922172ce11198164a2ec",
+    "crates/festerm-ui-egui/src/lib.rs": "78280a7096fbeab8900e2177d17e5f8a1eaaa23f509698783274f96e7a9050aa",
+    "crates/festerm-ui-egui/src/native_painter.rs": "98ca5f0b10e6305f66a43eea1f6e370f2ae2813be0d3ebeac61e0f48e235c81d",
+    "crates/festerm-ui-egui/src/overlay.rs": "c765a26e6e735145e0eccf5ba03b3978cea3b041af188da38ce267473a1dc705",
+    "crates/festerm-ui-egui/src/palette.rs": "baf84667fea642d32798b436557aad3b3bd84c7f5520b18b87c5ae4c6184d2a3",
+    "crates/festerm-ui-egui/src/recording.rs": "5ca1ca02bc33cb6dd3275f0d512945e77e1575b8c6673e988aa9846d28699b22",
+    "crates/festerm-ui-egui/src/rectangle_copy.rs": "be7da0b3c3b11271dcaa91a5c2acb9e0ad26b8e2725a1a5e2f9cf3ba0f333b2f",
+    "crates/festerm-ui-egui/src/renderer.rs": "f85b4862d600835029c2c18af9a387dad0e1b949ff1b01c27d692144b20498b6",
+    "crates/festerm-ui-egui/src/renderer/clip_batching.rs": "730dbc819959b1e13d03d29e8b0c2f246686405f44575a548fd1fa3564477130",
+    "crates/festerm-ui-egui/src/renderer/row_cache.rs": "fe9fea093884ab527059ca6b8abb1b70b46671b99206c63fe6acc39a8dd08b7b",
+    "crates/festerm-ui-egui/src/routing_trace.rs": "a3ac835c41a2024fcaf39bc815236595cf0ca70113b988c9c19bae18ba759be2",
+    "crates/festerm-ui-egui/src/selection.rs": "67a9e47070604d6f305e8700feb025d4798b9196f6bbde0ae3ffe68a8e1b331c",
+    "crates/festerm-ui-egui/src/smart_selection.rs": "d7f40f5ca8f22cb348c0a6435ef30fc77a264a9117314a83e66a7979787c8337",
+    "crates/festerm-ui-egui/src/statusbar.rs": "9bf84828e705aae5a8d4898c8b0914137658011a397d1ef5c0e7d08e5ad5706b",
+    "crates/festerm-ui-egui/src/theme.rs": "810843f9171bf320367e3f65f5a805ccbe59a08d2a0895da744bd00a210c2ac7",
+    "crates/festerm-ui-egui/src/view.rs": "cb128049983182dfb9660e95c9de27f7ba25ccdf1b068eb8c85ebf014bab711e",
+    "crates/festerm-ui-egui/tests/bounded_selection_allocations.rs": "dc1877aa69fe753a9e2f3eb10815b882d53f965629370b60c537f1418a9fe47b",
+    "crates/festerm-ui-egui/tests/recording_visibility.rs": "3f9e703320e60b6a76f4a49ab941bc235351a5164d2d6213a87a94cc014d5b91",
+    "crates/festerm-ui-egui/tests/routed_input_allocations.rs": "800d7676b8d2f97593e4300f098798c412ce0dedb97bbe34298eb4f7c7a81340",
+    "crates/festerm-unix-security/Cargo.toml": "d02082e1a0e319ed22320f3652474e45179e8d22fe178b3a7cae52f8754a01e4",
+    "crates/festerm-unix-security/src/lib.rs": "9ffd67a5a06b7a04890bdfa464bfa218efa9c5c837385ce4e1d7f198ad7354ab",
+    "crates/festerm-windows-direct2d/Cargo.toml": "6d60998f03889c8cc7519d9557d836d5f07b128e7bca2210d1b784b4bd5b997e",
+    "crates/festerm-windows-direct2d/build.rs": "1f8765adfed956dfa17ba2002474b948f760253c0cffd4b6477efab724101eca",
+    "crates/festerm-windows-direct2d/src/lib.rs": "05a9eb04ea701051c20c2863333b4a232fd033f2b87fe9f3421d5d3d805f9baa",
+    "crates/festerm-windows-direct2d/src/renderer.rs": "5d2f14fee2e75ec46d600ace9d463848503050724279b48caa3f8a806627f5d2",
+    "crates/festerm-windows-direct2d/src/texture_limits.rs": "f96bd6d2e74ee1d586e41c81d5b57220bd0fbead317a3c08828d69f725c4d629",
+    "crates/festerm-windows-job/Cargo.toml": "bc3b40635941dfc3ccbc1b73a383dd9b560c2535eb88993e3ef71733be593122",
+    "crates/festerm-windows-job/src/lib.rs": "4db85614914590478add2c15ef49231f5cba85e82e236da6eebd2df52046b60c",
+    "crates/festerm-windows-power/Cargo.toml": "9cd841f52fa008095d6aec84ac5381b5389a9a492e8ded3957a9e25e40f14405",
+    "crates/festerm-windows-power/src/lib.rs": "af145c05c6fd9a7443d12638979fc46fa61eef08060e938788c96b65e6ce4960",
+    "crates/festerm-windows-power/src/privacy_lifecycle.rs": "0e350d84d5077e50be2b47a5762494916a93300751d18290f70d013cf2037002",
+    "crates/festerm-windows-power/src/privacy_shared.rs": "10d1b161061592678c3819b0d9fc3f03516ed1a1522846916a919bed61558066",
+    "crates/festerm-windows-runtime/Cargo.toml": "435999d20a6f09801d4046773ef8406dc462c3a6ed75f5c11f4618da4a3a4993",
+    "crates/festerm-windows-runtime/src/lib.rs": "50337ad18bb081b0724240ce0eb8996a5652866be28522a433630531d721c80f",
+    "crates/festerm-windows-security/Cargo.toml": "bafddbd54e9f7aef7d21b7fde3f121c31568d1c37c8d6bb65d7d8758e6cb5838",
+    "crates/festerm-windows-security/src/host_publisher.rs": "bdfe3e57370db3039ed720697238121c5192e1840788e42decb93d822840b71d",
+    "crates/festerm-windows-security/src/host_publisher/native.rs": "d4ad1285d6c4eabcde2f58e203a03742ab06808a4cdd5c805607c06c3b64f4ba",
+    "crates/festerm-windows-security/src/host_service.rs": "6ce75e24e1a1365b975521ebe6481ab0377cc2ea96591255cf503c536e596d84",
+    "crates/festerm-windows-security/src/lib.rs": "98109539c4e608aa049eb72429f9bdda6717773b194e09a97538de4dcbe157b1",
+    "crates/festerm-windows-security/src/named_pipe.rs": "507a2364930c709151b009192542a2328e8bf57005cf129bd9f86ea68740b5d4",
+    "crates/festerm-windows-security/tests/support/stdout_probe_control.rs": "61dd8a334c1987361f8c2e6968700323d59f8c8baf6e4dc75708c436594b029a",
+    "crates/festerm-windows-security/tests/windows_stdout_probe.rs": "ca144b42f12bcd2f643787681b0a59182f21867efc6b8f5866f13f18bf1d7f9e",
+    "crates/festerm-windows-security/tests/windows_stdout_probe_control.rs": "5539c667c7a72a9e439dc77649cdc3566039ed3f611b824097e497322ddf6104",
+    "scripts/capture-mobile-ui.py": "45c5f3e3b9dcbdc06a77f25b88f6ad4602aaf8987c62892f17b0e00fed3bc6c0",
+    "vendor/accesskit_android/Cargo.toml": "0ffe8004d9c8fd43dbfcf0e4773b268338b4384e3066bf817974d2665ee02115",
+    "vendor/accesskit_android/src/action.rs": "8c75bce1af9da5814edf07db304e94fc0c7e6ad0de682851928fc7977e217942",
+    "vendor/accesskit_android/src/adapter.rs": "0ef282b832afb3ca97e81337a0a00babdc72043c77675ee676b7a70b21447cfe",
+    "vendor/accesskit_android/src/event.rs": "d221813447ba353996b64861d38994248dc68067513c938a96cc736d6151c1ed",
+    "vendor/accesskit_android/src/filters.rs": "9bc30463e2c42525696431bfc7fef8f125afd2036c104581c3441d01eb698676",
+    "vendor/accesskit_android/src/inject.rs": "afacc811606fc778b2fcf4398322f050b3bf53be67d15f03ea441d6d1af2110f",
+    "vendor/accesskit_android/src/lib.rs": "dc7c95ba8e8a273344caeac687e18486283cb6c2c3c155434c9dbfedc48b8f3f",
+    "vendor/accesskit_android/src/node.rs": "2c394c3fd5fcb21fdda7c738814f8252614bcf40a2d0a9eab50efab9454c4200",
+    "vendor/accesskit_android/src/util.rs": "8cc98398e306cf560ee98f24fd9bfd3b8f09b0d078a8ef6357cfcf43cba7ff94",
+    "vendor/dev-tunnels/Cargo.toml": "c8bd1d7264cc1227ca06f781224dc3decb347d6334aef67e1bda42fef7b8aa86",
+    "vendor/dev-tunnels/src/connections/errors.rs": "7391f4b774b2de480cfc5394277b19388235e242af5c0fd05dd8cb19bf9dfc7f",
+    "vendor/dev-tunnels/src/connections/io.rs": "8e312891c1b88cb0b13658037e8a176d8bbb42fc4722b2ba1a0e761070dafe25",
+    "vendor/dev-tunnels/src/connections/mod.rs": "079d45886685efe7a0edb99843ac9da5943e53c1df5e3c6fb6a06e934c79e0a0",
+    "vendor/dev-tunnels/src/connections/relay_tunnel_client.rs": "f3952741f090371f7fa7162fb2948552a2c74131bade0ddf38404b8d96d58543",
+    "vendor/dev-tunnels/src/connections/relay_tunnel_host.rs": "dc265fb93ed73c2d13a759525690e717c5689351b4400b55e23eff87fcce6841",
+    "vendor/dev-tunnels/src/connections/ws.rs": "7a406fb9c89d08834e20e396d932c1eb119ee336bcca5e580910d314d46b2620",
+    "vendor/dev-tunnels/src/contracts/cluster_availability.rs": "25e9a6bb866c8ba778c52f673bd35bb5d65469fdd933805b253f480e79cb8766",
+    "vendor/dev-tunnels/src/contracts/cluster_details.rs": "a3c845417292875f526c17d417e4764163f47fbf0ec9b0e64feb5843069613ab",
+    "vendor/dev-tunnels/src/contracts/cluster_recommendation.rs": "9dfd710bc7aa4dbc81a6a2e3ff8d77ce030d5e321d32ed967e5b4a20d9a9515b",
+    "vendor/dev-tunnels/src/contracts/cluster_recommendation_response.rs": "0a7461b1262137ae9357ea7ef8032cc66f9c77e2064b394d45e49463f27936cc",
+    "vendor/dev-tunnels/src/contracts/error_codes.rs": "79d75a477ead7b950e5509ba624879ebdc20c6ef39a66130c925de1ad0d5b509",
+    "vendor/dev-tunnels/src/contracts/error_detail.rs": "64ea9f7e5d3dcf9e64f4f9192784b2e0c372ec98c932659965fd00e059a4f01d",
+    "vendor/dev-tunnels/src/contracts/inner_error_detail.rs": "9c48e99c93f447ab5a8d38e522d6b66147c544c17f87a0ff2b2630e712e94c16",
+    "vendor/dev-tunnels/src/contracts/local_network_tunnel_endpoint.rs": "f36e65d1a0a372f48272e958b7cb2b0c9bef4a385248849475578e9b0c2c24f0",
+    "vendor/dev-tunnels/src/contracts/mod.rs": "116cac32ba9d438c5a89d3c83730226e7429d9f4c963012e1a4910edb45621d4",
+    "vendor/dev-tunnels/src/contracts/named_rate_status.rs": "a7c40f537be621437bfe038f8a84748839624e68e2b0eacd18589167a974ef93",
+    "vendor/dev-tunnels/src/contracts/problem_details.rs": "d4f3e2e0b179ef40a3d6263fbe2fa25b1fcfe0786efebe19199f15f8910ee02e",
+    "vendor/dev-tunnels/src/contracts/rate_status.rs": "a5a29319df1da74c3814cae3a48c3df6cea68e792018a7fb5228e040142c9342",
+    "vendor/dev-tunnels/src/contracts/resource_status.rs": "261b1270159045a18542f2d154824e8e14493ebb8bfd2ee89e2b4a9b3eebd0ff",
+    "vendor/dev-tunnels/src/contracts/service_version_details.rs": "d85b08b37b66267dcee8c1cb4927f0c9c15f82e8e3c70482d22f956fdfe57999",
+    "vendor/dev-tunnels/src/contracts/tunnel.rs": "d4e6c0145811369e2c92464e3af4b26fce51f4f037260f756a8911c802a5c2bb",
+    "vendor/dev-tunnels/src/contracts/tunnel_access_control.rs": "e424e28907e256b15cdf74ba8c248e167ef43b26d3efab41e829d9f8b27bcc75",
+    "vendor/dev-tunnels/src/contracts/tunnel_access_control_entry.rs": "1375d89121668fe34217b4c7a4ea87707c6339e84dbeff531f16fb79ec96221b",
+    "vendor/dev-tunnels/src/contracts/tunnel_access_control_entry_type.rs": "ea679cbf42d93a652a3b910f82022eadca4bed8cf3e612956c7745ff0ce674ad",
+    "vendor/dev-tunnels/src/contracts/tunnel_access_scopes.rs": "167a62997ae7007116c839c9d061001e7a02a9f6b627953372b112aa48d76834",
+    "vendor/dev-tunnels/src/contracts/tunnel_access_subject.rs": "256de57ec2a5b969d1e78a3acc4e26ae1824593b345c43a729bd3db75e62d87c",
+    "vendor/dev-tunnels/src/contracts/tunnel_authentication_schemes.rs": "af8451a536fad8bafbe438eb3704ed4c914e81a185b3ec68fc2f3f9f15ffbb54",
+    "vendor/dev-tunnels/src/contracts/tunnel_connection_mode.rs": "5cbd4df0b236123782a5003f472020024e7553a5131c2c43e6a3dee560033793",
+    "vendor/dev-tunnels/src/contracts/tunnel_constraints.rs": "3b7d17dfe26b8b8cb01ba91fce3a944b2096d89e91d68deedc4007fee0be386f",
+    "vendor/dev-tunnels/src/contracts/tunnel_endpoint.rs": "30d4c7e8c8b26f511acd4c68774712d7da7ec72413947bdcde109e68d40911a1",
+    "vendor/dev-tunnels/src/contracts/tunnel_environments.rs": "8b53d581414adafa105446f8873a04db474eb0a633479da685d70412838774e0",
+    "vendor/dev-tunnels/src/contracts/tunnel_event.rs": "5a50c004f505269454091fb5b3ee1aff2a66c0d0df6b92fde927ff7549092821",
+    "vendor/dev-tunnels/src/contracts/tunnel_header_names.rs": "d1b7d07009c6960a2226509b92afebeaf37a42c967d9433c3343b0b7543084e1",
+    "vendor/dev-tunnels/src/contracts/tunnel_list_by_region.rs": "af1c7c6a75504b776e38bfa2310b888536cc918f944179ef47b9efbd8c786dd3",
+    "vendor/dev-tunnels/src/contracts/tunnel_list_by_region_response.rs": "e24d1ea620590850a9b42695c80da6bb05e07aefeeac3d3aa2b9953a8c718961",
+    "vendor/dev-tunnels/src/contracts/tunnel_options.rs": "90a54a0f50fb883807807e5f0241b196f8c72b35b9f4a7b2f78d028a9030302a",
+    "vendor/dev-tunnels/src/contracts/tunnel_port.rs": "57df3f2c27f883a719541ea1ddb8b8fdf6761682a193eeef39c47d49e5fbcc01",
+    "vendor/dev-tunnels/src/contracts/tunnel_port_list_response.rs": "487f91857f09cf397cd4d021e3fd803686650f017193b1cdcf12a0cc7322b2c2",
+    "vendor/dev-tunnels/src/contracts/tunnel_port_status.rs": "507425455962bc251cdec6ec65ecd6803d733521660f4b1e7dca4072462ddd32",
+    "vendor/dev-tunnels/src/contracts/tunnel_progress.rs": "e6688b9ccecf15b553714e0be3e98293e40808df37e6c1e61c0b53d5b82c073d",
+    "vendor/dev-tunnels/src/contracts/tunnel_protocol.rs": "495b9c0d8837923f4d26c2536b49802e2ec374e580803db8ffc1ef168eca7c58",
+    "vendor/dev-tunnels/src/contracts/tunnel_relay_tunnel_endpoint.rs": "55763ccf4c946967116afa3fd33742861de12c5c8c6556a5df82bbaa9dacbd1f",
+    "vendor/dev-tunnels/src/contracts/tunnel_report_progress_event_args.rs": "bb6a87c4183d51ba5422597317fc2cbafcbb90ba59eef0f8f3303ead64380389",
+    "vendor/dev-tunnels/src/contracts/tunnel_service_properties.rs": "6567a4f1b0ad245fdf8d10dd5653e6b65cb0091fcac321bbfd2a26952c0b80fc",
+    "vendor/dev-tunnels/src/contracts/tunnel_status.rs": "89dbc90e79f21cceb6155864d25a26969ab4e127d7800f1aa218a8ade6751ac7",
+    "vendor/dev-tunnels/src/lib.rs": "b9fc021ec6bd0cf5f710f72acb145846ecf325a8f738e77e6183099eecdcbc8e",
+    "vendor/dev-tunnels/src/management/authorization.rs": "d481d8ec10fcecbf09ec015d082515c87c94c1ecae24af12370b7b0aeb1d73a0",
+    "vendor/dev-tunnels/src/management/cluster_selection.rs": "13b75f01bd23f720826c491df5be66a0e3c9c22618f1d9b5ef754edb56ccf227",
+    "vendor/dev-tunnels/src/management/errors.rs": "80b6a5c328b5fdd659f6676fd4ad231e5f68dace4a3a6b1649252a3dcf94e745",
+    "vendor/dev-tunnels/src/management/http_client.rs": "b2200a0781d3411b49942ba3597d8eba5abf10d38554cf8b7754b443926993fc",
+    "vendor/dev-tunnels/src/management/mod.rs": "3adbedd12a0d8af7fc696e1a8d7664ccbca676a70be83dd9b90aeb3deb7427b9",
+    "vendor/dev-tunnels/src/management/policy_provider.rs": "f381150a7b8400412bcaee41099465f837afe59c93d9267da9645807919a1def",
+    "vendor/dev-tunnels/src/management/tunnel_locator.rs": "678d3f188f590887eec55533c0ddb865632f04af74df9a825f220e7b05e39497",
+    "vendor/dev-tunnels/src/management/tunnel_request_options.rs": "cdb6da3eff698baf60c74a06336b136bd5a2a984abf8fae614689913e012b3ce",
+    "vendor/dev-tunnels/src/tunnel.rs": "04da7bf0478de2e0092c7fbac93d4140a7f7c6703c75bdc82733e5ad98cde824",
+    "vendor/dev-tunnels/test/tunnels_test.rs": "33ba8adc55101c925948da0b1d3410ec0da3888cf958ac997c4b12d54a20f59a",
+    "vendor/egui-wgpu/Cargo.toml": "6ebe3e94acfbb78c0017e9c8798ec258fc3d7de3d98d2e7ba6290072cf387a17",
+    "vendor/egui-wgpu/src/capture.rs": "26c38801830775a2538225dc61fd42e0779612c4ee75d094d34fc00c5191fe22",
+    "vendor/egui-wgpu/src/egui.wgsl": "3f29892e50fa5363a1945d0d969f130ab5b61add4280d9d711d7902499857a9f",
+    "vendor/egui-wgpu/src/lib.rs": "7bececffa45893417b182533916b82cc87ca2ed1c893bc9c6cf5c2f2ebeaea55",
+    "vendor/egui-wgpu/src/renderer.rs": "c09c83e7fa92a87d44a53d9b4994cf3531a09b0553d4e24cea16c079cd017df4",
+    "vendor/egui-wgpu/src/retained.rs": "d6727a06a47683809497c8717216ac11bdc031e712a9263bff480cff4850f5d5",
+    "vendor/egui-wgpu/src/setup.rs": "039f0e43d1df8d541e7d965a181e278a4795e4b1974d9daaf3ed28a9fb6e8164",
+    "vendor/egui-wgpu/src/texture_copy.wgsl": "b5f7873cceca89e13932ce8d32e487feed2124f414e9959fc7dbe4a5d33939c6",
+    "vendor/egui-wgpu/src/winit.rs": "29c19050ce14ae06742f03f665afb5050c95b052ae1714946762c52935006abb",
+    "vendor/egui-winit/Cargo.toml": "fb161958ffaa11538676826aa21f98ed6b0ce5c92d3537b4f3c9fdab488b820a",
+    "vendor/egui-winit/src/clipboard.rs": "8394c1e0347f71d83785f40f57c2bb05485b941951e77fb39404f9d6d8dcc733",
+    "vendor/egui-winit/src/clipboard_requests.rs": "6e161c176dc3423164a0a78388f9ea6ca5c78086d469457cae2ce437b6a4c8e1",
+    "vendor/egui-winit/src/dropped_file.rs": "8c5b2e67f09233bea2b515d94215d9f699f787d94461576422fd8356420804c9",
+    "vendor/egui-winit/src/lib.rs": "6fea2586bf864302f62292837951d0f2848ba0ec8a4a66d3a270b1bb82922b97",
+    "vendor/egui-winit/src/safe_area.rs": "7d6efc7d283814d6dcb5e0938225bea19a479a452aa85377092b33e8bd11bb8b",
+    "vendor/egui-winit/src/window_settings.rs": "de2848526dfba7655ead1de4860e59199dd11148376062adf3d3edd0d1bf3cfc",
+    "vendor/egui/Cargo.toml": "d813d6e87a131a276c4fb97ca76ed46a231caa7f30314b7120721fb5ace964c0",
+    "vendor/egui/src/animation_manager.rs": "545bea7ecf4b650b85f7bd79eb3fbfc5d554302903b03d209a81117a24f1c995",
+    "vendor/egui/src/atomics/atom.rs": "38ca5e1ee7317dd9744a07e43953faf855b5ec073156682b61728e86b13b61dc",
+    "vendor/egui/src/atomics/atom_ext.rs": "64f32cf37f896bc18af55e5fc70a338a1bcbfe5e18d75cfae746df513d578003",
+    "vendor/egui/src/atomics/atom_kind.rs": "a46805fc5db34975d6eaf9422a6283b2a925cc83712c927f672820299f1af22f",
+    "vendor/egui/src/atomics/atom_layout.rs": "972a4cfa24c813d3141d77a4185ea7d821046cb941b8136c4b160f250771509a",
+    "vendor/egui/src/atomics/atoms.rs": "d3733d45346dcde29a9f17a9377fa93e9c9a0bc34c788d2bf6af67a77cddd896",
+    "vendor/egui/src/atomics/mod.rs": "c1c9660798dac1830d72bb319b7b47af4c03b81f7ba239e1c7d6485649df55b5",
+    "vendor/egui/src/atomics/sized_atom.rs": "d93b66b3f28c41d4b8b6010c7957ec8f3af9da7282e213bb958e6aa2bb3d3a59",
+    "vendor/egui/src/atomics/sized_atom_kind.rs": "3199088299794f10522710419f7f6267e6efbf6ac88376ef7e12562311b4b360",
+    "vendor/egui/src/cache/cache_storage.rs": "d9214ba9a1791a3dddd05ba5f225f788ef1e1d4117ceddce13ec25e224698f67",
+    "vendor/egui/src/cache/cache_trait.rs": "f4a408603795e8b4268c4eae38040bbda94dcdc73972e93dbf591fb4a7492e02",
+    "vendor/egui/src/cache/frame_cache.rs": "3085dc54874c2331a3895c8e6ac0f60d982e9e54d32b42af15d2dbc99cd8ae06",
+    "vendor/egui/src/cache/frame_publisher.rs": "9124e4312bb651d0467d993bced70fd21781f405d179a97ae1e67b8f280111bd",
+    "vendor/egui/src/cache/mod.rs": "405a558bc37e85653f20cae7cfb6c10e8eed2394f65d2b3ecbc630e10333a849",
+    "vendor/egui/src/callstack.rs": "4242dd7aceafcfab2d3cac8f1c8b51efa405c0a29acfe26973f63e91872f2c30",
+    "vendor/egui/src/containers/area.rs": "54cea74d29b067652ee0d5e9cf004000a79e7686683fc502a54f53649061ed77",
+    "vendor/egui/src/containers/close_tag.rs": "f8a12895c4330ca894953ad4100c9c1b15743e1ef20e8f49517bada41b65efa7",
+    "vendor/egui/src/containers/collapsing_header.rs": "7a0e22ddbfea2b4d77216a4f985ba909ea960a18084b5b96c610e983b362a6e2",
+    "vendor/egui/src/containers/combo_box.rs": "5a15ac228ab3dae5a8951deae66a3bad30137ff4fbfa24635666a0c62bad1acb",
+    "vendor/egui/src/containers/frame.rs": "833eadc15e3ea5fcd5215aaf0bbaf7478cd09bbe86d584f7d9ddabcde62b5573",
+    "vendor/egui/src/containers/menu.rs": "8825df19fb6ca95ef061b4a8c53bde7388a5180b06ecea1ea5a89c4a248e08ae",
+    "vendor/egui/src/containers/mod.rs": "aa74bc100efb9096ccfb4177baa8836691c274387c3546349773204c928fc4c4",
+    "vendor/egui/src/containers/modal.rs": "63f33d914cc1f0a3fbcbc63b9e894ebca633bf2499110a842bdb3f0d4c02f7ff",
+    "vendor/egui/src/containers/panel.rs": "de1ad3d131ff4002d705e4f9ab0cb703ca8d26c5c480fa7d2612c64feb16c031",
+    "vendor/egui/src/containers/popup.rs": "12adb0e4e5e685a3c53918af5ca4ae64ebab81aaf64b02c4b70b01ea9a3abbd1",
+    "vendor/egui/src/containers/resize.rs": "a639aafe8d7fd71810443d699e79c66c4d9b6880946949f466b325f83465b8ab",
+    "vendor/egui/src/containers/scene.rs": "43c36418bee654e21ebe88222a500ad1865ec7c9274a8713cd00a517846ff885",
+    "vendor/egui/src/containers/scroll_area.rs": "7f4aedd910aba7e4b9a6d63cc79dc6ec5e52480dd3656a6c290d6109f5dfce2e",
+    "vendor/egui/src/containers/sides.rs": "fb34fb1f2dedaf0ce5352594fcd185a65509cf26efad5139d628b17d73ada992",
+    "vendor/egui/src/containers/tooltip.rs": "dab3dea3aa2b660a6e37b0d2c6454b91cbfd470a8400fe1f6ad044a2de5838bc",
+    "vendor/egui/src/containers/window.rs": "5a0ce2dc9de6e5b64a34cbbd0e5d1a2a5bac6c5ea777315febac1348450cee37",
+    "vendor/egui/src/context.rs": "3bd6ae9c54157353012d0f978b1a4cc1c41de8fbce333d7596443583d82c9e03",
+    "vendor/egui/src/data/input/dropped_file.rs": "1bcdd8bfc56c61b596b36472a3b8f40c7c7372178ae1b5d1d9f3fe0bda2b1a85",
+    "vendor/egui/src/data/input/event.rs": "f2d802df6cf308d457c888742152848e3394e6d86df462c06caeec1d18f3d147",
+    "vendor/egui/src/data/input/event_filter.rs": "79958a7fe1cf0674352c2a3787df28ab2b6ca3f5ef336b38875725e8e52b45fd",
+    "vendor/egui/src/data/input/hovered_file.rs": "c2d39852d8f403f199b3c7a70c6342eb745b1548679aaeacff23476961ae41e0",
+    "vendor/egui/src/data/input/ime_event.rs": "96133adc4dd1ad83ff324c3b757611e9147955edc9f710e225d515f812382003",
+    "vendor/egui/src/data/input/keyboard_shortcut.rs": "e7e8a552f973940a2b019d791ecedbd55708200f8094b555f4c198381a8fc346",
+    "vendor/egui/src/data/input/mod.rs": "6f515ca28abdab5495c785f98d0c4bc7f2ebbe45ffc3f068940c0a5dc64d57ef",
+    "vendor/egui/src/data/input/modifier_names.rs": "c1db3060f1c8ebeb8d6c2ad6a1d38cd0a933914c7ee49129128b617f0bf88916",
+    "vendor/egui/src/data/input/modifiers.rs": "edc6684e0c67f8a180b33d56d8a74171316efb6f2b4c7429130f8709f9c4cef7",
+    "vendor/egui/src/data/input/mouse_wheel_unit.rs": "46f048860d83d884a47f9b69e2a37a14c386997c7bea45880d2c95fd5ae54377",
+    "vendor/egui/src/data/input/pointer_button.rs": "6447fcf5394e8751bce2726dbc41571269fbe485746813ff478f7e79d19f0559",
+    "vendor/egui/src/data/input/raw_input.rs": "03a293900b58601f567ce4b72d047e167431359e71006e656dae4b916e44c888",
+    "vendor/egui/src/data/input/safe_area_insets.rs": "65bae6f8b1d2b4e5e4326bb5069ba01fde36cf97623cc348d22f079183d12818",
+    "vendor/egui/src/data/input/touch.rs": "7ba9cb0508ba25fa3e9e931294805565947b1f6f111e6f98c6431c9c59bb1829",
+    "vendor/egui/src/data/input/viewport_info.rs": "9570bc688a9b815b004ce2ac79fd080de17a66d0f307d233ac4614fe5d015f98",
+    "vendor/egui/src/data/key.rs": "236cb071555329d7b28e9706e0afab1b400d844040d7e463745a93913fcbb642",
+    "vendor/egui/src/data/mod.rs": "8b87b93ed90eee9ef30fed8155538b2b04e54eb9f976c84aad29cb0373e74bcb",
+    "vendor/egui/src/data/output.rs": "7af7fb94777f40a49260d7d465ad90bbab402dd4e1a591a01b9ff36fe8ee891f",
+    "vendor/egui/src/data/user_data.rs": "095cc614060c8cc42b1e6b079d441ed9021474f9fd85bc823cbb7d005a79a04f",
+    "vendor/egui/src/debug_text.rs": "be2d0892388dc89f7aa7ff7847354843aa7147a158e6e3166a7702b589945ebc",
+    "vendor/egui/src/drag_and_drop.rs": "f50fdf45bce2fcc1b92114bedc1396b9c40a9a9324be1b0c65a6bf0f198c20d4",
+    "vendor/egui/src/grid.rs": "1e66f4ad8e5518ba48b8b5ca6493b72a783622ddce27721e807ae2bab0a94842",
+    "vendor/egui/src/gui_zoom.rs": "be6d30dc78816dad5b6822d25bd2f33b72a5f4a4b0e0a7ef162dea88fd21adc7",
+    "vendor/egui/src/hit_test.rs": "b86a7a303b6445359f3fb7105eee731ecdc22d186a81fca021c50851f5c15080",
+    "vendor/egui/src/id.rs": "0a1ae59c6386bbfebd1150fa77a5c1de08affa43b6cb1c12294585961359ee28",
+    "vendor/egui/src/id_salt.rs": "d626ad1042365920aa8212e6d4dcd4b7461a97a83eae2bb55ae8e17bd8af04af",
+    "vendor/egui/src/input_state/mod.rs": "ffd107b859c3e1b896e065b8c413b8e26bca0184cc6854961bd1c3bb6494b25b",
+    "vendor/egui/src/input_state/touch_state.rs": "b5137df87c4e4c003b2f7c1e667277891e36207aa0079c32f82b576d1938e2a1",
+    "vendor/egui/src/input_state/wheel_state.rs": "bc036517beebd5754456c8667cfd5f6e1576ea2e0541a774a27e7677bf3aac70",
+    "vendor/egui/src/interaction.rs": "9b46009fb43a1af49485c693372b0e7d23605d2f639a2b1ca0ac747976412f16",
+    "vendor/egui/src/introspection.rs": "ecccc7160b6424fe711ea31a34c6663a8d5e77ae7f765f8928f94fe23ff26a68",
+    "vendor/egui/src/layers.rs": "dac8365b9a98945be12fcac9318053b5ddc731f86566aea51fa8f4c647e627d6",
+    "vendor/egui/src/layout.rs": "ab5cce08c6da790f2fba34d5e5b1090c8bbe4d57e9d8d8cd30da9e673f94e2ae",
+    "vendor/egui/src/lib.rs": "159e4831e7345351c0ce430e31e64a1d7641d9cf4d2d832deb7606b618c94cbe",
+    "vendor/egui/src/load.rs": "0450a0382add5e10e92edb0f0bfa7e39bd35c7a1235a1b6af5fbc8f9d25d8799",
+    "vendor/egui/src/load/bytes_loader.rs": "65e7deeffe9b19be191524f0cf64788249db7d369748c51a5660781b40be5fcd",
+    "vendor/egui/src/load/texture_loader.rs": "97b02bc7cc655bae30452e0e4673e471b74d2195d5bdc3c61e470fb8f1473cc4",
+    "vendor/egui/src/memory/mod.rs": "3c02cf285af17f1e419e3f70bc1014b8ed04d5b738ee39abea9640341ced144a",
+    "vendor/egui/src/memory/theme.rs": "76d58c4c43a0d3a2e8a033e19f734b987f15cdd6763b725a1c23a1d95d823d91",
+    "vendor/egui/src/os.rs": "442839a9bf52059e5eb7119a935d7092abc36ab2dc5c509e8e4d065594ec8683",
+    "vendor/egui/src/painter.rs": "41dcf24d830f4180b37210f05c07ef54a45f71b336a8450a8c13b96d418f95be",
+    "vendor/egui/src/pass_state.rs": "25079cf84dd3d14f8cb8dcdcdcef4ab65ce132091b9dd0ea5ea30a41f867697b",
+    "vendor/egui/src/placer.rs": "a89069db47c5fbd6b79184e888d2b78cb658c7fa3e8789d9c496dee653d7ec33",
+    "vendor/egui/src/plugin.rs": "e8ed987cfe27e1be7a1c1b4f7aa47a6bea2454fc39ba1502965e6c0dcd8a8df2",
+    "vendor/egui/src/response.rs": "8abde76c6b24be79079bad23179e2b14d5f7366d301953ab8bc76cd2ebd10a78",
+    "vendor/egui/src/sense.rs": "a73a6605fba97ee43042589e8cca028e046fac57a94820ef202b9c1b8b6dc457",
+    "vendor/egui/src/style.rs": "5c204b7c925858495bae9f6167aef8ebbeedb104acb5b35e22533d215ab71391",
+    "vendor/egui/src/text_selection/accesskit_text.rs": "eaf1372240eb7d952b0b1f99dd887c2002e106cf10ebe38c97cb89d44ae992a3",
+    "vendor/egui/src/text_selection/cursor_range.rs": "ba2d32c55f92c472a58ea51fa2df7798cf8dd95dbf3b9bb414fa3119edba0161",
+    "vendor/egui/src/text_selection/label_text_selection.rs": "c681f7972fdffa8b768c2de7bf9db956860d32027d7a46f429f7355858f07a0a",
+    "vendor/egui/src/text_selection/mod.rs": "09d2771a59ed56a0070ed26799d07ce7ddca05de5603f9092dfcf9bfd781e502",
+    "vendor/egui/src/text_selection/text_cursor_state.rs": "1ba98ec7a09cd26ee0f2ea229667ebaf09e052771f7a7a0a02c355eb44f3b39c",
+    "vendor/egui/src/text_selection/visuals.rs": "16414f794cfdb37b2d2ad4c5b0566a30e85846f33df470b6ef18179903fce167",
+    "vendor/egui/src/ui.rs": "8e7c50212135599ff01e32605afb4d721ffe0a66fe54508553779dc45a33e0b0",
+    "vendor/egui/src/ui_builder.rs": "3e967e7999453e23a1382e09dac7db31e0aeeebe86a5408f7c33661cd249814e",
+    "vendor/egui/src/ui_stack.rs": "f1726d451e26cf58b58a388071e5dc644a826cf197eb0707b275e49d16e70f8a",
+    "vendor/egui/src/util/fixed_cache.rs": "24423fa292c94de7e31aa9af312ed0d0508c80b4a41bec1ab56a1ec56e3101ad",
+    "vendor/egui/src/util/id_type_map.rs": "64c6d12822f4e0960e2dbdbce2b037ca4adc06e93464ccee5d71543a5eb48a75",
+    "vendor/egui/src/util/mod.rs": "0924f2f34fc438defc207939c8cec3cc89e4600baf1e4a69ea6b826aa828e5b9",
+    "vendor/egui/src/util/undoer.rs": "69692e84dd77561e99fd6138e18afc10e352c029fe4e0f2e72e05cf6e4d25e0d",
+    "vendor/egui/src/viewport.rs": "d2b427295fb65db10a2505f6e7d05809124a80ac2347b206b554105200b5fec9",
+    "vendor/egui/src/widget_rect.rs": "842969b8cbe0574612aa2d195fed4f40771f661ab0f64bb6dc64732cd84b919d",
+    "vendor/egui/src/widget_style.rs": "ed32c8f5e824f6449b044c889ffd3b63223f0ce165044a1afa0bc3fe8cd2521d",
+    "vendor/egui/src/widget_text.rs": "b9b93b579ca91c82d241c3cc62f3372974262f1b99208873cd4ccbfa54fd43a9",
+    "vendor/egui/src/widgets/button.rs": "dd720416906683daee31b112ff03782be924a3146aa6c0d8bbca56e31c10d84f",
+    "vendor/egui/src/widgets/checkbox.rs": "6f8d8ea44baa9ee808ed0c92439597b3dc8bef53f7a3956f39a1fbf34b317217",
+    "vendor/egui/src/widgets/color_picker.rs": "947e20009493575143a9bd560e9714a0cb5743e68a3430eda8aeb59e08e869df",
+    "vendor/egui/src/widgets/drag_value.rs": "4bee0618f79ad015359dd70f59a7445077d033fc958f5c5d2347e263a816a7d9",
+    "vendor/egui/src/widgets/hyperlink.rs": "65ff4e99f186de67531c11bd048466c0f3146878b297377cb1053107b82698e2",
+    "vendor/egui/src/widgets/image.rs": "eb0662920d48e0e7c1117b9d557a2ee6e8958fde4398e9b050f96fd2864ac5b4",
+    "vendor/egui/src/widgets/label.rs": "58a82bb905ce48c35df71d7faa4149261f6de489207ceddf85b0c92399195611",
+    "vendor/egui/src/widgets/mod.rs": "3faac525203431b9bfe29b9f39b1d4fbb3375d721500e98e196e4c9957e6a549",
+    "vendor/egui/src/widgets/progress_bar.rs": "c830f6ff963a13ff22e0dacad709873070c5171a5bc88bc3faecf3902d298207",
+    "vendor/egui/src/widgets/radio_button.rs": "f603c54e8b6b75f88e5fd0981d44d22cdb0234d620a81565f13664f578e0fbc9",
+    "vendor/egui/src/widgets/separator.rs": "ed58f41919f1e4f27bae9e9e9d4bc4aeb85757f9af58748205123687a1fbf30a",
+    "vendor/egui/src/widgets/slider.rs": "679d2b6263687a3ca4f405cd6dff6f42fcaedb3428581f53a6f7d895c3a4e355",
+    "vendor/egui/src/widgets/spinner.rs": "ca8e9c35c0d95ba305ef981415364b36b5e445490a4504b7d66d2f5a3a21ece8",
+    "vendor/egui/src/widgets/text_edit/builder.rs": "341112ce59e7b070c643576fb0fd878edf0763a1e85c6832b4067cbe8a982ea4",
+    "vendor/egui/src/widgets/text_edit/mod.rs": "479367022ff10befbfeb56618dc6fced02cdd5bbd2869e6edba338f0407553f8",
+    "vendor/egui/src/widgets/text_edit/output.rs": "f1960e60d4c4f76c31dd4fddd6c9e648ff9e5057425775786bf41475be673705",
+    "vendor/egui/src/widgets/text_edit/state.rs": "d73feeef4f73154821c47333e9e7d65240ccc65ed2c2908832c93d5b035f577f",
+    "vendor/egui/src/widgets/text_edit/text_buffer.rs": "6ac11dc0237bf7250bfae23c8139c56ae352ecb92b9ecfa699bc5b73203d0989",
+    "vendor/epaint/Cargo.toml": "9bfbb31991cd3f56530ff7986a7e7ac2a7d34e50f8a1ea6a59486e1bcd09b642",
+    "vendor/epaint/benches/benchmark.rs": "ee78d2c1ec83185f6b0cc32999e33744c30d38f712adbefda81a845fd24ff252",
+    "vendor/epaint/src/brush.rs": "cfefc5f28bd387c822e4be248495dbbe093f918691eb4aad8a0a22392a75e1db",
+    "vendor/epaint/src/color.rs": "5ab9ea0d18de9468d29e3b49a6443f985ea640823d37bdb9475214e2d83912fb",
+    "vendor/epaint/src/corner_radius.rs": "09bf3167e9dcf5416f58699395349c5f69e8eecda26b7598f967d725a286f236",
+    "vendor/epaint/src/corner_radius_f32.rs": "a0a27ac61f70587067ed65375d491dd00d52841e4188435da349b1b0f344b755",
+    "vendor/epaint/src/direction.rs": "ffa0aa03693216f5e0b4876168c3abd7c6f9923124d8df76d13f3eeb3a4a299d",
+    "vendor/epaint/src/image.rs": "6838f5015c2821d153989b0d8af97b9e3a77e6ecdd2df72399aa34b99e837e1d",
+    "vendor/epaint/src/lib.rs": "acefa1a46074fa78c9bd3cd4e6a3e6a11cc8f15eb9363eeaa406908259184577",
+    "vendor/epaint/src/margin.rs": "8a35e9152de77c8151bb01947bde6437dd1918f8edeaee286596f02718aef714",
+    "vendor/epaint/src/margin_f32.rs": "f665d75612b01e3dc435671dac70cc6d011bf9bdecf0ecd1bb4435f6f3cc64ef",
+    "vendor/epaint/src/mesh.rs": "08bf896bd7097dabc4d32491b2a8ce21ad3e4473247932c484c4192cbedb9889",
+    "vendor/epaint/src/mutex.rs": "165b04cc3dd5503e85e6a1aa212eebfbf2003d9fe88c9ed1e35fed48eebb9d34",
+    "vendor/epaint/src/shadow.rs": "f14c6fb893c92466d06f65044497cd07ec4ac7c98552f638110fb2e4b1759f23",
+    "vendor/epaint/src/shape_transform.rs": "c64a2ac4e631acb36619c5cdc33c3444161ca352ee89c1f050ec1e99b8797d9c",
+    "vendor/epaint/src/shapes/bezier_shape.rs": "1d8ac42284a361e212184b375473621ff0ef41f0a336ca2584a3c045a1e91dd8",
+    "vendor/epaint/src/shapes/circle_shape.rs": "e227a8c5830667373aa524e4752682ca40b901f2376215a88a3657e89a8f6269",
+    "vendor/epaint/src/shapes/ellipse_shape.rs": "c5714b9fbab50012c23c0590a10826367e6c5a52c8e0a6648d36834d2b892043",
+    "vendor/epaint/src/shapes/mod.rs": "40b509a459066d8a4390af1302b51fa4bc2147feda3ee822b5a448d1dce7077c",
+    "vendor/epaint/src/shapes/paint_callback.rs": "e6cc7d7a099201238507015d4acd65e9d8ac60f349d46f67861148d8188547c4",
+    "vendor/epaint/src/shapes/path_shape.rs": "d64aacb029b4abf6e016be3c7de0a3d79d03f30c787dea69111e1cd363cda856",
+    "vendor/epaint/src/shapes/rect_shape.rs": "29b7ea6cdfae08af7c84da036ee84b2fc0b46f7a1fead9626befe62cc9f01326",
+    "vendor/epaint/src/shapes/shape.rs": "47bd10304eca8ae1283b5e18876eb52e0d3ba2538db1905e99f21ea5f084369d",
+    "vendor/epaint/src/shapes/text_shape.rs": "3d34a0012126e00803af5a111cfa99d6740a11cb18c2740da212417bd36cd96b",
+    "vendor/epaint/src/stats.rs": "b4628f8e1f65799a253b31eebe9aeaa94b9c14657322506712eb466ac9ac4cf6",
+    "vendor/epaint/src/stroke.rs": "dc861b96a1903e3bed518823c5c819e58727e4e18bd817a9d8d477752d1915dc",
+    "vendor/epaint/src/tessellator.rs": "ff166e6d59766dd57e17f2f7b7cbca146fbd030612a9d5c1efaaea32cfd216b5",
+    "vendor/epaint/src/text/cursor.rs": "19d1298731289aa8428af87f3dd29e496e663cec6d8c12c9db677b417528b45b",
+    "vendor/epaint/src/text/font.rs": "3cd00d7cea9452f34884be6462fc3501bd5c7ed35aeb97382b06eeeed3f5c820",
+    "vendor/epaint/src/text/fonts.rs": "bc59e3f73cc26851fe6c6ffb890c479b6a7734b67fe620652bdf33482c8ac22e",
+    "vendor/epaint/src/text/index.rs": "636c88564a1b4a4d2d0bdde7b3479867758326276cad0fa80925cc7204e70313",
+    "vendor/epaint/src/text/mod.rs": "0e0fcac681cb744db8330d4c027f9114ff39d6ae3b6dc26bebde37c5bcbfecb9",
+    "vendor/epaint/src/text/text_layout.rs": "d23efb7f61ac8ee71ca6148d89559b8a0f070c794d32ef42d87b952244b17dd9",
+    "vendor/epaint/src/text/text_layout_types.rs": "6581b38f7ba2c1cce598c580eb06b7a5c3cbee7ff6925ebcf9b9521801a0750e",
+    "vendor/epaint/src/texture_atlas.rs": "e47336f2a1dfbb84fbce4c5c738286136e5dd670b0cf9b5b3710897f93d792b4",
+    "vendor/epaint/src/texture_handle.rs": "7f5010021d85cb0ced88ca2c88504eb44165fbc79829587de6c94e9b61da3b86",
+    "vendor/epaint/src/textures.rs": "78697161c9196e2a69828ad4de6d4de3ef19b8863397ea225d8e9cc5f1dd3abc",
+    "vendor/epaint/src/util/mod.rs": "5d7d895f237d4113bc37c28b41afc52034a3e16cc1bf179eefff011ecfd4710a",
+    "vendor/epaint/src/viewport.rs": "e9aa21f945ff4982934565edbb8bdb47b0c6ca3a0ede9068525b7402dcb6b47f",
+    "vendor/psrp-rs/Cargo.toml": "437b399493de545df706d67efe95de0b9a1dfdcbf48bb8759ed2f36993ae7f83",
+    "vendor/psrp-rs/deny.toml": "835b51fc066e7e7df6ec7115cfc6059ac1e4b6a255dbc80ed1ec60c58e115c50",
+    "vendor/psrp-rs/examples/generate_fuzz_corpus.rs": "c311b371e17de825f073b9aa86a4b77cf9e0fa0e3b4eaa6c5e7a9c73dba9a505",
+    "vendor/psrp-rs/fuzz/Cargo.toml": "f20a971fbac674bfb81491390f687b23c133603eec8e132a4866612482eb7cc7",
+    "vendor/psrp-rs/fuzz/fuzz_targets/clixml_decoder.rs": "46f8fa95277b8ed1d96e557cc7bc606c5194b7037e18cc4f9f9546404348153e",
+    "vendor/psrp-rs/fuzz/fuzz_targets/clixml_encode_decode.rs": "125cc0b25a7bb2e03fd6e5ee613b25971934cc0d5d0b01691af5c433105d1984",
+    "vendor/psrp-rs/fuzz/fuzz_targets/clixml_roundtrip.rs": "b76b70e65b3b474a124d6e6bd87f7e078feb1309d07bd840b5f04b3da16ab439",
+    "vendor/psrp-rs/fuzz/fuzz_targets/codecs.rs": "f95c09ba1aa47508efb4b5d6569ae59061b387f72c5d419a6a66b05ade3a18f7",
+    "vendor/psrp-rs/fuzz/fuzz_targets/crypto_secure_string.rs": "af3e47e23228a798af81bc97434466a9b2a7f93b2c4e77981fdaac7284efc10b",
+    "vendor/psrp-rs/fuzz/fuzz_targets/fragment_reassembler.rs": "eeb61d5af20d81ad81990376bab45e1c61f075c7c66fd648ad7dd8ca871a7303",
+    "vendor/psrp-rs/fuzz/fuzz_targets/fragment_roundtrip.rs": "c252a530fb570718eac4979fd67f4d69e837cfed592a02494763493aa5bae129",
+    "vendor/psrp-rs/fuzz/fuzz_targets/host_dispatch.rs": "6c944068844b11f90ad8c2fd397fe342a61f361ae1fef026881b0d940d8b98ce",
+    "vendor/psrp-rs/fuzz/fuzz_targets/known_hosts_match.rs": "1f297a250d0740d1c29d93284d1a5639afaefc3b96753ee7d4eda311fb5f9cac",
+    "vendor/psrp-rs/fuzz/fuzz_targets/message_decode.rs": "542e0660cd5b90c4d25e039335cf7fafcfa5e6f030737931e491b8d52a4f521d",
+    "vendor/psrp-rs/fuzz/fuzz_targets/message_roundtrip.rs": "f9884e3d3d3aa08ef7ae915653b9ee9d2818a89e15e0704ba4828578810dfef9",
+    "vendor/psrp-rs/fuzz/fuzz_targets/metadata_decode.rs": "6042a663739a42e4c5e32f6360edf3f820c6980d936059c6f42f085a1de8af7b",
+    "vendor/psrp-rs/fuzz/fuzz_targets/pool_receive.rs": "8f6866b30aedbbca68037f4e3f0ae02977c981536c99dd029900d6c66e2a3e89",
+    "vendor/psrp-rs/fuzz/fuzz_targets/psrp_stream.rs": "5c5c53ad4ebf335aea972495269a4d84ea9d62845fe676d232147d92ad87f2ed",
+    "vendor/psrp-rs/fuzz/fuzz_targets/records_decode.rs": "afa398989afcfaff36889748d709915cc6d4f9a8b35a4191eac29274cebc9c66",
+    "vendor/psrp-rs/fuzz/fuzz_targets/runspace_state_machine.rs": "e5fb607bc8f9e0cc33d4d60373201041e29acded3c70542331f3980b19429059",
+    "vendor/psrp-rs/fuzz/src/lib.rs": "09c763267e04c1cc6ec6e044d7998c5c62b1df02399bf66f7d8c1b4a92ac3642",
+    "vendor/psrp-rs/rust-toolchain.toml": "909f34195e0a55911c205de8aee010b6b7f204d4b6463c5238ac4cb99ad5db77",
+    "vendor/psrp-rs/src/blocking.rs": "08a5f5745fb8bc0372c981c2731c89781ba7f7537ff4bd820bf9e35cb60ddb67",
+    "vendor/psrp-rs/src/clixml/decode.rs": "bb84bc884772a7263a7027ab11c82c5bd47a98477c843abed0abe1d7fd276e0b",
+    "vendor/psrp-rs/src/clixml/encode.rs": "33ec5436839032e44df0f289ae939a0f87d91f1908de55b115c95834ac1fa835",
+    "vendor/psrp-rs/src/clixml/mod.rs": "b7c58af906774b7899c3494c5833f4eb7e5a8a790bb8623938877aa7e2aadc74",
+    "vendor/psrp-rs/src/crypto.rs": "e42628f647c485f4a6db6d52be3c8630ce5612a3280ae93627970b89bd6e2ed0",
+    "vendor/psrp-rs/src/error.rs": "1a6f5fe9b2a376e5fe088c3a0fe8f6318455efa2ab411996b9c7e06b74a9c6e5",
+    "vendor/psrp-rs/src/fragment.rs": "2592b084f08889a82abab901e6cc78e327c3e39c96b8408a8dd632888564846e",
+    "vendor/psrp-rs/src/host.rs": "7670338a3dcb57528fb75a364dd5d5f316d8a5b7ff21367712260d3ff4ae3eea",
+    "vendor/psrp-rs/src/internal.rs": "24d5ab5c4146fc29007b543173e5ecd596ec6521defa24c0b86f833082ec9f7b",
+    "vendor/psrp-rs/src/lib.rs": "b9dd633eb6b3c74bd5bc376f272518cc89ee108b465f96db6441aa6910012b3c",
+    "vendor/psrp-rs/src/message.rs": "571403a5ed605b4c67f28fd523d6c642d67b30353ea4f683194b45c3c7ca1459",
+    "vendor/psrp-rs/src/metadata.rs": "20af987c8d0a564fa701341f73f08025f64c71b4d15f2e0d9ffd5a5027767d95",
+    "vendor/psrp-rs/src/pipeline.rs": "c23b679a53de06863746b5ca65a7237aac40ce496427e1d8d3e4c8951d5b67aa",
+    "vendor/psrp-rs/src/records.rs": "6230149096c7f7f83132a1f2cfcf24e9fa58fde00940eb2f1850b3c52eebc81b",
+    "vendor/psrp-rs/src/runspace/mod.rs": "8dda4b90b311250d87e2c68351144fd973402adc25074ab247a9cca398810be9",
+    "vendor/psrp-rs/src/runspace/pool.rs": "b4517d1b4aa74c1d4851b277d607c4de01567db100413b41fbb65465d71f781c",
+    "vendor/psrp-rs/src/runspace/state.rs": "0c94c8eff70fb92b429726ad2dd0aa508f195eea3bca7ed16dd9b2bfc0a12831",
+    "vendor/psrp-rs/src/shared.rs": "60b9be2ef04af7951d45b9e118411ba3c42793f6c752bbdcedfbdcad56b68b48",
+    "vendor/psrp-rs/src/ssh.rs": "187aec5317a3cfae1f39538e12ec2666507be40dd80a526387f7835986cc5a97",
+    "vendor/psrp-rs/src/transport.rs": "b1c427e6c4f95a987e9b0a1d677e85d2219da34874da3645c2ae92ed4c1212af",
+    "vendor/psrp-rs/tests/end_to_end.rs": "9717793bc1cf208a74cd3b7978d383d9b98b53d8048ca3bbebec44349bb4ebb2",
+    "vendor/psrp-rs/tests/integration_real.rs": "01d3bd870a32013c29e8a84f8b2c843555e93e9e2a7b7dd91c47c23edd8f32e6",
+    "vendor/russh-sftp/Cargo.toml": "0d3aee63954e7adc1a3201343a66fd7998fac6dbae32809c606507aefecec2b7",
+    "vendor/russh-sftp/benches/upload_benchmark.rs": "24e35c14b491428deded059fa845adcc7b69a6a1257e56cfc541e8d658752f62",
+    "vendor/russh-sftp/deny.toml": "d14cd56b8f922fae2a7a638e5a9c844dacb5a209fb1ad36b91e247324e7b3b37",
+    "vendor/russh-sftp/examples/client.rs": "50de7a4cb9299d80a1a2c843f75670232bbde828413f84fee98b108552555456",
+    "vendor/russh-sftp/examples/server.rs": "799b7308e05bdae66050433b68f05c3ace2370c57f76881ef0937e932f30602f",
+    "vendor/russh-sftp/src/buf.rs": "9753106e71230c2c5a81cc940d53d39bd7b592a7de651ca969583d0039d02430",
+    "vendor/russh-sftp/src/client/error.rs": "d97bc1d67cf28611057672ac1e3eafe27fc35a7cb7b19854c71c4129baa018c8",
+    "vendor/russh-sftp/src/client/fs/dir.rs": "35e88964973eb9262e5b1bb502d2bfb84970d41579362b01d7bac3f62e05a669",
+    "vendor/russh-sftp/src/client/fs/file.rs": "4cfccb34bfebd6b2f6d623f97f9747e5048679be94e7693ffc2d1fec5a8ef496",
+    "vendor/russh-sftp/src/client/fs/mod.rs": "a342144d6299cdb30ccb330b60f3cfb3349787a509fbaf35044d907946c1b7f1",
+    "vendor/russh-sftp/src/client/handler.rs": "7addc40e636d1bca2759d2eb39baa998b0507f7cb8e251b37fef359b113fa147",
+    "vendor/russh-sftp/src/client/mod.rs": "29f67a381ce42843862506c1f4815d3caefe18fc94850136174e02c6364df704",
+    "vendor/russh-sftp/src/client/rawsession.rs": "2d16d82499838928e32f92d16cc38930ed485a806dbf235c3c3343a633fc7570",
+    "vendor/russh-sftp/src/client/runtime.rs": "ec7dcd2504ff9c23ed1ee909fd024749279a95b4008bbac4fb7455b102fde054",
+    "vendor/russh-sftp/src/client/session.rs": "ce236bfb4690952cb49444257659e38a3a62fe76d0ef50384e6b8e10d3b15a0e",
+    "vendor/russh-sftp/src/de.rs": "ea0bb0151116133d6f1ca361f188332d67a94e57bf7101c235f45249958b2ea4",
+    "vendor/russh-sftp/src/error.rs": "657463e18570c869ed32f52e7c8737509757a18c32ca8a7d8fe91104a1eb81f6",
+    "vendor/russh-sftp/src/extensions.rs": "b2f2020cd844265c9d9423e9fe0351f8d05bcd485c361dc426600ce5119ecca2",
+    "vendor/russh-sftp/src/lib.rs": "d674f6480edd10b470269ae64c87cf510d3abf3d16662c0c2073867845f41f81",
+    "vendor/russh-sftp/src/protocol/attrs.rs": "f6a7d8c038996a80650d82ad69bfdfcfe26beb28992471cb40ebd4af128f5599",
+    "vendor/russh-sftp/src/protocol/close.rs": "bb1b674f2244751f45b3d4298c7e03b22dbae22539cca2496e78ec74ae0867c9",
+    "vendor/russh-sftp/src/protocol/data.rs": "1b8f72528e08fa3ca75dd1103a21f8d5a2a19adbd0f5fc3866fca392549830dc",
+    "vendor/russh-sftp/src/protocol/extended.rs": "4f815834024760e8b0497a219a92696265ab4ea1ae61237c789b93b38d8e84e6",
+    "vendor/russh-sftp/src/protocol/file.rs": "a1e2859015fcdb30a16e597aceb649cc2043aefc1b29fe54b05531d26f10a71c",
+    "vendor/russh-sftp/src/protocol/file_attrs.rs": "1285c6745a7096d3070f373ddfb1d76c333e2132034b0212dd974fed45ef3026",
+    "vendor/russh-sftp/src/protocol/fsetstat.rs": "851c8aae01d131d9a1471354603b0e28a8999324b1ab7b7261b2aa4d24064265",
+    "vendor/russh-sftp/src/protocol/fstat.rs": "979f6bd7376a1cc04da6c45c80bb854895f1c1f2c9b184de14333700e513e943",
+    "vendor/russh-sftp/src/protocol/handle.rs": "326588c49bbd603d62edc82f131f29816e5103bb2973d22f49335efc9f0601b0",
+    "vendor/russh-sftp/src/protocol/init.rs": "57700a28f84a177050627d82d5af44a9ffd4b0379d876a62a39b7e704b5235fc",
+    "vendor/russh-sftp/src/protocol/lstat.rs": "fff4ebff7754467ef96618f1ab9b01634b36878cfaaf0136eacb0248919f2b24",
+    "vendor/russh-sftp/src/protocol/mkdir.rs": "1fd112eeb84e7bcee5dca37a7a5dd9d529aef79d180d16f41e6720169e551440",
+    "vendor/russh-sftp/src/protocol/mod.rs": "4d3427883379009768eeed1cfec68dc9a323150863a008d16732fef95d167c7b",
+    "vendor/russh-sftp/src/protocol/name.rs": "8ed9f912bb450ee8c1d27534eff316bff313d41916158f3bca3515f9f53abdb6",
+    "vendor/russh-sftp/src/protocol/open.rs": "f49c8d50a36f09da9625df1d4b4ef97a6e9e968722bbbdb939e68614d36804bd",
+    "vendor/russh-sftp/src/protocol/opendir.rs": "c331226da172fa5be3fd6c26bc34e4a3c4c31b56df9da444496331216f64e3d4",
+    "vendor/russh-sftp/src/protocol/read.rs": "5f3606484faf3eee7ac313a19e467f1b656819887d014d4243f882fbfbd65d92",
+    "vendor/russh-sftp/src/protocol/readdir.rs": "5845ae81f393c8b8a9c1f374968c0225de3dab7d720c1f353a2d84a225f3afaf",
+    "vendor/russh-sftp/src/protocol/readlink.rs": "3dad590a5357b741cea1474381f141249911f0af4654646fed1055cc31a72de5",
+    "vendor/russh-sftp/src/protocol/realpath.rs": "d237b41d43cd1583dc26fff44dd4aa157023a5523fc59265a73ea0ba139cf422",
+    "vendor/russh-sftp/src/protocol/remove.rs": "50e872897e66163a214e316b6c830444492d908c5f7718ad3d522f1ca145db55",
+    "vendor/russh-sftp/src/protocol/rename.rs": "f16e7bdcff37d1443e4cbcd57fc7a6715e1c9a3c4ee5292cb7471cc1a767e655",
+    "vendor/russh-sftp/src/protocol/rmdir.rs": "7e3c72f921ea46a50f6f1d5a06664622f9187787c879c289481c32beaaac1887",
+    "vendor/russh-sftp/src/protocol/setstat.rs": "e7afb8dbe06728ada114bcb92cdc5597f1262fa10396d4709df62f881c488277",
+    "vendor/russh-sftp/src/protocol/stat.rs": "7db55cece8526b6737eba4b9ab0aa16228cfd9182d40349b5f1964f624b1f683",
+    "vendor/russh-sftp/src/protocol/status.rs": "cac82de9c93d38e49b6386a9b8ee01df60752a2c9390c2b3a2c669a6228485bc",
+    "vendor/russh-sftp/src/protocol/symlink.rs": "b0e5f74a6ca9b02ec091f5c16b219e39c584e0fbb21cb085582199b7922d68cc",
+    "vendor/russh-sftp/src/protocol/version.rs": "9e318f259ff30def76c4b2bcedfa66a42114d4829f562b34afb8d76a0caee718",
+    "vendor/russh-sftp/src/protocol/write.rs": "118e5f7214fc153976b2c2eaf971caa1218b633e3ea1e9d7f017445acf5b2055",
+    "vendor/russh-sftp/src/ser.rs": "d5c76e5c76e9356df7e3ad6453c0834e8da31556b1f3beef8f082b95442e8c7d",
+    "vendor/russh-sftp/src/server/handler.rs": "5f219042057196218827806e0f8a781f71a394669ede9082de3f9c81625b94bf",
+    "vendor/russh-sftp/src/server/mod.rs": "efbec31f34560c6ee053d5a3e73be8cdca2a4a7a3e6db7d9fbc07e206a916e2b",
+    "vendor/russh-sftp/src/server/reply.rs": "20e29746bffda119abf47b95d8e6e8a9a845e3932cd0d376503c60d8c3285880",
+    "vendor/russh-sftp/src/utils.rs": "309f15e66148affcd29b040c1748cb02ed784f28b825c3bf7e7775bb9e0cffa6",
+    "vendor/russh/Cargo.toml": "e12fd33e82e3a171bdcf5b6b7cc479f5f4b31a6d28b1a52525fb94a232892b80",
+    "vendor/russh/benches/ciphers.rs": "8eed524c8e6d71b62ef484a6f75ea7695a5d2bb0d1824e430f8793d41e7d0b6f",
+    "vendor/russh/examples/client_exec_interactive.rs": "485a4fa3bb6e0a590e5cd03985a51aba79d06e0088bda0f90c4a69ae92c7993f",
+    "vendor/russh/examples/client_exec_simple.rs": "1e7158ea8a1fba454a960ca96bf9294d984ee1492a21e4a3450c321187910db2",
+    "vendor/russh/examples/client_open_direct_tcpip.rs": "54f2404bb607adb13bfaa227755a760fb7f4d24ef32b215c34b0262fc36c714a",
+    "vendor/russh/examples/echoserver.rs": "7182112ceddf6434cfedf1fb47514de41619aa5d4e934f2eb14e4a6177c6bc40",
+    "vendor/russh/examples/ratatui_app.rs": "f4897741e2a1d16963c3e84443703370ba97fc468b27bf418f4bd6be7fedab7c",
+    "vendor/russh/examples/ratatui_shared_app.rs": "ea502dae7589c8e43e81e1dba4ed4ee8aa12ebfc78435fb696bcdcca14c38e28",
+    "vendor/russh/examples/sftp_client.rs": "ac7a8bbcece3474cbc8ef4e41e4385b176b9ab2079655fc8d455e6ab06158d73",
+    "vendor/russh/examples/sftp_server.rs": "6f62f9c0d2c8d1789c37b8c47e1e2e2cc98f335c724519908aa8c63507ed60ab",
+    "vendor/russh/examples/test.rs": "a1f5078cc6194dcc3bdce6a256302b1977129ad0d01a295ac977752adca5bc81",
+    "vendor/russh/src/auth.rs": "9c59d800464a4cf10081175d126c5178100feb8dcd41a2643d8680e4ace07f3e",
+    "vendor/russh/src/cert.rs": "690241c97a426034cf774091b8b99d9b25c09964700f9a166bb5af434df3760c",
+    "vendor/russh/src/channels/binding.rs": "038b3d002e7f5f40a7365a92ffd951cca289c80164e94b2bb1f35fa663288029",
+    "vendor/russh/src/channels/channel_ref.rs": "8d6678c43cae06d095ae4cc242ae33ca1bf65efcdef9a5948d382cbffb101f06",
+    "vendor/russh/src/channels/channel_stream.rs": "6e2e3054ee92091745d01b44581fcce7469a7c1a9f81ce0c3e4b1b739785242c",
+    "vendor/russh/src/channels/io/mod.rs": "d058ed66458c0d5a7da50c270cb6c6a9c067c68cc328cc91a990d3ff39be8c1d",
+    "vendor/russh/src/channels/io/rx.rs": "6e241986dcb5f75fdf9788000fa7e9f6c0dc7500c7062fbb16cbcba0c6e0d166",
+    "vendor/russh/src/channels/io/tx.rs": "8c62048b5176ba6b330c5b74148a328172920ca950bfe6bddd1ba5b1a2d16767",
+    "vendor/russh/src/channels/mod.rs": "a678773b85f981c14f3cced75498f2dd05e434f063311b13f8be7ce28e54c0ce",
+    "vendor/russh/src/cipher/benchmark.rs": "1632912cbd81f39684fdc57ef49f240677fd72c9176fa548eb9944b5d66ffeb9",
+    "vendor/russh/src/cipher/block.rs": "1abade93fa680ee57634f2287f6a3ad378aaf5557e21d12ed198a4620cfc33a4",
+    "vendor/russh/src/cipher/cbc.rs": "5349c7a22b070501fb237da568c8e4ccbf31268b393289355de17200cbac2523",
+    "vendor/russh/src/cipher/chacha20poly1305.rs": "461cf944d4d2fab4e0d494ad5bd0923e44795d34e03dc6556122f1a28ba4e47f",
+    "vendor/russh/src/cipher/clear.rs": "0d3c514e38f353f5134e939a0912e72a3e6e01cccf7f134a2304253b56a4e238",
+    "vendor/russh/src/cipher/gcm.rs": "f734b060f43e14aabfd8fc48891f57fab804d0f378374579b4bc3a5098a7b2e4",
+    "vendor/russh/src/cipher/mod.rs": "609a7ae0ed7cf1d900992176cc66f2a1656d1742783af68b77ad95909194b14c",
+    "vendor/russh/src/client/encrypted.rs": "3812e0e6cd7d4cdfc629580932535a7380aed099e1c8691e7166c915c44c0d3b",
+    "vendor/russh/src/client/kex.rs": "a59a0d2e228686524e9d59b0e35a023d6f77d6b0e82428630c7be12084b45d86",
+    "vendor/russh/src/client/mod.rs": "7abbd03bdf2e24ef81708d0c60b15e0ab5a5422de11e5f6809fce5233650ee6a",
+    "vendor/russh/src/client/session.rs": "8ac36e6f6afd13e19b2aca1bdf8fa92892460460b05b1cc4a08cbceaa1fe3559",
+    "vendor/russh/src/client/test.rs": "c5b9ac2342f0c488c7d637bcaeef6d37dc95b0e089709de93f84cad2d22d30f8",
+    "vendor/russh/src/compression.rs": "774b59e33ff0746e2898d896074bcf800ab167f7174750c20ddfca69ada03c2c",
+    "vendor/russh/src/helpers.rs": "e92055a34871f714c284f85c9d38491c87e74ee18a047db263488032f1d19821",
+    "vendor/russh/src/kex/curve25519.rs": "b7d3813fa204892b2d7865f4ec1b83ab4dcc42680b76e60e045bf0f6827df0e5",
+    "vendor/russh/src/kex/dh/groups.rs": "0699b803048c2bf750b9789a76c9243f4967bee7cb8f0e78ef873358aaec1d24",
+    "vendor/russh/src/kex/dh/mod.rs": "c03651d5654fbb910efeab4528e6949c17a772d7b4145eb4c59133aa1827843e",
+    "vendor/russh/src/kex/ecdh_nistp.rs": "0bb7c452200130edf71be0966983ebdc311ca57154343d93eeab509ec2beaf17",
+    "vendor/russh/src/kex/hybrid_mlkem.rs": "c12f092465624e9d5bef94cbce3f2510ae1784c9a112aac3ea92e0527ba9a342",
+    "vendor/russh/src/kex/mod.rs": "c5e32cdbefe0e50a58dd0cdb14b08116e0c55c04ae8d6252b79198ca31f5795a",
+    "vendor/russh/src/kex/none.rs": "8c0d847c2caadd7a2db77d34877d3182e38cb2e90ed44e3823b53361a770960d",
+    "vendor/russh/src/keys/agent/client.rs": "c3ec1417037e0b5b03110e6bc2b187db2bbf3f37a79007a6d1436110d64e682b",
+    "vendor/russh/src/keys/agent/mod.rs": "5652be6d2079a3fdc8361f7e31cfe3a602bdc85a773b491d0bef91c909181e54",
+    "vendor/russh/src/keys/agent/msg.rs": "3461e3f12792ddbddc2aaddaca25f4e074e91a3e58488fe6b82dc087590134bc",
+    "vendor/russh/src/keys/agent/server.rs": "94876dc20ce2261881da41a36a9342b6970586937d2275b32364d98367f0f91f",
+    "vendor/russh/src/keys/format/mod.rs": "7ca4a796a523df1063f0ea0bac1b6d869288dd100d041a6455f8bd7d73b15678",
+    "vendor/russh/src/keys/format/openssh.rs": "e345287a5c5af34b95740c90431e322b86ba4230be4e116b2194c7de7bd99816",
+    "vendor/russh/src/keys/format/pkcs5.rs": "d3b0230ca88e809d73552212fc3b78aa6c4d45f34d2a74b073ef4cda6b1cde39",
+    "vendor/russh/src/keys/format/pkcs8.rs": "69db6690bcedeaabac613859967b6ddc8ea156b41c9a0a4ca0b36614487c99d3",
+    "vendor/russh/src/keys/format/pkcs8_legacy.rs": "c751866710db20fa55fda72a8245a6d32c9b7acd49675309f08de9ae6f58b9c8",
+    "vendor/russh/src/keys/format/tests.rs": "977939953f4ad8db5b86d7b539f0f63bfbc6d2a2de0d1307ca3e9707b3fc7d19",
+    "vendor/russh/src/keys/key.rs": "17b75a90739c32fc4b2fbeb31103b9cc8dd5f70c0b7de885bf1238b41b0b50e7",
+    "vendor/russh/src/keys/known_hosts.rs": "13802e03e9d8c11a25673ac29bddccaebedbbd759465b2d2ec847ba86e8e1049",
+    "vendor/russh/src/keys/mod.rs": "b70295ff6ccc78da503e4581a638924af424129357742d8a0c75726fe9845e3b",
+    "vendor/russh/src/lib.rs": "8398c8b25509efa7d56b8577ec9c46e27f8ab9b20ac0f2068e7390ddfad883a9",
+    "vendor/russh/src/lib_inner.rs": "b2022fe61522d4d1f00dfb41689ace02eb2c82eb98bcd64f665b902ff674c179",
+    "vendor/russh/src/mac/crypto.rs": "a6f8f5a98a6d342f925bb2842650b0c92e4c57c91036caf93aa2fdaa28a0b218",
+    "vendor/russh/src/mac/crypto_etm.rs": "36f76c3e30556c182bac25cc4b2918d6ce7f2be666531df849db4baf8fb02148",
+    "vendor/russh/src/mac/mod.rs": "a3418bb9fdc1cf9102ffd968811946e9c92cb4a3d50a0759f5cdb091cce6d18e",
+    "vendor/russh/src/mac/none.rs": "c58fe761c9e07df4956a8e349f2053e2d3fd28988b99a4af7b152f73a7db1211",
+    "vendor/russh/src/msg.rs": "c377a22642b6fd62d5be3676874e79173cd26d72e6a2a6bdc8ff86b1671eb20f",
+    "vendor/russh/src/negotiation.rs": "e26eb3d9ca29efb07bb373647a492a96d69961408c36eea76d114422992137fc",
+    "vendor/russh/src/parsing.rs": "8d1fada82c271ff3165b4ce3328440e9f4cd02e28e1074ef60cf66d803e5fb5b",
+    "vendor/russh/src/pty.rs": "db018a9139923b907999fb9870aad0e9bc93fe03d11b65752f3f08fe63c4eb3b",
+    "vendor/russh/src/server/encrypted.rs": "9c0512fe79f5723ae03c7cfb0f00073c84c805ff84c6f79e772b422da6d9811c",
+    "vendor/russh/src/server/kex.rs": "853c31a57742392d308a777b76e2dc8c9cb4971f3a6e0be76f955c9895d93e61",
+    "vendor/russh/src/server/mod.rs": "96feea1400b624f1f4d17cff33d6c143f1cef7172aaeaab7b4a2b6dc699167b4",
+    "vendor/russh/src/server/session.rs": "4bd4a6f845471259c0fc001d275d3af20257fe91411284b767e48690832db913",
+    "vendor/russh/src/session.rs": "b69f21a9b4bb7104ae33ad13cf249c31e9d7daff4f9671f2ab5d75c125cf3cdb",
+    "vendor/russh/src/ssh_read.rs": "469bc85924824923372391eba9815e72434388e36f6f8c34d33aed2e95127a2f",
+    "vendor/russh/src/sshbuffer.rs": "ecd35c32beae59d63b9683ca30d1043bbf628a020c75cdbfe8d06fbf98a3680d",
+    "vendor/russh/src/tests.rs": "d40565eff41c0207619aecf51691f4bca0c77eb31a246c1c54a6451600ab23f3",
+    "vendor/russh/tests/auth_state_reset.rs": "16205bf1adc46ab74102e6546df7ef361b2e89f2693c99f04ba98967a50185cd",
+    "vendor/russh/tests/test_backpressure.rs": "d5a1a53b19de748749539b63e09f89d23d85a48206310dce80a236c8aafc5cfd",
+    "vendor/russh/tests/test_data_stream.rs": "fcfdbb74cbcdb625e45214fbbf79ce94bbb5247b3d4e28ca2354dbf1ab125a16",
+    "vendor/russh/tests/test_kex_shared_secret.rs": "9243b67db867de1272ed78b9978c9cb0409a96e96116d3b4066e5c431313c4b3",
+    "vendor/russh/tests/test_max_channel_packet_size.rs": "286cb7b9c2d2250e2a9ba254b7c6c6f403745d535a5d2e18c01bdc0dc258f2b5",
+    "vendor/russh/tests/test_mlkem_kex.rs": "592b03d1c6911ee9e27084465acdd564c51fbb7f70a6c96b03c96c1af11f7841",
+    "vendor/russh/tests/test_rekey_strict_kex.rs": "e283332421a5bdf8acfd557517b8fd7352ea47581a42309fafa0f41904be8937",
+    "vendor/winrm-rs/.config/nextest.toml": "56ba573df1bd237a3c2d7628b23fe50b053dee212c8de29635bdc381712de488",
+    "vendor/winrm-rs/Cargo.toml": "e2a34c918aec94ec4cc522ef57203c0f7d6e8fc723e529881b015b79511cf62b",
+    "vendor/winrm-rs/cliff.toml": "4f7e8a3b109d156c73fe16b01e8e32f9a89966927a381ce9e2183b0f6e8975e3",
+    "vendor/winrm-rs/clippy.toml": "13d9f4f7116ecee4e044a1ff0d352d12a15f27cee59894d3c6707d324d9d2c47",
+    "vendor/winrm-rs/deny.toml": "972e6b643586a4387244b0dd7b0e0f3c202e1071ff774ab771cd0fe3d9842da7",
+    "vendor/winrm-rs/examples/basic.rs": "d8993984f572a13cdfacdcaf3bdf67962d8f90258a789da778886a6f25d38171",
+    "vendor/winrm-rs/fuzz/Cargo.toml": "d51f0fb94d284871686be9e7f7e42c887d8f5ac2a9f8d43181d0470d04cffa2c",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_asn1_cert.rs": "cd2a0a42a829c88f22236f8df8eeeaefca34eeddab438424380adcb0ee6b809c",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_asn1_spnego.rs": "aa659c0e2dfc68afa8d2374f304ec7a88a96476763e0dafce9f330f10e9733bc",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_asn1_ts_request.rs": "3c3241f138a0c77d65728109d335b631f4ab6de6d3dd9794c8baefe39aaacf60",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_av_pairs.rs": "8d6ff36a64c520043085ef07fc36dc474987a4fab26fb7f749efde5562af80de",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_challenge_header.rs": "bf6140244b05dba0cbb33194f846b237d90024e7d814156dfc3a9661c71a7188",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_crypto.rs": "16e2644186bb3d7cce75514057fad07951dbb27433ca9f5137f7ae408c7fe6bf",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_header_decode.rs": "398c729fcf2db6cd150db05eea3733e3625c4fdcb68634c71da4a3304855e846",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_parse.rs": "6ebbe75a75106c27832d626f38347619b85bc0d3c8f15b64122ca3f458766a6f",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_seal.rs": "a4bebe74344d543234a974f4c7f75c0fd21bc66ecac21226e5143bee70b29abc",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_session.rs": "33b92c4ada96087ea9cc37a2c808478800fdf3c1e8598f1e47a8ff67820dd669",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_ntlm_type3.rs": "5d5198c898154202a30497bc57a18933682cbc3415567e1f846feb8681d8b504",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_powershell_encode.rs": "9427c6c778f96a86d1e93db1a9326d8937b5bcd63ccda0c35e72de53b949d524",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_soap_enumerate.rs": "79023b7f729f67e4131ff83508ec0e06597309ffc4d96ba66fb588498452209e",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_soap_envelope.rs": "fdbe1aca0b980feee7ae1112aee60e9e060d28c6f63e3497d1aca7388e5e95bf",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_soap_parse.rs": "d2e1373fb7b307bfb7fb73f660d2328abd6054fb25e019168e656ed43d65965b",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_transfer_path.rs": "5b5093732ec92d9e183d93790724adde5393d51987a0de1a20fad403f4efbe0b",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_transport_host.rs": "c72b64ac77c888ec9a4f44466ba4bc03a7c317ea656e502a290f86ad83d8676b",
+    "vendor/winrm-rs/fuzz/fuzz_targets/fuzz_xml_escape.rs": "7b57bf361fd11a96d3eedfe8e62c82168b5839926d236bdbac39ae78b17d35d1",
+    "vendor/winrm-rs/release.toml": "df9d1c1f0b4605aee69f046b9254ba99ee656eae77e0a227ecf72e96d84174e3",
+    "vendor/winrm-rs/rustfmt.toml": "0908f6699349f28e520955b7f8685c90a44903f99ffa8f9f0c367499608b58e7",
+    "vendor/winrm-rs/src/__fuzz.rs": "21575179c3be5eb38c590e5aeb67d104868e2c09c7cc8e0f43958d4d8bb34bf7",
+    "vendor/winrm-rs/src/asn1.rs": "80e944e699be6fb459fc567e3f28593968733f748adec32b3154d6189de51f26",
+    "vendor/winrm-rs/src/auth/basic.rs": "e5f54635ebfd593571a824ced073053fe7014d5635c1fba7151790b0b8a60f03",
+    "vendor/winrm-rs/src/auth/certificate.rs": "6526f464e38594be30e5e22a7ba6f75639619e3b58c72224c4b770164dc2292c",
+    "vendor/winrm-rs/src/auth/credssp.rs": "62e55e22af40b807f5690da50cd8ab69ada642dab2f7930e3dd0286300145a65",
+    "vendor/winrm-rs/src/auth/kerberos.rs": "1ee2c68b1b28966294d66c1bc09bf770413792f8aa5b82375f3b8de4e25433d7",
+    "vendor/winrm-rs/src/auth/mod.rs": "7008db8c2b9871be5baea23af4f16e632784eccc94856fe5637eb9113253e363",
+    "vendor/winrm-rs/src/auth/ntlm.rs": "27512930e02757711d53777dfcf8d8f4530d78f76dac70cb9b2fb804060256c6",
+    "vendor/winrm-rs/src/builder.rs": "e830ecc8e3fa14f2d06aa0773d1f568f3c42fe715f4b979c780031e4629b5df4",
+    "vendor/winrm-rs/src/client.rs": "afbc2fd747e042859271e561269e94bf224502207c375a6009b1334e3db3e243",
+    "vendor/winrm-rs/src/command.rs": "01b0dcebbe6df431129564bf55c1a619851aa7cb9c65ee0251d810a7daf32570",
+    "vendor/winrm-rs/src/config.rs": "e62bf9d3c4ebad63ee8c44d477e7e1302e3fc1407ff6da58992e8ce5daa1b3f8",
+    "vendor/winrm-rs/src/error.rs": "7efa9c3b9fd5d77cea7ee7ea352b7c4225f35b8e071a2bc201dfbceb37a2c85a",
+    "vendor/winrm-rs/src/lib.rs": "707c5d77e4960ae0ebe68a1f32372de8d86078fb27b5472ffb4e2e56651e7cd5",
+    "vendor/winrm-rs/src/ntlm/crypto.rs": "21a3be1a31b432ff948b073e413a535294136253caaab84bb3f2b21bee77b467",
+    "vendor/winrm-rs/src/ntlm/messages.rs": "0d2ca3296656c13b1bb5e0438c1d41f0f88d94adad32d9761d0b57a04c38681c",
+    "vendor/winrm-rs/src/ntlm/mod.rs": "e8add23bbfd46ebfbba1aa0a8db15bd394f63f3f39dae42d976dfe8d4c13504b",
+    "vendor/winrm-rs/src/shell.rs": "aa8664dd277295e860d4e73859c23bc4f0937f2fbf2f3052aa99b7e2a021b132",
+    "vendor/winrm-rs/src/soap/envelope.rs": "42f7e914c5f50e2a85746541466fcc796b5cc8f32eeb5d5696636a06a52ea883",
+    "vendor/winrm-rs/src/soap/mod.rs": "f1201b50b3fc01e572a9df13faa0bc77059b6f3dea57357e0ec56ec7a0a2cfd3",
+    "vendor/winrm-rs/src/soap/namespaces.rs": "dfed35de5c2a1f5566abc79a94b7692b541ef01db7ae9efb970ef01f9c0fde63",
+    "vendor/winrm-rs/src/soap/parser.rs": "691bc27873fc2576d7f48ed4d7ce8884995c393dec19648d7cbd1093b73abda7",
+    "vendor/winrm-rs/src/tls.rs": "f569109700a91589532c1926ba412cacca7c2ff5e7dc996b773caa1fa484f7ce",
+    "vendor/winrm-rs/src/transfer.rs": "1a1e44a0bf356d733894ecaf4d6e3becf7e78cd1839163209a9465cbd15b8ea0",
+    "vendor/winrm-rs/src/transport.rs": "b6fcf489908f601f3e605f57e28ddb902cc469f71b0edc72f38bc71607315bfa",
+    "vendor/winrm-rs/tests/integration_real.rs": "e0d9c232a43db48c31fb4dbd6897e2731a05027d4e335d69fad414d739e42f4c",
+    "vendor/winrm-rs/tests/proptest_wire_format.rs": "f09a12f08863af6244e0161a0ea5d2ac360cb9b1c42039c4c177fba2eafbf1ed",
+    "vendor/winrm-rs/tests/security_regression.rs": "17b7725dc66e0944ce3a4eae624c83018be1ad4b87924339bdab24f800f11d6c"
+  },
+  "source_fingerprint_sha256": "7348f6c8683a7ca10b34f03ad0f89da3edeac27a0d490a94b38980edb749c0ab"
+}

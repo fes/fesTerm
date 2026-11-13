@@ -7,6 +7,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Native SSH session transport and trust policy for fesTerm."
 
+[features]
+test-support = []
+
 [dependencies]
 festerm-session = { path = "../festerm-session" }
 festerm-secret-store = { path = "../festerm-secret-store" }

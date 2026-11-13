@@ -3,6 +3,10 @@ mod confirmations;
 #[cfg(feature = "local-host-settings")]
 #[path = "desktop_remote_access.rs"]
 pub(crate) mod desktop_remote_access;
+#[cfg(test)]
+pub(crate) mod experimental_gallery;
+#[cfg(test)]
+pub(crate) mod gallery;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "host_browser.rs"]
 mod host_browser;

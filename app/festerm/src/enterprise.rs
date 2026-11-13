@@ -407,6 +407,69 @@ pub(crate) struct EnterpriseTab {
     invalidated_worker_completion_state: EnterpriseState,
 }
 
+#[cfg(test)]
+impl EnterpriseTab {
+    pub(crate) fn gallery_inventory(scene: &str) -> Self {
+        let mut tab = Self::gallery_fixture(EnterpriseState::Ready);
+        match scene {
+            "empty" => tab.inventory = EnterpriseInventory::default(),
+            "unauthorized" => {
+                tab.inventory.projects[0].dev_box_readable = false;
+                tab.inventory.projects[0].note = Some("Synthetic read-only discovery: current account is not authorized to list Dev Boxes for this project.".into());
+                tab.inventory.dev_boxes.clear();
+            }
+            "truncated" => {
+                tab.inventory.truncated = true;
+                tab.inventory.stopped_fetching_at_budget = true;
+                tab.inventory.omitted_projects = 12;
+                tab.inventory.omitted_dev_boxes = 24;
+            }
+            _ => unreachable!("unknown enterprise inventory fixture"),
+        }
+        tab
+    }
+
+    pub(crate) fn gallery_fixture(state: EnterpriseState) -> Self {
+        let mut tab = Self::new();
+        tab.state = state;
+        tab.draft = EnterpriseDraft {
+            tenant_id: "11111111-1111-4111-8111-111111111111".into(),
+            client_id: "22222222-2222-4222-8222-222222222222".into(),
+            dev_center_uri: "https://engineering.devcenter.azure.com".into(),
+            project: "engineering".into(),
+        };
+        assert!(validate_draft(&tab.draft).is_ok());
+        if state == EnterpriseState::Ready {
+            tab.inventory.projects.push(ProjectSummary {
+                name: "engineering".into(),
+                display_name: Some("Synthetic engineering".into()),
+                dev_box_readable: true,
+                note: None,
+            });
+            tab.inventory.dev_boxes.push(DevBoxSummary {
+                project_name: "engineering".into(),
+                name: "build-workstation".into(),
+                provisioning_state: Some("Succeeded".into()),
+                pool_name: Some("review-pool".into()),
+                location: Some("westus".into()),
+                os_type: Some("Windows".into()),
+                user: Some("devuser@example.com".into()),
+            });
+        }
+        if state == EnterpriseState::Failed {
+            tab.push_event(PresentedEvent::new(
+                "Enterprise discovery failed: synthetic access denial. No terminal connection was opened.",
+            ));
+        }
+        if state == EnterpriseState::Closed {
+            tab.push_event(PresentedEvent::new(
+                "Enterprise worker closed; transient account state was cleared.",
+            ));
+        }
+        tab
+    }
+}
+
 impl EnterpriseTab {
     pub(crate) fn new() -> Self {
         Self {

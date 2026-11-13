@@ -30,13 +30,22 @@ mod profiles;
     any(target_os = "android", target_os = "ios", test)
 ))]
 mod recording_draft;
-#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+#[cfg(all(
+    feature = "live-ssh",
+    any(test, target_os = "android", target_os = "ios")
+))]
 mod recording_library_ui;
 #[cfg(all(feature = "live-ssh", unix))]
 mod recording_storage;
-#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+#[cfg(all(
+    feature = "live-ssh",
+    any(test, target_os = "android", target_os = "ios")
+))]
 mod recording_tasks;
-#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+#[cfg(all(
+    feature = "live-ssh",
+    any(test, target_os = "android", target_os = "ios")
+))]
 mod recording_ui;
 mod runtime;
 pub use runtime::run_native;
@@ -382,7 +391,7 @@ impl SuspensionHandle {
         })
     }
 
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(any(test, target_os = "android", target_os = "ios"))]
     fn start_prepared_recording(
         &self,
         prepared: festerm_recording::PreparedRecording,
@@ -757,7 +766,7 @@ struct LiveView {
 #[cfg(feature = "live-ssh")]
 enum RecordingStart<'a> {
     Directory(&'a std::path::Path),
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(any(test, target_os = "android", target_os = "ios"))]
     Prepared {
         source: festerm_recording::PreparedRecording,
         generation: u64,
@@ -770,7 +779,10 @@ struct RecordingSessionSelection {
     session: std::sync::Weak<dyn festerm_session::Session>,
 }
 
-#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+#[cfg(all(
+    feature = "live-ssh",
+    any(test, target_os = "android", target_os = "ios")
+))]
 struct RecordingConsent {
     generation: u64,
     selected: Vec<RecordingSessionSelection>,
@@ -818,7 +830,10 @@ pub struct MobileApp {
     profiles: Option<profiles::Profiles>,
     #[cfg(all(feature = "live-ssh", unix))]
     recording_storage: Option<recording_storage::RecordingStorage>,
-    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        feature = "live-ssh",
+        any(test, target_os = "android", target_os = "ios")
+    ))]
     recording_ui: recording_ui::RecordingUi,
     #[cfg(all(feature = "live-ssh", target_os = "ios"))]
     recording_folder_picker: Option<festerm_ios_window::RecordingFolderPicker>,
@@ -916,7 +931,10 @@ impl MobileApp {
             profiles: None,
             #[cfg(all(feature = "live-ssh", unix))]
             recording_storage: None,
-            #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+            #[cfg(all(
+                feature = "live-ssh",
+                any(test, target_os = "android", target_os = "ios")
+            ))]
             recording_ui: recording_ui::RecordingUi::default(),
             #[cfg(all(feature = "live-ssh", target_os = "ios"))]
             recording_folder_picker: None,
@@ -1089,7 +1107,10 @@ impl MobileApp {
         self.start_terminal_recording_from(RecordingStart::Directory(directory), &selected, context)
     }
 
-    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        feature = "live-ssh",
+        any(test, target_os = "android", target_os = "ios")
+    ))]
     fn start_prepared_terminal_recording(
         &mut self,
         prepared: festerm_recording::PreparedRecording,
@@ -1169,7 +1190,10 @@ impl MobileApp {
         Ok(terminals)
     }
 
-    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        feature = "live-ssh",
+        any(test, target_os = "android", target_os = "ios")
+    ))]
     fn validate_recording_consent(&self, consent: &RecordingConsent) -> Result<(), String> {
         if self.recording_privacy_generation()? != consent.generation {
             return Err("Recording stopped because privacy or app activity changed".to_owned());
@@ -1190,10 +1214,10 @@ impl MobileApp {
         }
         let terminals = self.validate_recording_selection(selected)?;
         let context = context.clone();
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(test, target_os = "android", target_os = "ios"))]
         let recording_lease = self.recording_ui.lease.clone();
         let wake = move || {
-            #[cfg(any(target_os = "android", target_os = "ios"))]
+            #[cfg(any(test, target_os = "android", target_os = "ios"))]
             let _lease = &recording_lease;
             context.request_repaint();
         };
@@ -1204,7 +1228,7 @@ impl MobileApp {
                 || self.recording_privacy_generation(),
                 wake,
             ),
-            #[cfg(any(target_os = "android", target_os = "ios"))]
+            #[cfg(any(test, target_os = "android", target_os = "ios"))]
             RecordingStart::Prepared {
                 source: prepared,
                 generation,
@@ -1361,7 +1385,10 @@ impl MobileApp {
             .recording_privacy_generation()
     }
 
-    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        feature = "live-ssh",
+        any(test, target_os = "android", target_os = "ios")
+    ))]
     fn foreground_export_cancellation(
         &self,
     ) -> Result<std::sync::Arc<festerm_recording_export::ExportCancellation>, String> {
@@ -1398,7 +1425,10 @@ impl MobileApp {
         self.poll_recording_settings();
         #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
         self.poll_recording_folder();
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.poll_recording_ui(ui.ctx());
         #[cfg(all(
             target_os = "ios",
@@ -1816,7 +1846,10 @@ impl MobileApp {
             return model::SessionSource::surfaces(sessions);
         }
         let mut surfaces = self.tab_surfaces();
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.mark_recorded_surfaces(&mut surfaces);
         surfaces.extend(self.documents.surfaces(self.surface == Surface::Documents));
         surfaces
@@ -1934,7 +1967,10 @@ impl MobileApp {
                 return;
             }
         }
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.show_recording_status(ui);
         #[cfg(feature = "host-clients")]
         if self.hosts.open {
@@ -2163,7 +2199,10 @@ impl MobileApp {
                 ShellAction::SaveRecordingSettings => self.save_recording_settings(ctx),
                 #[cfg(all(feature = "live-ssh", unix))]
                 ShellAction::ReloadRecordingSettings => self.reload_recording_settings(ctx),
-                #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+                #[cfg(all(
+                    feature = "live-ssh",
+                    any(test, target_os = "android", target_os = "ios")
+                ))]
                 ShellAction::OpenRecordingLibrary => self.open_recording_library(ctx),
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
@@ -2254,7 +2293,7 @@ impl MobileApp {
     ) {
         let stop_error = if !enabled {
             self.shell.session_recording_enabled = false;
-            #[cfg(any(target_os = "android", target_os = "ios"))]
+            #[cfg(any(test, target_os = "android", target_os = "ios"))]
             self.cancel_recording_capture();
             let error = self.stop_terminal_recording().err();
             self.sink.live.stop_recording_capture();
@@ -2625,15 +2664,30 @@ impl MobileApp {
             self.apply_shell_actions(ctx, actions);
         }
         self.show_tab_menu(ctx, bounds);
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.show_recording_sheet(ctx, bounds);
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.poll_recording_preparation(ctx);
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.show_recording_export(ctx, bounds);
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.poll_recording_export_preview(ctx);
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         self.show_recording_library(ctx, bounds);
         if let Some(id) = self.confirm_close {
             match self.tabs.iter().find(|tab| tab.id == id) {
@@ -3052,7 +3106,7 @@ impl MobileApp {
                     }
                     #[cfg(all(
                         feature = "live-ssh",
-                        any(target_os = "android", target_os = "ios")
+                        any(test, target_os = "android", target_os = "ios")
                     ))]
                     if in_terminal {
                         self.recording_menu(ui);
@@ -3185,7 +3239,10 @@ impl MobileApp {
             && self.confirm_close.is_none()
             && !self.editor.open
             && !self.documents.modal_open();
-        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            feature = "live-ssh",
+            any(test, target_os = "android", target_os = "ios")
+        ))]
         let ready = ready && !self.recording_ui.blocks_terminal_input();
         #[cfg(feature = "live-ssh")]
         let ready = ready

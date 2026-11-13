@@ -33,6 +33,9 @@
 //! A changed UI here simply produces a changed PNG; the test never fails
 //! because of it.
 
+mod additional_surfaces;
+mod core_surfaces;
+mod experimental;
 mod warp_profile;
 
 use std::{
@@ -682,6 +685,9 @@ fn scenarios() -> Vec<Scenario> {
         capture: scene.capture,
     }));
     scenarios.extend(style_review_scenarios());
+    scenarios.extend(core_surfaces::scenarios());
+    scenarios.extend(additional_surfaces::scenarios());
+    scenarios.extend(experimental::scenarios());
     scenarios
 }
 
@@ -822,11 +828,43 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
+    let all = selected_gallery_scenarios(None).unwrap();
+    let ids: std::collections::BTreeSet<_> = all.iter().map(|scene| scene.id).collect();
     assert_eq!(
-        selected_gallery_scenarios(None).unwrap().len(),
-        139 + 5 * usize::from(cfg!(feature = "experimental-dev-tunnels"))
-            + 2 * usize::from(cfg!(feature = "local-host-settings"))
+        ids.len(),
+        all.len(),
+        "every capture needs a unique scene identity"
     );
+    let mut groups = Vec::new();
+    for catalog in [
+        include_str!("../../../validation/ui-review-routes.json"),
+        include_str!("ui_gallery/experimental-routes.json"),
+    ] {
+        let value: serde_json::Value = serde_json::from_str(catalog).unwrap();
+        groups.extend(value["groups"].as_array().unwrap().iter().cloned());
+    }
+    for scene in &all {
+        let route = groups
+            .iter()
+            .find(|group| {
+                group["ids"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id == scene.id))
+                    || group["id_prefix"]
+                        .as_str()
+                        .is_some_and(|prefix| scene.id.starts_with(prefix))
+                    || group["id_prefixes"].as_array().is_some_and(|prefixes| {
+                        prefixes
+                            .iter()
+                            .any(|prefix| scene.id.starts_with(prefix.as_str().unwrap()))
+                    })
+            })
+            .unwrap_or_else(|| panic!("{} has no audited screenshot route", scene.id));
+        assert!(route["route"]
+            .as_str()
+            .is_some_and(|route| !route.is_empty()));
+        assert!(route["exit"].as_str().is_some_and(|exit| !exit.is_empty()));
+    }
     assert_eq!(
         selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
             .unwrap()
@@ -1018,14 +1056,16 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(
-        gallery.len(),
-        50 + 52
-            + 10
-            + 27
-            + 5 * usize::from(cfg!(feature = "experimental-dev-tunnels"))
-            + 2 * usize::from(cfg!(feature = "local-host-settings"))
-    );
+    let legacy_matrix_gallery_count = gallery
+        .iter()
+        .filter(|scene| {
+            !matches!(
+                scene.section,
+                "workflow-surfaces" | "experimental-surfaces" | "dev-tunnels"
+            )
+        })
+        .count();
+    assert_eq!(legacy_matrix_gallery_count, 50 + 52 + 10 + 27);
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()
@@ -3090,10 +3130,17 @@ fn render_markdown(
         },
         tab,
     );
-    harness.run();
+    harness.run_steps(16);
     interact(&mut harness);
-    harness.run();
-    finish(&mut harness)
+    harness.run_steps(16);
+    harness.remove_cursor();
+    harness.run_steps(4);
+    trim_to_content(
+        &harness
+            .render()
+            .expect("headless Markdown render must succeed"),
+        GALLERY_MARGIN,
+    )
 }
 
 fn capture_markdown_preview() -> image::RgbaImage {
@@ -3139,6 +3186,7 @@ fn render_inspector_over_terminal(
     rows: usize,
     transcript: &str,
     content: InspectorContent<'static>,
+    diagnostics_open: bool,
 ) -> image::RgbaImage {
     let mut terminal =
         Terminal::new(Dimensions::new(cols, rows).expect("valid gallery terminal size"))
@@ -3160,6 +3208,10 @@ fn render_inspector_over_terminal(
     );
     harness.run();
     harness.run();
+    if diagnostics_open {
+        harness.get_by_label("Diagnostics").click();
+        harness.run();
+    }
     finish(&mut harness)
 }
 
@@ -3193,6 +3245,7 @@ fn capture_diagnostics_ssh_session() -> image::RgbaImage {
             open_sftp_available: true,
             persistent_session: None,
         },
+        false,
     )
 }
 
@@ -3225,6 +3278,7 @@ fn capture_diagnostics_durable_session() -> image::RgbaImage {
                 session_name: "deploy-watch",
             }),
         },
+        false,
     )
 }
 
@@ -3305,13 +3359,15 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
     ]
 }
 
-fn render_chips(
+fn chip_gallery_harness(
+    size: egui::Vec2,
     show_session_details: bool,
     available_update: Option<&'static str>,
-) -> image::RgbaImage {
+    layout: ChipLayout,
+) -> Harness<'static, ()> {
     let chips = synthetic_chip_view_models();
-    let mut harness = gallery_harness(
-        egui::vec2(1000.0, 160.0),
+    gallery_harness(
+        size,
         move |ui, ()| {
             let _ = chrome::show(
                 ui,
@@ -3319,13 +3375,25 @@ fn render_chips(
                 ChipId(2),
                 false,
                 true,
-                ChipLayout::Wrap,
+                layout,
                 show_session_details,
                 false,
                 available_update,
             );
         },
         (),
+    )
+}
+
+fn render_chips(
+    show_session_details: bool,
+    available_update: Option<&'static str>,
+) -> image::RgbaImage {
+    let mut harness = chip_gallery_harness(
+        egui::vec2(1000.0, 160.0),
+        show_session_details,
+        available_update,
+        ChipLayout::Wrap,
     );
     harness.remove_cursor();
     harness.run();

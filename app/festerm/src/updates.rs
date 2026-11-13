@@ -336,6 +336,13 @@ impl UpdateController {
     }
 
     #[cfg(test)]
+    pub(crate) fn status_for_gallery(status: UpdateStatus) -> Self {
+        let mut controller = Self::inert_for_test();
+        controller.status = status;
+        controller
+    }
+
+    #[cfg(test)]
     fn with_test_backend(backend: Arc<dyn UpdateBackend>) -> Self {
         Self {
             status: UpdateStatus::Idle,

@@ -3,6 +3,47 @@ use festerm_recording_export::{
     ExportBackend, ExportPublication, PublicationRequest, StagedRecording,
 };
 
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+mod headless {
+    use super::*;
+    pub(crate) struct RefusingEncoder;
+    impl festerm_recording_export::VideoEncoder for RefusingEncoder {
+        type Error = &'static str;
+        fn append(&mut self, _: &[u8]) -> Result<(), Self::Error> {
+            Err("Native mobile encoding is unavailable in the headless gallery")
+        }
+        fn finish(&mut self) -> Result<(), Self::Error> {
+            Err("Native mobile encoding is unavailable in the headless gallery")
+        }
+    }
+    pub(crate) struct RefusingFactory;
+    impl festerm_recording_export::EncoderFactory for RefusingFactory {
+        type Encoder = RefusingEncoder;
+        type Error = &'static str;
+        fn create(
+            &mut self,
+            _: &std::path::Path,
+            _: festerm_ui_egui::RecordingFrameSize,
+        ) -> Result<Self::Encoder, Self::Error> {
+            Err("Native mobile encoding is unavailable in the headless gallery")
+        }
+    }
+    pub(crate) struct Publication;
+    pub(crate) fn encoder_factory() -> RefusingFactory {
+        RefusingFactory
+    }
+    pub(crate) fn preflight(_: &ExportDestination) -> Result<(), String> {
+        Err("Native mobile publication is unavailable in the headless gallery".to_owned())
+    }
+    pub(crate) fn publish(_: PublicationRequest<'_>) -> Result<Publication, String> {
+        Err("Native mobile publication is unavailable in the headless gallery".to_owned())
+    }
+}
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+use headless::publish;
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+pub(super) use headless::{encoder_factory, preflight, Publication};
+
 pub(super) struct MobileBackend;
 
 impl ExportBackend for MobileBackend {
@@ -108,6 +149,14 @@ fn publish(request: PublicationRequest<'_>) -> Result<Publication, String> {
 }
 
 impl ExportPublication for Publication {
+    #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+    fn names(&self) -> (String, Vec<String>) {
+        unreachable!("headless publication always refuses")
+    }
+    #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+    fn finish(self) -> Result<(), String> {
+        Err("Native mobile publication is unavailable in the headless gallery".to_owned())
+    }
     #[cfg(target_os = "android")]
     fn names(&self) -> (String, Vec<String>) {
         (

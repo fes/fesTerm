@@ -26,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 36] = [
+const STATES: &[&str] = &[
     "profiles",
     "profiles-empty",
     "terminal",
@@ -63,6 +63,67 @@ const STATES: [&str; 36] = [
     "host-setup",
     "host-setup-linux",
     "host-script",
+    "sessions",
+    "terminal-menu",
+    "terminal-tab-menu",
+    "editor-sftp",
+    "editor-error",
+    "editor-delete",
+    "auth-password",
+    "auth-key-passphrase",
+    "tunnel-rename",
+    "tunnel-delete",
+    "settings-bottom",
+    "settings-lock-bottom",
+    "recording-settings",
+    "files-selected",
+    "files-filter",
+    "files-error",
+    "files-connecting",
+    "files-password",
+    "files-host-trust",
+    "files-options",
+    "signin-loading",
+    "signin-error",
+    "host-setup-windows",
+    "host-script-windows",
+    "host-script-linux",
+    "recording-consent",
+    "recording-consent-bottom",
+    "recording-message",
+    "recording-library-empty",
+    "recording-library-error",
+    "recording-library-options",
+    "recording-library-confirm",
+    "recording-library-complete",
+    "recording-export",
+    "recording-library-incomplete",
+    "recording-library-source-confirm",
+    "recording-library-retry",
+    "editor-field-menu",
+];
+const EXTRA_STATES: &[&str] = &[
+    "terminal-close",
+    "terminal-close-plain",
+    "terminal-close-host",
+    "recording-consent-sessions",
+    "recording-consent-sessions-bottom",
+    "recording-preparing",
+    "recording-active",
+    "recording-finalizing",
+    "recording-export-preparing",
+    "recording-export-progress",
+    "recording-export-error",
+    "recording-export-cancel-late",
+    "recording-export-calculating",
+    "recording-export-calculated",
+    "recording-library-scanning",
+    "recording-library-staging",
+    "recording-library-staging-confirm",
+    "recording-library-journal",
+    "recording-library-journal-published",
+    "recording-library-journal-confirm",
+    "recording-library-retry-recovered",
 ];
 
 fn fixture_rows() -> Vec<model::Profile> {
@@ -301,8 +362,21 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.surface = Surface::Tabs;
             app.shell.tab = shell::Tab::Settings;
         }
-        "unlock" | "unlock-waiting" | "unlock-failure" | "unlock-unavailable"
-        | "unlock-passcode" | "settings-lock" => {
+        "settings-bottom" | "recording-settings" => {
+            app.surface = Surface::Tabs;
+            app.shell.tab = shell::Tab::Settings;
+            if state == "recording-settings" {
+                app.shell.recording_settings_open = true;
+                app.shell.recording_settings = Some(Default::default());
+            }
+        }
+        "unlock"
+        | "unlock-waiting"
+        | "unlock-failure"
+        | "unlock-unavailable"
+        | "unlock-passcode"
+        | "settings-lock"
+        | "settings-lock-bottom" => {
             use festerm_ios_lock::{
                 AppLock, AuthFailure, Availability, BiometryKind, FakeLocker, LockSettings,
                 ManualClock,
@@ -332,6 +406,27 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.lock = Some(app_lock::LockHost::new(lock, None));
         }
         "sessions-sheet" => app.shell.sessions_sheet = true,
+        "sessions" => {
+            app.surface = Surface::Tabs;
+            app.shell.tab = shell::Tab::Sessions;
+        }
+        "terminal-tab-menu" => {
+            app.open_local_tab();
+            let id = app.active_tab.expect("offline tab");
+            app.request_tab_menu(id);
+        }
+        "terminal-close" | "terminal-close-plain" | "terminal-close-host" => {
+            let mut spec = fixture_spec();
+            if state == "terminal-close-plain" {
+                spec.ssh.remote_session = RemoteSession::Plain;
+            }
+            app.fixture_ssh_tab(spec);
+            #[cfg(feature = "host-clients")]
+            if state == "terminal-close-host" {
+                app.tabs.last_mut().unwrap().host = true;
+            }
+            app.confirm_close = app.active_tab;
+        }
         "keys-panel" => app.keys_panel.open = true,
         "keys-fkeys" => {
             app.keys_panel.open = true;
@@ -401,6 +496,21 @@ fn configure(app: &mut MobileApp, state: &str) {
                 expires_in: Duration::from_secs(900),
             });
         }
+        "signin-loading" | "signin-error" => {
+            app.editor.open_new();
+            app.editor.kind_index = 1;
+            app.tunnel.sign_in = Some(tunnel_link::SignInFlow {
+                start: None,
+                started: None,
+                active: None,
+                error: (state == "signin-error").then(|| {
+                    "Synthetic sign-in declined or expired. No account was contacted.".to_owned()
+                }),
+                resume: tunnel_link::Resume::Nothing,
+                expected: None,
+                effects: tunnel_link::SignInEffects::default(),
+            });
+        }
         "taken-over" => {
             app.fixture_ssh_tab(fixture_spec());
             if let Some(tab) = app.tabs.last_mut() {
@@ -426,17 +536,28 @@ fn configure(app: &mut MobileApp, state: &str) {
                 },
             });
         }
-        "host-setup" | "host-setup-linux" | "host-script" => {
+        "host-setup"
+        | "host-setup-linux"
+        | "host-script"
+        | "host-setup-windows"
+        | "host-script-windows"
+        | "host-script-linux" => {
             app.editor.open_new();
             app.editor.kind_index = 1;
             app.editor.name = "build-box".to_owned();
             app.host_setup.open();
-            app.host_setup.platform_index = if state == "host-setup" { 0 } else { 1 };
+            app.host_setup.platform_index = if state.ends_with("-windows") {
+                2
+            } else if state.ends_with("-linux") {
+                1
+            } else {
+                0
+            };
             app.host_setup.install_dependencies = state == "host-setup-linux";
             app.host_setup.takeover = state != "host-setup-linux";
-            app.host_setup.viewing = state == "host-script";
+            app.host_setup.viewing = state.starts_with("host-script");
         }
-        "editor-edit" => {
+        "editor-edit" | "editor-delete" => {
             let id = app
                 .profiles
                 .as_mut()
@@ -453,28 +574,87 @@ fn configure(app: &mut MobileApp, state: &str) {
                 )
                 .expect("save fixture profile");
             app.edit_profile(&id);
+            app.editor.confirm_delete = state == "editor-delete";
         }
-        "files" | "files-transfers" | "files-conflict" => {
+        state if state.starts_with("files") => {
             app.fixture_ssh_tab(fixture_spec());
-            let rows = if state == "files" {
-                Vec::new()
-            } else {
+            let rows = if matches!(state, "files-transfers" | "files-conflict") {
                 transfer_rows(state == "files-conflict")
+            } else {
+                Vec::new()
             };
             let ctx = egui::Context::default();
             let mut session = fixture_files(rows, &ctx);
             session.transfers_sheet = state == "files-transfers";
+            if state == "files-selected" {
+                session.remote.as_mut().unwrap().toggle("README.md");
+                session.local.as_mut().unwrap().toggle("release-notes.md");
+            }
+            if state == "files-filter" {
+                let pane = session.remote.as_mut().unwrap();
+                pane.filter_open = true;
+                pane.filter = "app".to_owned();
+            }
+            session.link = match state {
+                "files-error" => files::Link::Failed(
+                    "Synthetic connection loss; no server contacted.".to_owned(),
+                ),
+                "files-connecting" => files::Link::Connecting("Opening SFTP channel…".to_owned()),
+                "files-password" => files::Link::Password {
+                    target: "ops@files.example.net".to_owned(),
+                    retry: true,
+                },
+                "files-host-trust" => files::Link::HostKey(model::HostVerification {
+                    name: "release-files".to_owned(),
+                    target: "files.example.net:22".to_owned(),
+                    algorithm: "ssh-ed25519".to_owned(),
+                    fingerprint: "SHA256:synthetic-review-only".to_owned(),
+                    changed_from: None,
+                }),
+                _ => files::Link::Ready,
+            };
             app.files = Some(Box::new(session));
             app.workspace = workspaces::Workspace::Files;
         }
-        "auth-key" => {
+        "auth-key" | "auth-password" | "auth-key-passphrase" => {
             app.editor.open_new();
             app.editor.host = "web.example.net".to_owned();
             app.editor.username = "deploy".to_owned();
             app.editor.auth_mode = forms::AuthMode::Key;
             app.editor.auth_sheet = true;
             app.editor.durable_credentials = true;
+            if state == "auth-password" {
+                app.editor.auth_mode = forms::AuthMode::Password;
+            }
+            app.editor.needs_passphrase = state == "auth-key-passphrase";
         }
+        "editor-sftp" => {
+            app.editor.open_new();
+            app.editor.kind_index = 2;
+            app.editor.name = "release-files".to_owned();
+            app.editor.host = "files.example.net".to_owned();
+            app.editor.username = "ops".to_owned();
+            app.editor.start_dir = "/srv/app/releases".to_owned();
+        }
+        "editor-error" => {
+            app.editor.open_new();
+            app.editor.error = Some("Enter a host name before connecting.".to_owned());
+        }
+        "editor-field-menu" => {
+            app.editor.open_new();
+            app.editor.username = "synthetic-user".to_owned();
+        }
+        "tunnel-rename" | "tunnel-delete" => {
+            configure(app, "editor-devtunnel");
+            app.editor.tunnel_name = "build-tunnel.usa".to_owned();
+            if state == "tunnel-rename" {
+                app.editor.renaming_tunnel = Some("build-tunnel.usa".to_owned());
+                app.editor.friendly_name_draft = "Build host".to_owned();
+            } else {
+                app.editor.confirm_delete_tunnel = true;
+            }
+        }
+        state if state.starts_with("recording-") => app.configure_recording_gallery(state),
         _ => {}
     }
 }
@@ -483,7 +663,7 @@ fn configure(app: &mut MobileApp, state: &str) {
 #[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
 fn capture_mobile_ui_gallery() {
     capture_gallery(
-        &STATES,
+        STATES,
         &[
             ("phone", 390.0, 844.0, 0.35),
             ("tablet", 834.0, 1194.0, 0.30),
@@ -509,6 +689,70 @@ fn capture_host_client_ui_gallery() {
 }
 
 #[test]
+fn gallery_surface_catalog_renders_without_native_services() {
+    use egui_kittest::kittest::Queryable;
+    for (width, height) in [(390.0, 844.0), (834.0, 1194.0)] {
+        for &state in STATES.iter().chain(EXTRA_STATES) {
+            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            configure(&mut app, state);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run_steps(3);
+            assert!(!harness.output().shapes.is_empty(), "{state}");
+            assert_eq!(harness.state().sink.diagnostics.byte_count, 0, "{state}");
+            if state.starts_with("recording-") {
+                harness.state().recording_ui.assert_gallery_inert();
+                assert!(harness
+                    .state()
+                    .sink
+                    .live
+                    .current_recording()
+                    .unwrap()
+                    .is_none());
+                if matches!(
+                    state,
+                    "recording-active"
+                        | "recording-export-progress"
+                        | "recording-export-calculated"
+                ) {
+                    let label = match state {
+                        "recording-active" => "Stop recording",
+                        "recording-export-progress" => "Cancel export",
+                        _ => "Export recording",
+                    };
+                    harness.get_all_by_label(label).last().unwrap().click();
+                    harness.run_steps(2);
+                    harness.state().recording_ui.assert_gallery_inert();
+                    assert!(harness.state().recording_ui.status.is_none(), "{state}");
+                }
+            }
+            match state {
+                "tunnel-rename" => {
+                    harness.get_by_label("Save friendly name");
+                }
+                "tunnel-delete" => {
+                    harness.get_by_label("Tap again to delete build-tunnel.usa");
+                }
+                "recording-consent" => {
+                    harness.get_by_label("Record terminal sessions");
+                }
+                "recording-library-confirm" | "recording-library-source-confirm" => {
+                    harness.get_by_label("Confirm recording action");
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
 fn capture_split_keyboard_ui_gallery() {
     capture_gallery(
@@ -524,6 +768,15 @@ fn capture_split_keyboard_ui_gallery() {
             ("dual-screen", 1114.0, 720.0, 0.0),
             ("phone", 390.0, 844.0, 0.0),
         ],
+    );
+}
+
+#[test]
+#[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
+fn capture_close_ui_gallery() {
+    capture_gallery(
+        EXTRA_STATES,
+        &[("phone", 390.0, 844.0, 0.0), ("tablet", 834.0, 1194.0, 0.0)],
     );
 }
 
@@ -560,6 +813,17 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
     for &(family, width, height, occlusion) in viewports {
         for &state in states {
             let state_occlusion = if state.starts_with("unlock")
+                || state.starts_with("hosts-")
+                || state.starts_with("files-")
+                || state.starts_with("settings-")
+                || state.starts_with("editor-")
+                || state.starts_with("auth-")
+                || state.starts_with("tunnel-")
+                || state.starts_with("recording-")
+                || matches!(
+                    state,
+                    "sessions" | "recording-settings" | "terminal-menu" | "terminal-tab-menu"
+                )
                 || matches!(
                     state,
                     "disconnected"
@@ -609,8 +873,44 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 .ctx
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
+            if state == "files-options" {
+                use egui_kittest::kittest::Queryable;
+                harness.run_steps(3);
+                harness
+                    .get_all_by_label("Sort and view options")
+                    .next()
+                    .unwrap()
+                    .click();
+            }
+            if state == "terminal-menu" {
+                use egui_kittest::kittest::Queryable;
+                harness.run_steps(3);
+                harness.get_by_label("More").click();
+            }
+            if state.ends_with("-bottom")
+                || matches!(
+                    state,
+                    "recording-export-calculating" | "recording-export-calculated"
+                )
+            {
+                harness.run_steps(3);
+                harness.event(egui::Event::PointerMoved(egui::pos2(
+                    width * 0.5,
+                    height * 0.5,
+                )));
+                harness.event(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -6000.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                });
+                harness.run_steps(10);
+            }
             // Live transfer rows request repaints for their progress clock.
-            if state.starts_with("files-") || state.starts_with("host-setup") {
+            if state.starts_with("files-")
+                || state.starts_with("host-setup")
+                || state == "recording-export-calculating"
+            {
                 harness.run_steps(3);
             } else {
                 harness.run();
@@ -627,6 +927,38 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 });
                 harness.step();
                 assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+            } else if state == "editor-field-menu" {
+                use egui_kittest::kittest::Queryable;
+                let position = harness.get_by_label("Username").rect().center();
+                let time = harness.ctx.input(|input| input.time);
+                for (elapsed, phase, pressed) in [
+                    (0.02, egui::TouchPhase::Start, true),
+                    (0.72, egui::TouchPhase::Move, true),
+                    (0.74, egui::TouchPhase::End, false),
+                ] {
+                    harness.input_mut().time = Some(time + elapsed);
+                    harness.event(egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(1),
+                        id: egui::TouchId(1),
+                        phase,
+                        pos: position,
+                        force: None,
+                    });
+                    harness.event(egui::Event::PointerMoved(position));
+                    if phase != egui::TouchPhase::Move {
+                        harness.event(egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                    }
+                    harness.step();
+                }
+                harness.run_steps(3);
+                harness.get_by_label("Select All").click();
+                harness.run_steps(3);
+                harness.get_by_label("Copy");
             } else if state == "arrow-helper" {
                 let origin = harness
                     .state()
@@ -665,7 +997,7 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 harness.step();
             } else {
                 harness.remove_cursor();
-                if state.starts_with("files-") {
+                if state.starts_with("files-") || state == "recording-export-calculating" {
                     harness.run_steps(3);
                 } else {
                     harness.run();

@@ -28,6 +28,11 @@ DEFAULT_MANIFESTS = [REPOSITORY_ROOT / "docs" / "images" / "ui-state" / "manifes
 DEFAULT_NARRATIVE = REPOSITORY_ROOT / "docs" / "ui-state-narrative.md"
 DEFAULT_TITLE = "State of the UI"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "docs" / "state-of-the-ui.md"
+DEFAULT_ROUTE_CATALOGS = [
+    REPOSITORY_ROOT / "validation" / "ui-review-routes.json",
+    REPOSITORY_ROOT / "app" / "festerm" / "src" / "ui_gallery" / "experimental-routes.json",
+]
+DEFAULT_ROUTES_OUTPUT = REPOSITORY_ROOT / "docs" / "ui-review-route-map.md"
 DEFAULT_SURFACE_MATRIX = (
     REPOSITORY_ROOT / "validation" / "windows-warp" / "surface-matrix.json"
 )
@@ -87,6 +92,8 @@ def load_manifest(path: Path) -> list[dict]:
                 f"is missing {', '.join(missing)}"
             )
         scenario["_manifest_directory"] = path.parent
+        if "capture" in document:
+            scenario["_capture"] = document["capture"]
     return scenarios
 
 
@@ -170,6 +177,67 @@ def relative_image_path(scenario: dict, output_path: Path) -> str:
     return relative.as_posix()
 
 
+def attach_routes(scenarios: list[dict], catalog_paths: list[Path]) -> None:
+    """Resolve audited routes in declaration order; reject unaccounted scenes."""
+    groups = []
+    for path in catalog_paths:
+        try:
+            catalog = json.loads(path.read_text(encoding="utf-8"))
+            if catalog["schema_version"] != 1:
+                raise BuildError(f"unsupported route catalog: {path}")
+            groups.extend(catalog["groups"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+            raise BuildError(f"invalid route catalog {path}: {error}") from error
+    known_ids = {scenario["id"] for scenario in scenarios}
+    for group in groups:
+        unknown = set(group.get("ids", [])) - known_ids
+        if unknown:
+            raise BuildError(f"route catalog references uncaptured scenes: {sorted(unknown)}")
+    for scenario in scenarios:
+        for group in groups:
+            matches = (
+                scenario["id"] in group.get("ids", [])
+                or bool(group.get("id_prefix") and scenario["id"].startswith(group["id_prefix"]))
+                or any(scenario["id"].startswith(prefix) for prefix in group.get("id_prefixes", []))
+                or scenario["section"] in group.get("sections", [])
+            )
+            if matches:
+                for field in ("route", "exit", "production_symbols", "gui_ids"):
+                    if not group.get(field):
+                        raise BuildError(f"scene {scenario['id']!r} has no route {field}")
+                scenario["_route"] = group
+                break
+        else:
+            raise BuildError(f"scene {scenario['id']!r} has no audited route")
+
+
+def render_routes(scenarios: list[dict], output_path: Path) -> str:
+    lines = [
+        "# UI screenshot route map",
+        "",
+        "Generated from the capture manifest and audited route catalogs. Each row names",
+        "the production renderer, user entry and safe exit. The scene caption describes",
+        "the synthetic state trigger. This is screenshot coverage, not functional,",
+        "native-platform or usability acceptance. See [State of the UI](state-of-the-ui.md)",
+        "and [mobile coverage](state-of-mobile-ui.md) for images and remaining boundaries.",
+        "",
+        "| Scene / screenshot | Enter / trigger | Exit / recovery | Production source / graph |",
+        "| --- | --- | --- | --- |",
+    ]
+    def cell(text: str) -> str:
+        return text.replace("|", "\\|").replace("\n", " ")
+    for scenario in sorted(scenarios, key=lambda item: (item["section"], item["id"])):
+        route = scenario["_route"]
+        source = ", ".join(f"`{symbol}`" for symbol in route["production_symbols"])
+        edges = ", ".join(f"`GUI:{edge}`" for edge in route["gui_ids"])
+        lines.append(
+            f"| [{scenario['id']}]({relative_image_path(scenario, output_path)}) "
+            f"| {cell(route['route'])}<br>{cell(scenario['caption'])} "
+            f"| {cell(route['exit'])} | {source}<br>{edges} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def render(
     scenarios: list[dict],
     sections: list[tuple[str, str, str]],
@@ -184,7 +252,27 @@ def render(
     for group in by_section.values():
         group.sort(key=lambda scenario: scenario["id"])
 
-    lines = [GENERATED_BANNER, "", f"# {title}", ""]
+    lines = [
+        GENERATED_BANNER, "", f"# {title}", "",
+        f"**Inventory:** {len(scenarios)} captures; "
+        f"{len({scenario['sha256'] for scenario in scenarios})} distinct PNG hashes.",
+        "",
+    ]
+    recorded_captures: set[tuple[str, str]] = set()
+    for scenario in scenarios:
+        capture = scenario.get("_capture")
+        if capture:
+            identity = (capture["completed_utc"], capture["source_tree_sha256"])
+            if identity not in recorded_captures:
+                recorded_captures.add(identity)
+                lines.extend([
+                    f"**Captured:** {capture['completed_utc']} "
+                    f"({capture['system']}/{capture['machine']}); "
+                    f"HEAD `{capture['source_revision']}`; "
+                    f"dirty sources: `{capture['source_dirty']}`.<br>",
+                    f"**Source-tree SHA-256:** `{capture['source_tree_sha256']}`",
+                    "",
+                ])
 
     documented: set[str] = set()
     for section_id, section_title, body in sections:
@@ -201,6 +289,14 @@ def render(
             lines.append("")
             lines.append(scenario["caption"].strip())
             lines.append("")
+            if "_route" in scenario:
+                route = scenario["_route"]
+                lines.extend([
+                    f"**Enter:** {route['route']}<br>",
+                    f"**Exit:** {route['exit']}<br>",
+                    "**Production:** " + ", ".join(f"`{name}`" for name in route["production_symbols"]),
+                    "",
+                ])
             link = relative_image_path(scenario, output_path)
             lines.append(f"![{scenario['title']}]({link})")
             lines.append("")
@@ -351,6 +447,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--narrative", type=Path, default=DEFAULT_NARRATIVE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--route-catalog", type=Path, action="append",
+                        help="audited route catalog; repeatable, first matching group wins")
+    parser.add_argument("--routes-output", type=Path,
+                        help="also generate the per-screenshot entry/exit/source route map")
     parser.add_argument("--surface-matrix-report", type=Path, help="write an expanded JSON coverage report instead of rebuilding the gallery document")
     parser.add_argument("--surface-matrix", type=Path, default=DEFAULT_SURFACE_MATRIX)
     parser.add_argument("--surface-profile", type=Path, help="optional retained v2 construction profile.json; never native evidence")
@@ -387,6 +487,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     manifests = arguments.manifest or DEFAULT_MANIFESTS
+    if arguments.manifest is None:
+        arguments.route_catalog = arguments.route_catalog or DEFAULT_ROUTE_CATALOGS
+        arguments.routes_output = arguments.routes_output or DEFAULT_ROUTES_OUTPUT
     try:
         scenarios: list[dict] = []
         for manifest in manifests:
@@ -400,6 +503,10 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         verify_images(scenarios, verify_digest=not arguments.skip_digest_check)
+        if arguments.routes_output is not None and not arguments.route_catalog:
+            raise BuildError("--routes-output requires --route-catalog")
+        if arguments.route_catalog:
+            attach_routes(scenarios, arguments.route_catalog)
         _editor_notes, sections = parse_narrative(arguments.narrative)
         document = render(scenarios, sections, arguments.output)
     except BuildError as error:
@@ -422,10 +529,21 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(f"build_ui_state_doc: {arguments.output} is up to date")
+        if arguments.routes_output is not None:
+            if not arguments.routes_output.is_file() or arguments.routes_output.read_text(
+                encoding="utf-8"
+            ) != render_routes(scenarios, arguments.routes_output):
+                print("build_ui_state_doc: screenshot route map is out of date", file=sys.stderr)
+                return 1
         return 0
 
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(document, encoding="utf-8")
+    if arguments.routes_output is not None:
+        arguments.routes_output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.routes_output.write_text(
+            render_routes(scenarios, arguments.routes_output), encoding="utf-8"
+        )
     print(
         f"build_ui_state_doc: wrote {arguments.output} "
         f"({len(scenarios)} screenshots across {len(sections)} sections)"

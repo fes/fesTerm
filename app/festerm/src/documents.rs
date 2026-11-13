@@ -203,6 +203,17 @@ impl OpenDocument {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn status_inputs_for_gallery(&mut self, inputs: StatusInputs) {
+        self.availability = inputs.availability;
+        self.save = inputs.save;
+        self.last_error = inputs.last_error;
+        self.recovery_error = inputs.recovery_error;
+        self.conflict = inputs.conflict;
+        self.auto_save_requested = inputs.auto_save_requested;
+        self.checked = Instant::now();
+    }
+
     fn status_with_error(&self, last_error: Option<SaveError>) -> DocumentStatus {
         DocumentStatus::derive(&StatusInputs {
             dirty: self.text.is_dirty(),

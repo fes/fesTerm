@@ -200,6 +200,81 @@ impl SftpCollisionId {
     }
 }
 
+/// Synthetic worker events for production-widget screenshot fixtures only.
+#[cfg(feature = "test-support")]
+pub fn gallery_transfer_events(collision: bool) -> Vec<SftpTransferEvent> {
+    let batch_id = SftpTransferBatchId(1);
+    let mut events = Vec::new();
+    for (index, name) in ["release.tar.gz", "NOTES.md", "restricted.txt"]
+        .iter()
+        .enumerate()
+    {
+        let transfer_id = SftpTransferId(index as u64 + 1);
+        let source = SftpPath::local(format!("/work/project/{name}"));
+        let destination = SftpPath::remote(format!("/srv/releases/{name}"));
+        events.push(SftpTransferEvent::ItemStarted {
+            batch_id,
+            transfer_id,
+            source: source.clone(),
+            destination: destination.clone(),
+            direction: SftpTransferDirection::Upload,
+            total_bytes: Some(8192),
+        });
+        events.push(match index {
+            1 => SftpTransferEvent::ItemCompleted {
+                batch_id,
+                transfer_id,
+                destination,
+                bytes_transferred: 8192,
+                total_bytes: Some(8192),
+                skipped_conflicts: 0,
+            },
+            2 => SftpTransferEvent::ItemFailed {
+                batch_id,
+                transfer_id,
+                destination: Some(destination),
+                reason: "Synthetic permission denied; no transfer was attempted.".into(),
+            },
+            _ => SftpTransferEvent::ItemProgress {
+                batch_id,
+                transfer_id,
+                current_path: source,
+                bytes_transferred: 4096,
+                total_bytes: Some(8192),
+            },
+        });
+    }
+    if collision {
+        events.push(SftpTransferEvent::Collision(SftpCollision {
+            id: SftpCollisionId(1),
+            batch_id,
+            transfer_id: SftpTransferId(1),
+            source: SftpPathMetadata {
+                path: SftpPath::local("/work/project/release.tar.gz"),
+                file_type: SftpEntryType::File,
+                size: Some(8192),
+                modified_at: None,
+                permissions: Some(0o644),
+            },
+            destination: SftpPathMetadata {
+                path: SftpPath::remote("/srv/releases/release.tar.gz"),
+                file_type: SftpEntryType::File,
+                size: Some(4096),
+                modified_at: None,
+                permissions: Some(0o644),
+            },
+            proposed_keep_both_destination: SftpPath::remote("/srv/releases/release (2).tar.gz"),
+            allowed_decisions: vec![
+                SftpCollisionDecision::Replace,
+                SftpCollisionDecision::Skip,
+                SftpCollisionDecision::KeepBoth,
+            ],
+            can_apply_to_all: true,
+        }));
+    }
+    events
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SftpTransferDirection {
     Upload,

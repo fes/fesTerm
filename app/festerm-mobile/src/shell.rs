@@ -172,7 +172,10 @@ pub enum ShellAction {
     SaveRecordingSettings,
     #[cfg(all(feature = "live-ssh", unix))]
     ReloadRecordingSettings,
-    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        feature = "live-ssh",
+        any(test, target_os = "android", target_os = "ios")
+    ))]
     OpenRecordingLibrary,
     /// Move a saved profile before another, or to the end when `before` is
     /// `None`.
@@ -760,7 +763,7 @@ fn recording_access(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<Shell
                 actions.push(ShellAction::OpenRecordingSettings);
             }
         }
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(test, target_os = "android", target_os = "ios"))]
         if button(ui, ButtonKind::Secondary, "Open recording library", true).clicked() {
             actions.push(ShellAction::OpenRecordingLibrary);
         }

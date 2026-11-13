@@ -1,0 +1,412 @@
+{
+  "schema_version": 1,
+  "scope": "Desktop production-widget screenshot routes. First specific match wins. Scene captions define variant triggers; native composition remains separate.",
+  "groups": [
+    {
+      "ids": [
+        "profiles-delete-confirmation"
+      ],
+      "production_symbols": [
+        "screens::profiles::ProfilesScreenMode::ConfirmDelete"
+      ],
+      "route": "Profiles > saved row > More actions > Delete",
+      "exit": "Current implementation has no local Cancel. Reopen Profiles through the global action to abandon confirmation; Delete is never pressed by capture.",
+      "gui_ids": [
+        "PROF-03"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "ssh-trust-",
+        "sftp-trust-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_host_key_prompt_ui",
+        "sftp_file_manager::show_host_key_prompt"
+      ],
+      "route": "New Session > SSH/SFTP, or saved profile > Connect > unknown/changed host key",
+      "exit": "Reject/Cancel/Escape; accept only after deliberate fingerprint review. Changed keys require typed yes.",
+      "gui_ids": [
+        "TRUST-01",
+        "TRUST-04"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "ssh-password-",
+        "sftp-authentication",
+        "sftp-private-key",
+        "workspace-"
+      ],
+      "production_symbols": [
+        "screens::show_ssh_authentication_required",
+        "screens::show_sftp_authentication_required",
+        "sftp_file_manager::show_authentication_required",
+        "app::FesTermApp::ui_content"
+      ],
+      "route": "Connect after host trust, or restore a metadata-only workspace tab requiring fresh authentication",
+      "exit": "Clear/cancel fresh credentials or explicitly Connect. Capture never submits a credential.",
+      "gui_ids": [
+        "AUTH-01",
+        "AUTH-03"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "launcher-",
+        "local-launch-",
+        "ssh-",
+        "sftp-connect-",
+        "sftp-text-",
+        "serial-"
+      ],
+      "production_symbols": [
+        "screens::show_launcher",
+        "screens::show_ssh_form",
+        "screens::show_sftp_form",
+        "screens::SerialLauncherForm"
+      ],
+      "route": "New Session > Local/SSH/SFTP/Serial; choose destination/authentication or advanced options as captioned",
+      "exit": "Back/Escape returns to New Session; a deliberate valid submit starts a session outside capture.",
+      "gui_ids": [
+        "LAUNCH-01",
+        "LAUNCH-02",
+        "LAUNCH-06",
+        "LAUNCH-09",
+        "LAUNCH-12"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "profiles-"
+      ],
+      "production_symbols": [
+        "screens::profiles::show_profiles",
+        "screens::show_profile_row_menu"
+      ],
+      "route": "More actions > Profiles > New Profile, saved row or row More actions; choose the captioned edit/delete/duplicate/search action",
+      "exit": "Cancel discards staged edits; Save commits metadata. Dismiss row menus with Escape; deletion is separately confirmed and may be blocked by references.",
+      "gui_ids": [
+        "PROF-01",
+        "PROF-02",
+        "PROF-03",
+        "PROF-06",
+        "PROF-07"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "sftp-"
+      ],
+      "production_symbols": [
+        "sftp_file_manager::SftpFileManagerTab::show",
+        "sftp_file_manager::show_collision_modal"
+      ],
+      "route": "New Session > SFTP > graphical file manager, or saved SSH/SFTP profile > Open SFTP; navigate/transfer as captioned",
+      "exit": "Cancel collision or choose an explicit decision; Retry/Edit connection after error; close the SFTP chip to leave.",
+      "gui_ids": [
+        "SFTPG-01",
+        "SFTPG-04",
+        "SFTPG-06"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "settings-",
+        "keyboard-"
+      ],
+      "production_symbols": [
+        "screens::settings::show_settings",
+        "keyboard::show_editor"
+      ],
+      "route": "More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.",
+      "exit": "Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.",
+      "gui_ids": [
+        "SET-01",
+        "SET-02",
+        "SET-08"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "editor-",
+        "text-editor-",
+        "style-dirty-",
+        "safety-dirty-"
+      ],
+      "production_symbols": [
+        "text_editor::TextEditorTab::show",
+        "text_editor::show_banner",
+        "app::FesTermApp::show_document_close_confirmation"
+      ],
+      "route": "Open File > synthetic text/Markdown file > Edit/Preview/Split; perform the captioned Find/options/save/conflict/close trigger",
+      "exit": "Close Find/options with Escape; resolve conflicts explicitly. Final dirty close offers Save, Discard changes or Cancel.",
+      "gui_ids": [
+        "EDIT-02",
+        "EDIT-04",
+        "EDIT-05",
+        "EDIT-06",
+        "EDIT-07",
+        "EDIT-08",
+        "EDIT-09"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "markdown-"
+      ],
+      "production_symbols": [
+        "markdown_viewer::MarkdownViewerTab::show",
+        "markdown_viewer::MarkdownViewerTab::show_toolbar"
+      ],
+      "route": "Remote SFTP Markdown selection opens the read-only viewer; choose Preview/Source/Contents or Viewer menu/right-click path",
+      "exit": "Escape dismisses one popup; Close viewer returns to its source surface. No remote reload or clipboard action is executed by capture.",
+      "gui_ids": [
+        "MD-02",
+        "MD-03"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "open-file-",
+        "style-open-file-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_markdown_file_picker"
+      ],
+      "route": "More actions > Open File; browse the synthetic ready/error directory described in the caption",
+      "exit": "Cancel/Escape preserves the previous surface; select a file only deliberately.",
+      "gui_ids": [
+        "LAUNCH-11"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "save-as-",
+        "style-save-as-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_save_as_picker"
+      ],
+      "route": "Editor > Save As; select the captioned synthetic destination directory/name",
+      "exit": "Cancel/Escape leaves the document intact. Existing targets require explicit confirmation; capture never presses Save.",
+      "gui_ids": [
+        "EDIT-04"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "about-",
+        "style-about-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_about"
+      ],
+      "route": "More actions > About fesTerm; expand licenses or inspect the captioned synthetic updater state",
+      "exit": "Close/Escape returns to the prior owner; no update download, installation or restart is executed.",
+      "gui_ids": [
+        "WIN-05"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "palette-",
+        "style-palette-"
+      ],
+      "production_symbols": [
+        "festerm_ui_egui::palette::show"
+      ],
+      "route": "More actions > Command palette or configured shortcut; filter/select category as captioned",
+      "exit": "Escape dismisses category popup first, then palette, restoring the exact prior viable focus owner.",
+      "gui_ids": [
+        "PAL-01",
+        "PAL-03",
+        "PAL-04"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "desktop-panes-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_pane_layout_menu",
+        "app::FesTermApp::ui_content",
+        "chrome::show"
+      ],
+      "route": "Combine live views into a pane group > Layout/Details/Rearrange/handle menu as captioned",
+      "exit": "Escape/Done leaves Rearrange; cancel guarded close; Separate restores independent chips without closing sessions.",
+      "gui_ids": [
+        "PANE-01",
+        "PANE-03",
+        "PANE-05",
+        "PANE-07",
+        "PANE-08",
+        "PANE-09"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "chips-",
+        "chip-",
+        "chrome-",
+        "style-expanded-"
+      ],
+      "production_symbols": [
+        "festerm_ui_egui::chrome::show"
+      ],
+      "route": "Upper window chrome > More actions or right-click the captioned session chip",
+      "exit": "Escape/outside click dismisses menu; no chip close/move is dispatched during capture.",
+      "gui_ids": [
+        "WIN-01"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "terminal-rectangle-",
+        "terminal-smart-"
+      ],
+      "production_symbols": [
+        "festerm_ui_egui::TerminalView::show",
+        "tabs::AppState::dispatch"
+      ],
+      "route": "Focused terminal > palette/context menu > Bounded rectangle copy or Smart Select Paragraph",
+      "exit": "Escape cancels local capture/selection. Copy is separate; no clipboard is read or written during capture.",
+      "gui_ids": [
+        "TERM-11",
+        "TERM-12",
+        "TERM-13",
+        "TERM-14"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "terminal-",
+        "session-"
+      ],
+      "production_symbols": [
+        "festerm_ui_egui::TerminalView::show",
+        "app::FesTermApp::ui_content"
+      ],
+      "route": "Start a synthetic terminal > normal/history/context/Find/focus-mode or captioned lifecycle state",
+      "exit": "Close Find/menu with Escape; toggle Focus Mode again. Reconnect or close retained exited/disconnected history explicitly.",
+      "gui_ids": [
+        "TERM-01",
+        "TERM-08",
+        "TERM-09",
+        "TERM-10",
+        "SSH-02",
+        "SSH-03"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "diagnostics-",
+        "inspector-"
+      ],
+      "production_symbols": [
+        "inspector::show",
+        "app::FesTermApp::ui_content"
+      ],
+      "route": "Live or retained session > More actions/palette > Session inspector; expand Diagnostics",
+      "exit": "Close/Escape/outside click restores the prior viable focus owner without resizing the terminal.",
+      "gui_ids": [
+        "INSP-01",
+        "INSP-02",
+        "INSP-04"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "port-forward-"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_port_forward_manager"
+      ],
+      "route": "Live SSH > palette/shortcut > Port Forward Manager; enter the captioned mapping",
+      "exit": "Correct validation fields or Close/Escape. Capture does not add a forward.",
+      "gui_ids": [
+        "LAUNCH-02"
+      ]
+    },
+    {
+      "id_prefixes": [
+        "safety-",
+        "style-live-close-",
+        "style-paste-"
+      ],
+      "production_symbols": [
+        "app::confirmations",
+        "app::FesTermApp::ui_content"
+      ],
+      "route": "Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action",
+      "exit": "Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.",
+      "gui_ids": [
+        "CLOSE-01",
+        "QUIT-01"
+      ]
+    },
+    {
+      "ids": [
+        "document-open-refusal",
+        "contextual-notice"
+      ],
+      "production_symbols": [
+        "app::FesTermApp::show_open_refusal_notice",
+        "app::FesTermApp::ui_content"
+      ],
+      "route": "Open an unsupported file, or drop files onto an ineligible transport, as captioned",
+      "exit": "Acknowledge the open refusal; contextual notice expires. Existing sessions/documents are unchanged.",
+      "gui_ids": [
+        "LAUNCH-11",
+        "EDIT-04"
+      ]
+    },
+    {
+      "ids": [
+        "dev-tunnel-hosts",
+        "dev-tunnel-hosts-narrow",
+        "dev-tunnel-hosts-error"
+      ],
+      "production_symbols": [
+        "screens::host_workspace::show"
+      ],
+      "route": "New Session (launcher) → Dev Tunnel host card → Select a host / Find hosts (per signed-in GitHub account) → optional Refresh",
+      "exit": "Close the launcher tab or choose another launcher card; selecting a host only stages local metadata and never connects until Connect/Create is pressed.",
+      "gui_ids": [
+        "HOST-01"
+      ],
+      "notes": "Default and 360-point layouts plus explicit-discovery failure with retained last-listed results; synthetic account identity only."
+    },
+    {
+      "ids": [
+        "dev-tunnel-profile",
+        "dev-tunnel-profile-narrow"
+      ],
+      "production_symbols": [
+        "screens::host_workspace::show"
+      ],
+      "route": "New Session → Dev Tunnel host card → saved host shortcut → Edit (offline host profile editor)",
+      "exit": "Cancel/Back discards staged edits; Save writes public metadata only and never connects.",
+      "gui_ids": [
+        "HOST-02"
+      ],
+      "notes": "Offline editor with synthetic saved host hint and session name; no discovery or authentication."
+    },
+    {
+      "ids": [
+        "dev-tunnel-host-settings-off",
+        "dev-tunnel-host-settings-requested"
+      ],
+      "production_symbols": [
+        "app::desktop_remote_access::show",
+        "screens::settings"
+      ],
+      "route": "Settings → Remote access → Allow remote access through Dev Tunnels (computer-level master switch)",
+      "exit": "Leave Settings; turning the switch off tears down advertised shared profiles, and nothing is enabled without the typed review/confirm.",
+      "gui_ids": [
+        "HOST-04"
+      ],
+      "notes": "Requires local-host-settings; access off and access requested with an absent synthetic host."
+    }
+  ]
+}

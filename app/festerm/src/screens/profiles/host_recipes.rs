@@ -12,6 +12,181 @@ const REVIEW_NOTICE: &str =
 const OFFLINE_NOTICE: &str =
     "Experimental · rendering and metadata editing stay offline. Review and connect is a separate foreground action; saving or importing never authorizes execution.";
 
+#[cfg(test)]
+impl crate::tabs::AppState {
+    pub(crate) fn gallery_host_recipes(ui: &mut Ui, scene: &str) {
+        let mut recipe = PublicRecipe::persistent(
+            "Synthetic build recipe",
+            HostReference {
+                id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+                account: AccountReference::Github { account_id: 42 },
+            },
+            Recipe {
+                shell: Some("/bin/sh".into()),
+                args: vec!["-l".into()],
+                cwd: Some("/work/synthetic".into()),
+            },
+        )
+        .unwrap();
+        recipe.id = RecipeId::parse("22222222-2222-4222-8222-222222222222").unwrap();
+        recipe.logical_session = "33333333-3333-4333-8333-333333333333".parse().unwrap();
+        match scene {
+            "edit-temporary" => {
+                recipe.lifetime = Lifetime::Temporary {
+                    reconnect_grace_seconds: 60,
+                }
+            }
+            "edit-attach-only" => {
+                recipe.behavior = ConnectionBehavior::AttachOnly {
+                    generation: "7".to_owned().try_into().unwrap(),
+                }
+            }
+            "edit-always-create" => recipe.behavior = ConnectionBehavior::AlwaysCreate,
+            "edit-resume" => recipe.behavior = ConnectionBehavior::ResumeOrCreate,
+            _ => {}
+        }
+        let (configuration, _) = festerm_config::Configuration::empty()
+            .with_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+        let portable = recipe.export().unwrap();
+        let page = match scene {
+            "list" | "error" => RecipePage::List,
+            "add" => RecipePage::Edit(Box::default()),
+            "edit" | "edit-temporary" | "edit-attach-only" | "edit-always-create"
+            | "edit-resume" => RecipePage::Edit(Box::new(RecipeDraft::from_recipe(recipe.clone()))),
+            "duplicate" => RecipePage::Duplicate {
+                source: recipe.clone(),
+                name: "Synthetic build recipe copy".into(),
+            },
+            "delete" => RecipePage::Delete {
+                recipe: recipe.clone(),
+                focus_cancel: true,
+            },
+            "import" | "import-review" | "import-invalid" | "import-reviewed" => {
+                RecipePage::Import {
+                    text: zeroize::Zeroizing::new(if scene == "import-invalid" {
+                        "{\"unverified\":".into()
+                    } else {
+                        portable.clone()
+                    }),
+                    preview: matches!(scene, "import-review" | "import-reviewed")
+                        .then_some(recipe.clone()),
+                    reviewed: scene == "import-reviewed",
+                }
+            }
+            "export" => RecipePage::Export(portable),
+            _ => unreachable!("unknown recipe scene"),
+        };
+        let mut state = HostRecipesState {
+            page,
+            feedback: if scene == "import-invalid" {
+                Some("The portable recipe is invalid or exceeds its bounded limits.")
+            } else {
+                (scene == "error")
+                    .then_some("The recipe could not be saved. The original metadata is unchanged.")
+            },
+            ..HostRecipesState::default()
+        };
+        let _ = state.show(ui, Self::for_test().active(), &configuration, &mut None);
+    }
+}
+
+#[cfg(test)]
+impl crate::tabs::AppState {
+    /// Installs a synthetic New Dev Tunnel profile editor for the screenshot
+    /// gallery and returns its two-account configuration. Nothing connects.
+    pub(crate) fn gallery_host_picker(
+        context: &egui::Context,
+        tab: TabId,
+        scene: &str,
+    ) -> festerm_config::Configuration {
+        use crate::screens::host_workspace::{HostSessions, SavedSessionChoice};
+        let account = |identifier: &str, id: u64, login: &str| {
+            festerm_config::DevTunnelAccount::new(
+                identifier,
+                festerm_config::AccountProvider::Github,
+                id,
+                login,
+                festerm_secret_store::SecretReference::generate(),
+            )
+            .expect("synthetic account")
+        };
+        let configuration = festerm_config::Configuration::empty()
+            .with_account(account("alice-key", 1, "alice"))
+            .unwrap()
+            .0
+            .with_account(account("bob-key", 2, "bob"))
+            .unwrap()
+            .0;
+        let host = HostSessions {
+            reference: HostReference {
+                id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+                account: AccountReference::Github { account_id: 1 },
+            },
+            hint: festerm_config::host_recipes::HostHint {
+                name: "Build workstation".into(),
+                locator: "alice-build.use".into(),
+            },
+            sessions: [("build", 3), ("notes", 4), ("release", 5)]
+                .into_iter()
+                .map(|(name, generation)| SavedSessionChoice {
+                    target: festerm_tunnel_bridge::host_client::Target {
+                        logical: LogicalSessionId::new(),
+                        generation: GenerationId::new(generation).unwrap(),
+                    },
+                    name: name.into(),
+                    lifetime: Lifetime::Persistent {},
+                })
+                .collect(),
+        };
+        crate::screens::host_workspace::install_profile_picker_gallery(context, tab, scene);
+        let mut draft = RecipeDraft {
+            name: "Build shortcut".into(),
+            hosts_refreshed: true,
+            ..Default::default()
+        };
+        match scene {
+            "session-open" | "session-existing" | "session-new" => {
+                crate::screens::host_workspace::remember_host(context, host.clone());
+                draft.bind_host(&host);
+                match scene {
+                    "session-existing" => draft.bind_session(&host.sessions[0]),
+                    "session-new" => {
+                        draft.session_name = "deploy-review".into();
+                        draft.reconcile_session_name(&host.sessions);
+                    }
+                    _ => {}
+                }
+            }
+            "session-locked" => {
+                let mut recipe = PublicRecipe::persistent(
+                    "Build shortcut",
+                    host.reference.clone(),
+                    Recipe::default(),
+                )
+                .unwrap();
+                recipe.host_hint = Some(host.hint.clone());
+                recipe.session_name = Some("build".into());
+                draft = RecipeDraft::from_recipe(recipe);
+            }
+            _ => {}
+        }
+        context.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode: ProfilesScreenMode::HostRecipes(Box::new(HostRecipesState {
+                        page: RecipePage::Edit(Box::new(draft)),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+        });
+        configuration
+    }
+}
+
 #[derive(Clone, Default)]
 pub(super) struct HostRecipesState {
     page: RecipePage,

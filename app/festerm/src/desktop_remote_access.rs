@@ -395,6 +395,11 @@ struct Report {
 #[derive(Clone)]
 pub struct DeviceCode(zeroize::Zeroizing<String>);
 
+#[cfg(test)]
+pub(crate) fn gallery_device_code() -> DeviceCode {
+    DeviceCode(zeroize::Zeroizing::new("DEMO-CODE".into()))
+}
+
 impl std::fmt::Debug for DeviceCode {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("DeviceCode(<private>)")

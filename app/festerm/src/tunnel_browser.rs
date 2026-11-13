@@ -235,6 +235,60 @@ impl Drop for Browser {
     }
 }
 
+#[cfg(test)]
+impl FesTermApp {
+    pub(crate) fn gallery_tunnel_browser(scene: &str) -> Self {
+        let mut app = Self::for_test_with_configuration(festerm_config::Configuration::empty());
+        let (_, receiver) = mpsc::channel();
+        let tunnel = TunnelSummary {
+            locator: "review-build.use".into(),
+            name: Some("review-build".into()),
+            description: Some("Synthetic build host".into()),
+            active: true,
+        };
+        let stage = match scene {
+            "working" => Stage::Working,
+            "device" => Stage::Device(DevicePrompt {
+                user_code: "DEMO-CODE".into(),
+            }),
+            "error" => Stage::Error(Error::Store),
+            "empty" => Stage::Pick {
+                login: "synthetic-devuser".into(),
+                tunnels: Vec::new(),
+                confirm_delete: None,
+                rename: None,
+            },
+            "list" | "rename" | "delete" => Stage::Pick {
+                login: "synthetic-devuser".into(),
+                confirm_delete: (scene == "delete").then(|| tunnel.locator.clone()),
+                rename: (scene == "rename")
+                    .then(|| (tunnel.locator.clone(), "Synthetic build host".into())),
+                tunnels: vec![
+                    tunnel,
+                    TunnelSummary {
+                        locator: "review-offline.use".into(),
+                        name: None,
+                        description: Some("Synthetic offline host".into()),
+                        active: false,
+                    },
+                ],
+            },
+            _ => unreachable!("unknown tunnel browser scene"),
+        };
+        app.tunnel_browser = Some(Browser {
+            cancel: CancellationToken::new(),
+            receiver,
+            stage,
+            focus_cancel: true,
+            device: DeviceActions::default(),
+            store: Arc::new(festerm_secret_store::MemorySecretStore::new()),
+            account: None,
+            _lease: None,
+        });
+        app
+    }
+}
+
 impl Browser {
     /// With an account, lists its tunnels using the stored credential, first
     /// deleting `delete` if given. Without one, runs the GitHub device flow and

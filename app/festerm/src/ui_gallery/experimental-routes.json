@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "section": "experimental-surfaces",
+  "fixture_policy": "Production renderers, deterministic synthetic public identities, no action dispatch, network, native vault, host service, cloud resources, PSRP or recording workers. Headless UI evidence is not native qualification.",
+  "groups": [
+    {
+      "ids": ["host-setup-windows", "host-setup-macos", "host-setup-linux", "host-setup-upgrade"],
+      "production_symbols": ["screens::profiles::show_profiles", "screens::profiles::ProfilesScreenMode::HostSetup", "screens::profiles::HostSetupDraft::command"],
+      "route": "Command palette → Dev Tunnel: Set up a host…; or Profiles → New Profile → Dev Tunnel → Set up a host… → choose platform/options",
+      "exit": "Back returns to the profile list without installing or executing anything. View script opens a read-only embedded installer tab; close that tab to return. Copy command/script requires a separate explicit action, never dispatched during capture.",
+      "gui_ids": ["TUNNEL-13"],
+      "notes": "All three platform field sets and pinned commands; Linux dependency choice; upgrade disables friendly-name editing and can refuse takeover. HostSetup has no inline validation/error state: the production generator escapes metadata into the command rather than executing it."
+    },
+    {
+      "ids": ["profile-dev-tunnel-new", "profile-dev-tunnel-edit", "profile-dev-tunnel-advanced", "profile-dev-tunnel-legacy", "profile-dev-tunnel-validation", "profile-dev-tunnel-saving", "profile-dev-tunnel-save-error"],
+      "production_symbols": ["screens::profiles::show_profiles", "screens::profiles::ProfilesScreenMode::EditDevTunnel", "screens::profiles::DevTunnelProfileDraft::build"],
+      "route": "Profiles → New Profile → Dev Tunnel · Experimental; or saved Dev Tunnel row → Edit → Advanced → optional Use destination file; Save stages validation and transactional persistence",
+      "exit": "Cancel or Back discards the staged draft without connecting or mutating an existing session. Collapse Advanced without changing metadata. Correct invalid fields or explicitly retry a failed Save; pending Save never claims success or connects automatically.",
+      "gui_ids": ["TUNNEL-01", "TUNNEL-07"],
+      "notes": "New and saved editors, immutable saved name, native tunnel/account controls, expanded legacy public destination/scoped-token controls, actual build validation, pending save and retained-draft persistence error. No token, account grant, credential lookup, file access or command dispatch."
+    },
+    {
+      "ids": ["profile-powershell-new", "profile-powershell-https-edit", "profile-powershell-ssh-edit", "profile-powershell-validation", "profile-powershell-ssh-validation", "profile-powershell-endpoint-changed"],
+      "production_symbols": ["screens::profiles::show_profiles", "screens::profiles::ProfilesScreenMode::EditPowerShell", "screens::profiles::PowerShellProfileDraft::build"],
+      "route": "Profiles → New Profile → PowerShell; or saved PowerShell row → Edit → HTTPS/NTLM or SSH subsystem → exact endpoint/trust/source fields → Save validation",
+      "exit": "Cancel discards staged metadata and clears the password widget. Correct invalid port or missing SSH pin and explicitly Save again. Endpoint changes require password re-entry; saving metadata never connects or falls back to another transport/configuration.",
+      "gui_ids": ["PSRP-02", "PSRP-05", "PSRP-06"],
+      "notes": "Separate from the runtime tab: basic new form, populated custom HTTPS/domain/CA/Ask-source fields, pinned SSH subsystem, actual build errors and endpoint-changed credential reset warning. This editor has no collapsed Advanced section; its transport-specific fields are directly visible. Synthetic CA/destination strings are never opened; all password fields remain empty."
+    },
+    {
+      "ids": ["recording-settings-advanced", "recording-settings-invalid", "recording-font-menu", "recording-theme-menu", "recording-speed-menu"],
+      "production_symbols": ["application::recording::ui::settings"],
+      "route": "Recording menu → Recording settings → enable typing normalization, burst limits and progressive reveal; edit naming template or open Font/Theme/playback-speed selector",
+      "exit": "Cancel discards draft settings. Escape dismisses an open selector. Correct an invalid template before Save; choosing a preview option never records or exports anything.",
+      "gui_ids": ["REC-01", "REC-05"],
+      "notes": "Conditional numeric controls, invalid template feedback and all export selector popups use the production editor."
+    },
+    {
+      "ids": ["recording-start-empty", "recording-start-include-new", "recording-start-options", "recording-include-empty"],
+      "production_symbols": ["application::recording::DesktopRecording::show"],
+      "route": "Recording menu → Start recording → no active terminals, Include new sessions or One-recording export options; active recording → Include sessions with no further eligible rows",
+      "exit": "Cancel returns without recording or changing inclusion. Uncheck Include new sessions to withdraw that draft choice. Close the empty inclusion dialog without mutating recording membership.",
+      "gui_ids": ["REC-01", "REC-02"],
+      "notes": "No-target admission refusal, explicit future-session/integrity warning, expanded per-recording options and no-additional-session state."
+    },
+    {
+      "ids": ["mcp-controller-optin"],
+      "production_symbols": ["screens::settings::automation_settings"],
+      "route": "Settings → Local MCP → Controller registrations before this process has opted in → inspect explicit Enable controller registration for new connections",
+      "exit": "Leave Settings without enabling. Opt-in alone would not associate a terminal or approve observation/input; existing connections cannot silently upgrade.",
+      "gui_ids": ["AUT-07", "AUT-08"],
+      "notes": "Displays only the real registration opt-in surface; no registration approval is dispatched."
+    },
+    {
+      "ids": ["workflow-starting", "workflow-input-queued", "workflow-source-last"],
+      "production_symbols": ["screens::settings::workflow_settings", "screens::settings::workflow_source_review"],
+      "route": "Settings → JavaScript workflows → explicit reviewed Run starts isolated worker; queued exact input/refusal notice; captured source → Next source page → final page",
+      "exit": "Stop workflow fences subsequent admission without undoing previously admitted input. Cancel exact input refuses that proposal. Previous source page or collapse returns from read-only source review.",
+      "gui_ids": ["AUT-01", "AUT-02", "AUT-04", "AUT-05"],
+      "notes": "Starting worker status, queued-input count/refusal notice and disabled Next on the final source page; no JavaScript executes."
+    },
+    {
+      "ids": ["remote-share-eligible"],
+      "production_symbols": ["desktop_remote_access::show"],
+      "route": "Settings → Remote access · this device → eligible attached persistent shell → Review exact generation",
+      "exit": "Leave Settings without selecting a session, or retain it privately. Merely seeing an eligible row does not Bind, Switch or grant exposure.",
+      "gui_ids": ["HOST-03", "HOST-04"],
+      "notes": "Synthetic exact-generation selection row. Successful private Bind remains blocked on authenticated connected-local source capability."
+    },
+    {
+      "ids": ["enterprise-empty-inventory", "enterprise-unauthorized-project", "enterprise-truncated-inventory"],
+      "production_symbols": ["enterprise::EnterpriseTab::show_inventory"],
+      "route": "INTERNAL ONLY: OpenEnterpriseDiscovery → foreground sign-in/discovery → empty, project-denied or bounded inventory",
+      "exit": "INTERNAL ONLY: Sign out and clear discards transient inventory; Close/tab close retains worker cleanup ownership. A subsequent discovery requires a new explicit sign-in.",
+      "gui_ids": ["ENTRA-03"],
+      "notes": "Empty resources, project authorization denial, omitted rows and queries deliberately not fetched after the display budget."
+    },
+    {
+      "ids": ["recording-library-populated", "recording-export-calculating", "recording-export-ready"],
+      "production_symbols": ["application::recording::ui::library_rows", "application::recording::DesktopRecording::show"],
+      "route": "Recording library → retained complete/incomplete/empty source, orphan options or staging; completed source → Export → Calculate duration",
+      "exit": "Close leaves the library without modifying data. Keep source for later closes export and retains private data; cancellation of actual preview/export never claims publication.",
+      "gui_ids": ["REC-01", "REC-05"],
+      "notes": "Pure display projections feed the same production row/dialog renderer. Export scenes scroll to the footer: calculating shows the spinner and disabled Export; ready shows 42.0-second duration and enabled Export. No RecordingSource, storage lease, artifact, staging file, preview task or encoder is manufactured. Actions still require real coordinator-owned library/preview state."
+    },
+    {
+      "ids": ["mcp-controller-choose-empty", "mcp-controller-choose-incomplete", "mcp-controller-choose-foreign", "mcp-controller-associate-missing", "mcp-controller-associate-foreign", "mcp-controller-metadata-stale", "mcp-controller-metadata-missing", "mcp-controller-metadata-foreign", "mcp-controller-input-stale", "mcp-controller-input-missing", "mcp-controller-input-foreign", "mcp-controller-input-submit", "mcp-controller-submitting-not-admitted"],
+      "production_symbols": ["screens::settings::automation_settings"],
+      "route": "Settings → Local MCP → Controller registrations → choice/association/metadata/input review → target disappears, list is incomplete, originating window differs or review is revoked",
+      "exit": "Cancel controller selection, Cancel metadata review or Cancel requested input refuses that proposal. Return to the originating window and explicitly choose/review current targets. Disarm/revoke stops later admission, not already admitted input.",
+      "gui_ids": ["AUT-07", "AUT-08"],
+      "notes": "Real in-memory broker snapshot fixture, missing/incomplete public target lists and existing review invalidation methods. No native approval is applied."
+    },
+    {
+      "ids": ["workflow-capabilities", "workflow-parameters", "workflow-source-modules", "workflow-source-page2", "workflow-parameters-invalid", "workflow-parameters-reviewed", "workflow-ready-no-target"],
+      "production_symbols": ["screens::settings::workflow_source_review", "screens::settings::workflow_run_settings", "screens::settings::workflow_settings"],
+      "route": "Settings → JavaScript workflows → captured multi-module bundle → expand capabilities/parameters/source → module selector or next page → explicit parameter-bearing Run review",
+      "exit": "Collapse disclosures or Clear workflow preview without executing. Correct invalid fields or select an eligible local terminal before a new explicit review; Stop workflow ends any actual active run without undoing previously admitted input.",
+      "gui_ids": ["AUT-01", "AUT-02", "AUT-04", "AUT-05"],
+      "notes": "ApprovedBundle validates token-safe manifest, sorted/reachable static modules and typed parameters. Every text/integer/boolean/target parameter widget, range/length refusal, source-page and module popup is rendered without running JavaScript."
+    },
+    {
+      "ids": ["host-retry-original", "host-resolved-unpresented", "host-always-create", "host-attach-exact-generation"],
+      "production_symbols": ["FesTermApp::show_host_browser"],
+      "route": "Profiles → HOST recipe → Review and connect → retained original-action presentation or explicit AlwaysCreate/AttachOnly recipe behavior",
+      "exit": "Cancel or Escape closes review without replaying or replacing the original action. Review the same current binding again; a resolved-but-unpresented response is not permission to create another shell.",
+      "gui_ids": ["HOST-01", "HOST-02"],
+      "notes": "Test-only public display data feeds the production original-action text/warning; no CreationIntent, protected receipt, granted owner context or actual request is manufactured."
+    },
+    {
+      "ids": ["dev-tunnel-changed-host", "dev-tunnel-save-account"],
+      "production_symbols": ["FesTermApp::show_native_tunnel"],
+      "route": "Saved legacy Dev Tunnel → Connect → different host fingerprint; account-save flow → explicit host trust without connecting",
+      "exit": "Cancel or Escape refuses proposed trust. Independently investigate changed host identity before reconnecting; closing never saves a changed trust decision.",
+      "gui_ids": ["TUNNEL-07", "TUNNEL-08"],
+      "notes": "Previous/proposed synthetic public fingerprints and Save account-only action; no credential lookup, device sign-in or connection."
+    },
+    {
+      "ids": ["host-recipes-import-invalid", "host-recipes-import-reviewed", "host-recipes-edit-temporary", "host-recipes-edit-attach-only", "host-recipes-edit-always-create", "host-recipes-edit-resume"],
+      "production_symbols": ["screens::profiles::host_recipes::HostRecipesState::show"],
+      "route": "Profiles → Host/session recipes → Import malformed/reviewed public JSON or edit Temporary/AttachOnly/AlwaysCreate/ResumeOrCreate metadata",
+      "exit": "Cancel abandons the staged import/editor and returns to recipes. Correct malformed JSON or generation fields and review again. Metadata save/import never executes a recipe or ends a shell.",
+      "gui_ids": ["HOST-02"],
+      "notes": "All conditional metadata field sets and explicit reviewed-import state, using the existing production editor. Intentional visual equivalence: host-recipes-edit-resume is pixel-identical to host-recipes-edit because PublicRecipe::persistent already defaults to ConnectionBehavior::ResumeOrCreate. The explicit behavior scene documents that default rather than pretending it is a separate widget surface."
+    },
+    {
+      "ids": ["remote-advanced-selected"],
+      "production_symbols": ["desktop_remote_access::show"],
+      "route": "Settings → Remote access · this device → Advanced · explicit signed local bundle → Use manually selected signed files",
+      "exit": "Uncheck the explicit manual-bundle choice or leave Settings without confirming Enable. Collapse Advanced to hide its fields. Neither leaving nor collapsing installs, approves or cleans up anything.",
+      "gui_ids": ["HOST-04"],
+      "notes": "Explicit manual alternative with synthetic inert paths; selecting it is never an acquisition or verification failure fallback."
+    },
+    {
+      "id_prefix": "remote-",
+      "production_symbols": ["desktop_remote_access::show", "desktop_remote_access::View", "desktop_remote_access::Operation", "desktop_remote_access::Failure"],
+      "route": "Settings → Remote access · this device → explicit status refresh / Review action / separate Confirm",
+      "exit": "Not now dismisses an installation review. During work use Cancel and fence mutating work and wait for actual revocation/drain. Leaving Settings only hides the surface; it does not disable access or prove cleanup. Preserve uncertain original sharing operations; Refresh and explicitly review recovery or authenticated cleanup again. Release keeps the shell; rollback is an explicit irreversible unshare.",
+      "gui_ids": ["HOST-04", "HOST-03"],
+      "states": ["unobserved", "absent", "disabled", "enable-requested", "provisioned", "reconciling", "stop-requested", "removed", "review-enable", "review-owner", "review-start", "review-observe", "review-inspect", "review-recover", "review-disable", "review-uninstall", "owner-context", "advanced-bundle", "acquiring", "authenticated", "qualifying", "complete", "device-signin", "cancelling", "cleanup-missing", "cleanup-unverified", "cleanup-guidance", "share-unsupported", "share-recovery", "share-prepared", "share-active", "share-revoked", "share-released", "share-uncertain", "error-busy", "error-cancelled", "error-refresh", "error-changed", "error-private", "error-signature", "error-unpublished", "error-download", "error-vault", "error-account", "error-owner", "error-platform", "error-recovery", "error-share", "error-session", "error-native", "error-draft", "error-cloud"],
+      "notes": "All lifecycle phases, installation confirmations, acquisition stages, typed refusals and original-operation share status controls. Separate eligible-row scene captures exact-session selection. Sharing fixtures deliberately have no authenticated connected-local source and therefore show capability refusal; a real native source remains required for successful Bind."
+    },
+    {
+      "ids": ["host-review", "host-review-working", "host-review-error", "host-owner-key", "host-inventory-empty", "host-inventory-unknown", "host-inventory-sessions", "host-create-review", "host-temporary-review"],
+      "production_symbols": ["FesTermApp::show_host_browser", "host_browser::Browser"],
+      "route": "Profiles → Host/session recipes · Experimental → recipe → Review and connect…",
+      "exit": "Cancel or Escape closes foreground HOST review without connecting or replaying input. Local owner-key preparation may already have completed: reopen and explicitly reload the same protected receipt. Uncertain creation retains its original action; closing review is not absence, deletion or replacement consent.",
+      "gui_ids": ["HOST-01", "HOST-02"],
+      "notes": "First-connect binding entry, explicit attestation, bounded worker, vault refusal, public owner-key disclosure, empty/Unknown inventory, available/busy session rows and exact persistent/temporary creation consent. Test-only public owner display data feeds the same production renderer, without manufacturing a protected receipt, private key or runnable client context."
+    },
+    {
+      "ids": ["dev-tunnels-working", "dev-tunnels-signin", "dev-tunnels-list", "dev-tunnels-empty", "dev-tunnels-rename", "dev-tunnels-delete", "dev-tunnels-error"],
+      "production_symbols": ["FesTermApp::show_tunnel_browser", "tunnel_browser::Stage"],
+      "route": "Profiles → Add Dev Tunnel / account browser → Browse my tunnels → optional Rename / Delete",
+      "exit": "Cancel or Escape cancels working/device-flow browsing; Close exits a completed list or error. Rename Cancel returns to the list; deletion Keep refuses deletion. Closing never grants host trust or connects a shell.",
+      "gui_ids": ["TUNNEL-07", "TUNNEL-11"],
+      "notes": "Legacy bridge discovery only; device code is synthetic DEMO-CODE. Delete defaults to Cancel."
+    },
+    {
+      "ids": ["dev-tunnel-connect", "dev-tunnel-device", "dev-tunnel-trust", "dev-tunnel-connect-error"],
+      "production_symbols": ["FesTermApp::show_native_tunnel", "tunnel_workflow::Stage"],
+      "route": "Launcher or Profiles → legacy Dev Tunnel profile → Connect → explicit GitHub device sign-in → host trust",
+      "exit": "Cancel or Escape cancels pending connection or refuses host trust; an error offers Close. Return to the profile and reconnect explicitly after correcting the account, storage or host identity. Do not approve a changed fingerprint merely to clear the error.",
+      "gui_ids": ["TUNNEL-07", "TUNNEL-08"],
+      "notes": "No sign-in or bridge launch; synthetic public host key and device code only."
+    },
+    {
+      "ids": ["hosting-new-shell", "hosting-recreate", "hosting-cleanup"],
+      "production_symbols": ["FesTermApp::poll_local_hosts", "profile_hosting::Controller"],
+      "route": "Profiles → locally hosted persistent profile → New shell / Recreate missing tunnel; Settings hosted inventory → Revoke unreferenced exposure",
+      "exit": "Cancel or Escape dismisses new-shell, recreate-tunnel or unreferenced-cleanup confirmation without starting a shell, recreating exposure or removing resources. Return to Profiles or Settings to inspect and review the exact current binding again.",
+      "gui_ids": ["TUNNEL-15", "TUNNEL-16"],
+      "notes": "Controller disabled for capture, so polling cannot enumerate local state or launch workers. Persistent shells are never started, killed or replaced."
+    },
+    {
+      "ids": ["hosting-account", "hosting-account-working", "hosting-account-signed-out", "hosting-account-conflict", "hosting-account-error"],
+      "production_symbols": ["profile_hosting::account::Chooser::poll"],
+      "route": "Profiles → add/edit Local profile → expose through Dev Tunnel → Choose GitHub account",
+      "exit": "Cancel or Escape returns to the staged Local profile editor without verified account consent. In-flight account work is cancelled; a sign-in already completed in the external browser can remain with the CLI. Retry account check is explicit; incompatible existing exposures must be reconciled before changing accounts.",
+      "gui_ids": ["TUNNEL-17"],
+      "notes": "Verified synthetic account, waiting, signed-out, incompatible binding and unavailable verified-helper states."
+    },
+    {
+      "ids": ["host-recipes-list", "host-recipes-add", "host-recipes-edit", "host-recipes-copy", "host-recipes-delete", "host-recipes-import", "host-recipes-import-review", "host-recipes-export", "host-recipes-error"],
+      "production_symbols": ["screens::profiles::host_recipes::HostRecipesState::show"],
+      "route": "Profiles → Host/session recipes · Experimental → Add / Edit / Copy / Delete / Import / Export",
+      "exit": "Cancel abandons an unsaved editor, duplicate, import or deletion review and returns to recipes. Export uses Back to recipes; the list uses Back to Profiles. A failed save keeps the staged metadata for correction or cancellation. Deleting metadata never ends the remote shell.",
+      "gui_ids": ["HOST-02"],
+      "notes": "Offline metadata only; import review is unverified and unchecked; copy/deletion never grants access or ends a shell."
+    },
+    {
+      "ids": ["enterprise-setup", "enterprise-signing-in", "enterprise-discovering", "enterprise-inventory", "enterprise-failed", "enterprise-closing", "enterprise-closed"],
+      "production_symbols": ["enterprise::EnterpriseTab::show"],
+      "route": "INTERNAL ONLY: OpenEnterpriseDiscovery command → tenant/client/Dev Center setup → Sign in and discover. Product GUI entry points are deliberately hidden pending owner approval.",
+      "exit": "INTERNAL ONLY: Cancel sign-in cancels SigningIn/Discovering and waits for worker cleanup. Inventory offers Sign out and clear or Close; tab close retains cleanup ownership until workers finish. Failed/Closed setup requires a new explicit sign-in. These fixtures do not imply a discoverable public launcher entry.",
+      "gui_ids": ["ENTRA-03"],
+      "notes": "Implemented internal surface, not a user-discoverable released entry point. Valid synthetic Azure Dev Center draft and read-only project/Dev Box rows; Failed and Closed reuse the same setup controls intentionally, while the production event list distinguishes discovery failure from completed worker cleanup. No identity, discovery or remote-desktop workers."
+    },
+    {
+      "ids": ["powershell-setup", "powershell-ssh-setup", "powershell-connecting", "powershell-ready", "powershell-structured-value", "powershell-running", "powershell-cancelling", "powershell-failed", "powershell-closing", "powershell-closed"],
+      "production_symbols": ["powershell::PowerShellTab::show"],
+      "route": "Settings → enable experimental PowerShell → Profiles → PowerShell profile → Connect → Run / Cancel",
+      "exit": "Cancel connection refuses a pending connection. Stop requests cancellation of a running pipeline; Close or tab close waits for owned runspace cleanup and may require the app's active-session confirmation. Failed/Closed returns to setup for an explicit new connection, never automatic command replay.",
+      "gui_ids": ["PSRP-02", "PSRP-03", "PSRP-06"],
+      "notes": "Structured output/warning events and setup/connect/run/cancel/error presentation; no password or PSRP transport."
+    },
+    {
+      "ids": ["recording-settings", "recording-start", "recording-privacy-blocked", "recording-include", "recording-export", "recording-library", "recording-library-empty", "recording-retry", "recording-recovered", "recording-delete-source", "recording-delete-manifest", "recording-delete-staging", "recording-status-active", "recording-status-preparing", "recording-status-exporting", "recording-status-failed", "recording-status-complete"],
+      "production_symbols": ["application::recording::DesktopRecording::show", "application::recording::ui::Dialog", "FesTermApp::show_recording_status"],
+      "route": "Settings → Recording defaults; terminal recording action → Start / Include sessions / Stop and export; Recording library → Retry / Recover / Delete",
+      "exit": "Cancel or Escape dismisses Start/Include; Close leaves settings or library. Export Keep source for later retains private data; retry Back and deletion Cancel return to the library. Active Stop recording finalizes capture; Cancel preparation/export stops that work without claiming publication. Incomplete sources remain for explicit recovery or deletion; Dismiss only hides an idle status notice.",
+      "gui_ids": ["REC-01", "REC-02", "REC-03", "REC-04", "REC-05"],
+      "notes": "Every dialog variant and deletion kind. Native privacy admission is intentionally absent, so Start remains disabled. No source, staging file, video encoder or native folder picker is created."
+    },
+    {
+      "ids": ["mcp-disabled", "mcp-observation-review", "mcp-observation-granted", "mcp-direct-verify", "mcp-controller-idle", "mcp-controller-choose", "mcp-controller-associate", "mcp-controller-metadata", "mcp-controller-metadata-review", "mcp-controller-metadata-granted", "mcp-controller-input-request", "mcp-controller-input-review", "mcp-controller-keys-review", "mcp-controller-preparing", "mcp-controller-submitting", "mcp-controller-cancelling", "mcp-controller-metadata-cancelling", "mcp-controller-metadata-revoking", "mcp-controller-armed"],
+      "production_symbols": ["screens::settings::automation_settings", "screens::settings::direct_verification_settings"],
+      "route": "Settings → Local MCP (Beta) → connection code / exact attachment consent; Controller registrations → Choose terminal → Confirm association → independent metadata or requested-input review",
+      "exit": "Reject direct MCP connection or Disconnect/Revoke this MCP connection closes its access. Cancel controller selection, Cancel metadata review and Cancel requested input reject the corresponding review; revoke metadata, Disarm terminal control or Unregister controller end later authority. Cancellation/disarm cannot undo already admitted input. Merely leaving Settings does not revoke a grant.",
+      "gui_ids": ["AUT-07", "AUT-08"],
+      "notes": "In-memory broker fixtures only. No listener or grant is applied by capture; text/keys, disarm, cancellation and possible-admission warnings use real presentation."
+    },
+    {
+      "ids": ["workflow-empty", "workflow-capturing", "workflow-waiting", "workflow-failed", "workflow-cancelling", "workflow-preview", "workflow-source", "workflow-monitoring", "workflow-ready", "workflow-running", "workflow-input", "workflow-sending"],
+      "production_symbols": ["screens::settings::workflow_settings", "screens::settings::workflow_run_settings", "screens::settings::workflow_run_status"],
+      "route": "Settings → JavaScript workflows (Beta) → Select workflow JSON → captured source/capability review → privacy monitoring → explicit Run → separate per-input consent / Stop",
+      "exit": "Clear workflow preview abandons captured-source review without granting execution. Deny rejects the displayed input; Stop workflow ends the active run. A capture still cancelling must finish before another read starts. Leaving Settings does not itself stop an existing run, and stopping never undoes already admitted terminal input.",
+      "gui_ids": ["AUT-01", "AUT-02", "AUT-04", "AUT-05"],
+      "notes": "Frozen in-memory source snapshot only; no file picker, JavaScript worker, shell input or broker disclosure."
+    },
+    {
+      "ids": ["host-profile-picker-open", "host-profile-picker-refreshing", "host-profile-picker-stale"],
+      "production_symbols": ["screens::profiles::show_profiles", "screens::host_workspace::show_profile_host_picker"],
+      "route": "Profiles → New Profile → Dev Tunnel → Host dropdown, with two signed-in GitHub accounts",
+      "exit": "Choosing a host only fills the draft; Escape or clicking away closes the dropdown. Cancel/Back discards the draft without saving or connecting.",
+      "gui_ids": ["HOST-01", "HOST-02"],
+      "notes": "Hosts are grouped under each signed-in account. Refreshing shows bounded parallel per-account discovery in flight; stale shows one account's discovery error while the other account's hosts remain selectable. Synthetic accounts only; no discovery request is sent."
+    },
+    {
+      "ids": ["host-profile-session-open", "host-profile-session-existing", "host-profile-session-new", "host-profile-session-locked"],
+      "production_symbols": ["screens::profiles::show_profiles", "screens::profiles::host_recipes"],
+      "route": "Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)",
+      "exit": "Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.",
+      "gui_ids": ["HOST-02"],
+      "notes": "Editable combo lists the remembered host's existing sessions and accepts a new name. Existing selects a known session; new shows a typed name not yet on the host; locked shows a recipe-derived profile whose session name is fixed."
+    }
+  ],
+  "implemented_egui_gaps": [
+    {
+      "production_symbols": ["desktop_remote_access::show"],
+      "route": "Settings → Remote access → eligible attached persistent shell → exact sharing review",
+      "missing": "Only authenticated-source Confirm Bind privately remains uncaptured. Eligible-session selection and every prepared/active/revoked/released/uncertain status/recovery surface have scenes.",
+      "prerequisite": "A live authenticated connected-local LocalSessionTarget capability from the actual native daemon, with the exact current session generation and current protected native-vault owner policy. Neither metadata/PID nor a fabricated source token is acceptable.",
+      "classification": "Blocked capability-bound evidence, not an omitted constructible display model."
+    }
+  ],
+  "native_only_gaps": [
+    "Actual protected HOST receipt reopening and successful authorized attachment/creation require native vault/private-index composition. The public owner-key pane and inventory/creation rendering are captured using test-only public display data; no fake receipt is passed as protected approval.",
+    "Successful exact connected-local Bind needs authenticated native source capability; fixtures show refusals and all independently presented sharing status/recovery controls without manufacturing that capability.",
+    "System GitHub browser, OS vault/unlock, enterprise browser/device identity, native folder picker, helper registration, lock/privacy dialogs and cloud/provider cleanup UI are external native surfaces, not headless egui renders.",
+    "Real tunnel readiness, signed release availability, native Windows/macOS/Linux manager behavior, actual recording/export and installed-device qualification remain unclaimed."
+  ]
+}

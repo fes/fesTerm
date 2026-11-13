@@ -6,6 +6,29 @@ transient SSH session, pending native/live-service qualification. It combines th
 with the profile, Files/SFTP and Markdown workspaces of the mobile shell. See
 [ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
 
+## Shared mobile UI review gallery
+
+[State of mobile UI](../../docs/state-of-mobile-ui.md) catalogs the current
+production-widget screenshots, source owners, navigation routes and explicit
+native-only gaps for experimental iOS and Android. Recreate it offline with:
+
+```sh
+CARGO_BUILD_JOBS=2 python3 scripts/capture-mobile-ui.py \
+  --output docs/images/ui-state-mobile-fresh \
+  --index-output docs/state-of-mobile-ui-fresh.md
+```
+
+Use a new output directory. The generator enables `host-clients` in tests,
+uses synthetic profiles/listings/documents and bounded recording sources, and
+renders actual recording-owner widgets through test-only cfg. Mobile encoding
+and publication refuse in this headless host. No native app, credentials,
+clipboard, real connection or OS picker is used. These are not native iOS or
+Android acceptance screenshots.
+Every PNG has separate entry/exit/source routes. Manifests include a working-tree
+input fingerprint checked unchanged before/after capture. Recording task phases
+and HOST protected-history screens use inert public display seams into the actual
+renderers; they cannot create tasks, protected receipts or dispatch HOST work.
+
 ## Opt-in ADR 0084 HOST client
 
 `host-clients` adds **Profiles → Dev Tunnel hosts…**; it is not enabled by
