@@ -1833,6 +1833,14 @@ neither qualifies actual native-vault, installed endpoint, GUI or usability.
 
 Detailed contract and fixture coverage:
 
+HOST-03 lease maintenance and Detached receipts may wait within the existing
+15-second admission budget only on pre-effect Busy, with fresh protected policy
+and generation fencing on every attempt. Cancellation and other refusals remain
+final; possible mutation, input/adoption or receipt publication prevents replay.
+Owned terminal fixtures require actual adoption, isolated bytes and exact
+Detached replies; pre-snapshot Busy and partial read-only inventory are bounded
+readiness states, not success, absence or installed/native qualification.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; freshly verified principal/host; private sessions hidden; bounded foreground workers | Request/recipe identity, cancellation, account/protected-context and native-lifetime fences; authorized Unknown entries remain Unknown | P; Desktop plus opt-in shared mobile foreground contracts/auth/privacy/browser/framed tests; actual cloud/native-vault/GUI/device H,N deferred |

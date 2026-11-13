@@ -1379,41 +1379,57 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
         generation: GenerationId::new(running.target.generation.get() + 1).unwrap(),
     };
     assert_eq!(
-        fixture.control().end(&fixture.owner, &stale, allow),
+        retry_busy(|| fixture.control().end(&fixture.owner, &stale, allow)),
         Err(ControlError::Stale)
     );
-    fixture
-        .control()
-        .end(&fixture.owner, &running.target, allow)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .end(&fixture.owner, &running.target, allow)
+    })
+    .unwrap();
     fixture.wait_absent(&running.target);
     let replacement = fixture.ensure(&creation);
     assert_ne!(replacement.target.generation, running.target.generation);
     assert_eq!(
-        fixture
-            .control()
-            .end(&fixture.owner, &running.target, allow),
+        retry_busy(|| {
+            fixture
+                .control()
+                .end(&fixture.owner, &running.target, allow)
+        }),
         Err(ControlError::Stale)
     );
-    fixture
-        .control()
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
+    let remaining = list_running_sessions_in(&fixture.root).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].session.pid, replacement.identity.pid);
     assert_eq!(
+        remaining[0].session.created_at_unix_ms,
+        replacement.target.generation.get()
+    );
+    retry_busy(|| {
         fixture
             .control()
-            .lookup(&fixture.owner, &creation.logical, allow),
+            .revoke_local(&fixture.owner, &creation.logical)
+    })
+    .unwrap();
+    assert_eq!(
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        }),
         Err(ControlError::Revoked)
     );
+    let operation = fixture.issued();
     assert!(matches!(
-        fixture.control().ensure(
+        retry_busy(|| fixture.control().ensure(
             &fixture.owner,
-            &fixture.issued(),
+            &operation,
             &creation,
             false,
             &AtomicBool::new(false),
             allow
-        ),
+        )),
         Err(ControlError::Revoked)
     ));
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
@@ -2308,10 +2324,10 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
     let control = fixture.control();
     let pending = fixture.attach(&running.target, &creation.attachment, false);
     let authority = pending.authority.clone();
-    assert!(matches!(
-        control.with_attachment_authorized(&authority, allow, || Ok(())),
+    assert_eq!(
+        retry_busy(|| control.with_attachment_authorized(&authority, allow, || Ok(()))),
         Err(ControlError::Stale)
-    ));
+    );
     struct Guard(Arc<AtomicBool>);
     impl Drop for Guard {
         fn drop(&mut self) {
@@ -2319,8 +2335,8 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
         }
     }
     let held = Arc::new(AtomicBool::new(false));
-    control
-        .with_pending_attachment_authorized(
+    retry_busy(|| {
+        control.with_pending_attachment_authorized(
             &authority,
             |_| {
                 held.store(true, Ordering::Release);
@@ -2337,29 +2353,53 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
                 Ok(())
             },
         )
-        .unwrap();
+    })
+    .unwrap();
     assert!(!held.load(Ordering::Acquire));
     let (active, _) = fixture.adopt(&running.target, pending);
-    control
-        .with_attachment_authorized(&authority, allow, || Ok(()))
-        .unwrap();
-    assert!(matches!(
-        control.with_attachment_authorized(
-            &authority,
-            |_| Err::<(), _>(ControlError::Denied),
-            || -> Result<(), ControlError> { panic!("denied action ran") }
-        ),
+    retry_busy(|| control.with_attachment_authorized(&authority, allow, || Ok(()))).unwrap();
+    assert_eq!(
+        retry_busy(|| {
+            control.with_attachment_authorized(
+                &authority,
+                |_| Err::<(), _>(ControlError::Denied),
+                || -> Result<(), ControlError> { panic!("denied action ran") },
+            )
+        }),
         Err(ControlError::Denied)
-    ));
-    control
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
-    assert!(matches!(
+    );
+    retry_busy(|| control.revoke_local(&fixture.owner, &creation.logical)).unwrap();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let lease_lock = storage::open_private_file(
+        &directory,
+        Path::new(&format!(
+            "host-daemon-{}.lock",
+            running.target.generation.get()
+        )),
+        false,
+    )
+    .unwrap();
+    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
+        Err(error) => panic!("owned authority lease lock failed: {error}"),
+    })
+    .unwrap();
+    assert_eq!(
         control.with_attachment_authorized(&authority, allow, || -> Result<(), ControlError> {
-            panic!("revoked action ran")
+            panic!("contended revoked action ran")
+        }),
+        Err(ControlError::Busy)
+    );
+    drop(lease_lock);
+    assert_eq!(
+        retry_busy(|| {
+            control.with_attachment_authorized(&authority, allow, || -> Result<(), ControlError> {
+                panic!("revoked action ran")
+            })
         }),
         Err(ControlError::Revoked)
-    ));
+    );
     drop(active);
 }
 

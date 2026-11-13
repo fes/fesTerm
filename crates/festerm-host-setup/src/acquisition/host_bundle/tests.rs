@@ -19,7 +19,9 @@ struct Response {
     body: Vec<u8>,
     before_headers: Duration,
     before_body: Duration,
+    headers_release: Option<std::sync::mpsc::Receiver<()>>,
     body_release: Option<std::sync::mpsc::Receiver<()>>,
+    blocked: Option<std::sync::mpsc::Sender<()>>,
 }
 
 impl Response {
@@ -29,7 +31,9 @@ impl Response {
             body,
             before_headers: Duration::ZERO,
             before_body: Duration::ZERO,
+            headers_release: None,
             body_release: None,
+            blocked: None,
         }
     }
 
@@ -64,7 +68,7 @@ impl Server {
         let stopped = stop.clone();
         let task = thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(5);
-            for response in responses {
+            for mut response in responses {
                 let mut connection = loop {
                     if stopped.load(Ordering::SeqCst) || Instant::now() >= deadline {
                         return;
@@ -87,9 +91,20 @@ impl Server {
                 let request = read_request(&mut connection);
                 observed.lock().unwrap().push(request);
                 thread::sleep(response.before_headers);
+                if let Some(release) = response.headers_release {
+                    if let Some(blocked) = response.blocked.take() {
+                        let _ = blocked.send(());
+                    }
+                    if release.recv_timeout(Duration::from_secs(5)).is_err() {
+                        return;
+                    }
+                }
                 if connection.write_all(&response.head).is_ok() {
                     thread::sleep(response.before_body);
                     if let Some(release) = response.body_release {
+                        if let Some(blocked) = response.blocked.take() {
+                            let _ = blocked.send(());
+                        }
                         if release.recv_timeout(Duration::from_secs(5)).is_err() {
                             return;
                         }
@@ -566,7 +581,6 @@ fn official_host_bundle_rejects_zero_oversize_encoded_truncated_and_stream_overf
 fn official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_budget() {
     let expected = identity();
     let fixture = host_acquisition_fixture(&expected);
-    let downloader = fixture_client(Duration::from_secs(2));
     let cancel = CancellationToken::new();
     cancel.cancel();
     assert_eq!(
@@ -576,53 +590,76 @@ fn official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_b
     for before_headers in [false, true] {
         for cancelled in [false, true] {
             let mut response = responses(&fixture);
+            let (release, wait) = std::sync::mpsc::channel();
+            let (blocked, ready) = std::sync::mpsc::channel();
             if before_headers {
-                response[0].before_headers = Duration::from_millis(150);
+                response[0].headers_release = Some(wait);
             } else {
-                response[0].before_body = Duration::from_millis(150);
+                response[0].body_release = Some(wait);
             }
+            response[0].blocked = Some(blocked);
             let server = Server::new(response);
             let cancel = CancellationToken::new();
-            let cancelling = if cancelled {
-                let cancel = cancel.clone();
-                let requests = server.requests.clone();
-                Some(thread::spawn(move || {
-                    let deadline = Instant::now() + Duration::from_secs(2);
-                    while requests.lock().unwrap().is_empty() && Instant::now() < deadline {
-                        thread::sleep(Duration::from_millis(1));
+            let urls = server.urls(&expected);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                tokio::time::pause();
+                let deadline = Instant::now() + REQUEST_TIMEOUT;
+                let child_cancel = cancel.clone();
+                let receiving = tokio::spawn(async move {
+                    receive_assets(
+                        &fixture_client(REQUEST_TIMEOUT * 2),
+                        urls,
+                        &child_cancel,
+                        deadline,
+                    )
+                    .await
+                });
+                let watchdog = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match ready.try_recv() {
+                        Ok(()) => break,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                        Err(error) => panic!("fixture stage disconnected: {error}"),
                     }
-                    cancel.cancel();
-                }))
-            } else {
-                None
-            };
-            let started = Instant::now();
-            let error = refused(acquire(
-                &downloader,
-                server.urls(&expected),
-                &expected,
-                &cancel,
-                started
-                    + if cancelled {
-                        Duration::from_secs(2)
-                    } else {
-                        Duration::from_millis(40)
-                    },
-                verify_acquisition_fixture,
-            ));
-            if let Some(task) = cancelling {
-                task.join().unwrap();
-            }
-            assert_eq!(
-                error,
-                if cancelled {
-                    HostBundleError::Cancelled
-                } else {
-                    HostBundleError::Deadline
+                    assert!(
+                        Instant::now() < watchdog,
+                        "fixture did not reach blocked stage; before_headers={before_headers}"
+                    );
+                    tokio::task::yield_now().await;
                 }
-            );
-            assert!(started.elapsed() < Duration::from_secs(1));
-            assert_eq!(server.requests().len(), 1);
+                assert_eq!(server.requests().len(), 1);
+                assert!(!receiving.is_finished());
+                if cancelled {
+                    cancel.cancel();
+                } else {
+                    tokio::time::advance(REQUEST_TIMEOUT + Duration::from_secs(1)).await;
+                }
+                while !receiving.is_finished() {
+                    assert!(
+                        Instant::now() < watchdog,
+                        "blocked acquisition did not honor cancellation/deadline"
+                    );
+                    tokio::task::yield_now().await;
+                }
+                let error = receiving
+                    .await
+                    .unwrap()
+                    .expect_err("blocked acquisition must not complete successfully");
+                assert_eq!(
+                    error,
+                    if cancelled {
+                        HostBundleError::Cancelled
+                    } else {
+                        HostBundleError::Deadline
+                    }
+                );
+                assert_eq!(server.requests().len(), 1);
+                release.send(()).unwrap();
+            });
         }
     }
     let mut response = responses(&fixture);

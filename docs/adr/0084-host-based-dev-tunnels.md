@@ -778,6 +778,22 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+Native terminal lease maintenance and Detached-receipt publication use the
+existing bounded 15-second admission wait for typed Busy only before an effect
+can begin. Each attempt reacquires the generation lock and fresh protected
+policy; cancellation, revocation and every non-Busy refusal remain final.
+Successful mutation admission, input/adoption invocation or receipt publication
+ends retry eligibility, including a later Busy result. No input, lease mutation
+or adoption is replayed. Unit contracts cover pre-effect contention, post-effect
+Busy, final refusals, cancellation and exhausted budgets; real owned SSH/PTY
+tests retain exact Detached, temporary grace and current-policy fences.
+Fixture readiness may retry an explicitly refused pre-snapshot attachment with
+the same target/ticket/request, never an adopted frontend or uncertain outcome.
+Read-only inventory readiness uses fresh List probes and requires the complete
+same-target set with no Unknown entries before success; partial inventory is
+never treated as absence. These changes do not qualify installed/native-vault,
+mobile or Windows service behavior or change HOST-01--HOST-06 classifications.
+
 Historical selected Linux Logind and acquisition/replay observations are
 recorded with exact source and immutable archive digests in the
 [manual evidence record](../manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).

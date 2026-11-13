@@ -79,6 +79,30 @@ fn refusal(error: ControlError) -> Refusal {
     }
 }
 
+fn retry_before_effect<T>(
+    deadline: Instant,
+    cancelled: impl Fn() -> bool,
+    mut operation: impl FnMut(&mut bool) -> Result<T, ControlError>,
+) -> Result<T, ControlError> {
+    loop {
+        if cancelled() {
+            return Err(ControlError::Cancelled);
+        }
+        let mut effect_possible = false;
+        let result = operation(&mut effect_possible);
+        // Reacquire fresh authorization, but never replay input or a lease
+        // mutation once its effect may have begun, even if it reports Busy.
+        if !effect_possible
+            && matches!(result, Err(ControlError::Busy))
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        return result;
+    }
+}
+
 impl<A: ProtectedPolicySource> Worker<A> {
     fn admit(
         &self,
@@ -128,39 +152,30 @@ impl<A: ProtectedPolicySource> Worker<A> {
         action: impl FnOnce() -> Result<T, ControlError>,
     ) -> Result<T, ControlError> {
         let sessions = &self.backend.sessions;
-        let deadline = Instant::now() + DEADLINE;
         let mut action = Some(action);
-        loop {
-            if self.admission.cancelled() {
-                return Err(ControlError::Cancelled);
-            }
-            let mut attempted = false;
-            let apply = || {
-                attempted = true;
-                action.take().ok_or(ControlError::Storage)?()
-            };
-            let result = if !self.adopted {
-                sessions.with_pending_attachment_authorized(
-                    &self.pending.authority,
-                    |state| self.admit(state, None, false),
-                    apply,
-                )
-            } else {
-                sessions.with_attachment_authorized(
-                    &self.pending.authority,
-                    |state| self.admit(state, None, false),
-                    apply,
-                )
-            };
-            if !attempted && matches!(result, Err(ControlError::Busy)) && Instant::now() < deadline
-            {
-                // Retry admission only. Once the nonblocking action is called,
-                // its result is final: never replay terminal input or adoption.
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            return result;
-        }
+        retry_before_effect(
+            Instant::now() + DEADLINE,
+            || self.admission.cancelled(),
+            |attempted| {
+                let apply = || {
+                    *attempted = true;
+                    action.take().ok_or(ControlError::Storage)?()
+                };
+                if !self.adopted {
+                    sessions.with_pending_attachment_authorized(
+                        &self.pending.authority,
+                        |state| self.admit(state, None, false),
+                        apply,
+                    )
+                } else {
+                    sessions.with_attachment_authorized(
+                        &self.pending.authority,
+                        |state| self.admit(state, None, false),
+                        apply,
+                    )
+                }
+            },
+        )
     }
 
     fn event(&self) -> Result<Option<SessionEvent>, ControlError> {
@@ -286,15 +301,22 @@ impl<A: ProtectedPolicySource> Worker<A> {
         {
             return Err(ControlError::Stale);
         }
-        let receipt = self
-            .backend
-            .sessions
-            .maintain_lease(
-                &self.pending.authority,
-                Some(DetachKind::Intentional),
-                |state| self.admit(state, Some(request), false),
-            )?
-            .ok_or(ControlError::Unknown)?;
+        let receipt = retry_before_effect(
+            Instant::now() + DEADLINE,
+            || self.admission.cancelled(),
+            |effect_possible| {
+                self.backend.sessions.maintain_lease(
+                    &self.pending.authority,
+                    Some(DetachKind::Intentional),
+                    |state| {
+                        let guard = self.admit(state, Some(request), false)?;
+                        *effect_possible = true;
+                        Ok(guard)
+                    },
+                )
+            },
+        )?
+        .ok_or(ControlError::Unknown)?;
         self.detachment = Some((receipt, request.clone()));
         self.intentional = true;
         Ok(Response::Detached {
@@ -306,10 +328,19 @@ impl<A: ProtectedPolicySource> Worker<A> {
         if matches!(response.body, Response::Detached { .. }) {
             let (receipt, request) = self.detachment.as_ref().ok_or(ControlError::Stale)?;
             response.validate_for(request).map_err(control)?;
-            self.backend.sessions.with_detachment_receipt_authorized(
-                receipt,
-                |state| self.admit(state, Some(request), false),
-                || Ok(()),
+            retry_before_effect(
+                Instant::now() + DEADLINE,
+                || self.admission.cancelled(),
+                |effect_possible| {
+                    self.backend.sessions.with_detachment_receipt_authorized(
+                        receipt,
+                        |state| self.admit(state, Some(request), false),
+                        || {
+                            *effect_possible = true;
+                            Ok(())
+                        },
+                    )
+                },
             )
         } else {
             self.action(|| Ok(()))
@@ -319,11 +350,19 @@ impl<A: ProtectedPolicySource> Worker<A> {
     fn check(&self, heartbeat: bool) -> Result<(), ControlError> {
         self.action(|| Ok(()))?;
         if heartbeat && self.adopted {
-            self.backend
-                .sessions
-                .maintain_lease(&self.pending.authority, None, |state| {
-                    self.admit(state, None, false)
-                })?;
+            retry_before_effect(
+                Instant::now() + DEADLINE,
+                || self.admission.cancelled(),
+                |effect_possible| {
+                    self.backend
+                        .sessions
+                        .maintain_lease(&self.pending.authority, None, |state| {
+                            let guard = self.admit(state, None, false)?;
+                            *effect_possible = true;
+                            Ok(guard)
+                        })
+                },
+            )?;
         }
         Ok(())
     }
@@ -886,5 +925,119 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         biased;
         _ = closed.cancelled() => Err(Error::Closed),
         result = route => result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn lease_admission_retries_busy_only_before_effect() {
+        let mut calls = 0;
+        let mut effects = 0;
+        let result = retry_before_effect(
+            Instant::now() + Duration::from_secs(1),
+            || false,
+            |effect_possible| {
+                calls += 1;
+                if calls < 3 {
+                    return Err(ControlError::Busy);
+                }
+                *effect_possible = true;
+                effects += 1;
+                Ok(42)
+            },
+        );
+        assert_eq!(result, Ok(42));
+        assert_eq!(calls, 3);
+        assert_eq!(effects, 1);
+    }
+
+    #[test]
+    fn lease_admission_never_replays_busy_after_possible_effect() {
+        let mut calls = 0;
+        let result = retry_before_effect(
+            Instant::now() + Duration::from_secs(1),
+            || false,
+            |effect_possible| {
+                calls += 1;
+                *effect_possible = true;
+                Err::<(), _>(ControlError::Busy)
+            },
+        );
+        assert_eq!(result, Err(ControlError::Busy));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn lease_admission_never_retries_non_busy_refusals() {
+        for error in [
+            ControlError::Denied,
+            ControlError::Revoked,
+            ControlError::Unknown,
+            ControlError::Stale,
+            ControlError::RecipeConflict,
+            ControlError::OperationConflict,
+            ControlError::AlreadyExists,
+            ControlError::Ended,
+            ControlError::Cancelled,
+            ControlError::Invalid,
+            ControlError::Storage,
+            ControlError::CommittedButNotPublished,
+        ] {
+            for initially_busy in [false, true] {
+                let mut calls = 0;
+                let result = retry_before_effect(
+                    Instant::now() + Duration::from_secs(1),
+                    || false,
+                    |_| {
+                        calls += 1;
+                        if initially_busy && calls == 1 {
+                            Err(ControlError::Busy)
+                        } else {
+                            Err::<(), _>(error)
+                        }
+                    },
+                );
+                assert_eq!(result, Err(error));
+                assert_eq!(calls, if initially_busy { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn lease_admission_cancellation_stops_before_first_or_next_attempt() {
+        for initially_cancelled in [false, true] {
+            let cancelled = Cell::new(initially_cancelled);
+            let mut calls = 0;
+            let result = retry_before_effect(
+                Instant::now() + Duration::from_secs(1),
+                || cancelled.get(),
+                |_| {
+                    calls += 1;
+                    cancelled.set(true);
+                    Err::<(), _>(ControlError::Busy)
+                },
+            );
+            assert_eq!(result, Err(ControlError::Cancelled));
+            assert_eq!(calls, usize::from(!initially_cancelled));
+        }
+    }
+
+    #[test]
+    fn lease_admission_expired_budget_preserves_busy() {
+        let mut calls = 0;
+        let result = retry_before_effect(
+            Instant::now(),
+            || false,
+            |_| {
+                calls += 1;
+                Err::<(), _>(ControlError::Busy)
+            },
+        );
+        assert_eq!(result, Err(ControlError::Busy));
+        assert_eq!(calls, 1);
     }
 }
