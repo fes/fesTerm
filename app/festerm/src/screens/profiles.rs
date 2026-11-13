@@ -276,6 +276,26 @@ pub(crate) fn local_host_account_request(
     (draft.expose && draft.account_selection == Some(request)).then_some(draft.original_id)
 }
 
+#[cfg(all(test, feature = "experimental-dev-tunnels"))]
+impl crate::tabs::AppState {
+    pub(crate) fn gallery_install_account_request(
+        context: &egui::Context,
+        tab: TabId,
+        request: egui::Id,
+    ) {
+        let draft = LocalProfileDraft {
+            expose: true,
+            account_selection: Some(request),
+            ..LocalProfileDraft::default()
+        };
+        let state = ProfilesScreenState {
+            mode: ProfilesScreenMode::EditLocal(draft),
+            ..ProfilesScreenState::default()
+        };
+        context.data_mut(|data| data.insert_temp(profiles_state_id(tab), state));
+    }
+}
+
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) fn report_local_host_account(
     context: &egui::Context,
@@ -313,6 +333,128 @@ pub(crate) fn report_local_host_account(
         data.insert_temp(id, state);
     });
     context.request_repaint();
+}
+
+#[cfg(test)]
+impl crate::tabs::AppState {
+    pub(crate) fn gallery_install_remote_profile(
+        context: &egui::Context,
+        tab: TabId,
+        scene: &str,
+    ) -> festerm_config::Configuration {
+        let mut configuration = festerm_config::Configuration::empty();
+        let mode = if scene.starts_with("host-setup-") {
+            let mut draft = HostSetupDraft {
+                platform: match scene {
+                    "host-setup-windows" => festerm_host_setup::HostPlatform::Windows,
+                    "host-setup-macos" => festerm_host_setup::HostPlatform::MacOs,
+                    "host-setup-linux" | "host-setup-upgrade" => {
+                        festerm_host_setup::HostPlatform::Linux
+                    }
+                    _ => unreachable!("unknown host setup fixture"),
+                },
+                ..HostSetupDraft::default()
+            };
+            draft.options.friendly_name = "Synthetic review host".into();
+            if scene == "host-setup-upgrade" {
+                draft.options.upgrade = true;
+                draft.options.takeover = false;
+            }
+            ProfilesScreenMode::HostSetup(draft)
+        } else if scene.starts_with("profile-dev-tunnel-") {
+            let profile = if scene == "profile-dev-tunnel-legacy" {
+                Profile::dev_tunnel("build-box", "/review-fixtures/host-public.json").unwrap()
+            } else {
+                Profile::named_dev_tunnel("build-box", "abc123.use").unwrap()
+            };
+            let mut draft = if matches!(
+                scene,
+                "profile-dev-tunnel-edit" | "profile-dev-tunnel-legacy"
+            ) {
+                configuration = festerm_config::Configuration::new(vec![profile.clone()]).unwrap();
+                DevTunnelProfileDraft::from_profile(profile.as_dev_tunnel().unwrap())
+            } else {
+                DevTunnelProfileDraft {
+                    name: "build-box".into(),
+                    tunnel: "abc123.use".into(),
+                    ..DevTunnelProfileDraft::default()
+                }
+            };
+            match scene {
+                "profile-dev-tunnel-new" => draft = DevTunnelProfileDraft::default(),
+                "profile-dev-tunnel-validation" => {
+                    draft.tunnel = "invalid tunnel locator".into();
+                    draft.error = Some(draft.build().unwrap_err().to_string());
+                }
+                "profile-dev-tunnel-saving" => draft.pending_save = Some(egui::Id::new("synthetic-profile-save")),
+                "profile-dev-tunnel-save-error" => draft.error = Some("Synthetic configuration write was refused. The existing profile is unchanged; retry Save or Cancel.".into()),
+                "profile-dev-tunnel-edit" | "profile-dev-tunnel-advanced" | "profile-dev-tunnel-legacy" => {}
+                _ => unreachable!("unknown Dev Tunnel profile fixture"),
+            }
+            ProfilesScreenMode::EditDevTunnel(draft)
+        } else {
+            let profile =
+                Profile::powershell("ps-build", "ps.example.com", 5986, "builder").unwrap();
+            let mut draft = PowerShellProfileDraft::from_profile(profile.as_powershell().unwrap());
+            configuration = festerm_config::Configuration::new(vec![profile]).unwrap();
+            match scene {
+                "profile-powershell-new" => {
+                    draft = PowerShellProfileDraft::default();
+                    configuration = festerm_config::Configuration::empty();
+                }
+                "profile-powershell-https-edit" => {
+                    draft.domain = "EXAMPLE".into();
+                    draft.configuration_name = "PowerShell.7".into();
+                    draft.trusted_ca_file = "/review-fixtures/approved-ca.pem".into();
+                    draft.local_bind = LocalBindDraft::from_policy(LocalBindPolicy::Ask);
+                }
+                "profile-powershell-ssh-edit" | "profile-powershell-ssh-validation" => {
+                    draft.transport = festerm_config::PowerShellTransport::Ssh;
+                    draft.port = "22".into();
+                    draft.ssh_host_key_fingerprint =
+                        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into();
+                    if scene == "profile-powershell-ssh-validation" {
+                        draft.ssh_host_key_fingerprint.clear();
+                        draft.error = Some(draft.build().unwrap_err());
+                    }
+                }
+                "profile-powershell-validation" => {
+                    draft.port = "invalid".into();
+                    draft.error = Some(draft.build().unwrap_err());
+                }
+                "profile-powershell-endpoint-changed" => {
+                    draft.error = Some("Endpoint changed; enter the password again.".into());
+                }
+                _ => unreachable!("unknown PowerShell profile fixture"),
+            }
+            ProfilesScreenMode::EditPowerShell(Box::new(draft))
+        };
+        context.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode,
+                    ..ProfilesScreenState::default()
+                },
+            )
+        });
+        configuration
+    }
+
+    pub(crate) fn gallery_show_remote_profile(
+        ui: &mut Ui,
+        tab: TabId,
+        configuration: &festerm_config::Configuration,
+    ) {
+        let _ = show_profiles(
+            ui,
+            tab,
+            configuration,
+            None,
+            None,
+            PersistenceProviderKind::FestermSessiond,
+        );
+    }
 }
 
 /// Applies a persistence result only to the editor that submitted that save.

@@ -1819,6 +1819,34 @@ impl FesTermApp {
             Some(true)
         }
     }
+    #[cfg(test)]
+    pub(crate) fn gallery_hosting_confirmation(scene: &str) -> Self {
+        let mut app = Self::for_test_with_configuration(Configuration::empty());
+        app.local_hosting.enabled = false;
+        app.local_hosting.cleanup_initialized = true;
+        app.local_hosting.focus_confirmation = true;
+        let binding = LocalTunnelHosting::new(
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+            true,
+        )
+        .unwrap();
+        if scene == "cleanup" {
+            app.local_hosting.cleanup_confirmation = Some(binding);
+        } else {
+            app.local_hosting.confirmation = Some((
+                "Synthetic hosted shell".into(),
+                binding,
+                if scene == "new-shell" {
+                    LocalHostAction::NewShell
+                } else {
+                    LocalHostAction::RecreateMissing
+                },
+            ));
+        }
+        app
+    }
+
     pub(super) fn queue_cloud_browser_host_removal(&mut self, binding: LocalTunnelHosting) {
         self.local_hosting.enqueue(Work::Remove(binding));
         self.secure_storage_feedback = Some("Local exposure revoked; owned teardown is queued. The persistent shell is retained. Pending cleanup is available in Profiles.");

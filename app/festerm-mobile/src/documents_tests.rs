@@ -1570,6 +1570,10 @@ fn capture_document_ui() {
             "terminal-dictation",
             "preview-menu",
             "preview-selected",
+            "dirty-close",
+            "unavailable",
+            "document-error",
+            "document-menu",
         ] {
             let mut app = app(state != "read-only");
             let view = app.documents.active.unwrap();
@@ -1606,6 +1610,21 @@ fn capture_document_ui() {
                     .replace(&target, &target, "Updated notes\n\n")
                     .unwrap();
                 app.documents.duplicate(view, &mut app.next_tab);
+            }
+            if state == "dirty-close" {
+                let target = app.documents.registry.target(view, 0..0).unwrap();
+                app.documents
+                    .registry
+                    .replace(&target, &target, "Unsaved synthetic notes\n\n")
+                    .unwrap();
+                app.documents.close = Some(view);
+            }
+            if state == "unavailable" {
+                let id = app.documents.registry.document_for(view).unwrap();
+                app.documents.unavailable(id);
+            }
+            if state == "document-error" {
+                app.documents.notice = Some("Synthetic document error: unsupported file encoding. No external file was opened.".to_owned());
             }
             if state == "conflict" {
                 let target = app.documents.registry.target(view, 0..0).unwrap();
@@ -1693,6 +1712,10 @@ fn capture_document_ui() {
             } else {
                 harness.run();
             }
+            if state == "document-menu" {
+                harness.get_by_label("More").click();
+                harness.run();
+            }
             if state.starts_with("dictation-") || state == "terminal-dictation" {
                 if state != "terminal-dictation" {
                     focus(&mut harness, view, 0);
@@ -1738,6 +1761,8 @@ fn capture_document_ui() {
                 .collect();
             images.push(serde_json::json!({
                 "image": name, "sha256": hash, "logical_size": [width, height],
+                "state": state, "viewport_class": family,
+                "pixel_size": [image.width(), image.height()],
                 "simulated_keyboard_occlusion_fraction": visible_occlusion,
             }));
         }

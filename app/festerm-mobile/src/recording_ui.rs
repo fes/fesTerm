@@ -19,6 +19,12 @@ use eframe::egui;
 
 #[derive(Default)]
 pub(super) struct RecordingUi {
+    #[cfg(test)]
+    pub(super) gallery_display: Option<GalleryDisplay>,
+    #[cfg(test)]
+    gallery_root: Option<tempfile::TempDir>,
+    #[cfg(test)]
+    gallery_sessions: Option<Vec<(u64, String)>>,
     open: bool,
     selected: BTreeSet<u64>,
     pending_consent: Option<RecordingConsent>,
@@ -46,6 +52,247 @@ pub(super) struct RecordingUi {
     pub(super) retry: Option<RetryDraft>,
 }
 
+/// Presentation only: contains no task, encoder, native grant or dispatch capability.
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct GalleryDisplay {
+    pub preparing: bool,
+    pub recording: Option<bool>,
+    pub progress: Option<(usize, u64, u64)>,
+    pub calculating: bool,
+    pub duration: Option<Duration>,
+    pub library_busy: bool,
+    pub journal: Option<bool>,
+}
+
+#[cfg(test)]
+impl MobileApp {
+    pub(super) fn configure_recording_gallery(&mut self, state: &str) {
+        self.recording_ui.gallery_display = Some(GalleryDisplay::default());
+        let settings = RecordingSettings {
+            destination: Some(ExportDestination::DesktopPath(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("target/mobile-ui-fixtures/synthetic-export-destination"),
+            )),
+            delete_source_after_export: false,
+            ..Default::default()
+        };
+        self.shell.session_recording_enabled = true;
+        self.shell.recording_settings = Some(settings.clone());
+        self.shell.recording_saved = Some(settings.clone());
+        self.recording_ui.library_discovered = true;
+        match state {
+            "recording-preparing" => {
+                self.recording_ui.open = true;
+                self.recording_ui.draft.settings = Some(settings);
+                self.recording_ui
+                    .gallery_display
+                    .as_mut()
+                    .unwrap()
+                    .preparing = true;
+                return;
+            }
+            "recording-active" | "recording-finalizing" => {
+                self.recording_ui
+                    .gallery_display
+                    .as_mut()
+                    .unwrap()
+                    .recording = Some(state == "recording-active");
+                return;
+            }
+            "recording-export-preparing" | "recording-export-progress" => {
+                self.recording_ui.gallery_display.as_mut().unwrap().progress =
+                    Some(if state == "recording-export-progress" {
+                        (1, 120, 600)
+                    } else {
+                        (0, 0, 0)
+                    });
+                return;
+            }
+            "recording-export-error" | "recording-export-cancel-late" => {
+                self.recording_ui.status = Some(if state == "recording-export-error" {
+                    "Synthetic export failure: the destination became unavailable. The private source was retained for retry.".to_owned()
+                } else {
+                    "Export is finalizing; cancellation came too late to stop source retention."
+                        .to_owned()
+                });
+                return;
+            }
+            "recording-library-scanning" => {
+                self.recording_ui.library_open = true;
+                self.recording_ui
+                    .gallery_display
+                    .as_mut()
+                    .unwrap()
+                    .library_busy = true;
+                return;
+            }
+            "recording-consent"
+            | "recording-consent-bottom"
+            | "recording-consent-sessions"
+            | "recording-consent-sessions-bottom" => {
+                self.recording_ui.open = true;
+                self.recording_ui.draft.settings = Some(settings);
+                if state.starts_with("recording-consent-sessions") {
+                    self.recording_ui.gallery_sessions = Some(vec![
+                        (1, "prod-web · synthetic SSH".to_owned()),
+                        (2, "build-box · synthetic Dev Tunnel".to_owned()),
+                    ]);
+                    self.recording_ui.selected.insert(1);
+                }
+                return;
+            }
+            "recording-message" => {
+                self.recording_ui.status = Some("Synthetic recording stopped: privacy interruption. Source retained; capture does not resume automatically.".to_owned());
+                return;
+            }
+            "recording-library-error" => {
+                self.recording_ui.library_open = true;
+                self.recording_ui.status = Some(
+                    "Synthetic storage-unavailable error; no personal recording library was read."
+                        .to_owned(),
+                );
+                return;
+            }
+            _ => {}
+        }
+        self.recording_ui.library_open = true;
+        self.recording_ui.library = Some(LibrarySnapshot {
+            sources: Vec::new(),
+            manifests: Vec::new(),
+            staging: Vec::new(),
+            #[cfg(target_os = "android")]
+            journals: Vec::new(),
+        });
+        if state == "recording-library-empty" {
+            return;
+        }
+        if state.starts_with("recording-library-journal") {
+            self.recording_ui.gallery_display.as_mut().unwrap().journal =
+                Some(state == "recording-library-journal-published");
+            if state == "recording-library-journal-confirm" {
+                self.recording_ui.library_action = Some(LibraryAction::GalleryJournal);
+            }
+            return;
+        }
+        let parent = std::env::current_dir()
+            .unwrap()
+            .join("target/mobile-ui-fixtures");
+        std::fs::create_dir_all(&parent).unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("recording-")
+            .tempdir_in(parent)
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let id = RecordingId::parse("0123456789abcdef0123456789abcdef").unwrap();
+        let manifest = RecordingManifest::create(
+            root.path(),
+            id,
+            LocalStart::new(2026, 11, 12, 12, 0, 0).unwrap(),
+            &settings,
+        )
+        .unwrap();
+        let lease = Arc::new(RecordingLease::acquire(root.path()).unwrap());
+        if matches!(
+            state,
+            "recording-library-staging" | "recording-library-staging-confirm"
+        ) {
+            self.recording_ui
+                .library
+                .as_mut()
+                .unwrap()
+                .staging
+                .push(festerm_recording_export::PrivateStaging::create(root.path()).unwrap());
+            if state.ends_with("-confirm") {
+                self.recording_ui.library_action = Some(LibraryAction::Staging(0));
+            }
+            self.recording_ui.gallery_root = Some(root);
+            return;
+        }
+        if matches!(
+            state,
+            "recording-library-options" | "recording-library-confirm"
+        ) {
+            self.recording_ui
+                .library
+                .as_mut()
+                .unwrap()
+                .manifests
+                .push(manifest);
+            if state == "recording-library-confirm" {
+                self.recording_ui.library_action = Some(LibraryAction::Options(0));
+            }
+        } else {
+            let (recording, _) =
+                festerm_recording::SharedRecording::start_with_id_and_privacy_loss_flag(
+                    root.path(),
+                    id,
+                    &[&self.terminal],
+                    Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    || {},
+                )
+                .unwrap();
+            recording
+                .stop(if state == "recording-library-incomplete" {
+                    festerm_recording::FinishReason::IntegrityFailure
+                } else {
+                    festerm_recording::FinishReason::User
+                })
+                .unwrap();
+            let mut completion = None;
+            for _ in 0..500 {
+                completion = recording.poll_completion().unwrap();
+                if completion.is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let path = match completion.expect("synthetic recording finalizes") {
+                Completion::Complete { path, .. } | Completion::Incomplete { path, .. } => path,
+                other => panic!("synthetic recording must be complete: {other:?}"),
+            };
+            if state.starts_with("recording-export") {
+                self.recording_ui.library_open = false;
+                self.recording_ui.pending_export = Some(PendingExport {
+                    path,
+                    manifest,
+                    lease,
+                    settings,
+                });
+                let display = self.recording_ui.gallery_display.as_mut().unwrap();
+                display.calculating = state == "recording-export-calculating";
+                display.duration =
+                    (state == "recording-export-calculated").then_some(Duration::from_secs(42));
+            } else {
+                self.recording_ui.library.as_mut().unwrap().sources =
+                    festerm_recording::RecordingSource::recover(root.path(), &lease).unwrap();
+                self.recording_ui
+                    .library
+                    .as_mut()
+                    .unwrap()
+                    .manifests
+                    .push(manifest);
+                if state == "recording-library-source-confirm" {
+                    self.recording_ui.library_action = Some(LibraryAction::Source(0));
+                }
+                if matches!(
+                    state,
+                    "recording-library-retry" | "recording-library-retry-recovered"
+                ) {
+                    self.recording_ui.retry =
+                        Some(RetryDraft::gallery(settings, state.ends_with("-recovered")));
+                }
+            }
+        }
+        self.recording_ui.gallery_root = Some(root);
+    }
+}
+
 pub(super) struct PendingExport {
     path: PathBuf,
     manifest: RecordingManifest,
@@ -54,6 +301,12 @@ pub(super) struct PendingExport {
 }
 
 impl RecordingUi {
+    #[cfg(test)]
+    pub(super) fn assert_gallery_inert(&self) {
+        assert!(self.preparing.is_none() && self.preview_task.is_none());
+        assert!(self.exporting.is_none() && self.library_task.is_none());
+    }
+
     pub(super) fn blocks_terminal_input(&self) -> bool {
         self.open || self.pending_export.is_some() || self.library_open
     }
@@ -61,6 +314,10 @@ impl RecordingUi {
 
 impl MobileApp {
     fn recording_sessions(&self) -> Vec<(u64, String)> {
+        #[cfg(test)]
+        if let Some(sessions) = &self.recording_ui.gallery_sessions {
+            return sessions.clone();
+        }
         let active = self.sink.live.connection.borrow();
         let background = self.sink.live.background.borrow();
         self.tabs
@@ -220,6 +477,10 @@ impl MobileApp {
         }
     }
 
+    #[cfg_attr(
+        all(test, not(any(target_os = "android", target_os = "ios"))),
+        allow(dead_code)
+    )]
     pub(super) fn finish_capture_folder(
         &mut self,
         result: Result<Option<ExportDestination>, String>,
@@ -244,6 +505,13 @@ impl MobileApp {
         let sessions = self.recording_sessions();
         let selected_live = selected_sessions_are_live(&self.recording_ui.selected, &sessions);
         let preparing = self.recording_ui.preparing.is_some();
+        #[cfg(test)]
+        let preparing = preparing
+            || self
+                .recording_ui
+                .gallery_display
+                .as_ref()
+                .is_some_and(|display| display.preparing);
         let busy = preparing || self.shell.recording_picker_pending;
         let ready = !busy
             && settings.destination.is_some()
@@ -377,6 +645,10 @@ impl MobileApp {
             },
         );
         self.recording_ui.draft.settings = Some(settings);
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            return;
+        }
         if cancel_preparation || close || outcome.dismissed {
             if let Some(task) = &self.recording_ui.preparing {
                 task.cancel();
@@ -510,6 +782,10 @@ impl MobileApp {
     }
 
     pub(super) fn poll_recording_preparation(&mut self, ctx: &egui::Context) {
+        #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+        if self.recording_ui.preparing.is_none() {
+            return;
+        }
         if ctx.input(|input| input.pointer.any_down()) {
             ctx.request_repaint_after(Duration::from_millis(50));
             return;
@@ -566,6 +842,10 @@ impl MobileApp {
         }
     }
 
+    #[cfg_attr(
+        all(test, not(any(target_os = "android", target_os = "ios"))),
+        allow(dead_code)
+    )]
     pub(super) fn recording_for_new_session(&self) -> Option<RecordingId> {
         if !self.recording_ui.include_new {
             return None;
@@ -574,6 +854,10 @@ impl MobileApp {
         matches!(recording.is_recording(), Ok(true)).then_some(recording.id())
     }
 
+    #[cfg_attr(
+        all(test, not(any(target_os = "android", target_os = "ios"))),
+        allow(dead_code)
+    )]
     pub(super) fn include_new_session(&mut self, id: u64, intended: Option<RecordingId>) {
         if intended.is_none() || self.recording_for_new_session() != intended {
             return;
@@ -683,7 +967,24 @@ impl MobileApp {
             return;
         };
         let busy = self.recording_ui.preview_task.is_some();
+        #[cfg(test)]
+        let busy = busy
+            || self
+                .recording_ui
+                .gallery_display
+                .as_ref()
+                .is_some_and(|display| display.calculating);
         let preview = self.recording_ui.preview.as_ref();
+        let duration = preview
+            .filter(|preview| preview.matches(&pending.settings))
+            .map(ExportPreview::duration);
+        #[cfg(test)]
+        let duration = duration.or_else(|| {
+            self.recording_ui
+                .gallery_display
+                .as_ref()
+                .and_then(|display| display.duration)
+        });
         let mut close = false;
         let mut calculate = false;
         let mut export = false;
@@ -701,11 +1002,11 @@ impl MobileApp {
                 ui.add_enabled_ui(!busy, |ui| {
                     shell::recording_export_controls(ui, &mut pending.settings);
                 });
-                match preview.filter(|preview| preview.matches(&pending.settings)) {
-                    Some(preview) => {
+                match duration {
+                    Some(duration) => {
                         ui.label(format!(
                             "Estimated duration: {:.1} seconds",
-                            preview.duration().as_secs_f64()
+                            duration.as_secs_f64()
                         ));
                     }
                     None if busy => {
@@ -723,9 +1024,7 @@ impl MobileApp {
                     !busy && pending.settings.validate().is_ok(),
                 )
                 .clicked();
-                can_export.set(
-                    !busy && preview.is_some_and(|preview| preview.matches(&pending.settings)),
-                );
+                can_export.set(!busy && duration.is_some());
             },
             |ui| {
                 export = widgets::button(
@@ -737,6 +1036,11 @@ impl MobileApp {
                 .clicked();
             },
         );
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            self.recording_ui.pending_export = Some(pending);
+            return;
+        }
         if close || outcome.dismissed {
             self.recording_ui.preview_task = None;
             self.recording_ui.preview = None;
@@ -863,16 +1167,42 @@ impl MobileApp {
         let active = recording
             .as_ref()
             .is_some_and(|recording| matches!(recording.is_recording(), Ok(true)));
+        #[cfg(test)]
+        let active = self
+            .recording_ui
+            .gallery_display
+            .as_ref()
+            .and_then(|display| display.recording)
+            .unwrap_or(active);
+        let has_recording = recording.is_some();
+        #[cfg(test)]
+        let has_recording = has_recording
+            || self
+                .recording_ui
+                .gallery_display
+                .as_ref()
+                .is_some_and(|display| display.recording.is_some());
         let preparing = self.recording_ui.preparing.is_some();
+        #[cfg(test)]
+        let preparing = preparing
+            || self
+                .recording_ui
+                .gallery_display
+                .as_ref()
+                .is_some_and(|display| display.preparing);
         let progress = self
             .recording_ui
             .exporting
             .as_ref()
             .map(ExportTask::progress);
-        if recording.is_none()
-            && !preparing
-            && progress.is_none()
-            && self.recording_ui.status.is_none()
+        #[cfg(test)]
+        let progress = progress.or_else(|| {
+            self.recording_ui
+                .gallery_display
+                .as_ref()
+                .and_then(|display| display.progress)
+        });
+        if !has_recording && !preparing && progress.is_none() && self.recording_ui.status.is_none()
         {
             return;
         }
@@ -884,7 +1214,7 @@ impl MobileApp {
                 if active {
                     ui.colored_label(ui.visuals().error_fg_color, "Recording");
                     stop = ui.button("Stop recording").clicked();
-                } else if recording.is_some() {
+                } else if has_recording {
                     ui.label("Finalizing recording...");
                 } else if preparing {
                     ui.label("Preparing recording...");
@@ -903,6 +1233,10 @@ impl MobileApp {
                 }
             });
         });
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            return;
+        }
         if stop {
             if let Err(error) = self.stop_terminal_recording() {
                 self.recording_ui.status = Some(error);

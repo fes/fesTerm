@@ -2288,6 +2288,13 @@ impl SessionTab {
     /// The active SSH host-key request, if the transport is waiting for one.
     /// Local tabs never expose this UI state.
     pub fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
+        #[cfg(test)]
+        if matches!(
+            self.controller.session(),
+            Some(ApplicationSession::TestSsh(_))
+        ) {
+            return self.controller.host_key_prompt();
+        }
         matches!(
             self.controller.session(),
             Some(ApplicationSession::Ssh(_) | ApplicationSession::Sftp(_))
@@ -2322,6 +2329,13 @@ impl SessionTab {
     /// is waiting for one. Local tabs never expose this UI state. Mirrors
     /// [`Self::host_key_prompt`].
     pub fn password_prompt(&self) -> Option<&PasswordPrompt> {
+        #[cfg(test)]
+        if matches!(
+            self.controller.session(),
+            Some(ApplicationSession::TestSsh(_))
+        ) {
+            return self.controller.password_prompt();
+        }
         matches!(
             self.controller.session(),
             Some(ApplicationSession::Ssh(_) | ApplicationSession::Sftp(_))

@@ -97,6 +97,10 @@ pub(super) struct Browser {
     creation_confirmed: bool,
     locator: String,
     receipt: Option<Receipt>,
+    #[cfg(test)]
+    gallery_owner: Option<(festerm_tunnel_bridge::owner_auth::OwnerBinding, [u8; 32])>,
+    #[cfg(test)]
+    gallery_original: Option<(String, bool)>,
     resolved: Option<ResolvedTunnel>,
     receiver: Option<mpsc::Receiver<Result<ResultEvent, String>>>,
     pending_deadline: Option<(Instant, CancellationToken)>,
@@ -120,6 +124,176 @@ pub(super) struct Browser {
 impl Drop for Browser {
     fn drop(&mut self) {
         self.cancel.cancel();
+    }
+}
+
+#[cfg(test)]
+impl FesTermApp {
+    pub(crate) fn gallery_host_browser(scene: &str) -> Self {
+        let requested_scene = scene;
+        let scene = match scene {
+            "retry-original" | "resolved-original" | "always-create" | "attach-only" => "create",
+            _ => scene,
+        };
+        use festerm_config::{
+            host_recipes::{HostReference, Recipe},
+            AccountProvider, Configuration,
+        };
+        let account = DevTunnelAccount::new(
+            "synthetic-github",
+            AccountProvider::Github,
+            42,
+            "synthetic-devuser",
+            SecretReference::generate(),
+        )
+        .unwrap();
+        let mut recipe = PublicRecipe::persistent(
+            "Synthetic build host",
+            HostReference {
+                id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+                account: AccountReference::Github { account_id: 42 },
+            },
+            Recipe {
+                shell: Some("/bin/sh".into()),
+                args: vec!["-l".into()],
+                cwd: Some("/work/synthetic".into()),
+            },
+        )
+        .unwrap();
+        recipe.id =
+            festerm_config::host_recipes::RecipeId::parse("22222222-2222-4222-8222-222222222222")
+                .unwrap();
+        recipe.logical_session = "33333333-3333-4333-8333-333333333333".parse().unwrap();
+        let (configuration, _) = Configuration::empty()
+            .with_account(account.clone())
+            .unwrap();
+        let mut app = Self::for_test_with_configuration(configuration);
+        let context = egui::Context::default();
+        app.state.dispatch(AppCommand::OpenProfiles, &context);
+        let mut browser = Browser {
+            tab: app.state.active(),
+            request: egui::Id::new("gallery-host-review"),
+            recipe,
+            account_reference: account.credential_reference().duplicate_for_transport(),
+            account,
+            cancel: CancellationToken::new(),
+            prerequisite: zeroize::Zeroizing::new(String::new()),
+            fingerprint: String::new(),
+            consent: false,
+            host_approved: false,
+            creation_confirmed: false,
+            locator: "review-build.use".into(),
+            receipt: None,
+            gallery_owner: None,
+            gallery_original: None,
+            resolved: None,
+            receiver: None,
+            pending_deadline: None,
+            worker: None,
+            inventory: None,
+            generation: 1,
+            feedback: None,
+            workspace: false,
+            discovered: false,
+            auto_connect: false,
+            new_session: false,
+            session_name: String::new(),
+            profile_name: String::new(),
+            unbound: false,
+            resolve_after_load: false,
+            profile_target: None,
+            profile_create: false,
+            profile_label: None,
+        };
+        if scene == "error" {
+            browser.feedback = Some("Unlock the native credential store and retry explicitly. No file fallback, host enrollment or session creation occurred.".into());
+        }
+        if scene == "working" {
+            let (_, receiver) = mpsc::channel();
+            browser.receiver = Some(receiver);
+        }
+        if matches!(
+            scene,
+            "owner" | "inventory" | "unknown" | "sessions" | "create" | "temporary"
+        ) {
+            use festerm_tunnel_bridge::owner_auth::{OwnerBinding, PinnedHost};
+            browser.gallery_owner = Some((
+                OwnerBinding {
+                    installation: "44444444-4444-4444-8444-444444444444".into(),
+                    host: PinnedHost {
+                        host: browser.recipe.host.id.clone(),
+                        host_key_fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                            .into(),
+                    },
+                    account: "github:42".into(),
+                    principal: "55555555-5555-4555-8555-555555555555".parse().unwrap(),
+                },
+                [0; 32],
+            ));
+            browser.host_approved = scene != "owner";
+        }
+        if matches!(
+            scene,
+            "inventory" | "unknown" | "sessions" | "create" | "temporary"
+        ) {
+            browser.inventory = Some(Inventory {
+                capabilities: Default::default(),
+                sessions: Vec::new(),
+                profiles: Vec::new(),
+                unknown: if scene == "unknown" {
+                    vec![Target {
+                        logical: browser.recipe.logical_session.clone(),
+                        generation: "7".to_owned().try_into().unwrap(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+            });
+            let inventory = browser.inventory.as_mut().unwrap();
+            inventory.capabilities.attach = true;
+            inventory.capabilities.inventory = true;
+            if matches!(scene, "sessions" | "create" | "temporary") {
+                inventory.sessions = serde_json::from_value(serde_json::json!([
+                    {
+                        "target": { "logical": "33333333-3333-4333-8333-333333333333", "generation": "7" },
+                        "name": "Synthetic build", "lifetime": { "kind": "persistent" }, "attached": false
+                    },
+                    {
+                        "target": { "logical": "66666666-6666-4666-8666-666666666666", "generation": "8" },
+                        "name": "Synthetic occupied shell", "lifetime": { "kind": "persistent" }, "attached": true
+                    }
+                ])).expect("synthetic authorized session summaries");
+            }
+            if scene == "create" || scene == "temporary" {
+                inventory.capabilities.create = true;
+                inventory.capabilities.ensure = true;
+                inventory.capabilities.creation_allowed = true;
+                browser.creation_confirmed = true;
+            }
+            if scene == "temporary" {
+                inventory.capabilities.temporary = true;
+                browser.recipe.lifetime = Lifetime::Temporary {
+                    reconnect_grace_seconds: 60,
+                };
+            }
+        }
+        match requested_scene {
+            "retry-original" | "resolved-original" => {
+                browser.gallery_original = Some((
+                    format!("Original action · logical {} · attachment 77777777-7777-4777-8777-777777777777 · issued None", browser.recipe.logical_session),
+                    requested_scene == "resolved-original",
+                ));
+            }
+            "always-create" => browser.recipe.behavior = ConnectionBehavior::AlwaysCreate,
+            "attach-only" => {
+                browser.recipe.behavior = ConnectionBehavior::AttachOnly {
+                    generation: "7".to_owned().try_into().unwrap(),
+                }
+            }
+            _ => {}
+        }
+        app.host_browser = Some(browser);
+        app
     }
 }
 
@@ -377,6 +551,10 @@ impl FesTermApp {
             creation_confirmed: false,
             locator,
             receipt: None,
+            #[cfg(test)]
+            gallery_owner: None,
+            #[cfg(test)]
+            gallery_original: None,
             resolved: None,
             receiver: None,
             pending_deadline: None,
@@ -719,6 +897,10 @@ impl FesTermApp {
             creation_confirmed: false,
             locator,
             receipt: None,
+            #[cfg(test)]
+            gallery_owner: None,
+            #[cfg(test)]
+            gallery_original: None,
             resolved: None,
             receiver: None,
             pending_deadline: None,
@@ -1000,13 +1182,16 @@ impl FesTermApp {
                 if let Some(message) = &browser.feedback { ui.label(message); }
                 if browser.busy() { ui.spinner(); ui.label("Working on the selected host only…"); }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
-                    if let Some(receipt) = &browser.receipt {
+                    let owner = browser.receipt.as_ref().map(|receipt| (receipt.binding(), receipt.public_key()));
+                    #[cfg(test)]
+                    let owner = owner.or_else(|| browser.gallery_owner.as_ref().map(|(binding, public)| (binding, *public)));
+                    if let Some((binding, public)) = owner {
                         ui.separator();
-                        ui.label(format!("Approved installation: {}", receipt.binding().installation));
-                        ui.label(format!("Approved principal: {}", receipt.binding().principal));
-                        ui.label(format!("Pinned host key: {}", receipt.binding().host.host_key_fingerprint));
-                        let public_key: String = receipt.public_key().iter().map(|byte| format!("{byte:02x}")).collect();
-                        let fingerprint = festerm_tunnel_bridge::owner_auth::owner_key_fingerprint(&receipt.public_key());
+                        ui.label(format!("Approved installation: {}", binding.installation));
+                        ui.label(format!("Approved principal: {}", binding.principal));
+                        ui.label(format!("Pinned host key: {}", binding.host.host_key_fingerprint));
+                        let public_key: String = public.iter().map(|byte| format!("{byte:02x}")).collect();
+                        let fingerprint = festerm_tunnel_bridge::owner_auth::owner_key_fingerprint(&public);
                         ui.label("Client owner PUBLIC key (not a private key or service token):");
                         ui.monospace(&public_key);
                         if let Ok(fingerprint) = fingerprint {
@@ -1070,12 +1255,18 @@ impl FesTermApp {
                                 browser.recipe.launch.cwd, browser.recipe.lifetime));
                             ui.checkbox(&mut browser.creation_confirmed,
                                 "I approve executing these exact launch options and lifetime if the host authorizes creation");
-                            if let Some((_, _, intent)) = self.state.host_creation_intents.iter()
-                                .find(|(recipe, _, _)| recipe.id == browser.recipe.id) {
-                                ui.monospace(format!("Original action · logical {} · attachment {} · issued {:?}",
-                                    intent.creation().logical, intent.creation().attachment,
-                                    intent.issued_operation()));
-                                if intent.is_resolved() && !intent.is_presented() {
+                            let original = self.state.host_creation_intents.iter()
+                                .find(|(recipe, _, _)| recipe.id == browser.recipe.id)
+                                .map(|(_, _, intent)| (
+                                    format!("Original action · logical {} · attachment {} · issued {:?}",
+                                        intent.creation().logical, intent.creation().attachment, intent.issued_operation()),
+                                    intent.is_resolved() && !intent.is_presented(),
+                                ));
+                            #[cfg(test)]
+                            let original = original.or_else(|| browser.gallery_original.clone());
+                            if let Some((text, resolved_without_presentation)) = original {
+                                ui.monospace(text);
+                                if resolved_without_presentation {
                                     ui.label("The host confirmed this action, but it was not admitted for presentation. Retry retains this same action and cannot create a replacement.");
                                 }
                             }

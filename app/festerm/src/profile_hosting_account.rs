@@ -124,6 +124,33 @@ pub(super) struct Chooser {
     receipt: Option<Receipt>,
 }
 
+#[cfg(test)]
+impl FesTermApp {
+    pub(crate) fn gallery_hosting_account(context: &egui::Context, scene: &str) {
+        let tab = crate::tabs::AppState::for_test().active();
+        let request = egui::Id::new("gallery-hosting-account");
+        crate::tabs::AppState::gallery_install_account_request(context, tab, request);
+        let mut chooser = Chooser::default();
+        let (sender, receiver) = mpsc::channel();
+        chooser.prompt = Some(Prompt {
+            tab, request, original_id: None,
+            task: (scene == "working").then(|| Task { receiver, cancel: CancellationToken::new() }),
+            inspection: (scene != "working").then(|| Inspection {
+                current: (scene != "signed-out").then(|| GitHubAccount {
+                    id: "42".into(), username: Some("synthetic-devuser".into()),
+                }),
+                accounts: if scene == "conflict" { BTreeSet::from(["43".into()]) } else { BTreeSet::new() },
+                has_bindings: scene == "conflict",
+                verified: Instant::now(),
+            }),
+            error: (scene == "error").then(|| "Verified hosting helpers are unavailable. Install a complete fesTerm build and retry.".into()),
+            focus_cancel: true,
+        });
+        chooser.poll(context, tab);
+        drop(sender);
+    }
+}
+
 impl Chooser {
     pub(super) fn begin(&mut self, context: &egui::Context, tab: TabId, request: egui::Id) {
         let Some(original_id) = screens::local_host_account_request(context, tab, request) else {

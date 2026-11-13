@@ -1,16 +1,16 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ecb6e1070df163ed8599f725c7292360c0446b993493d330ef0beaa3367eb2c3"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "13218e5e5d517e4c39508af858bbce0fa24b1d819f9b5d85b413d138cbfcb650"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns authenticated SSH transport, host-key trust gating, and the GUI/text SFTP transfer stack used by remote file and session flows.
+This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations.
 
 Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
 ## ssh trust
 
-Use for: When opening or reconnecting an SSH session and a new host fingerprint must be accepted or rejected before shell or SFTP work continues.
+Use for: When a new SSH host fingerprint must be accepted or rejected before a shell or SFTP session can continue.
 
 - [`HostTrustDecision`](../../crates/festerm-ssh/src/lib.rs) — User response enum for reject, accept once, and persist.
 - [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns worker thread, lifecycle, and host-key/password decision gates.
@@ -20,13 +20,13 @@ Evidence:
 - [`controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Rejected key change stops recovery instead of silently continuing.
 
 Caveats:
-- Host trust is keyed by canonical host plus port identity, so mismatches are easy to miss.
+- Host trust is keyed by canonical host plus port, so mismatches are easy to miss.
 - A pending prompt pauses the worker without dropping the TCP session.
-- Interactive authentication is intentionally unsupported in GUI SFTP.
+- Interactive auth is intentionally unsupported in GUI SFTP.
 
-## gui sftp boot
+## gui sftp connect
 
-Use for: When the app opens a GUI-backed SFTP session and needs to pause on trust or keep the transport alive across the connect handshake.
+Use for: When the app opens a GUI-backed SFTP session and needs to pause on trust or keep the transport alive across connect.
 
 - [`connect_gui_sftp_session`](../../crates/festerm-ssh/src/lib.rs) — Starts a dedicated connect thread and emits host-key decisions as needed.
 - [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh-sftp session and local working directory state.
@@ -40,12 +40,12 @@ Caveats:
 - The keepalive must end when the session is dropped or the channel stays alive unexpectedly.
 - Interactive auth is rejected here; GUI SFTP must supply an explicit credential.
 
-## sftp client queue
+## sftp transfer queue
 
-Use for: When remote browsing or copy operations need a bounded SFTP client, queue, conflict resolution, and event reporting.
+Use for: When remote browsing or copy operations need a bounded transfer queue, conflict resolution, and event reporting.
 
-- [`SftpClient`](../../crates/festerm-sftp/src/remote.rs) — Wraps a russh-sftp connection with private runtime and bounded pane calls.
-- [`TransferManager`](../../crates/festerm-sftp/src/transfer.rs) — Owns queued transfers, progress events, conflict state, and final commit.
+- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and final commit.
+- [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local/remote path pairs and direction before scheduling work.
 
 Evidence:
 - [`download_conflicts_keep_both_skip_replace_and_remember`](../../crates/festerm-sftp/tests/sftp_integration.rs) — Collision handling is decided before data moves and remembered across retries.
@@ -56,7 +56,7 @@ Caveats:
 - Remote names and listings are untrusted; validation occurs before any write.
 - A closed client turns future operations into Disconnected instead of silently continuing.
 
-## app file manager
+## app remote sftp
 
 Use for: When the GUI opens an SFTP tab, resolves host-key prompts, and converts remote filesystem actions into local and remote pane operations.
 

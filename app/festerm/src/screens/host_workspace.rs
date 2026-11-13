@@ -269,6 +269,59 @@ pub(crate) fn install_gallery_state(context: &egui::Context, tab: TabId, unavail
     });
 }
 
+/// Synthetic two-account picker results for the screenshot gallery; no
+/// discovery request is issued and spinners never resolve.
+#[cfg(test)]
+pub(crate) fn install_profile_picker_gallery(context: &egui::Context, tab: TabId, scene: &str) {
+    let row = |account: &str, hosts: &[(&str, &str)], refreshing: bool, error: Option<&str>| {
+        AccountResults {
+            account: account.to_owned(),
+            request: refreshing.then(|| egui::Id::new(("gallery-refresh", account))),
+            hosts: Some(
+                hosts
+                    .iter()
+                    .map(|(locator, name)| HostChoice {
+                        account: account.to_owned(),
+                        name: (*name).to_owned(),
+                        locator: (*locator).to_owned(),
+                        reference: None,
+                    })
+                    .collect(),
+            ),
+            error: error.map(str::to_owned),
+            queued: false,
+        }
+    };
+    let refreshing = scene == "picker-refreshing";
+    let accounts = vec![
+        row(
+            "alice-key",
+            &[
+                ("alice-build.use", "Build workstation"),
+                ("alice-lab.use", "Lab Mac mini"),
+            ],
+            refreshing,
+            (scene == "picker-stale").then_some("Host discovery timed out. Try again."),
+        ),
+        row(
+            "bob-key",
+            &[("bob-linux.use", "Linux workstation")],
+            refreshing,
+            None,
+        ),
+    ];
+    context.data_mut(|data| {
+        data.insert_temp(
+            state_id(tab),
+            State {
+                accounts,
+                for_profile: true,
+                ..Default::default()
+            },
+        )
+    });
+}
+
 fn saved_host(recipe: &PublicRecipe, configuration: &Configuration) -> Option<HostChoice> {
     let hint = recipe.host_hint.as_ref()?;
     let festerm_config::host_recipes::AccountReference::Github { account_id } = recipe.host.account;

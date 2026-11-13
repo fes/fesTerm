@@ -12,8 +12,8 @@ error, so captures can never appear in the document unexplained.
 
 <!-- section: overview title: How to read this document -->
 
-This is a snapshot of every significant fesTerm surface as it currently
-behaves, intended for design and workflow review rather than as a manual.
+This is a finite audited inventory of fesTerm's production-widget surfaces,
+intended for design and workflow review rather than as a manual.
 It is regenerated, not written by hand: the screenshots come from the real
 UI rendered against repository-owned fixture data, so the document cannot
 drift from the product without the drift showing up as a changed picture.
@@ -27,18 +27,52 @@ host keys, clipboard content or shell history.
 
 Local editor and picker path bars are a remaining exception to synthetic
 identity: they display the physical fixture location under the checkout.
-The committed Windows batch was reviewed from a controlled, non-personal
-checkout root, but a checkout under a user's home can expose that user's name
+The refreshed macOS headless batch uses the non-personal checkout root
+`/Volumes/Storage/src/fesTerm`, but a checkout under a user's home can expose that user's name
 and captures vary across worktrees. The pipeline is not yet PII-free by
 construction. Public regeneration requires a non-personal checkout root and
 path/metadata review until canonical synthetic document/picker display
 identities are separated from isolated physical fixture I/O.
 
-Two things this document deliberately does *not* do. It does not enumerate
-every state of every control — it shows each surface doing representative
-work, plus the edge states that are actually interesting. And it does not
-assert correctness; the automated suites and the validation gates do that.
-What it captures is how the product currently *presents* itself.
+Coverage includes distinct forms, dialogs, menus, task, validation, refusal
+and recovery presentations. Arbitrary content, every scroll offset and all
+hover combinations are not separate surfaces. Native/system and genuinely
+capability-gated gaps remain explicit below; a nearby screenshot cannot close
+them. This inventory does not assert functional correctness or usability
+acceptance. It records how the product currently *presents* itself.
+
+Counts describe capture files, not a claim that every route has unique pixels.
+Different intents can deliberately converge on the same bounded presentation
+(for example refreshing update metadata before Download versus Install).
+Equivalent frames retain separate route metadata; duplicate-image auditing
+also checks that a supposed error, result or lower-region capture has not
+silently remained on its initial screen.
+
+The refreshed desktop batch has three intentional identical-image pairs:
+`host-recipes-edit` / `host-recipes-edit-resume` both show the existing
+ResumeOrCreate default; `save-as-small-ready-narrow` /
+`save-as-large-ready-narrow` show the same initial visible directory rows
+despite loading 12 versus 5,000 files; and `about-update-refresh-download` /
+`about-update-refresh-install` share the production metadata-refresh busy
+presentation. These are separate fixture requests, not extra visible surfaces.
+
+The refreshed batch pairs this gallery with the
+[per-screenshot entry/exit/source route map](ui-review-route-map.md) and
+[mobile catalog](state-of-mobile-ui.md). Machine-readable desktop routes are
+in `validation/ui-review-routes.json` and
+`app/festerm/src/ui_gallery/experimental-routes.json`. Every published desktop
+scene must resolve to an audited route; unknown or uncaptured route IDs fail
+document generation. The manifest records image SHA-256, dimensions and capture
+provenance, including the dirty source-tree fingerprint. HEAD alone is not the
+identity of these test-fixture additions.
+
+Headless evidence cannot show native menu bars, system permissions, browser
+sign-in, biometric sheets, device keyboards or provider pickers. Those are
+explicitly outside the captured set, not implied by a nearby screenshot.
+Protected-capability states that cannot be constructed without changing their
+authority contract are documented in the experimental and mobile catalogs.
+See the refresh entry in [manual validation](manual-validation.md) for native
+capture prerequisites. No visual/usability acceptance is claimed here.
 
 Headless captures use the production blue-graphite dark visuals on the actual
 rendering context, including built-in controls and popup frames. They retain
@@ -53,7 +87,7 @@ The New Session tab is the application's front door, and it answers three
 different questions at once: what kinds of session can I start, what have I
 saved, and what is already running that I could rejoin.
 
-Launch cards across the top cover the five entry points — local shell, SSH,
+Launch cards across the top cover local shell, SSH, experimental Dev Tunnel,
 SFTP, serial and Markdown. Below them the view splits: saved profiles on the
 left with search and sort, running sessions on the right grouped by the
 provider that owns them. That right-hand panel is the part that distinguishes
@@ -276,6 +310,54 @@ The review question here is less about the individual fields than about the
 round trip — whether what a user builds in a connection form can be saved
 without re-entering it, and whether a saved profile makes clear what it will
 do before it is launched.
+
+<!-- section: dev-tunnels title: Dev Tunnel hosts -->
+
+The host-based Dev Tunnel workflow starts from an explicit, account-scoped
+host search rather than a background scan, so every listed host names the
+GitHub account that discovered it. A failed refresh keeps the last results
+visible and marks them stale instead of clearing the list. The profile editor
+pairs a host with a session name that can pick an existing session or name a
+new one, created on first connect. Host access on this computer is a separate
+opt-in in Remote access settings; requesting it does not enable it.
+
+The captures use synthetic accounts and hosts and render offline. They do not
+sign in, contact the tunnel service or advertise anything.
+
+<!-- section: desktop-panes title: Desktop pane groups -->
+
+The real application presents combined views, focused-member details, layout
+choices, hover handles, explicit rearrangement and revision-bound movement.
+These fixtures preserve each member's identity and use synthetic transports;
+they do not start local shells or establish native drag/focus qualification.
+
+<!-- section: workflow-surfaces title: Authentication, recovery and secondary workflows -->
+
+These captures add the surrounding paths that a happy-path gallery misses:
+unknown/changed keys, fresh/restored authentication, startup and retained-history
+states, terminal Find and bounded copy, file-drop and application close/update
+confirmations, forwarding, profile operations, SFTP failures/transfers/collision
+choices and editor save/source/conflict failures. Captions describe the exact
+state trigger and user route. Synthetic typed events and test-only model factories
+render production widgets without opening transports or submitting actions.
+
+The profile-delete capture intentionally preserves a current implementation
+limitation: it has no local Cancel control. The route map names the global
+Open Profiles escape rather than inventing a button that is not present.
+
+<!-- section: experimental-surfaces title: Experimental, hosting, recording and automation surfaces -->
+
+HOST recipes, host review/inventory, legacy Dev Tunnels, local-host ownership
+and cleanup, Remote access settings, PowerShell, recording and local
+automation use their actual production renderers with inert synthetic state.
+Enterprise discovery is an internal implemented surface whose product entry
+points are intentionally hidden; its screenshots do not advertise a released
+workflow.
+
+No vault approval, cloud account, device sign-in, persistent host, protected
+original or privileged grant is implied by a screenshot. The experimental
+route catalog lists genuine capability/native prerequisites separately from
+rendered states. Actions are never dispatched during capture.
 
 <!-- section: surface-probes title: Menus, safety and file-dialog states -->
 

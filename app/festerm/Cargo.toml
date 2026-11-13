@@ -92,6 +92,7 @@ festerm-windows-direct2d = { path = "../../crates/festerm-windows-direct2d" }
 winresource = "0.1"
 
 [dev-dependencies]
+festerm-ssh = { path = "../../crates/festerm-ssh", features = ["test-support"] }
 festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }
 festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }
 festerm-test-support = { path = "../../crates/festerm-test-support", features = ["powershell"] }

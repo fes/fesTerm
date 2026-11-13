@@ -132,7 +132,13 @@ impl DesktopRecording {
             || self.storage.as_ref().is_some_and(|storage| storage.busy());
         let picker_busy = self.picker.is_some();
         let preview_busy = self.preview_task.is_some();
+        #[cfg(test)]
+        let preview_busy = preview_busy || self.gallery_preview_busy;
         let preview = self.preview.as_ref();
+        #[cfg(test)]
+        let gallery_rows = self.gallery_library_rows.as_deref();
+        #[cfg(not(test))]
+        let gallery_rows: Option<&[LibraryRowView]> = None;
         let privacy_ready = self
             .privacy
             .as_ref()
@@ -228,9 +234,12 @@ impl DesktopRecording {
                             ui.label("The completed private source is retained until you export or delete it. Pacing applies to every session on the shared timeline.");
                             settings(ui, draft, PickerTarget::Start, picker_busy, true, &mut action);
                             ui.separator();
-                            match preview.filter(|preview| preview.matches(draft)) {
-                                Some(preview) => {
-                                    ui.label(format!("Estimated duration: {:.1} seconds", preview.duration().as_secs_f64()));
+                            let duration = preview.filter(|preview| preview.matches(draft)).map(|preview| preview.duration());
+                            #[cfg(test)]
+                            let duration = duration.or(self.gallery_preview);
+                            match duration {
+                                Some(duration) => {
+                                    ui.label(format!("Estimated duration: {:.1} seconds", duration.as_secs_f64()));
                                 }
                                 None if preview_busy => {
                                     ui.spinner();
@@ -244,7 +253,7 @@ impl DesktopRecording {
                                 if ui.add_enabled(!preview_busy && !picker_busy && draft.validate().is_ok(), egui::Button::new("Calculate duration")).clicked() {
                                     action = Some(Action::PreviewExport(draft.clone()));
                                 }
-                                if ui.add_enabled(!preview_busy && !picker_busy && preview.is_some_and(|preview| preview.matches(draft)), egui::Button::new("Export recording")).clicked() {
+                                if ui.add_enabled(!preview_busy && !picker_busy && duration.is_some(), egui::Button::new("Export recording")).clicked() {
                                     action = Some(Action::ConfirmExport(draft.clone()));
                                 }
                                 if ui.button("Keep source for later").clicked() {
@@ -256,7 +265,9 @@ impl DesktopRecording {
                             ui.heading("Recording library");
                             ui.label("Private sources can contain sensitive terminal output. Only validated prefixes of incomplete sources can be recovered.");
                             if busy { ui.spinner(); ui.label("Inspecting private recording storage…"); }
-                            if let Some(library) = &self.library {
+                            if let Some(rows) = gallery_rows {
+                                library_rows(ui, rows, &mut action);
+                            } else if let Some(library) = &self.library {
                                 library_contents(ui, library, &mut action);
                             } else if !busy {
                                 ui.label("Recording storage has not been inspected.");
@@ -500,72 +511,173 @@ fn speed_label(speed: PlaybackSpeed) -> &'static str {
     }
 }
 
+pub(super) enum LibrarySourceStatus {
+    Empty,
+    Complete {
+        duration: std::time::Duration,
+        reason: festerm_recording::FinishReason,
+    },
+    Incomplete {
+        detail: String,
+        prefix: Option<(std::time::Duration, usize)>,
+    },
+}
+
+pub(super) enum LibraryRowView {
+    Source {
+        index: usize,
+        id: String,
+        status: LibrarySourceStatus,
+        bytes: u64,
+        partial: bool,
+        recovered: bool,
+        retryable: bool,
+    },
+    Manifest {
+        index: usize,
+        id: String,
+    },
+    Staging {
+        index: usize,
+        path: String,
+    },
+}
+
 fn library_contents(ui: &mut egui::Ui, library: &LibrarySnapshot, action: &mut Option<Action>) {
-    if library.sources.is_empty() && library.manifests.is_empty() && library.staging.is_empty() {
-        ui.label("No retained or unfinished recordings.");
-    }
+    let mut rows = Vec::new();
     for (index, source) in library.sources.iter().enumerate() {
-        ui.separator();
-        ui.strong(format!("Recording {}", source.id()));
-        match source.state() {
-            RecordingSourceState::Empty => {
-                ui.label("Empty unfinished source");
-            }
-            RecordingSourceState::Complete { duration, reason } => {
-                ui.label(format!(
-                    "Complete: {:.1} seconds ({reason:?})",
-                    duration.as_secs_f64()
-                ));
-            }
+        let status = match source.state() {
+            RecordingSourceState::Empty => LibrarySourceStatus::Empty,
+            RecordingSourceState::Complete { duration, reason } => LibrarySourceStatus::Complete {
+                duration: *duration,
+                reason: *reason,
+            },
             RecordingSourceState::Incomplete { detail, prefix } => {
-                ui.label(format!("Incomplete: {detail}"));
-                if let Some(prefix) = prefix {
-                    ui.label(format!(
-                        "Validated prefix: {:.1} seconds, {} session(s); later output may be missing.",
-                        prefix.duration().as_secs_f64(),
-                        prefix.stream_count()
-                    ));
+                LibrarySourceStatus::Incomplete {
+                    detail: detail.clone(),
+                    prefix: prefix
+                        .as_ref()
+                        .map(|prefix| (prefix.duration(), prefix.stream_count())),
                 }
             }
-        }
-        ui.label(format!(
-            "{} bytes{}",
-            source.length(),
-            if source.is_partial() {
-                " · unfinished filename"
-            } else {
-                ""
+        };
+        let recovered = matches!(
+            source.state(),
+            RecordingSourceState::Incomplete {
+                prefix: Some(_),
+                ..
             }
-        ));
-        ui.horizontal(|ui| {
-            let recovered = matches!(source.state(), RecordingSourceState::Incomplete { prefix: Some(_), .. });
-            let retryable = (matches!(source.state(), RecordingSourceState::Complete { reason, .. } if reason.is_complete()) || recovered)
-                && library.manifests.iter().any(|manifest| manifest.id() == source.id());
-            if ui.add_enabled(retryable, egui::Button::new(if recovered { "Export recovered prefix…" } else { "Retry export" })).clicked() {
-                *action = Some(Action::OpenRetry(index));
-            }
-            if ui.button("Delete…").clicked() { *action = Some(Action::Confirm(DeleteKind::Source(index))); }
+        );
+        let retryable = (matches!(source.state(), RecordingSourceState::Complete { reason, .. } if reason.is_complete())
+            || recovered)
+            && library
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id() == source.id());
+        rows.push(LibraryRowView::Source {
+            index,
+            id: source.id().to_string(),
+            status,
+            bytes: source.length(),
+            partial: source.is_partial(),
+            recovered,
+            retryable,
         });
     }
     for (index, manifest) in library.manifests.iter().enumerate() {
-        if library
+        if !library
             .sources
             .iter()
             .any(|source| source.id() == manifest.id())
         {
-            continue;
-        }
-        ui.separator();
-        ui.label(format!("Unfinished options for {}", manifest.id()));
-        if ui.button("Delete options…").clicked() {
-            *action = Some(Action::Confirm(DeleteKind::Manifest(index)));
+            rows.push(LibraryRowView::Manifest {
+                index,
+                id: manifest.id().to_string(),
+            });
         }
     }
     for (index, staging) in library.staging.iter().enumerate() {
+        rows.push(LibraryRowView::Staging {
+            index,
+            path: staging.path().display().to_string(),
+        });
+    }
+    library_rows(ui, &rows, action);
+}
+
+fn library_rows(ui: &mut egui::Ui, rows: &[LibraryRowView], action: &mut Option<Action>) {
+    if rows.is_empty() {
+        ui.label("No retained or unfinished recordings.");
+    }
+    for row in rows {
         ui.separator();
-        ui.label(format!("Private staging: {}", staging.path().display()));
-        if ui.button("Delete staged videos…").clicked() {
-            *action = Some(Action::Confirm(DeleteKind::Staging(index)));
+        match row {
+            LibraryRowView::Source {
+                index,
+                id,
+                status,
+                bytes,
+                partial,
+                recovered,
+                retryable,
+            } => {
+                ui.strong(format!("Recording {id}"));
+                match status {
+                    LibrarySourceStatus::Empty => {
+                        ui.label("Empty unfinished source");
+                    }
+                    LibrarySourceStatus::Complete { duration, reason } => {
+                        ui.label(format!(
+                            "Complete: {:.1} seconds ({reason:?})",
+                            duration.as_secs_f64()
+                        ));
+                    }
+                    LibrarySourceStatus::Incomplete { detail, prefix } => {
+                        ui.label(format!("Incomplete: {detail}"));
+                        if let Some((duration, streams)) = prefix {
+                            ui.label(format!("Validated prefix: {:.1} seconds, {} session(s); later output may be missing.", duration.as_secs_f64(), streams));
+                        }
+                    }
+                }
+                ui.label(format!(
+                    "{bytes} bytes{}",
+                    if *partial {
+                        " · unfinished filename"
+                    } else {
+                        ""
+                    }
+                ));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            *retryable,
+                            egui::Button::new(if *recovered {
+                                "Export recovered prefix…"
+                            } else {
+                                "Retry export"
+                            }),
+                        )
+                        .clicked()
+                    {
+                        *action = Some(Action::OpenRetry(*index));
+                    }
+                    if ui.button("Delete…").clicked() {
+                        *action = Some(Action::Confirm(DeleteKind::Source(*index)));
+                    }
+                });
+            }
+            LibraryRowView::Manifest { index, id } => {
+                ui.label(format!("Unfinished options for {id}"));
+                if ui.button("Delete options…").clicked() {
+                    *action = Some(Action::Confirm(DeleteKind::Manifest(*index)));
+                }
+            }
+            LibraryRowView::Staging { index, path } => {
+                ui.label(format!("Private staging: {path}"));
+                if ui.button("Delete staged videos…").clicked() {
+                    *action = Some(Action::Confirm(DeleteKind::Staging(*index)));
+                }
+            }
         }
     }
 }

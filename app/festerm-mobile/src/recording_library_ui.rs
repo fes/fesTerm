@@ -12,6 +12,8 @@ pub(super) enum LibraryAction {
     Staging(usize),
     #[cfg(target_os = "android")]
     Journal(usize),
+    #[cfg(test)]
+    GalleryJournal,
 }
 
 pub(super) struct RetryDraft {
@@ -21,9 +23,38 @@ pub(super) struct RetryDraft {
     pub settings: RecordingSettings,
 }
 
+#[cfg(test)]
+impl RetryDraft {
+    pub(super) fn gallery(settings: festerm_recording::RecordingSettings, recovered: bool) -> Self {
+        Self {
+            source: 0,
+            manifest: 0,
+            recovered,
+            settings,
+        }
+    }
+}
+
 fn wake(ctx: &egui::Context) -> Arc<dyn Fn() + Send + Sync> {
     let ctx = ctx.clone();
     Arc::new(move || ctx.request_repaint())
+}
+
+#[cfg(any(test, target_os = "android"))]
+fn show_export_notice(
+    ui: &mut egui::Ui,
+    recording: impl std::fmt::Display,
+    name: &str,
+    published: bool,
+) -> bool {
+    ui.separator();
+    ui.strong(format!("Export notice for recording {recording}"));
+    if published {
+        ui.label(format!("Videos were verified in {name} before the export was interrupted. Check the destination."));
+    } else {
+        ui.label(format!("Export was interrupted. A partial folder named {name} may remain in the chosen Files location."));
+    }
+    ui.button("Acknowledge export notice").clicked()
 }
 
 impl MobileApp {
@@ -127,6 +158,13 @@ impl MobileApp {
         let mut action = None;
         let mut retry = None;
         let busy = self.recording_ui.library_task.is_some();
+        #[cfg(test)]
+        let busy = busy
+            || self
+                .recording_ui
+                .gallery_display
+                .as_ref()
+                .is_some_and(|display| display.library_busy);
         let outcome = widgets::bottom_sheet_with_footer(
             ctx,
             "recording-library",
@@ -153,11 +191,18 @@ impl MobileApp {
                         {
                             library.journals.is_empty()
                         }
-                        #[cfg(target_os = "ios")]
+                        #[cfg(not(target_os = "android"))]
                         {
                             true
                         }
                     };
+                #[cfg(test)]
+                let empty = empty
+                    && self
+                        .recording_ui
+                        .gallery_display
+                        .as_ref()
+                        .is_none_or(|display| display.journal.is_none());
                 if empty {
                     ui.label("No private recordings or interrupted exports.");
                 }
@@ -244,21 +289,35 @@ impl MobileApp {
                 #[cfg(target_os = "android")]
                 for (index, journal) in library.journals.iter().enumerate() {
                     ui.push_id(("recording-journal", index), |ui| {
-                        ui.separator();
                         let record = journal.record();
-                        ui.strong(format!("Export notice for recording {}", record.recording_id()));
                         let name = record
                             .directory()
-                            .map_or(record.requested_directory(), |entry| entry.display_name.as_str());
-                        if record.published_videos().is_some() {
-                            ui.label(format!("Videos were verified in {name} before the export was interrupted. Check the destination."));
-                        } else {
-                            ui.label(format!("Export was interrupted. A partial folder named {name} may remain in the chosen Files location."));
-                        }
-                        if ui.button("Acknowledge export notice").clicked() {
+                            .map_or(record.requested_directory(), |entry| {
+                                entry.display_name.as_str()
+                            });
+                        if show_export_notice(
+                            ui,
+                            record.recording_id(),
+                            name,
+                            record.published_videos().is_some(),
+                        ) {
                             action = Some(LibraryAction::Journal(index));
                         }
                     });
+                }
+                #[cfg(test)]
+                if let Some(published) = self
+                    .recording_ui
+                    .gallery_display
+                    .as_ref()
+                    .and_then(|display| display.journal)
+                {
+                    show_export_notice(
+                        ui,
+                        "0123456789abcdef0123456789abcdef",
+                        "Synthetic export folder",
+                        published,
+                    );
                 }
             },
             |ui| {
@@ -271,6 +330,12 @@ impl MobileApp {
                 .clicked();
             },
         );
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            self.show_recording_library_confirmation(ctx, bounds);
+            self.show_recording_retry(ctx, bounds);
+            return;
+        }
         if close || outcome.dismissed {
             self.recording_ui.library_open = false;
             self.recording_ui.library = None;
@@ -319,6 +384,8 @@ impl MobileApp {
             LibraryAction::Staging(_) => "Delete this interrupted private video staging directory? Unexpected or changed files are retained and reported.",
             #[cfg(target_os = "android")]
             LibraryAction::Journal(_) => "Acknowledge this export notice? No destination files or folders will be removed; check the selected Files folder yourself.",
+            #[cfg(test)]
+            LibraryAction::GalleryJournal => "Acknowledge this export notice? No destination files or folders will be removed; check the selected Files folder yourself.",
         };
         let mut confirm = false;
         let mut close = false;
@@ -335,6 +402,10 @@ impl MobileApp {
                     .clicked();
             },
         );
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            return;
+        }
         if close || outcome.dismissed {
             self.recording_ui.library_action = None;
         } else if confirm {
@@ -375,6 +446,10 @@ impl MobileApp {
             LibraryAction::Journal(index) => {
                 let journal = library.journals.remove(index);
                 LibraryTask::acknowledge_journal(root, journal, wake(ctx))
+            }
+            #[cfg(test)]
+            LibraryAction::GalleryJournal => {
+                return;
             }
         };
         match result {
@@ -470,6 +545,11 @@ impl MobileApp {
                 .clicked();
             },
         );
+        #[cfg(test)]
+        if self.recording_ui.gallery_display.is_some() {
+            self.recording_ui.retry = Some(retry);
+            return;
+        }
         if close || outcome.dismissed {
             return;
         }

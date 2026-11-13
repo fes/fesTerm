@@ -69,6 +69,71 @@ class BuildUiStateDocTest(unittest.TestCase):
             "sha256": digest,
         }
 
+    def test_routes_require_complete_captured_inventory_and_recovery(self) -> None:
+        scenario = self._scenario("dialog-ready", "dialogs", "0" * 64)
+        group = {
+            "ids": ["dialog-ready"], "route": "More > Dialog",
+            "exit": "Cancel returns to the previous owner",
+            "production_symbols": ["app::show_dialog"], "gui_ids": ["VIS-01"],
+        }
+        catalog = self.root / "routes.json"
+        def write(groups):
+            catalog.write_text(json.dumps({"schema_version": 1, "groups": groups}))
+        write([group])
+        builder.attach_routes([scenario], [catalog])
+        self.assertIn("Cancel returns", scenario["_route"]["exit"])
+        write([{**group, "exit": ""}])
+        with self.assertRaisesRegex(builder.BuildError, "route exit"):
+            builder.attach_routes([scenario], [catalog])
+        write([{**group, "ids": ["not-captured"]}])
+        with self.assertRaisesRegex(builder.BuildError, "uncaptured"):
+            builder.attach_routes([scenario], [catalog])
+        write([])
+        with self.assertRaisesRegex(builder.BuildError, "no audited route"):
+            builder.attach_routes([scenario], [catalog])
+
+    def test_default_gallery_also_builds_and_checks_audited_route_map(self) -> None:
+        digest = self._write_image("dialog.png")
+        manifest = self._write_manifest([self._scenario("dialog", "dialogs", digest)])
+        narrative = self._write_narrative("<!-- section: dialogs title: Dialogs -->\n")
+        catalog = self.root / "routes.json"
+        catalog.write_text(json.dumps({"schema_version": 1, "groups": [{
+            "ids": ["dialog"], "route": "More > Dialog", "exit": "Cancel",
+            "production_symbols": ["app::show_dialog"], "gui_ids": ["VIS-01"],
+        }]}))
+        routes = self.root / "route-map.md"
+        arguments = ["--narrative", str(narrative), "--output", str(self.root / "ui.md")]
+        with patch.object(builder, "DEFAULT_MANIFESTS", [manifest]), \
+                patch.object(builder, "DEFAULT_ROUTE_CATALOGS", [catalog]), \
+                patch.object(builder, "DEFAULT_ROUTES_OUTPUT", routes):
+            self.assertEqual(builder.main(arguments), 0)
+            self.assertIn("Cancel", routes.read_text())
+            self.assertTrue(all(
+                line == line.rstrip()
+                for line in (self.root / "ui.md").read_text().splitlines()
+            ))
+            self.assertEqual(builder.main(arguments + ["--check"]), 0)
+            routes.write_text("stale route map")
+            self.assertEqual(builder.main(arguments + ["--check"]), 1)
+
+    def test_capture_identity_discloses_dirty_sources_in_gallery(self) -> None:
+        digest = self._write_image("dialog.png")
+        manifest = self._write_manifest([self._scenario("dialog", "dialogs", digest)])
+        document = json.loads(manifest.read_text())
+        document["capture"] = {
+            "completed_utc": "2026-11-13T04:00:00+00:00",
+            "source_tree_sha256": "a" * 64, "source_revision": "b" * 40,
+            "source_dirty": True, "system": "Darwin", "machine": "arm64",
+        }
+        manifest.write_text(json.dumps(document))
+        scenarios = builder.load_manifest(manifest)
+        result = builder.render(scenarios, [("dialogs", "Dialogs", "")], self.root / "ui.md")
+        self.assertIn("1 captures; 1 distinct PNG hashes", result)
+        self.assertIn("2026-11-13T04:00:00+00:00", result)
+        self.assertIn("dirty sources: `True`", result)
+        self.assertIn("a" * 64, result)
+        self.assertTrue(all(line == line.rstrip() for line in result.splitlines()))
+
     def test_builds_document_grouped_by_narrative_section_order(self) -> None:
         first = self._write_image("beta.png")
         second = self._write_image("alpha.png")

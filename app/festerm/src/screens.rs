@@ -41,6 +41,8 @@ use crate::tabs::{
 };
 
 mod destination;
+#[cfg(test)]
+pub(crate) mod gallery;
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) mod host_workspace;
 mod path_autocomplete;
@@ -1266,7 +1268,10 @@ struct SerialLauncherForm {
 
 impl Default for SerialLauncherForm {
     fn default() -> Self {
+        #[cfg(not(test))]
         let discovered_ports = festerm_serial::discover_ports().unwrap_or_default();
+        #[cfg(test)]
+        let discovered_ports = Vec::new();
         Self {
             device: String::new(),
             baud_rate: "115200".to_owned(),

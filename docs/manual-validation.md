@@ -1,5 +1,51 @@
 # Manual and Usability Validation Registry
 
+## UI review screenshot refresh
+
+**Automated reviewer inputs:** [desktop gallery](state-of-the-ui.md),
+[per-image desktop entry/exit/source map](ui-review-route-map.md), and
+[experimental iOS/Android catalog](state-of-mobile-ui.md). These render real
+production widgets with deterministic repository-owned fixtures and isolated
+profiles. Manifests record source fingerprints and image hashes. A populated
+gallery does not pass VIS-01, establish native composition, or qualify a live
+provider/device workflow.
+
+**Manual/native, not captured by headless tests:** macOS/Windows/Linux native
+window composition and menus, system file/permission/browser/biometric sheets,
+mobile platform keyboards and service/provider UI. Capture these only in an
+authorized ordinary-user session with a fresh isolated application profile,
+the appropriate signed/trusted build and genuine capabilities. No personal
+profile or permission/security repair is permitted. Capability-specific
+omissions and prerequisites remain explicit in the experimental route catalog
+and mobile catalog; synthetic refusal pictures are not successful authority.
+
+The 2026-11-13 refresh publishes 479 desktop and 342 mobile headless
+captures taken after the host-based Dev Tunnel redesign (#738). An earlier
+2026-11-12 native pass took 29 macOS, 18 Linux and 27 Windows
+keyboard-reachable frames from clean Parallels lab VMs (host-side
+`prlctl send-key-event` input, `prlctl capture` frames, a fresh 0700 private
+profile per run), because this macOS host lacks Accessibility and Screen
+Recording authorization. Those frames predate the redesign, are retained only
+as local lab evidence and are not published. A native refresh of the
+redesigned Dev Tunnel host picker, session dropdown and Remote access
+surfaces remains manual. iOS Simulator (screenshot hangs while the app is
+foreground), Android emulator (HVF unavailable) and mouse-only routes remain
+uncaptured natively.
+
+**Validation limits for this refresh:** formatter, strict Clippy, the
+desktop gallery tests, the mobile HOST-feature library tests, the Python
+script tests and traceability checks pass. Tests that require trusted private
+storage, including mobile host-client captures, ran from a copy on a private
+0700 volume because the shared external-storage ancestor is group-writable.
+No permission repair, security-policy bypass or test suppression was used.
+
+**Usability:** send the source-bound catalogs and screenshots to an independent
+reviewer using the eight-question rubric, including icon-only versus text
+action presentation. Findings and any follow-up usability study remain
+separate work. These screenshots do not upgrade milestone acceptance.
+
+## HOST relay recovery
+
 HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery has focused
 source-specific deterministic coverage; affected delta review and separately
 authorized native qualification remain required.

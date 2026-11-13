@@ -30,6 +30,30 @@ commands, directories and temporary lifetimes now stop for explicit launch
 review, while protected retry originals remain intact. A companion regression
 keeps a renamed logical-resume profile from silently acquiring a generation pin.
 
+## Refreshing a source-bound reviewer evidence inventory
+
+The published UI gallery had 48 images while the existing generator already
+contained many more scenes. That made a recent-looking overview an unreliable
+map of the implemented product. The refresh exercises actual desktop and
+experimental mobile widgets with isolated synthetic application state,
+including authentication, safety confirmations, file operations, recovery,
+profiles, workflows and secondary menus. It now publishes 479 desktop and 342
+mobile captures, including the host-based Dev Tunnel picker and session
+dropdown introduced in #738. Each image is paired with an entry,
+an exit, production symbols and stable GUI action IDs in the
+[desktop route map](ui-review-route-map.md) and
+[mobile catalog](state-of-mobile-ui.md).
+
+Capture provenance binds image hashes to the dirty source-tree fingerprint
+rather than claiming the unchanged HEAD identifies new fixtures. Capture
+rejects source changes during execution. Test-only state seams arrange typed
+events and inert background states; they do not copy product rendering,
+connect to services, submit credentials or bypass protected authority.
+Headless pictures remain review inputs, not native-platform, protected-service,
+functional or usability acceptance. The
+[manual registry](manual-validation.md#ui-review-screenshot-refresh) records
+the remaining native evidence boundary.
+
 ## Composing reviewed recovery with candidate evidence delivery
 
 The initial normal merge `2c00fbc6` composes reviewed #730 `6605011e` with exact #692 evidence

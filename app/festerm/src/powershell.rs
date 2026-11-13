@@ -296,6 +296,66 @@ pub(crate) struct PowerShellTab {
     input_feedback: Option<String>,
 }
 
+#[cfg(test)]
+impl PowerShellTab {
+    pub(crate) fn gallery_ssh_fixture() -> Self {
+        let profile = festerm_config::Profile::powershell(
+            "Synthetic SSH PowerShell",
+            "psrp.example.com",
+            22,
+            "devuser",
+        )
+        .unwrap()
+        .as_powershell()
+        .unwrap()
+        .clone()
+        .with_ssh_transport(
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "powershell",
+        )
+        .unwrap();
+        Self::new(profile)
+    }
+
+    pub(crate) fn gallery_fixture(state: PowerShellState) -> Self {
+        let profile = festerm_config::Profile::powershell(
+            "Synthetic PowerShell",
+            "psrp.example.com",
+            5986,
+            "devuser",
+        )
+        .unwrap()
+        .as_powershell()
+        .unwrap()
+        .clone();
+        let mut tab = Self::new(profile);
+        tab.state = state;
+        tab.command = "Get-Process | Select-Object -First 3 Name, Id".into();
+        if matches!(
+            state,
+            PowerShellState::Ready | PowerShellState::Running | PowerShellState::Cancelling
+        ) {
+            tab.events.push_back(PowerShellPresentedEvent {
+                stream: PowerShellStream::Output,
+                text: "Name: build-worker · Id: 4200".into(),
+                expandable: vec![
+                    ("Name".into(), "build-worker".into()),
+                    ("Id".into(), "4200".into()),
+                ],
+            });
+            tab.events.push_back(PowerShellPresentedEvent {
+                stream: PowerShellStream::Warning,
+                text: "Synthetic structured output; no remote pipeline was executed.".into(),
+                expandable: Vec::new(),
+            });
+        }
+        if state == PowerShellState::Failed {
+            tab.input_feedback = Some("Synthetic connection refusal. Review the endpoint, credentials and trust configuration.".into());
+        }
+        tab
+    }
+}
+
 impl PowerShellTab {
     pub(crate) fn new(profile: PowerShellProfileConfiguration) -> Self {
         Self {

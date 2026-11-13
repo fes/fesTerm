@@ -52,6 +52,11 @@ pub(crate) struct WindowView {
     pub modal: bool,
 }
 
+#[cfg(test)]
+pub(crate) fn gallery_show(context: &egui::Context, scene: &str) {
+    DesktopRecording::gallery_show(context, scene);
+}
+
 pub(super) struct DesktopRecording {
     auto_open: bool,
     attempted_open: bool,
@@ -86,6 +91,12 @@ pub(super) struct DesktopRecording {
     pending_open: Option<(WindowId, Request)>,
     action: Option<Action>,
     status: Option<String>,
+    #[cfg(test)]
+    gallery_library_rows: Option<Vec<ui::LibraryRowView>>,
+    #[cfg(test)]
+    gallery_preview: Option<std::time::Duration>,
+    #[cfg(test)]
+    gallery_preview_busy: bool,
 }
 
 struct Start {
@@ -163,6 +174,142 @@ impl Default for DesktopRecording {
 }
 
 impl DesktopRecording {
+    #[cfg(test)]
+    pub(crate) fn gallery_show(context: &egui::Context, scene: &str) {
+        let mut recording = Self::new(false, true);
+        let mut draft = RecordingSettings::default();
+        if scene == "settings-advanced" {
+            draft.normalize_typing = true;
+            draft.limit_long_output = true;
+            draft.reveal_output = true;
+        }
+        if scene == "settings-invalid" {
+            draft.directory_template = "{unsupported-placeholder}".into();
+        }
+        if matches!(scene, "export-ready" | "export-calculating") {
+            draft.destination = Some(ExportDestination::DesktopPath(
+                "/review-fixtures/recording-exports".into(),
+            ));
+        }
+        let mut choices = vec![SessionChoice {
+            id: crate::tabs::AppState::for_test().active(),
+            label: "Synthetic build · SSH · build.example.com".into(),
+            active: true,
+            included: scene == "include-empty",
+        }];
+        if scene == "start-empty" {
+            choices.clear();
+        }
+        recording.dialog = Some(match scene {
+            "settings" | "settings-advanced" | "settings-invalid" => Dialog::Settings { draft },
+            "start" | "privacy-blocked" | "start-empty" | "start-include-new" => Dialog::Start {
+                draft,
+                selected: choices
+                    .first()
+                    .map(|choice| std::collections::BTreeSet::from([choice.id]))
+                    .unwrap_or_default(),
+                include_new: scene == "start-include-new",
+            },
+            "include" | "include-empty" => Dialog::include(),
+            "export" | "export-calculating" | "export-ready" => Dialog::Export { draft },
+            "library" | "library-empty" | "library-populated" => Dialog::Library,
+            "retry" => Dialog::Retry {
+                source: 0,
+                draft,
+                recovered: false,
+            },
+            "recovered" => Dialog::Retry {
+                source: 0,
+                draft,
+                recovered: true,
+            },
+            "delete-source" => Dialog::Confirm {
+                kind: DeleteKind::Source(0),
+            },
+            "delete-manifest" => Dialog::Confirm {
+                kind: DeleteKind::Manifest(0),
+            },
+            "delete-staging" => Dialog::Confirm {
+                kind: DeleteKind::Staging(0),
+            },
+            _ => unreachable!("unknown recording scene"),
+        });
+        if scene == "privacy-blocked" {
+            recording.status = Some("Recording is unavailable until native lock/privacy monitoring can be established. No source was created.".into());
+        }
+        if scene == "library-empty" {
+            recording.library = Some(LibrarySnapshot {
+                sources: Vec::new(),
+                manifests: Vec::new(),
+                staging: Vec::new(),
+                #[cfg(target_os = "android")]
+                journals: Vec::new(),
+            });
+        }
+        recording.gallery_preview_busy = scene == "export-calculating";
+        recording.gallery_preview =
+            (scene == "export-ready").then(|| std::time::Duration::from_secs(42));
+        if scene == "library-populated" {
+            use ui::{LibraryRowView as Row, LibrarySourceStatus as Status};
+            recording.gallery_library_rows = Some(vec![
+                Row::Source {
+                    index: 0,
+                    id: "11111111111141118111111111111111".into(),
+                    status: Status::Complete {
+                        duration: std::time::Duration::from_secs(42),
+                        reason: FinishReason::User,
+                    },
+                    bytes: 16384,
+                    partial: false,
+                    recovered: false,
+                    retryable: true,
+                },
+                Row::Source {
+                    index: 1,
+                    id: "22222222222242228222222222222222".into(),
+                    status: Status::Incomplete {
+                        detail: "Synthetic interrupted output".into(),
+                        prefix: Some((std::time::Duration::from_secs(12), 2)),
+                    },
+                    bytes: 8192,
+                    partial: true,
+                    recovered: true,
+                    retryable: true,
+                },
+                Row::Source {
+                    index: 2,
+                    id: "33333333333343338333333333333333".into(),
+                    status: Status::Incomplete {
+                        detail: "Synthetic invalid prefix; recovery is unavailable".into(),
+                        prefix: None,
+                    },
+                    bytes: 128,
+                    partial: true,
+                    recovered: false,
+                    retryable: false,
+                },
+                Row::Source {
+                    index: 3,
+                    id: "44444444444444448444444444444444".into(),
+                    status: Status::Empty,
+                    bytes: 0,
+                    partial: true,
+                    recovered: false,
+                    retryable: false,
+                },
+                Row::Manifest {
+                    index: 4,
+                    id: "55555555555545558555555555555555".into(),
+                },
+                Row::Staging {
+                    index: 0,
+                    path: "/review-fixtures/recording/private-staging".into(),
+                },
+            ]);
+        }
+        recording.show(context, WindowId::PRIMARY, &choices);
+    }
+
     #[cfg(target_os = "linux")]
     pub(super) fn set_wayland_backend(&mut self, available: bool) {
         if self.wayland_backend == available {
@@ -225,6 +372,12 @@ impl DesktopRecording {
             pending_open: None,
             action: None,
             status: None,
+            #[cfg(test)]
+            gallery_library_rows: None,
+            #[cfg(test)]
+            gallery_preview: None,
+            #[cfg(test)]
+            gallery_preview_busy: false,
         }
     }
 

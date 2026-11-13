@@ -21,7 +21,7 @@ pub(crate) struct RecordingStorage {
 }
 
 impl RecordingStorage {
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    #[cfg(any(test, target_os = "ios", target_os = "android"))]
     pub(crate) fn path(&self) -> &Path {
         &self.root_path
     }
