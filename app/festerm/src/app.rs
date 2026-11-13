@@ -7150,6 +7150,7 @@ impl FesTermApp {
                 .observe_share_epoch(self.state.local_share_epoch());
             self.local_remote_access
                 .observe_share_targets(self.state.local_share_targets());
+            #[cfg(not(test))]
             self.local_remote_access.ensure_startup_observation(context);
             self.local_remote_access.poll(context);
             crate::screens::set_local_remote_access_view(

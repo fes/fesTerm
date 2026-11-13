@@ -249,6 +249,27 @@ fn desktop_remote_access_refresh_cannot_retarget_an_existing_confirmation() {
 }
 
 #[test]
+fn desktop_remote_access_startup_observation_is_single_and_read_only() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            recorded.lock().unwrap().push(request.operation);
+            Ok(Report {
+                scope: Scope::Absent,
+                ..Report::default()
+            })
+        },
+    )));
+    let context = egui::Context::default();
+    controller.ensure_startup_observation(&context);
+    controller.ensure_startup_observation(&context);
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [Operation::Refresh]);
+    assert_eq!(controller.view.scope, Scope::Absent);
+}
+
+#[test]
 fn desktop_remote_access_only_explicit_reviewed_action_reaches_bounded_worker() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let recorded = calls.clone();

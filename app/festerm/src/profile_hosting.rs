@@ -2642,7 +2642,10 @@ mod tests {
             .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
             .unwrap();
         let configuration = Configuration::new(vec![profile.clone(), ordinary]).unwrap();
-        let mut controller = Controller::default();
+        let mut controller = Controller {
+            master_access: Some(true),
+            ..Controller::default()
+        };
         controller.enqueue(Work::Ensure(Box::new(profile.clone()), 1024));
         controller.start_pending(&configuration, &egui::Context::default());
         assert!(controller.pending.is_none());
