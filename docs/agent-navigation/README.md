@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, real-window native smoke proof, and OS wake/privacy integration for packaged app behavior. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, real-window smoke validation, native macOS app bridges, and OS wake callbacks for packaged app behavior. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Mobile hosts own the shared Rust app runtime, Android JNI service bridge, and offline-first SSH/files/document flows for iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Desktop shell root for fesTerm's egui app, covering startup, multi-window policy, pane/session routing, and durable lifecycle diagnostics. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
