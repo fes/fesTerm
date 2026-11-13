@@ -324,7 +324,7 @@ fn legacy_session_in(root: &Path, name: &str) -> Result<Option<Target>, String> 
         }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn initial_hosted_launch(name: &str) -> Result<HostedLaunch, &'static str> {
     let legacy =
         festerm_sessiond::runtime_root().map_err(|_| "Private hosting storage is unavailable.")?;
@@ -351,8 +351,7 @@ fn initial_hosted_launch_in(
     })
 }
 
-#[cfg(unix)]
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn verify_hosted_endpoint_capacity(root: &Path) -> Result<(), &'static str> {
     let generation = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -365,12 +364,6 @@ fn verify_hosted_endpoint_capacity(root: &Path) -> Result<(), &'static str> {
     std::os::unix::net::SocketAddr::from_pathname(endpoint)
         .map(|_| ())
         .map_err(|_| "Private hosting storage is too long for a session socket. Use a shorter XDG_STATE_HOME and retry; no session was stopped.")
-}
-
-#[cfg(not(unix))]
-#[cfg(test)]
-fn verify_hosted_endpoint_capacity(_root: &Path) -> Result<(), &'static str> {
-    Ok(())
 }
 
 pub(crate) fn connect_profile(
