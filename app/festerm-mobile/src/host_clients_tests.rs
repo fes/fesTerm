@@ -52,15 +52,18 @@ fn client_inventory(creation_allowed: bool) -> Inventory {
         capabilities: Capabilities {
             issuance_epoch: Some(festerm_host_protocol::Epoch::new(1).unwrap()),
             inventory: true,
+            profiles: false,
             ensure: true,
             create: true,
             attach: true,
+            ensure_profile: false,
             detach: true,
             explicit_end: true,
             temporary: false,
             creation_allowed,
         },
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     }
 }
@@ -1397,6 +1400,7 @@ fn recovery_fixture_with_login(
             ..Capabilities::default()
         },
         sessions: Vec::new(),
+        profiles: Vec::new(),
         unknown: Vec::new(),
     });
     assert!(app.host_foreground() && app.host_recipe_current());
