@@ -535,8 +535,14 @@ mod native_routes {
                     .unwrap();
                 match response.body {
                     Response::Inventory { .. } => return response.body,
+                    // The fixture policy source is a try-lock shared with the
+                    // live terminal worker, which holds it for every output
+                    // action. Busy is refused before execution; contention at
+                    // the post-execution host check is reported as
+                    // OutcomeUncertain (host_control.rs). List is read-only, so
+                    // both mean "no answer yet" and the same request is retried.
                     Response::Refused {
-                        reason: Refusal::Busy,
+                        reason: Refusal::Busy | Refusal::OutcomeUncertain,
                     } => tokio::time::sleep(Duration::from_millis(25)).await,
                     _ => panic!("inventory: {:?}", response.body),
                 }
