@@ -143,7 +143,7 @@ impl RecordingSettingsStore {
         platform::check_directory(&self.directory_path, &self.directory)
     }
 
-    fn lock(&self) -> io::Result<File> {
+    fn lock(&self) -> io::Result<lease::HeldLock> {
         let name = Path::new(LOCK_NAME);
         let file = match platform::create_file(&self.directory, name) {
             Ok(file) => file,
@@ -152,8 +152,9 @@ impl RecordingSettingsStore {
             }
             Err(error) => return Err(error),
         };
+        let file = lease::HeldLock(file);
         platform::require_private_file(&file)?;
-        fs2::FileExt::try_lock_exclusive(&file)?;
+        fs2::FileExt::try_lock_exclusive(&*file)?;
         let current = platform::open_file_read(&self.directory, name)?;
         platform::require_private_file(&current)?;
         if platform::identity(&file)? != platform::identity(&current)? {

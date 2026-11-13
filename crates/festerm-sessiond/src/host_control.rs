@@ -731,7 +731,7 @@ impl Default for State {
 
 struct Transaction {
     directory: File,
-    _lock: File,
+    _lock: storage::UnlockOnDrop,
     state: State,
 }
 
@@ -1032,6 +1032,7 @@ impl SessionControl {
                 ControlError::Storage
             }
         })?;
+        let lock = storage::UnlockOnDrop(lock);
         let state = match storage::read_private(&directory, Path::new(STATE_FILE), STATE_LIMIT) {
             Ok(bytes) => {
                 serde_json::from_slice::<State>(&bytes).map_err(|_| ControlError::Storage)?

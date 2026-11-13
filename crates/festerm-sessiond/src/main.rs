@@ -36,6 +36,7 @@ use std::cell::RefCell;
 
 use festerm_pty::default_local_profile;
 use festerm_sessiond::lifecycle::{self, Event as LifecycleEvent, FailureStage};
+use festerm_sessiond::private_storage::UnlockOnDrop;
 use festerm_sessiond::AttachKind;
 use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
@@ -1159,7 +1160,7 @@ fn run_start(
             return combine_cleanup_result(Err(error), cleanup);
         }
     };
-    FileExt::unlock(&start_lock)?;
+    FileExt::unlock(&*start_lock)?;
 
     println!(
         "started {} pid={} socket={} shell={}",
@@ -1497,6 +1498,7 @@ fn with_daemon_generation_before_cleanup(
             .create_new(true)
             .open(&lease_path)?,
     };
+    let lease = UnlockOnDrop(lease);
     let mut socket_owned = false;
     let mut preserve_artifacts = false;
     let result = (|| {
@@ -4359,7 +4361,7 @@ fn lock_session_file(
     root: &Path,
     name: &str,
     kind: &str,
-) -> Result<File, Box<dyn std::error::Error>> {
+) -> Result<UnlockOnDrop, Box<dyn std::error::Error>> {
     let file_name = format!("{name}.{kind}.lock");
     let lock = match private_runtime_directory(root)? {
         Some(directory) => match festerm_sessiond::private_storage::open_private_file(
@@ -4391,6 +4393,7 @@ fn lock_session_file(
             file
         }
     };
+    let lock = UnlockOnDrop(lock);
     bounded_registry_lock(&lock, true)?;
     Ok(lock)
 }
@@ -4427,7 +4430,7 @@ fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
 
 struct RegistryAccess {
     path: PathBuf,
-    lock_file: File,
+    lock_file: UnlockOnDrop,
     directory: Option<File>,
 }
 
@@ -4481,7 +4484,7 @@ fn open_registry_lock_file_in(root: &Path) -> Result<RegistryAccess, Box<dyn std
         };
         return Ok(RegistryAccess {
             path,
-            lock_file,
+            lock_file: UnlockOnDrop(lock_file),
             directory: Some(directory),
         });
     }
@@ -4494,7 +4497,7 @@ fn open_registry_lock_file_in(root: &Path) -> Result<RegistryAccess, Box<dyn std
     set_file_mode(&lock_path, 0o600)?;
     Ok(RegistryAccess {
         path,
-        lock_file,
+        lock_file: UnlockOnDrop(lock_file),
         directory: None,
     })
 }
@@ -4511,7 +4514,7 @@ fn with_registry_lock_in<T>(
     mut before_prepare: impl FnMut(),
 ) -> Result<T, Box<dyn std::error::Error>> {
     let access = open_registry_lock_file_in(root)?;
-    let lock_file = &access.lock_file;
+    let lock_file = &*access.lock_file;
     let started = Instant::now();
     sessiond_trace(format_args!("registry acquire pid={}", process::id()));
     bounded_registry_lock(lock_file, true)?;
@@ -4664,7 +4667,7 @@ fn load_registry_in(
     let acquired = Instant::now();
     before_read();
     let result = access.read();
-    FileExt::unlock(&access.lock_file)?;
+    FileExt::unlock(&*access.lock_file)?;
     sessiond_trace(format_args!(
         "registry read released pid={} held={:?}",
         process::id(),
@@ -4896,7 +4899,7 @@ fn generation_has_exited(
     let Some(lease) = open_generation_lease(&generation_lease_path(root, record))? else {
         return Ok(true);
     };
-    match lease.try_lock_exclusive() {
+    match UnlockOnDrop(lease).try_lock_exclusive() {
         Ok(()) => Ok(true),
         Err(error) if festerm_sessiond::lock_is_contended(&error) => Ok(false),
         Err(error) => Err(error.into()),

@@ -148,7 +148,9 @@ fn checkpoint(directory: &File, record: &Installation) -> io::Result<()> {
     setup_storage::replace_private(directory, Path::new(CONFIG), &bytes)
 }
 
-fn lock(directory: &File, name: &str) -> io::Result<File> {
+/// Opens a lock file; the guard explicitly releases any lease taken on it so a
+/// concurrently spawned child that briefly shares the descriptor cannot pin it.
+fn lock(directory: &File, name: &str) -> io::Result<setup_storage::UnlockOnDrop> {
     let file = match setup_storage::open_private_file(directory, Path::new(name), true) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -156,7 +158,7 @@ fn lock(directory: &File, name: &str) -> io::Result<File> {
         }
         Err(error) => return Err(error),
     };
-    Ok(file)
+    Ok(setup_storage::UnlockOnDrop(file))
 }
 
 fn state_path(args: &[OsString]) -> io::Result<PathBuf> {
@@ -350,7 +352,7 @@ fn ready_record(directory: &File, record: &Installation) -> io::Result<Ready> {
 
 fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<Ready>> {
     let health = lock(directory, "health.lock")?;
-    match FileExt::try_lock_shared(&health) {
+    match FileExt::try_lock_shared(&*health) {
         Ok(()) => {}
         Err(error) if festerm_sessiond::lock_is_contended(&error) => return Ok(None),
         Err(error) => return Err(error),
@@ -358,7 +360,7 @@ fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<
     let worker = lock(directory, "worker.lock")?;
     match worker.try_lock_exclusive() {
         Ok(()) => {
-            FileExt::unlock(&worker)?;
+            FileExt::unlock(&*worker)?;
             Ok(None)
         }
         Err(error) if festerm_sessiond::lock_is_contended(&error) => {
@@ -1180,7 +1182,7 @@ async fn wait_worker_stopped(directory: &File) -> io::Result<()> {
     timeout(Duration::from_secs(30), async {
         loop {
             match worker.try_lock_exclusive() {
-                Ok(()) => return FileExt::unlock(&worker),
+                Ok(()) => return FileExt::unlock(&*worker),
                 Err(error) if festerm_sessiond::lock_is_contended(&error) => {}
                 Err(error) => return Err(error),
             }
@@ -1925,7 +1927,7 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             festerm_tunnel_bridge::profile_hosting::Store::open(&state, &record.id, false)?
                 .mark_exposed(&origin.consent)?;
         }
-        FileExt::unlock(&health)?;
+        FileExt::unlock(&*health)?;
         published = true;
         log.event("worker.bridge_ready", &[]);
         log.event(
@@ -2262,7 +2264,7 @@ mod tests {
         assert!(festerm_sessiond::lock_is_contended(
             &second.try_lock_exclusive().unwrap_err()
         ));
-        FileExt::unlock(&first).unwrap();
+        FileExt::unlock(&*first).unwrap();
         second.try_lock_exclusive().unwrap();
         drop(first);
         drop(second);
@@ -2362,7 +2364,7 @@ mod tests {
         let health = lock(&directory, "health.lock").unwrap();
         health.try_lock_exclusive().unwrap();
         assert!(healthy_record(&directory, &record).unwrap().is_none());
-        FileExt::unlock(&health).unwrap();
+        FileExt::unlock(&*health).unwrap();
         drop(health);
         let before = setup_storage::read_private(&directory, Path::new(CONFIG), 65536).unwrap();
         for _ in 0..2 {
@@ -2375,7 +2377,7 @@ mod tests {
         );
         FileExt::unlock(&lease).unwrap();
         assert!(healthy_record(&directory, &record).unwrap().is_none());
-        FileExt::unlock(&worker).unwrap();
+        FileExt::unlock(&*worker).unwrap();
         assert!(healthy_record(&directory, &record).unwrap().is_none());
         drop(worker);
         drop(lease);
@@ -2888,7 +2890,7 @@ mod tests {
         assert_eq!(error.to_string(), "setup.installation_update_in_progress");
         let saved: Installation = read_json(&directory, CONFIG).unwrap();
         assert_eq!(serde_json::to_value(saved).unwrap(), before);
-        FileExt::unlock(&installer).unwrap();
+        FileExt::unlock(&*installer).unwrap();
         let error = recover_daemon(&directory, &state, &mut stale, &log, |_| async {
             panic!("an interrupted revocation must remain unavailable")
         })

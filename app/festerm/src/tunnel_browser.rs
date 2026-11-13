@@ -226,7 +226,7 @@ pub(super) struct Browser {
     device: DeviceActions,
     store: Arc<dyn SecretStore>,
     account: Option<DevTunnelAccount>,
-    _lease: Option<std::fs::File>,
+    _lease: Option<festerm_sessiond::private_storage::UnlockOnDrop>,
 }
 
 impl Drop for Browser {

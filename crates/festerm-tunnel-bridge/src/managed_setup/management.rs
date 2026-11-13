@@ -119,7 +119,7 @@ fn namespace() -> io::Result<PathBuf> {
     setup_storage::script_namespace()
 }
 
-fn namespace_lock(root: &Path) -> io::Result<File> {
+fn namespace_lock(root: &Path) -> io::Result<setup_storage::UnlockOnDrop> {
     let parent = setup_storage::private_directory(root, false)?;
     let installer = lock(&parent, "installer.lock")?;
     installer
@@ -128,7 +128,9 @@ fn namespace_lock(root: &Path) -> io::Result<File> {
     Ok(installer)
 }
 
-pub(super) fn setup_namespace_lock(state: &Path) -> io::Result<Option<File>> {
+pub(super) fn setup_namespace_lock(
+    state: &Path,
+) -> io::Result<Option<setup_storage::UnlockOnDrop>> {
     let Ok(root) = namespace() else {
         return Ok(None);
     };
@@ -445,7 +447,7 @@ async fn cleanup_cloud(
         Err(_) => return Ok(Outcome::Pending("helper-unavailable")),
     };
     let script_lease = lock(directory, "account.lock")?;
-    FileExt::try_lock_shared(&script_lease)?;
+    FileExt::try_lock_shared(&*script_lease)?;
     let _lease = match festerm_tunnel_bridge::profile_hosting::account_lease(false) {
         Ok(lease) => Some(lease),
         // A standalone-only install has no desktop namespace. Never create it

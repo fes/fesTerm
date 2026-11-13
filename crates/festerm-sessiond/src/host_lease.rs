@@ -167,7 +167,7 @@ pub(crate) struct LeaseGuard {
     directory: File,
     name: PathBuf,
     generation: GenerationId,
-    _lock: File,
+    _lock: storage::UnlockOnDrop,
 }
 
 fn open_lock(directory: &File, name: &Path) -> io::Result<File> {
@@ -200,6 +200,7 @@ impl LeaseGuard {
         };
         // Never queue a daemon or a control worker behind a stalled bridge.
         FileExt::try_lock_exclusive(&lock)?;
+        let lock = storage::UnlockOnDrop(lock);
         Ok(Self {
             directory,
             name: PathBuf::from(format!("{stem}.json")),

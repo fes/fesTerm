@@ -123,7 +123,7 @@ pub fn accepts_runtime(root: &Path) -> io::Result<bool> {
 
 /// Foreground login takes an exclusive lease; desktop account-bound mutations
 /// and token acquisition take a shared lease. Revocation/stop does not need it.
-pub fn account_lease(exclusive: bool) -> io::Result<File> {
+pub fn account_lease(exclusive: bool) -> io::Result<setup_storage::UnlockOnDrop> {
     let directory = setup_storage::private_directory(&namespace()?, false)?;
     let name = Path::new("account.lock");
     let file = match setup_storage::open_private_file(&directory, name, true) {
@@ -133,10 +133,11 @@ pub fn account_lease(exclusive: bool) -> io::Result<File> {
         }
         Err(error) => return Err(error),
     };
+    let file = setup_storage::UnlockOnDrop(file);
     if exclusive {
         file.try_lock_exclusive()?;
     } else {
-        FileExt::try_lock_shared(&file)?;
+        FileExt::try_lock_shared(&*file)?;
     }
     Ok(file)
 }
@@ -436,7 +437,7 @@ pub struct Store {
 }
 
 pub struct HostingPermit {
-    _lock: File,
+    _lock: setup_storage::UnlockOnDrop,
 }
 
 pub struct HostedPreparation<'a> {
@@ -509,11 +510,11 @@ impl Store {
         })
     }
 
-    fn lock(&self) -> io::Result<File> {
+    fn lock(&self) -> io::Result<setup_storage::UnlockOnDrop> {
         self.lock_until(std::time::Instant::now() + std::time::Duration::from_secs(2))
     }
 
-    fn lock_until(&self, deadline: std::time::Instant) -> io::Result<File> {
+    fn lock_until(&self, deadline: std::time::Instant) -> io::Result<setup_storage::UnlockOnDrop> {
         let file = match setup_storage::open_private_file(&self.directory, Path::new(LOCK), true) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -521,6 +522,7 @@ impl Store {
             }
             Err(error) => return Err(error),
         };
+        let file = setup_storage::UnlockOnDrop(file);
         loop {
             match file.try_lock_exclusive() {
                 Ok(()) => break,

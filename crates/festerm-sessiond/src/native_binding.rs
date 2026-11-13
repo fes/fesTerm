@@ -250,8 +250,12 @@ impl Binding {
                 "lease-{}-{}",
                 self.identity.pid, self.identity.created_at_unix_ms
             );
-            let lifetime = storage::open_private_file(&directory, Path::new(&name), false)?;
-            match FileExt::try_lock_shared(&lifetime) {
+            let lifetime = storage::UnlockOnDrop(storage::open_private_file(
+                &directory,
+                Path::new(&name),
+                false,
+            )?);
+            match FileExt::try_lock_shared(&*lifetime) {
                 Err(error)
                     if crate::lock_is_contended(&error)
                         && crate::process_alive(self.identity.pid) => {}
@@ -259,24 +263,36 @@ impl Binding {
                 Ok(()) => return Err(invalid()),
             }
             return Ok(SourceFence {
-                _locks: vec![directory, lifetime],
+                _directory: Some(directory),
+                _locks: vec![lifetime],
             });
         }
         let directory = storage::private_directory(&self.source_root, false)?;
         let mut locks = Vec::new();
-        let lock = storage::open_private_file(&directory, Path::new("installer.lock"), false)?;
-        FileExt::try_lock_shared(&lock)?;
+        let lock = storage::UnlockOnDrop(storage::open_private_file(
+            &directory,
+            Path::new("installer.lock"),
+            false,
+        )?);
+        FileExt::try_lock_shared(&*lock)?;
         locks.push(lock);
         if self.source_profile {
-            let lock =
-                storage::open_private_file(&directory, Path::new("profile-consent.lock"), false)?;
-            FileExt::try_lock_shared(&lock)?;
+            let lock = storage::UnlockOnDrop(storage::open_private_file(
+                &directory,
+                Path::new("profile-consent.lock"),
+                false,
+            )?);
+            FileExt::try_lock_shared(&*lock)?;
             locks.push(lock);
         } else {
             let parent =
                 storage::private_directory(self.source_root.parent().ok_or_else(invalid)?, false)?;
-            let lock = storage::open_private_file(&parent, Path::new("installer.lock"), false)?;
-            FileExt::try_lock_shared(&lock)?;
+            let lock = storage::UnlockOnDrop(storage::open_private_file(
+                &parent,
+                Path::new("installer.lock"),
+                false,
+            )?);
+            FileExt::try_lock_shared(&*lock)?;
             locks.push(lock);
         }
         for (name, expected) in [
@@ -301,7 +317,10 @@ impl Binding {
                 ));
             }
         }
-        Ok(SourceFence { _locks: locks })
+        Ok(SourceFence {
+            _directory: None,
+            _locks: locks,
+        })
     }
 }
 
@@ -411,7 +430,8 @@ pub fn verify_private_source(binding: &Binding) -> io::Result<()> {
 }
 
 pub(crate) struct SourceFence {
-    _locks: Vec<File>,
+    _directory: Option<File>,
+    _locks: Vec<storage::UnlockOnDrop>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -490,12 +510,12 @@ impl CapabilityOwner {
 
 /// A single, non-recursive acquisition of a retired generation's lifetime lease.
 /// Keeping its handle private prevents cleanup consumers from relocking it.
-pub struct DeadGenerationLease(File);
+pub struct DeadGenerationLease(storage::UnlockOnDrop);
 
 impl DeadGenerationLease {
     pub fn acquire(file: File) -> io::Result<Self> {
         file.try_lock_exclusive()?;
-        Ok(Self(file))
+        Ok(Self(storage::UnlockOnDrop(file)))
     }
 
     pub fn metadata(&self) -> io::Result<std::fs::Metadata> {

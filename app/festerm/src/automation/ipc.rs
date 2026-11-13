@@ -795,7 +795,7 @@ type Stream = festerm_windows_security::named_pipe::Pipe;
 #[cfg(unix)]
 struct Listener {
     listener: std::os::unix::net::UnixListener,
-    _lock: std::fs::File,
+    _lock: festerm_sessiond::private_storage::UnlockOnDrop,
     socket: std::path::PathBuf,
 }
 
@@ -820,6 +820,7 @@ impl Listener {
             }
             Err(error) => return Err(error),
         };
+        let lock = festerm_sessiond::private_storage::UnlockOnDrop(lock);
         lock.try_lock_exclusive()?;
         let socket = root.join("broker.sock");
         match std::fs::symlink_metadata(&socket) {

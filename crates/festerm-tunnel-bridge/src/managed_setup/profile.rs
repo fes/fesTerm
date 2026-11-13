@@ -352,7 +352,7 @@ async fn wait_stopped(directory: &File) -> io::Result<()> {
     let worker = lock(directory, "worker.lock")?;
     for _ in 0..150 {
         match worker.try_lock_exclusive() {
-            Ok(()) => return FileExt::unlock(&worker),
+            Ok(()) => return FileExt::unlock(&*worker),
             Err(error) if festerm_sessiond::lock_is_contended(&error) => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }

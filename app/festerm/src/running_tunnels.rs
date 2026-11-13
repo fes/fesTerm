@@ -148,7 +148,7 @@ impl FesTermApp {
 fn spawn(
     account: festerm_config::DevTunnelAccount,
     store: Arc<dyn festerm_secret_store::SecretStore>,
-    lease: Option<std::fs::File>,
+    lease: Option<festerm_sessiond::private_storage::UnlockOnDrop>,
     context: &egui::Context,
 ) -> Pending {
     let cancel = CancellationToken::new();
