@@ -829,15 +829,18 @@ fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scop
     for _ in 0..MAX_PENDING_CREATES {
         let creation = fixture.creation(Lifetime::Persistent {});
         let operation = fixture.issued();
+        // Journal and lease locks are nonblocking: a child spawned by any concurrent
+        // thread briefly inherits their descriptors, and the running daemon takes
+        // its lease lock. Busy is refused before any effect, so only retry Busy.
         assert!(matches!(
-            control.ensure(
+            retry_busy(|| control.ensure(
                 &fixture.owner,
                 &operation,
                 &creation,
                 false,
                 &AtomicBool::new(false),
                 allow
-            ),
+            )),
             Err(ControlError::Unknown)
         ));
         let state = fixture.state();
@@ -907,32 +910,31 @@ fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scop
     }
     let running = fixture.ensure(&next);
     assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    // Busy is refused before any effect; retry only that outcome.
     for (creation, operation, _) in &pending {
         assert_eq!(
-            control
-                .lookup(&fixture.owner, &creation.logical, allow)
-                .unwrap(),
+            retry_busy(|| control.lookup(&fixture.owner, &creation.logical, allow)).unwrap(),
             Lookup::Absent
         );
         assert!(matches!(
-            control.ensure(
+            retry_busy(|| control.ensure(
                 &fixture.owner,
                 operation,
                 creation,
                 false,
                 &AtomicBool::new(false),
                 allow
-            ),
+            )),
             Err(ControlError::Stale)
         ));
     }
     assert!(!marker.exists());
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
     assert_eq!(
-        fixture
+        retry_busy(|| fixture
             .control()
-            .lookup(&fixture.owner, &next.logical, allow)
-            .unwrap(),
+            .lookup(&fixture.owner, &next.logical, allow))
+        .unwrap(),
         Lookup::Running(running.target)
     );
 }
@@ -2080,61 +2082,82 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
         Err(ControlError::Busy)
     ));
     let pending = fixture.attach(&running.target, &next_attachment, true);
-    fixture
-        .control()
-        .maintain_lease(&first_authority, None, allow)
-        .unwrap();
+    // Generation lease and journal locks are nonblocking. The daemon takes the
+    // lease lock while observing attach/detach, and a child spawned by any
+    // concurrent thread briefly inherits these descriptors. Busy is refused
+    // before any lease, journal or publication effect, so retry only Busy and
+    // assert every fence outcome exactly.
+    retry_busy(|| {
+        fixture
+            .control()
+            .maintain_lease(&first_authority, None, allow)
+    })
+    .unwrap();
     let (second, _, second_authority) = fixture.adopt_authorized(&running.target, pending);
     assert!(matches!(
-        fixture
-            .control()
-            .maintain_lease(&first_authority, Some(DetachKind::Intentional), allow),
+        retry_busy(|| fixture.control().maintain_lease(
+            &first_authority,
+            Some(DetachKind::Intentional),
+            allow
+        )),
         Err(ControlError::Stale)
     ));
-    fixture
-        .control()
-        .maintain_lease(&second_authority, None, allow)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .maintain_lease(&second_authority, None, allow)
+    })
+    .unwrap();
     drop(first);
-    fixture
-        .control()
-        .maintain_lease(&second_authority, Some(DetachKind::TransportLost), allow)
-        .unwrap();
-    assert!(matches!(
+    retry_busy(|| {
         fixture
             .control()
-            .maintain_lease(&second_authority, None, allow),
+            .maintain_lease(&second_authority, Some(DetachKind::TransportLost), allow)
+    })
+    .unwrap();
+    assert!(matches!(
+        retry_busy(|| fixture
+            .control()
+            .maintain_lease(&second_authority, None, allow)),
         Err(ControlError::Stale)
     ));
-    let receipt = fixture
-        .control()
-        .maintain_lease(&second_authority, Some(DetachKind::Intentional), allow)
-        .unwrap()
-        .unwrap();
+    let receipt = retry_busy(|| {
+        fixture
+            .control()
+            .maintain_lease(&second_authority, Some(DetachKind::Intentional), allow)
+    })
+    .unwrap()
+    .unwrap();
     assert!(matches!(
-        fixture.control().with_detachment_receipt_authorized(
+        retry_busy(|| fixture.control().with_detachment_receipt_authorized(
             &receipt,
             |_| Err::<(), _>(ControlError::Denied),
             || -> Result<(), ControlError> { panic!("denied detach publication") }
-        ),
+        )),
         Err(ControlError::Denied)
     ));
-    fixture
-        .control()
-        .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
-        .unwrap();
-    assert!(matches!(
+    retry_busy(|| {
         fixture
             .control()
-            .with_attachment_authorized(&second_authority, allow, || Ok(())),
+            .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
+    })
+    .unwrap();
+    assert!(matches!(
+        retry_busy(|| fixture.control().with_attachment_authorized(
+            &second_authority,
+            allow,
+            || Ok(())
+        )),
         Err(ControlError::Ended)
     ));
     drop(second);
     fixture.wait_absent(&running.target);
     assert!(matches!(
-        fixture
-            .control()
-            .with_detachment_receipt_authorized(&receipt, allow, || Ok(())),
+        retry_busy(|| fixture.control().with_detachment_receipt_authorized(
+            &receipt,
+            allow,
+            || Ok(())
+        )),
         Err(ControlError::Stale)
     ));
 
@@ -2143,28 +2166,36 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
     let pending = fixture.attach(&persistent.target, &AttachmentId::new(), false);
     let (active, lease, authority) = fixture.adopt_authorized(&persistent.target, pending);
     assert!(lease.is_none());
-    let receipt = fixture
-        .control()
-        .maintain_lease(&authority, Some(DetachKind::Intentional), allow)
-        .unwrap()
-        .unwrap();
-    fixture
-        .control()
-        .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
-        .unwrap();
-    assert!(matches!(
+    let receipt = retry_busy(|| {
         fixture
             .control()
-            .with_attachment_authorized(&authority, allow, || Ok(())),
+            .maintain_lease(&authority, Some(DetachKind::Intentional), allow)
+    })
+    .unwrap()
+    .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
+    })
+    .unwrap();
+    assert!(matches!(
+        retry_busy(|| fixture
+            .control()
+            .with_attachment_authorized(&authority, allow, || Ok(()))),
         Err(ControlError::Stale)
     ));
     drop(active);
-    assert!(matches!(
+    let observed = retry_busy(|| {
         fixture
             .control()
-            .lookup(&fixture.owner, &persistent.target.logical, allow),
-        Ok(Lookup::Running(_))
-    ));
+            .lookup(&fixture.owner, &persistent.target.logical, allow)
+    });
+    assert!(
+        matches!(observed, Ok(Lookup::Running(_))),
+        "persistent lookup after detach: {:?}",
+        observed
+    );
 }
 
 #[test]
