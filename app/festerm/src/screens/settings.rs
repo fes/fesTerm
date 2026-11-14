@@ -850,18 +850,13 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if dev_tunnel_accounts.is_empty() {
                                 ssh_paragraph(ui, "No accounts yet.");
                             }
-                            for (key, login, used_by, status) in &dev_tunnel_accounts {
+                            for (key, login, _used_by, status) in &dev_tunnel_accounts {
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.label(format!(
-                                        "@{login} · used by {used_by} profile{}",
-                                        if *used_by == 1 { "" } else { "s" }
-                                    ));
+                                    ui.label(format!("@{login}"));
                                     if status.needs_sign_in() {
                                         ui.colored_label(theme::STATUS_ERROR, status.label());
-                                    } else {
-                                        ui.weak(status.label());
                                     }
-                                    if action_button(ui, ActionButtonRole::Secondary, "Sign in again").clicked() {
+                                    if status.needs_sign_in() && action_button(ui, ActionButtonRole::Secondary, "Sign in again").clicked() {
                                         command = Some(AppCommand::ReauthenticateDevTunnelAccount {
                                             account: key.clone(),
                                         });

@@ -349,23 +349,6 @@ pub(crate) enum ProfileHostPick {
     Command(Box<AppCommand>),
 }
 
-/// Queues a host refresh for every signed-in account. The picker starts the
-/// queued requests; the app runs up to its parallel discovery limit.
-pub(crate) fn queue_profile_refresh(
-    context: &egui::Context,
-    tab: TabId,
-    configuration: &Configuration,
-) {
-    context.data_mut(|data| {
-        let mut state = data.get_temp::<State>(state_id(tab)).unwrap_or_default();
-        sync_accounts(&mut state, configuration);
-        for row in &mut state.accounts {
-            row.queued = true;
-        }
-        data.insert_temp(state_id(tab), state);
-    });
-}
-
 fn sync_accounts(state: &mut State, configuration: &Configuration) {
     state
         .accounts
@@ -447,7 +430,7 @@ fn picker_entries(
     entries
 }
 
-/// Account-grouped host dropdown with an explicit Refresh. Hosts without a
+/// Account-grouped host dropdown with explicit per-account discovery. Hosts without a
 /// remembered inventory open the foreground host review, which returns the
 /// selection to the draft.
 pub(crate) fn show_profile_host_picker(
@@ -472,26 +455,7 @@ pub(crate) fn show_profile_host_picker(
     }
     let remembered = remembered_hosts(ui.ctx());
     let mut pick = None;
-    let mut refresh = false;
-    let mut host_label = None;
-    ui.horizontal(|ui| {
-        host_label = Some(ui.label("Host").id);
-        if enabled && !configuration.accounts().is_empty() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let busy = state
-                    .accounts
-                    .iter()
-                    .any(|row| row.request.is_some() || row.queued);
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Refresh").small())
-                    .on_hover_text("Find hosts again for every signed-in account")
-                    .clicked()
-                {
-                    refresh = true;
-                }
-            });
-        }
-    });
+    let host_label = ui.label("Host").id;
     ui.add_enabled_ui(enabled, |ui| {
         let combo = egui::ComboBox::from_id_salt(("recipe_host", tab))
             .width(ui.available_width())
@@ -561,19 +525,67 @@ pub(crate) fn show_profile_host_picker(
                     }
                 }
             });
-        if let Some(label) = host_label {
-            combo.response.labelled_by(label);
-        }
+        combo.response.labelled_by(host_label);
     });
+    if enabled {
+        let selected_host = selected.and_then(|reference| {
+            let AccountReference::Github { account_id } = reference.account;
+            let account = configuration
+                .accounts()
+                .iter()
+                .find(|account| account.account_id() == account_id)?;
+            let hint = remembered
+                .iter()
+                .find(|host| &host.reference == reference)
+                .map(|host| &host.hint)
+                .or_else(|| {
+                    configuration
+                        .host_recipes()
+                        .recipes()
+                        .iter()
+                        .find(|recipe| &recipe.host == reference)
+                        .and_then(|recipe| recipe.host_hint.as_ref())
+                })?;
+            Some(HostChoice {
+                account: account.identifier().to_owned(),
+                name: hint.name.clone(),
+                locator: hint.locator.clone(),
+                reference: Some(reference.clone()),
+            })
+        });
+        if let Some(host) = selected_host {
+            if action_button(ui, ActionButtonRole::Secondary, "Refresh sessions").clicked() {
+                let request = egui::Id::new(uuid::Uuid::new_v4());
+                state.request = Some(request);
+                state.feedback = None;
+                pick = Some(ProfileHostPick::Command(Box::new(
+                    AppCommand::ReviewDevTunnelHost {
+                        tab_id: tab,
+                        request,
+                        host,
+                    },
+                )));
+            }
+        }
+    }
     if enabled {
         for account in configuration.accounts() {
             let Some(row) = state
                 .accounts
-                .iter()
+                .iter_mut()
                 .find(|row| row.account == account.identifier())
             else {
                 continue;
             };
+            if ui
+                .add_enabled(
+                    row.request.is_none() && !row.queued,
+                    egui::Button::new(format!("Find hosts · @{}", account.login())),
+                )
+                .clicked()
+            {
+                row.queued = true;
+            }
             if row.request.is_some() || row.queued {
                 ui.horizontal(|ui| {
                     ui.spinner();
@@ -596,11 +608,6 @@ pub(crate) fn show_profile_host_picker(
         }
         if let Some(message) = &state.feedback {
             ui.label(egui::RichText::new(message).color(theme::TEXT_MUTED));
-        }
-    }
-    if refresh {
-        for row in &mut state.accounts {
-            row.queued = true;
         }
     }
     if pick.is_none() {
@@ -894,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_host_picker_refreshes_every_account_and_groups_hosts_by_account() {
+    fn profile_host_picker_is_offline_until_each_account_is_explicitly_discovered() {
         let configuration = Configuration::empty()
             .with_account(account("alice-key", 1, "alice"))
             .unwrap()
@@ -904,7 +911,15 @@ mod tests {
             .0;
         let tab = TabId::next_for_test();
         let mut harness = picker_harness(configuration.clone(), tab);
-        queue_profile_refresh(&harness.ctx, tab, &configuration);
+        harness.run_steps(4);
+        assert!(
+            discoveries(harness.state()).is_empty(),
+            "opening is offline"
+        );
+        harness.get_by_label("Find hosts · @alice").click();
+        harness.run_steps(4);
+        assert_eq!(discoveries(harness.state()).len(), 1);
+        harness.get_by_label("Find hosts · @bob").click();
         harness.run_steps(4);
         let started = discoveries(harness.state());
         assert_eq!(
@@ -913,7 +928,7 @@ mod tests {
                 .map(|(_, account)| account.as_str())
                 .collect::<Vec<_>>(),
             ["alice-key", "bob-key"],
-            "every signed-in account refreshes without a Find hosts click"
+            "only explicitly requested accounts are discovered"
         );
         harness.get_by_label("Refreshing hosts · @alice…");
         for ((request, account), host) in started.iter().zip(["Alice build", "Bob build"]) {
@@ -955,7 +970,8 @@ mod tests {
             .0;
         let tab = TabId::next_for_test();
         let mut harness = picker_harness(configuration.clone(), tab);
-        queue_profile_refresh(&harness.ctx, tab, &configuration);
+        harness.run_steps(4);
+        harness.get_by_label("Find hosts · @alice").click();
         harness.run_steps(4);
         let (request, account) = discoveries(harness.state()).pop().unwrap();
         report_discovery(
@@ -968,7 +984,7 @@ mod tests {
         harness.run_steps(4);
         harness.get_by_label("@alice: couldn't find hosts. Host discovery timed out. Try again.");
 
-        harness.get_by_label("Refresh").click();
+        harness.get_by_label("Find hosts · @alice").click();
         harness.run_steps(4);
         let (request, _) = discoveries(harness.state()).pop().unwrap();
         report_discovery(
@@ -979,7 +995,7 @@ mod tests {
             Ok(vec![summary("alice.use", "Alice build")]),
         );
         harness.run_steps(4);
-        harness.get_by_label("Refresh").click();
+        harness.get_by_label("Find hosts · @alice").click();
         harness.run_steps(4);
         let (request, _) = discoveries(harness.state()).pop().unwrap();
         report_discovery(
@@ -1002,6 +1018,62 @@ mod tests {
         let cached = cached_discovery(&harness.ctx, &account).unwrap();
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].name, "Alice build");
+    }
+
+    #[test]
+    fn profile_host_session_refresh_requires_an_explicit_click_and_foreground_review() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice-key", 1, "alice"))
+            .unwrap()
+            .0;
+        let reference = HostReference {
+            id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+            account: AccountReference::Github { account_id: 1 },
+        };
+        let selected = reference.clone();
+        let tab = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 600.0))
+            .build_ui_state(
+                move |ui, picks: &mut Vec<ProfileHostPick>| {
+                    if let Some(pick) = show_profile_host_picker(
+                        ui,
+                        tab,
+                        &configuration,
+                        Some(&selected),
+                        Some("Saved build"),
+                        true,
+                    ) {
+                        picks.push(pick);
+                    }
+                },
+                Vec::new(),
+            );
+        remember_host(
+            &harness.ctx,
+            HostSessions {
+                reference: reference.clone(),
+                hint: HostHint {
+                    name: "Saved build".into(),
+                    locator: "alice.use".into(),
+                },
+                sessions: Vec::new(),
+            },
+        );
+        harness.run_steps(4);
+        assert!(
+            harness.state().is_empty(),
+            "saved host rendering remains offline"
+        );
+        harness.get_by_label("Refresh sessions").click();
+        harness.run_steps(4);
+        let Some(ProfileHostPick::Command(command)) = harness.state().last() else {
+            panic!("explicit refresh opens foreground host review");
+        };
+        assert!(
+            matches!(command.as_ref(), AppCommand::ReviewDevTunnelHost { host, .. }
+            if host.reference.as_ref() == Some(&reference))
+        );
     }
 
     #[test]
@@ -1040,7 +1112,7 @@ mod tests {
             .is_none());
         });
         disabled.run();
-        assert!(disabled.query_by_label("Refresh").is_none());
+        assert!(disabled.query_by_label("Find hosts · @alice").is_none());
 
         harness.run_steps(4);
         harness.get_by_label("Host").click();

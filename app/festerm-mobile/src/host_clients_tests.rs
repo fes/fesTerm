@@ -782,6 +782,15 @@ impl MobileApp {
                     attached: false,
                 });
         }
+        inventory.capabilities.profiles = true;
+        inventory.capabilities.ensure_profile = true;
+        inventory
+            .profiles
+            .push(festerm_host_protocol::ProfileSummary {
+                logical: LogicalSessionId::new(),
+                revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+                name: "Shared build profile".into(),
+            });
         fixture.hosts.inventory = Some(inventory);
         fixture.surface = Surface::Tabs;
         fixture.shell.tab = crate::shell::Tab::Profiles;
@@ -2473,4 +2482,294 @@ fn mobile_host_changed_account_or_recipe_discards_completed_work_without_a_repla
     app.poll_hosts(&context);
     assert!(app.hosts.receipt.is_none() && app.hosts.inventory.is_none());
     assert!(app.hosts.originals.is_empty());
+}
+
+#[test]
+fn mobile_host_shared_profile_operation_keeps_exact_revision_and_requires_capabilities() {
+    let mut hosts = HostUi::default();
+    assert!(hosts.shared_profile_operation(0).is_err());
+    let mut inventory = client_inventory(false);
+    let logical = LogicalSessionId::new();
+    let revision = festerm_host_protocol::Epoch::new(4).unwrap();
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: logical.clone(),
+            revision,
+            name: "Build shell".into(),
+        });
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    hosts.inventory = Some(inventory);
+    assert!(matches!(hosts.shared_profile_operation(0).unwrap(),
+        host_client::Operation::EnsureProfile { logical: selected, revision: selected_revision, .. }
+        if selected == logical && selected_revision == revision));
+    assert!(hosts.shared_profile_operation(1).is_err());
+    hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .ensure_profile = false;
+    assert!(hosts.shared_profile_operation(0).is_err());
+    assert!(
+        !hosts.quick_creation_allowed(),
+        "profile permission must not imply generic shell creation"
+    );
+}
+
+#[test]
+fn mobile_host_profile_can_explicitly_change_saved_host_without_network_or_losing_draft() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut original = client_recipe();
+    original.session_name = Some("build".into());
+    let mut other = client_recipe();
+    other.name = "Other host".into();
+    other.host_hint = Some(HostHint {
+        locator: "other.test".into(),
+        name: "Other host".into(),
+    });
+    for recipe in [&original, &other] {
+        store
+            .lock()
+            .unwrap()
+            .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+    }
+    let mut app = app().with_profiles(profiles);
+    assert!(app.select_host_profile(original.id.as_str(), true));
+    app.hosts.profile_name = "Edited shortcut".into();
+    app.hosts.session_name = "release".into();
+    app.hosts.create_if_missing = true;
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.host_action(&ctx, Action::SelectSavedProfileHost(1))
+        .unwrap();
+    assert_eq!(app.hosts.profile_name, "Edited shortcut");
+    assert_eq!(app.hosts.session_name, "release");
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, other.host);
+    assert_ne!(
+        app.hosts.selected.as_ref().unwrap().logical_session,
+        original.logical_session
+    );
+    assert!(app.hosts.receipt.is_none() && !app.hosts.enrolled);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.host_action(&ctx, Action::SaveProfile).unwrap();
+    let saved = store
+        .lock()
+        .unwrap()
+        .host_recipes()
+        .get(&original.id)
+        .unwrap()
+        .clone();
+    assert_eq!(saved.id, original.id);
+    assert_eq!(saved.host, other.host);
+    assert_eq!(saved.name, "Edited shortcut");
+    assert_eq!(saved.session_name(), "release");
+    assert!(matches!(saved.behavior, ConnectionBehavior::ResumeOrCreate));
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_profile_host_selection_cancel_preserves_original_target_and_draft() {
+    let profiles = crate::profiles::testing::profiles();
+    let original = client_recipe();
+    profiles
+        .store_handle()
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(original.clone()))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    assert!(app.select_host_profile(original.id.as_str(), true));
+    app.hosts.profile_name = "Unsaved name".into();
+    app.hosts.session_name = "Unsaved session".into();
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    app.host_action(&ctx, Action::CancelProfileHost).unwrap();
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, original.host);
+    assert_eq!(app.hosts.profile_name, "Unsaved name");
+    assert_eq!(app.hosts.session_name, "Unsaved session");
+    assert!(app.hosts.editing && app.host_recipe_current());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_shared_profiles_are_visible_without_generic_creation_or_render_effects() {
+    use egui_kittest::kittest::{By, Queryable};
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    let mut inventory = client_inventory(false);
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: LogicalSessionId::new(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Shared build".into(),
+        });
+    app.hosts.inventory = Some(inventory);
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    harness.get(By::new().label("Connect · Shared build"));
+    assert!(harness.query(By::new().label("+ New session")).is_none());
+    assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_explicit_session_name_edit_binds_unique_authorized_name_or_new_identity() {
+    let original = client_recipe();
+    let previous = original.logical_session.clone();
+    let mut hosts = HostUi {
+        selected: Some(original),
+        ..Default::default()
+    };
+    hosts.session_name = "release".into();
+    hosts.reconcile_profile_session_name();
+    let next = hosts.selected.as_ref().unwrap().logical_session.clone();
+    assert_ne!(next, previous);
+    hosts.reconcile_profile_session_name();
+    assert_eq!(
+        hosts.selected.as_ref().unwrap().logical_session,
+        next,
+        "rendering/validation must not allocate another identity"
+    );
+    let listed = LogicalSessionId::new();
+    let mut inventory = client_inventory(false);
+    inventory
+        .sessions
+        .push(festerm_host_protocol::SessionSummary {
+            target: host_client::Target {
+                logical: listed.clone(),
+                generation: GenerationId::new(1).unwrap(),
+            },
+            name: "build".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        });
+    hosts.inventory = Some(inventory);
+    hosts.session_name = "build".into();
+    hosts.reconcile_profile_session_name();
+    assert_eq!(hosts.selected.as_ref().unwrap().logical_session, listed);
+    assert_eq!(hosts.existing_session, Some(0));
+}
+
+#[test]
+fn mobile_host_reverting_session_name_restores_saved_identity_and_creation_off_needs_a_target() {
+    let recipe = client_recipe();
+    let logical = recipe.logical_session.clone();
+    let name = recipe.session_name().to_owned();
+    let mut hosts = HostUi {
+        selected: Some(recipe),
+        saved: true,
+        ..Default::default()
+    };
+    hosts.begin_profile_edit();
+    hosts.create_if_missing = true;
+    hosts.session_name = "another shell".into();
+    hosts.reconcile_profile_session_name();
+    assert_ne!(hosts.selected.as_ref().unwrap().logical_session, logical);
+    hosts.create_if_missing = false;
+    assert!(
+        hosts.profile_draft().is_err(),
+        "a new logical identity is not an existing session"
+    );
+    hosts.session_name = name;
+    hosts.reconcile_profile_session_name();
+    assert_eq!(hosts.selected.as_ref().unwrap().logical_session, logical);
+    hosts.profile_name = "Renamed shortcut".into();
+    let draft = hosts.profile_draft().unwrap();
+    assert_eq!(draft.logical_session, logical);
+    assert!(matches!(draft.behavior, ConnectionBehavior::ResumeOnly {}));
+}
+
+#[test]
+fn mobile_host_cancel_host_selection_restores_original_account_and_discards_foreign_results() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let first = festerm_mobile_tunnels::testing::seed_account(&store, 7, "first", false);
+    let second = festerm_mobile_tunnels::testing::seed_account(&store, 8, "second", false);
+    let original = client_recipe();
+    store
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(original.clone()))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    app.select_host_profile(original.id.as_str(), true);
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    app.hosts.account = second;
+    app.hosts.discovered = true;
+    app.hosts.hosts.push(TunnelSummary {
+        locator: "foreign.test".into(),
+        name: None,
+        description: None,
+        active: false,
+    });
+    app.host_action(&ctx, Action::CancelProfileHost).unwrap();
+    assert_eq!(app.hosts.account, first);
+    assert!(app.hosts.hosts.is_empty() && !app.hosts.discovered);
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, original.host);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_legacy_long_implicit_name_stays_editable_without_allocating_a_session() {
+    let mut original = client_recipe();
+    original.name = "x".repeat(200);
+    let logical = original.logical_session.clone();
+    let mut hosts = HostUi {
+        selected: Some(original),
+        saved: true,
+        ..Default::default()
+    };
+    hosts.begin_profile_edit();
+    hosts.profile_name = "Short local label".into();
+    hosts.create_if_missing = false;
+    let draft = hosts.profile_draft().unwrap();
+    assert_eq!(draft.logical_session, logical);
+    assert_eq!(draft.session_name, None);
+    assert!(matches!(draft.behavior, ConnectionBehavior::ResumeOnly {}));
+}
+
+#[test]
+fn mobile_host_known_identity_reuse_refuses_ambiguous_or_foreign_account_locators() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut first = client_recipe();
+    first.host_hint = Some(HostHint {
+        locator: "same.test".into(),
+        name: "First".into(),
+    });
+    let mut second = client_recipe();
+    second.host_hint = first.host_hint.clone();
+    for recipe in [&first, &second] {
+        store
+            .lock()
+            .unwrap()
+            .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+    }
+    let mut app = app().with_profiles(profiles);
+    app.hosts.account = account;
+    assert!(app.known_host_recipe("same.test").is_none());
+    store
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Delete(second.id))
+        .unwrap();
+    assert_eq!(app.known_host_recipe("same.test").unwrap().host, first.host);
+    app.hosts.account = "foreign".into();
+    assert!(app.known_host_recipe("same.test").is_none());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
 }

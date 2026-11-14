@@ -44,7 +44,7 @@ fn remote_view(scene: &str) -> remote::View {
     let phase = match scene {
         "disabled" => Some("disabled"),
         "enable-requested" => Some("enable-requested"),
-        "provisioned" => Some("provisioned"),
+        "provisioned" | "owner-context" | "review-owner" => Some("provisioned"),
         "reconciling" => Some("reconciling"),
         "stop-requested" => Some("stop-requested"),
         "cleanup-missing" | "cleanup-unverified" | "cleanup-guidance" => Some("cleanup-pending"),
@@ -119,8 +119,25 @@ fn remote_view(scene: &str) -> remote::View {
     if scene == "device" {
         view.device_code = Some(remote::gallery_device_code());
     }
-    if scene == "owner-context" {
-        view.owner_binding = Some("Synthetic public owner binding · installation 11111111-1111-4111-8111-111111111111 · github:42 · policy revision 7".into());
+    if matches!(scene, "provisioned" | "owner-context" | "review-owner") {
+        view.accounts.push(remote::HostAccount {
+            account_id: 42,
+            login: "reviewer".into(),
+        });
+    }
+    if matches!(scene, "owner-context" | "review-owner") {
+        view.owner_binding = Some(
+            serde_json::json!({
+                "installation": "11111111-1111-4111-8111-111111111111",
+                "host": {
+                    "host": "22222222-2222-4222-8222-222222222222",
+                    "host_key_fingerprint": "SHA256:synthetic-review-host"
+                },
+                "account": "github:42",
+                "principal": "33333333-3333-4333-8333-333333333333"
+            })
+            .to_string(),
+        );
         view.owner_revision = Some(7);
     }
     if scene == "cleanup-unverified" || scene == "cleanup-guidance" {
@@ -190,16 +207,23 @@ fn capture_remote(scene: &'static str) -> image::RgbaImage {
     harness.run_steps(4);
     let expand = match scene {
         "owner-context" => Some("Public owner binding for independent client review"),
-        "review-owner" => Some("Explicit owner-key approval · native vault only"),
+        "review-owner" => Some("Connect another device"),
         "advanced" | "advanced-selected" => Some("Advanced · explicit signed local bundle"),
         _ => None,
     };
     if let Some(label) = expand {
-        // These disclosures are nested inside the Advanced / Recovery section.
-        for label in ["Advanced / Recovery", label] {
-            harness.get_by_label(label).click();
-            harness.run_steps(4);
+        match scene {
+            "owner-context" => {
+                harness.get_by_label("Connect another device").click();
+            }
+            "review-owner" => {}
+            _ => {
+                harness.get_by_label("Advanced / Recovery").click();
+            }
         }
+        harness.run_steps(4);
+        harness.get_by_label(label).click();
+        harness.run_steps(4);
     }
     finish_experimental(&mut harness)
 }
@@ -395,7 +419,7 @@ fn capture_host_picker(scene: &'static str) -> image::RgbaImage {
     harness.run_steps(4);
     let open = match scene {
         "picker-open" => Some("Host"),
-        "session-open" => Some("Existing sessions"),
+        "session-open" => Some("Existing session"),
         _ => None,
     };
     if let Some(label) = open {

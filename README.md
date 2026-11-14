@@ -12,6 +12,13 @@ service qualification remains open under
 [#429](https://github.com/fes/fesTerm/issues/429);
 advanced scoped-token activation remains available.
 
+The host-based Desktop/iOS workflow uses explicit per-account discovery,
+shared profile inventory and durable session creation. iOS development builds
+select `--host-clients`; TestFlight selects that client graph. The
+[opt-in VM lab campaign](docs/dev-tunnel-workflow-lab.md) targets a dedicated
+controlled account and native approval fixture; a missing fixture blocks the
+campaign and does not count as end-to-end acceptance.
+
 The host also offers an explicitly enabled
 [rooted filesystem protocol](docs/dev-tunnel-files-protocol.md) for enumeration
 and streaming transfers. Desktop/iOS file-manager integration is separate work;

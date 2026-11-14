@@ -15,6 +15,7 @@ one of these modes:
 - `keyboard-routing-check`
 - `keyboard-routing-native`
 - `windows-conpty-prompt-stress` (Windows only)
+- `dev-tunnel-workflow` (explicit real-service/native-vault prerequisites)
 
 Each mode invokes the existing repository-owned runner and writes its
 content-free status file beneath the artifact directory supplied by the shared
@@ -42,7 +43,21 @@ builds keep that environment in their child PowerShell process. Cargo stderr
 progress is not itself a failure, but its nonzero exit still fails the run.
 Portable source/fixture contracts do not qualify native Windows execution.
 
-The fixed November ADR 0084 campaign modes are not in the current allowlist.
+`dev-tunnel-workflow` invokes the bounded real-service HOST client runner with
+an empty job payload. It selects only the controlled `fes-festerm1` identity
+and the operator's isolated configuration/native receipt. The two operator-selected
+creation-policy phases exercise shared profile start/resume, private profile exclusion,
+generic create permission, actual encrypted terminal roundtrips, exact detach and
+durable-generation survival. It never automates password login, enrolls an owner,
+accepts secrets from a job, deletes cloud resources or ends unrelated shells.
+Windows execution is explicitly **blocked** until an owned Job capability
+is implemented; a Windows host can be tested from a Unix client. Missing
+operator metadata, account credentials or owner approval is **blocked**,
+never pass. GUI acceptance is always separately marked **unrun**. See
+[the operator procedure](../../docs/dev-tunnel-workflow-lab.md) before adding this
+mode to a host's private allowlist and updating its adapter pin.
+
+The historical fixed November ADR 0084 campaign modes are not in the current allowlist.
 Historical source `62b1a47b` and its immutable private evidence retain those
 operators; see the [scope and outcome record](../../docs/manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).
 No old source result qualifies a new head or authorizes another VM window.

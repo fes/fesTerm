@@ -1274,3 +1274,27 @@ fn desktop_remote_access_bundle_progress_cannot_displace_sign_in_or_publish_afte
     assert!(controller.view.device_code.is_none());
     assert!(!controller.view.owner_approved);
 }
+
+#[test]
+fn desktop_remote_access_sign_in_delivery_controls_do_not_replace_pending_work() {
+    let context = egui::Context::default();
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("delivery controls cannot start host work")
+    })));
+    controller.view.busy = true;
+    controller.view.device_code = Some(gallery_device_code());
+    controller.view.failure = Some(Failure::SignIn);
+    let generation = controller.generation;
+    for action in [Action::CopySignInCode, Action::OpenSignInBrowser] {
+        controller.action(action, &context);
+        assert_eq!(controller.generation, generation);
+        assert!(controller.pending.is_none());
+        assert!(controller.fence.is_none());
+        assert_eq!(controller.view.failure, Some(Failure::SignIn));
+        assert!(controller.view.device_code.is_some());
+    }
+    controller.view.device_code = None;
+    controller.action(Action::CopySignInCode, &context);
+    assert!(controller.view.device_code.is_none());
+    assert!(controller.pending.is_none());
+}

@@ -47,6 +47,43 @@ enum Action {
     Create,
 }
 
+/// Reuse only an unambiguous same-account, exact-locator public identity.
+/// The protected receipt and live host pin still have to verify before inventory.
+fn known_host_reference(
+    context: &egui::Context,
+    configuration: &festerm_config::Configuration,
+    account_id: u64,
+    locator: &str,
+) -> Option<HostReference> {
+    let remembered = crate::screens::host_workspace::remembered_hosts(context);
+    let candidates = remembered
+        .iter()
+        .filter(|host| host.hint.locator == locator)
+        .map(|host| &host.reference)
+        .chain(
+            configuration
+                .host_recipes()
+                .recipes()
+                .iter()
+                .filter_map(|recipe| {
+                    recipe
+                        .host_hint
+                        .as_ref()
+                        .filter(|hint| hint.locator == locator)
+                        .map(|_| &recipe.host)
+                }),
+        )
+        .filter(|reference| reference.account == AccountReference::Github { account_id });
+    let mut known = None;
+    for reference in candidates {
+        if known.as_ref().is_some_and(|known| known != reference) {
+            return None;
+        }
+        known = Some(reference.clone());
+    }
+    known
+}
+
 fn valid_session_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
@@ -782,8 +819,16 @@ impl FesTermApp {
         let Some(account) = self.state.configuration().account(&host.account) else {
             return;
         };
-        let unbound = host.reference.is_none();
-        let reference = host.reference.unwrap_or_else(|| HostReference {
+        let known = host.reference.or_else(|| {
+            known_host_reference(
+                context,
+                self.state.configuration(),
+                account.account_id(),
+                &host.locator,
+            )
+        });
+        let unbound = known.is_none();
+        let reference = known.unwrap_or_else(|| HostReference {
             id: uuid::Uuid::new_v4()
                 .to_string()
                 .try_into()
@@ -1064,7 +1109,7 @@ impl FesTermApp {
                 Outcome::Created(created) => {
                     if created.disposition() == host_client::EnsureDisposition::Recreated {
                         self.overlays.transient_notice = Some((
-                            "The host recreated this session. Previous shell state was not restored.".into(),
+                            "Previous session ended. Started a new shell.".into(),
                             Instant::now() + Duration::from_secs(12),
                         ));
                     }
@@ -1106,8 +1151,7 @@ impl FesTermApp {
                 } => {
                     if disposition == host_client::EnsureDisposition::Recreated {
                         self.overlays.transient_notice = Some((
-                            "The host recreated this profile session. Previous shell state was not restored."
-                                .into(),
+                            "Previous session ended. Started a new shell.".into(),
                             Instant::now() + Duration::from_secs(12),
                         ));
                     }
@@ -1378,14 +1422,14 @@ impl FesTermApp {
                 ui.add_enabled_ui(!browser.busy(), |ui| {
                     if browser.receipt.is_none() {
                         ui.label("Verify this host");
-                        ui.label("Public owner binding");
+                        ui.label("Host details");
                         ui.add(egui::TextEdit::multiline(&mut *browser.prerequisite)
                             .char_limit(4096).desired_rows(3));
                         ui.label("Host fingerprint");
                         ui.add(egui::TextEdit::singleline(&mut browser.fingerprint).char_limit(128));
                         ui.checkbox(&mut browser.consent, "I independently verified this host and account");
                         ui.collapsing("Where to find these details", |ui| {
-                            ui.label("Use this host's protected owner-approval details. Never paste a private key, credential or token.");
+                            ui.label("On the host, open Settings → Dev Tunnels → Remote access → Connect another device. Copy its host details and fingerprint. Never paste a private key or token.");
                         });
                         if action_button_enabled(ui, browser.consent && !browser.fingerprint.is_empty(),
                             ActionButtonRole::Accent, "Prepare client key").clicked() {
@@ -1417,7 +1461,7 @@ impl FesTermApp {
                                     ui.collapsing("Approval details", |ui| {
                                         ui.monospace(public_key);
                                         ui.monospace(fingerprint);
-                                        ui.label("On this host, explicitly approve this public key using festerm-host approve-owner. Choose permissions separately.");
+                                        ui.label("On the host, open Settings → Dev Tunnels → Remote access → Approve a client. Paste this public key and fingerprint, then confirm the selected permissions.");
                                     });
                                 }
                             }

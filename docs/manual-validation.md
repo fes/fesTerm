@@ -729,6 +729,25 @@ separately owned HOST-03–05 slice, not implemented or claimed by this incremen
 
 ## Host-based Dev Tunnel UI redesign evidence
 
+The follow-up workflow repair removes automatic new-profile discovery, keeps
+create-if-missing explicit and editable, consolidates ordinary local sharing on
+the protected profile catalog, and renders shared profiles on mobile. Public
+metadata may be deliberately retargeted for future connections; protected
+receipts, live attachments and already-issued operations retain their original
+binding. Host-side GUI approval remains separate from discovery and sign-in.
+The iOS builders expose an explicit `--host-clients` mode and TestFlight selects
+the HOST client graph; build receipts are not device execution evidence.
+
+The opt-in `dev-tunnel-workflow` VM adapter mode exercises real GitHub and Dev
+Tunnels service/client integration for the controlled `fes-festerm1` account.
+See [the operator procedure](dev-tunnel-workflow-lab.md). Missing native sign-in,
+protected owner receipt, isolated fixture or host approval is **blocked**, not
+passed. Creation-off/on phases use stable owned logical IDs and exact detach;
+there is no account signup, password login, global cleanup or anonymous access.
+The password record remains local-only outside the repository. Native GUI
+setup/approval, clipboard/browser delivery, host-disable behavior and physical
+iOS acceptance remain separate checks; this runner cannot qualify them.
+
 The November 2026 desktop/iOS redesign requires synthetic normal/error captures
 for accounts, sign-in, host settings, eligible local sharing, discovery,
 authorized sessions, named durable creation and profile connection. Capture

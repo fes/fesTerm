@@ -239,10 +239,10 @@
     {
       "ids": ["host-profile-session-open", "host-profile-session-existing", "host-profile-session-new", "host-profile-session-locked"],
       "production_symbols": ["screens::profiles::show_profiles", "screens::profiles::host_recipes"],
-      "route": "Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)",
+      "route": "Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing",
       "exit": "Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.",
       "gui_ids": ["HOST-02"],
-      "notes": "Editable combo lists the remembered host's existing sessions and accepts a new name. Existing selects a known session; new shows a typed name not yet on the host; locked shows a recipe-derived profile whose session name is fixed."
+      "notes": "The existing-session selector lists remembered authorized sessions. Create session if missing explicitly reveals an editable required name; both new and saved profiles permit deliberate host/session edits. The historical session-locked image ID now shows editable saved metadata."
     }
   ],
   "implemented_egui_gaps": [

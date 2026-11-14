@@ -1896,8 +1896,9 @@ Disabling fences remote access without terminating durable local shells.
 Operator diagnostics, protected owner approval and recovery remain available
 through contextual disclosures rather than a permanent console.
 
-Only eligible durable local profiles offer **Make this profile available on
-the computer's remote host**. When the host is off, show an actionable Settings
+Only eligible durable local profiles offer **Allow remote access to this
+session** as one saved-profile opt-in. Exact-running-generation Bind/Switch
+controls are a separate Advanced workflow. When the host is off, show an actionable Settings
 link; do not launch a setup wizard or select an account per profile. Saving
 registers the exact saved recipe in the protected host catalog without starting
 a shell or creating a tunnel. Settings owns the computer-level service and its
@@ -1912,7 +1913,10 @@ shared host; they are never adopted or silently migrated.
 New Session offers **Find hosts · @username** for each account. Discovery is
 explicit; selecting a host explicitly obtains authorized sessions. Saved hints
 are public metadata, never online indicators. First contact still requires
-independent host verification and separate host-local owner approval. Ordinary
+independent host verification and separate host-local owner approval. The host's
+**Connect another device** section exposes copyable public details/fingerprint
+and **Approve a client** controls; no command-line tool is required for this
+approval. Copying metadata alone never approves a client. Ordinary
 sessions offer Connect; creation appears only when supported and permitted.
 Quick creation requires a trimmed nonblank **Session name**, creates a durable
 shell only on **Create and connect**, and preserves its original operation on
@@ -1926,7 +1930,10 @@ permit creation. Names are labels, not a substitute for host/account/logical
 identity. Existing advanced/temporary recipes remain compatible.
 Turning creation off preserves the logical identity with `resume_only`; it does
 not invent an exact generation. Profile discovery returns the chosen public
-host/session into the same draft, with one offline Save.
+host/session into the same draft, with one offline Save. Opening either new
+or saved editors starts no discovery; each account has its own Find hosts
+action. Create session if missing remains configurable without inventory or
+creation permission; changing that choice never silently follows typed text.
 
 The handoff HTML is workflow guidance, not a replacement design system. Use
 existing dark semantic tokens, integrated chip chrome and shared action roles;
@@ -1942,8 +1949,9 @@ Metadata management does not imply an online indicator or sign-in-on-save.
 The desktop surface lists public host/account/logical identity and exact
 generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
 import and explicit JSON export/copy. Arguments use a JSON string vector so
-quoting and empty arguments survive edits. Host/logical IDs cannot be retargeted
-by editing. Failed writes retain the draft; results are bound to its tab/request.
+quoting and empty arguments survive edits. Only explicit host/session selection retargets future metadata;
+unchanged names preserve the existing logical identity, and live attachments
+and protected pending operations keep their original snapshots. Failed writes retain the draft; results are bound to its tab/request.
 Delete initially focuses Cancel, Escape cancels without a command, and changed
 or removed records require reopening the confirmation rather than stale deletion.
 Import review is metadata inspection only, never persisted execution approval.

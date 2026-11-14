@@ -28,6 +28,18 @@ assert sys.argv[1:] == []
 sys.exit(3 if os.environ.get("FESTERM_TEST_KEYBOARD_FAILURE") == "1" else 0)
 EOF
 
+cat >"$temporary_root/source/scripts/check_dev_tunnel_workflow.py" <<'EOF'
+import os
+from pathlib import Path
+import sys
+
+assert sys.argv[1:3] == ["--run", "--result"] and len(sys.argv) == 4
+mode = os.environ.get("FESTERM_TEST_HOST_RESULT", "pass")
+status = "blocked" if mode == "blocked" else "fail" if mode == "fail" else "pass"
+Path(sys.argv[3]).write_text(f"scope=real-service-host-client\nstatus={status}\n")
+sys.exit(2 if mode == "blocked" else 1 if mode == "fail" else 0)
+EOF
+
 for platform in linux macos; do
     cat >"$temporary_root/source/scripts/run-$platform-os-input-smoke.sh" <<'EOF'
 #!/usr/bin/env sh
@@ -85,6 +97,28 @@ EOF
         "$temporary_root/source-map.json" \
         "$temporary_root/artifacts/invalid"; then
         echo 'adapter accepted arbitrary stress parameters' >&2
+        exit 1
+    fi
+
+    jq -e '.modes | index("dev-tunnel-workflow") != null' "$adapter_root/policy.json" >/dev/null
+    cat >"$temporary_root/job.json" <<EOF
+{"adapter_id":"festerm","adapter_schema_version":1,"platform":"$platform","mode":"dev-tunnel-workflow","payload":{}}
+EOF
+    "$adapter_root/$platform.sh" "$temporary_root/job.json" "$temporary_root/source-map.json" "$temporary_root/artifacts/$platform"
+    grep -qx 'status=pass' "$temporary_root/artifacts/$platform/dev-tunnel-workflow.txt"
+    for campaign_result in blocked fail; do
+        if FESTERM_TEST_HOST_RESULT=$campaign_result "$adapter_root/$platform.sh" \
+            "$temporary_root/job.json" "$temporary_root/source-map.json" "$temporary_root/artifacts/$platform"; then
+            echo 'adapter masked a failed or blocked HOST campaign' >&2
+            exit 1
+        fi
+        grep -qx "status=$campaign_result" "$temporary_root/artifacts/$platform/dev-tunnel-workflow.txt"
+    done
+    cat >"$temporary_root/invalid-job.json" <<EOF
+{"adapter_id":"festerm","adapter_schema_version":1,"platform":"$platform","mode":"dev-tunnel-workflow","payload":{"password":"must-not-be-accepted"}}
+EOF
+    if "$adapter_root/$platform.sh" "$temporary_root/invalid-job.json" "$temporary_root/source-map.json" "$temporary_root/artifacts/invalid"; then
+        echo 'adapter accepted credential or command payload for HOST campaign' >&2
         exit 1
     fi
 
