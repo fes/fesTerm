@@ -15,8 +15,8 @@ A workspace run exposed a transient Busy while a test re-adopted the same
 reserved daemon generation. The fixture now forces that contention, verifies
 the launching record remains intact, and retries only Busy with the original
 operation before checking the same native identity. No production recovery
-policy or authority changed. A parallel nextest run also exposed transient
-journal contention in the cancellation/revocation test; it now retries only
+policy or authority changed. A parallel nextest run also exposed Busy in the
+cancellation/revocation test; it now forces lease contention and retries only
 Busy through the existing bounded helper. A separate bridge test waits for
 READY across the recovery snapshot and ordered output frames rather than
 assuming PTY output precedes the snapshot; its exit and takeover final-frame

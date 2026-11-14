@@ -1,12 +1,12 @@
 # State of mobile UI
 
-Fresh synthetic review set: **366 PNGs**, source HEAD `7a29259eca442775605ff99247cd3d4e3cca1886`.
+Fresh synthetic review set: **366 PNGs**, source HEAD `a4fc3a9b276cd92448b4c0781f3fb36666f1efde`.
 The working tree contained the test-only gallery additions at capture time;
 each manifest records `source_dirty`. This is a finite production-surface catalog,
 not every possible content, scroll offset, connection outcome or gesture combination.
 
 Unchanged-source fingerprint (SHA-256 of the canonical sorted per-file SHA-256 map):
-`c0e9176919289c3ce507275ce67d8ac7637a923c3683f1ccb2ff4d2cedb164d3`. The capture script hashes working-tree mobile sources,
+`03b9aa0f292595667656ac2705abd910bcf35ee1ace69d5b7a3c33be24c345d4`. The capture script hashes working-tree mobile sources,
 workspace crate/vendor code, manifests/lockfile and rendering assets **before and
 after all captures**, refusing attribution if any input changes. Thus dirty files
 are identified by their actual contents, not merely the base Git SHA. Each of the

@@ -1729,12 +1729,10 @@ fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_re
     let creation = fixture.creation(Lifetime::Persistent {});
     let running = fixture.ensure(&creation);
     let before_revoke = fixture.state();
-    retry_busy(|| {
-        fixture
-            .control()
-            .revoke_local(&fixture.owner, &creation.logical)
-    })
-    .unwrap();
+    fixture
+        .control()
+        .revoke_local(&fixture.owner, &creation.logical)
+        .unwrap();
     // Lease publication committed, but model a crash before journal publication.
     fixture.save_state(&before_revoke);
     let observation = fixture
@@ -2422,16 +2420,35 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
         AttachmentCancellation::Committed(Some(lease.clone()))
     );
     let pending = fixture.attach(&running.target, &AttachmentId::new(), true);
-    fixture
-        .control()
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let lease_name = format!("host-daemon-{}.lock", running.target.generation.get());
+    let lease_lock = storage::open_private_file(&directory, Path::new(&lease_name), false).unwrap();
+    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
+        Err(error) => panic!("owned generation lease failed: {error}"),
+    })
+    .unwrap();
+    let mut lease_lock = Some(lease_lock);
+    retry_busy(|| {
+        let result = fixture
+            .control()
+            .revoke_local(&fixture.owner, &creation.logical);
+        if let Some(lease_lock) = lease_lock.take() {
+            assert!(
+                matches!(&result, Err(ControlError::Busy)),
+                "revocation must refuse while the generation lease is held: {result:?}"
+            );
+            drop(lease_lock);
+        }
+        result
+    })
+    .unwrap();
     pending.session.acknowledge_recovery_adoption();
     drop(pending);
     thread::sleep(Duration::from_millis(100));
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
     // Revocation fences pending ownership, not the persistent process policy.
-    let directory = storage::private_directory(&fixture.root, false).unwrap();
     let name = PathBuf::from(format!(
         "host-daemon-{}.json",
         running.target.generation.get()
