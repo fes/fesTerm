@@ -7,7 +7,7 @@ in source; pages route to code, they do not authorize or instruct.
 | Page | Owns |
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
-| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software painting boundaries without session I/O. |
+| [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns input routing, render caching, and native/software painting boundaries without session I/O. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the shared session lifecycle, PTY and serial backends, daemon persistence, and host-controlled attachments for recoverable terminals. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML config, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
@@ -18,7 +18,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns discovery, consented hosting, and the trusted session boundaries for managed tunnels, enterprise inventory, and PowerShell. |
 | [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, native-window validation, macOS bridge semantics, and wake/privacy hooks that gate packaged runtime behavior. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime, Android JNI boundary, and offline-first terminal/document flows for iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | Desktop application shell and screens own fesTerm's egui window lifecycle, pane/session routing, and user-facing launch flows. |
+| [Desktop application shell and screens](app-shell.md) | fesTerm’s desktop shell owns window lifecycle, pane/session routing, and screen-driven launch flows. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

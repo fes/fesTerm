@@ -139,8 +139,8 @@ struct SettingsNavigation {
     text_focused: bool,
 }
 
-/// Main-page section headings, top to bottom. Drill-in sections are rows
-/// rather than headed cards and are named by their row title.
+/// Main-page section headings and drill-in rows, top to bottom.
+/// Remote access is the last row inside the Dev Tunnels card.
 #[cfg(test)]
 const SETTINGS_SECTION_ORDER: &[&str] = &[
     "Terminal",
@@ -930,17 +930,22 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                     }
                                 });
                             }
+                            #[cfg(feature = "local-host-settings")]
+                            {
+                                settings_row_separator(ui);
+                                let page = SettingsPage::RemoteAccess;
+                                let response = settings_drill_in_row(
+                                    ui,
+                                    settings_drill_in_id(navigation_id, page),
+                                    page.title(),
+                                    Some(&remote_access_summary(&local_remote_access)),
+                                );
+                                settings_drill_in_focus(ui, &response, page, &mut navigation);
+                                if response.clicked() {
+                                    open_page = Some(page);
+                                }
+                            }
                         });
-
-                        #[cfg(feature = "local-host-settings")]
-                        settings_drill_in_card(
-                            ui,
-                            settings_drill_in_id(navigation_id, SettingsPage::RemoteAccess),
-                            SettingsPage::RemoteAccess,
-                            &remote_access_summary(&local_remote_access),
-                            &mut navigation,
-                            &mut open_page,
-                        );
 
                         settings_card(ui, "Recording", |ui| {
                             if settings_toggle_row(
