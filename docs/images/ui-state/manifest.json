@@ -241,7 +241,7 @@
       "width": 752,
       "height": 516,
       "tier": "headless",
-      "sha256": "179903451c5bfb4cfa0f6f02d0e5609938efffc8904c4b9b8e80de504c168ae5"
+      "sha256": "973bf9d25bb9f09e4f4cce2adea5a84bd38db72c6cf6172da659da5653e21a99"
     },
     {
       "id": "dev-tunnel-host-settings-requested",
@@ -252,7 +252,7 @@
       "width": 752,
       "height": 516,
       "tier": "headless",
-      "sha256": "0d3c9bd9ed9a7bf6275c51859f34cc22da6e0156f104fd55b2366d768c0c6259"
+      "sha256": "3e8971c9d0ee5e812c1cfdacf1bc19694cdd33803b4e080d1a59f5dfd45fcc57"
     },
     {
       "id": "dev-tunnel-hosts",
@@ -340,7 +340,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8e6b7b0bb6eaf6d5dc3c25d2fd36506bd0e81984c304683befe40731b4407b5f"
+      "sha256": "68f0316e0259861893f382148961630bfeccc033a86d156f46c6a0cec7a8201d"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -351,7 +351,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "c06bc3fbb4dd07d3a850c978a565af2f7b3b4e5f98fcf4dbc428d5823eacdd5e"
+      "sha256": "c723a4575eabeeb03bba5711947f57926b12c5d6cc23b52f7b860a5c902e4f9e"
     },
     {
       "id": "text-editor-dirty-close",
@@ -362,7 +362,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "5152b041fdd9dc627015f9d4e9adb346cc0fd7c1e7142afbbee608b046f396d2"
+      "sha256": "1054fa25241d9a93da24da5b289587c1d40234652c888447de92f6863edf6b48"
     },
     {
       "id": "text-editor-find",
@@ -373,7 +373,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "9a2e2307d08ff56875f7be8c2d02cd57ce97d89fcc373de5363295febcdf1dd5"
+      "sha256": "12c3c43569b32df9e0be48c7103670049b476a6717335d77901f15559cd4cec9"
     },
     {
       "id": "text-editor-options",
@@ -384,7 +384,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "9cf948a759929fe15c1f08ccc524326efc6b63a491c22c6bb465ff76cdc8dfb9"
+      "sha256": "ff7f84b47aa4fd799564410f58983c73a6587bbc11e3e875c664d953f0e417fb"
     },
     {
       "id": "text-editor-outline",
@@ -395,7 +395,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "75a5d2a9e0ae3512cd703b4188cfc3a1ed273aa27b8889a03d4b0d78d5b95efe"
+      "sha256": "703000ca49eda9de8967b291bdf02a45b8db50ce27a1d1a6f76a8bd4a34167e6"
     },
     {
       "id": "text-editor-preview",
@@ -406,7 +406,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4b09644e0544ad3fb572677477067868d9963dcf7d91fa2d6777ea9702cf5255"
+      "sha256": "0dd67f818c168f2ced5724481f449ce5c7a402062dafaca614de3aa2cf9ffd79"
     },
     {
       "id": "text-editor-save-as",
@@ -417,7 +417,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "8dedb489a05cc16d8d5632d7ee28e4807f29a2e861a282c383a03a35e0e83cbd"
+      "sha256": "c57963dc80aabab7e35b3916881a070c6966b3c8e4e5aee2e87a6f058182a071"
     },
     {
       "id": "text-editor-saved",
@@ -428,7 +428,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "1a697b338b85dc91076cd41721c28d882768b93cca291179cd2b4710aa72c0e0"
+      "sha256": "d242c3ee3357643e7a7e183e2f529ac3c3f248b0f4763a505254cbee9c9a00ab"
     },
     {
       "id": "text-editor-split",
@@ -439,7 +439,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d923aa9595dc49f4edf3a4294df327d45efa7eb7a134dc8f26df6229d7062104"
+      "sha256": "95c9dda6c630ebd9c70c15be132256571bed9c604ef2dfea4e55f5b16a7c5157"
     },
     {
       "id": "text-editor-syntax",
@@ -450,7 +450,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "184459eced0a291e9d55a43678626bc1afee4dd588b03132a4aab4511a86d234"
+      "sha256": "d7405575f1b549cb53e0ded4cdf5709d64ad12449b9ced9e809da2b9b642ce2f"
     },
     {
       "id": "text-editor-unsaved",
@@ -461,7 +461,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4c4afb8795f47c0aea946add72b8068dcf1e76a6c080f651f63c3923057d039f"
+      "sha256": "61f5ee52270193a5e3b69e1f2bc3b41ebb33374b90b10678ed95ccf2e342d1b4"
     },
     {
       "id": "text-editor-vi-command",
@@ -472,7 +472,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "bd86793710fe811cf7112804932fb697c8fee116b3faec37da652f88a4d621d2"
+      "sha256": "f6cda4a6d1dbdb28c33741e5917fe0fbbbea10fcf91a2fe0eaee1f7f247e9284"
     },
     {
       "id": "text-editor-vi-mode",
@@ -483,7 +483,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "e0030646b5b7f89d8618a793af6778d7f9eccb6c987af54a6feb344b7e01da0c"
+      "sha256": "7c5d64a1e4cc21c1a890e2d3dddf7c932ee66d6890a06d143ed0a583e3cac00e"
     },
     {
       "id": "text-editor-vi-search",
@@ -494,7 +494,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "0c6c3f8cac84a125720195a64cb7737ab0bb385308bf7a3f07db9a6a3db35922"
+      "sha256": "fc1dadaa1c3e8b3f69bc2c39388985979f3aff5bc188e693c9aadc06d052946e"
     },
     {
       "id": "dev-tunnel-changed-host",
@@ -2207,10 +2207,10 @@
       "title": "Remote access \u00b7 no local installation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-absent.png",
-      "width": 252,
-      "height": 91,
+      "width": 1100,
+      "height": 99,
       "tier": "headless",
-      "sha256": "c03292c472e29515031b7aafaf0f5df93fc9dc4eeed306fc69675d94090017fe"
+      "sha256": "ec44bab4d1a70cfd1e847ce07eaca6bc6a7e999228c6ae62ed2fcd62b652fcfe"
     },
     {
       "id": "remote-acquiring",
@@ -2218,10 +2218,10 @@
       "title": "Remote access \u00b7 authenticating exact bundle",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-acquiring.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "19ad716906f533532ab01f8483a23cd108b4e36617a1830c0f50855ee8f5c9f1"
+      "sha256": "6ef7b4c525b75a5cfbd044e1cfaf41e1089922552a017ebd0d2d00458dbf743d"
     },
     {
       "id": "remote-advanced-bundle",
@@ -2229,10 +2229,10 @@
       "title": "Remote access \u00b7 explicit advanced signed local bundle",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-advanced-bundle.png",
-      "width": 1083,
-      "height": 527,
+      "width": 1100,
+      "height": 542,
       "tier": "headless",
-      "sha256": "82794721b1531a3a5fab6ad53ec522c230b8c7c77381d3a5010d7cf4eb2f98f9"
+      "sha256": "d12d4b39e740c16b81a0b6c869b00a848de84805588a945fe7857da49041f8ac"
     },
     {
       "id": "remote-advanced-selected",
@@ -2240,10 +2240,10 @@
       "title": "Remote access \u00b7 reviewed manual signed file selection",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-advanced-selected.png",
-      "width": 1083,
-      "height": 527,
+      "width": 1100,
+      "height": 542,
       "tier": "headless",
-      "sha256": "4df477a9bd7efca27fd0bb1bc031097c7f70dfb9277832b99068ff93b198aad0"
+      "sha256": "60b7efc11c18bbe8d55f660883a682d296c0c6d595e424564eeb20b80cd4d5f4"
     },
     {
       "id": "remote-authenticated",
@@ -2251,10 +2251,10 @@
       "title": "Remote access \u00b7 authenticated bytes",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-authenticated.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "19ad716906f533532ab01f8483a23cd108b4e36617a1830c0f50855ee8f5c9f1"
+      "sha256": "6ef7b4c525b75a5cfbd044e1cfaf41e1089922552a017ebd0d2d00458dbf743d"
     },
     {
       "id": "remote-cancelling",
@@ -2262,10 +2262,10 @@
       "title": "Remote access \u00b7 cancelling and fencing",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-cancelling.png",
-      "width": 443,
-      "height": 163,
+      "width": 1100,
+      "height": 171,
       "tier": "headless",
-      "sha256": "bff4c76b2ab34e0c85f1a9a91e9e791375e959ed7c7f4b1ad2f8749e770a708e"
+      "sha256": "fe5dd7507f82c57354ba1e506d70f8bc33dfd1a338964bf8a88c94a2f12ee567"
     },
     {
       "id": "remote-cleanup-guidance",
@@ -2273,10 +2273,10 @@
       "title": "Remote access \u00b7 authenticated manual provider guidance",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-cleanup-guidance.png",
-      "width": 252,
-      "height": 118,
+      "width": 1100,
+      "height": 126,
       "tier": "headless",
-      "sha256": "b46bbc0a545ddf046b1b286c9fa100b868e7be9dddfb85240524e022195cc9be"
+      "sha256": "6a24c5f1f4fd5623042f46791da324977599251c348c9ebb98135675176e0ba1"
     },
     {
       "id": "remote-cleanup-missing",
@@ -2284,10 +2284,10 @@
       "title": "Remote access \u00b7 missing cleanup receipt",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-cleanup-missing.png",
-      "width": 252,
-      "height": 118,
+      "width": 1100,
+      "height": 126,
       "tier": "headless",
-      "sha256": "b46bbc0a545ddf046b1b286c9fa100b868e7be9dddfb85240524e022195cc9be"
+      "sha256": "6a24c5f1f4fd5623042f46791da324977599251c348c9ebb98135675176e0ba1"
     },
     {
       "id": "remote-cleanup-unverified",
@@ -2295,10 +2295,10 @@
       "title": "Remote access \u00b7 unverified stored cleanup context",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-cleanup-unverified.png",
-      "width": 252,
-      "height": 118,
+      "width": 1100,
+      "height": 126,
       "tier": "headless",
-      "sha256": "b46bbc0a545ddf046b1b286c9fa100b868e7be9dddfb85240524e022195cc9be"
+      "sha256": "6a24c5f1f4fd5623042f46791da324977599251c348c9ebb98135675176e0ba1"
     },
     {
       "id": "remote-complete",
@@ -2306,10 +2306,10 @@
       "title": "Remote access \u00b7 setup returned, not ready",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-complete.png",
-      "width": 252,
-      "height": 118,
+      "width": 1100,
+      "height": 126,
       "tier": "headless",
-      "sha256": "c6647c69ccf2d0d5673a73147578d9d3c14efb6461fe692c90e95de85eeed01e"
+      "sha256": "a3ce23650f690e8589df9e8f1d2a59eae092bf69e73a18555c8ce24347df36b7"
     },
     {
       "id": "remote-device-signin",
@@ -2317,10 +2317,10 @@
       "title": "Remote access \u00b7 foreground device sign-in",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-device-signin.png",
-      "width": 383,
-      "height": 194,
+      "width": 1100,
+      "height": 206,
       "tier": "headless",
-      "sha256": "c08adb7a80c299017d063bfaf0abc2e446f76eadfef4aee259f3c3fcdfcec0a9"
+      "sha256": "9502cc05115cecc73b89a5ffebe1c448f07e3890786ed138e50f430a4bfca301"
     },
     {
       "id": "remote-disabled",
@@ -2328,10 +2328,10 @@
       "title": "Remote access \u00b7 disabled",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-disabled.png",
-      "width": 252,
-      "height": 91,
+      "width": 1100,
+      "height": 99,
       "tier": "headless",
-      "sha256": "c03292c472e29515031b7aafaf0f5df93fc9dc4eeed306fc69675d94090017fe"
+      "sha256": "ec44bab4d1a70cfd1e847ce07eaca6bc6a7e999228c6ae62ed2fcd62b652fcfe"
     },
     {
       "id": "remote-enable-requested",
@@ -2339,10 +2339,10 @@
       "title": "Remote access \u00b7 enable requested",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-enable-requested.png",
-      "width": 288,
-      "height": 217,
+      "width": 1100,
+      "height": 233,
       "tier": "headless",
-      "sha256": "0d6e6c2045f64c04f75941809d69444184079c4c385ce9fb851afdbfd81c4c91"
+      "sha256": "8972540f299e9d24448ff899987c5de4e018e9aa650a1345a1f57539ed69bc18"
     },
     {
       "id": "remote-error-account",
@@ -2350,10 +2350,10 @@
       "title": "Remote access \u00b7 account verification required",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-account.png",
-      "width": 420,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "b93d5515128f4c16f579a03a1ba64bfc5afd9b7821a2289a5153994d3283a458"
+      "sha256": "5aafa3e9504e3abd06879aa5a520d77f8af03417a614b50baea70cfbe0113dc3"
     },
     {
       "id": "remote-error-busy",
@@ -2361,10 +2361,10 @@
       "title": "Remote access \u00b7 admission draining",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-busy.png",
-      "width": 326,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "83293a32f60953be68fb61703d4e11ec12301ada8b948df1114cef6f55e4dacf"
+      "sha256": "a9d06fc06c84fb1ae12f667e935547495693e7ecaa791965a1502d190b8384e8"
     },
     {
       "id": "remote-error-cancelled",
@@ -2372,10 +2372,10 @@
       "title": "Remote access \u00b7 cancelled operation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-cancelled.png",
-      "width": 326,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "83293a32f60953be68fb61703d4e11ec12301ada8b948df1114cef6f55e4dacf"
+      "sha256": "a9d06fc06c84fb1ae12f667e935547495693e7ecaa791965a1502d190b8384e8"
     },
     {
       "id": "remote-error-changed",
@@ -2383,10 +2383,10 @@
       "title": "Remote access \u00b7 stale scope refusal",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-changed.png",
-      "width": 252,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "63650b802f7d01c48c9f2d3a1d839f2f61fe6d499e7daea4734b75b0e63eb9aa"
+      "sha256": "7cbcd7a3454ea2e3aa2de0f0b0803da707b5f5b2e6a9ffe10c352714bce488fd"
     },
     {
       "id": "remote-error-cloud",
@@ -2394,10 +2394,10 @@
       "title": "Remote access \u00b7 cloud outcome uncertain",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-cloud.png",
-      "width": 365,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "a92500ba78edb1ea8f6712a4cfc38d4249d19272002b8cc089bd19a7fc456833"
+      "sha256": "45d7e0474d2eaea0d1c13eb86b91355c955d6b3e434169f46de27b261c06a388"
     },
     {
       "id": "remote-error-download",
@@ -2405,10 +2405,10 @@
       "title": "Remote access \u00b7 bounded acquisition failed",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-download.png",
-      "width": 304,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "c93710b46556ac83f2742964d05bac8d3acfd1f2c4036daa6911cc9303a7efdb"
+      "sha256": "1793c22fdd21d0b06162e72482fd4429c7257b4198e9b692eab082250e817ad8"
     },
     {
       "id": "remote-error-draft",
@@ -2416,10 +2416,10 @@
       "title": "Remote access \u00b7 bounded draft validation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-draft.png",
-      "width": 256,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "8cf604a8cab2726bd0b65af8b4b2f3ad51f59f660a21e2b2114db3e71b3a9099"
+      "sha256": "01f82e7d5fad0d453b87749654db7c27342882e7e739d6901d3636732967d6f5"
     },
     {
       "id": "remote-error-native",
@@ -2427,10 +2427,10 @@
       "title": "Remote access \u00b7 no native observation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-native.png",
-      "width": 256,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "50e9dee63255ca3aca7b6fed4f3747766cc157d84de11998b5a03b336eca7d98"
+      "sha256": "c486e00647cd568d55c32522afe61b8b178e0871ee19ce822c35ad893351bc7e"
     },
     {
       "id": "remote-error-owner",
@@ -2438,10 +2438,10 @@
       "title": "Remote access \u00b7 owner approval refused",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-owner.png",
-      "width": 291,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "bdbc70efed3a2f768e65593651c28020fca038d7f7fd6c67300343b6a45a950a"
+      "sha256": "afd311d3270e3078dff705fac1541f4a5d08b21a8ef173cf46df2e126055c502"
     },
     {
       "id": "remote-error-platform",
@@ -2449,10 +2449,10 @@
       "title": "Remote access \u00b7 native policy unqualified",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-platform.png",
-      "width": 366,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "b18a917e61129343099f75e6d92ddb1671658bffb286344d8eb8268cef189caa"
+      "sha256": "0e30b61c1d37c30ac0f0955049b04b5990beeec411a673d311f881be0cb1e0a4"
     },
     {
       "id": "remote-error-private",
@@ -2460,10 +2460,10 @@
       "title": "Remote access \u00b7 protected storage refusal",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-private.png",
-      "width": 337,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "192fc41190b9475cb48f6df61be0497377d5f7e88ca24bc08ccc004bea5f8fa4"
+      "sha256": "adf8f0355db7290fe3757cbee8a2d579eca48189f7dd6060f2108ee4478afebf"
     },
     {
       "id": "remote-error-recovery",
@@ -2471,10 +2471,10 @@
       "title": "Remote access \u00b7 incomplete reconciliation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-recovery.png",
-      "width": 365,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "a92500ba78edb1ea8f6712a4cfc38d4249d19272002b8cc089bd19a7fc456833"
+      "sha256": "45d7e0474d2eaea0d1c13eb86b91355c955d6b3e434169f46de27b261c06a388"
     },
     {
       "id": "remote-error-refresh",
@@ -2482,10 +2482,10 @@
       "title": "Remote access \u00b7 refresh required",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-refresh.png",
-      "width": 252,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "63650b802f7d01c48c9f2d3a1d839f2f61fe6d499e7daea4734b75b0e63eb9aa"
+      "sha256": "7cbcd7a3454ea2e3aa2de0f0b0803da707b5f5b2e6a9ffe10c352714bce488fd"
     },
     {
       "id": "remote-error-session",
@@ -2493,10 +2493,10 @@
       "title": "Remote access \u00b7 session generation changed",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-session.png",
-      "width": 279,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "75fbce36258f8e32f3b8e6f93a10a323c86a0b276209e7915a1f0610ebfb95ff"
+      "sha256": "3aba7bb803de3c2239ba4150e3f490275937040cd34b01ec19c33c95d50cca2c"
     },
     {
       "id": "remote-error-share",
@@ -2504,10 +2504,10 @@
       "title": "Remote access \u00b7 source capability refused",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-share.png",
-      "width": 303,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "5e0de126c5dbb9cc9df58046af038902b8213270ebb17123ebf655648a73d10f"
+      "sha256": "21c9f07d018a479d447acb897d98a0554269eadec86c27fda313c5599a86c324"
     },
     {
       "id": "remote-error-signature",
@@ -2515,10 +2515,10 @@
       "title": "Remote access \u00b7 signed bundle refused",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-signature.png",
-      "width": 350,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "caf79b0c0fd3d006ac398d2ff56b9956720d494ec5460f93df035fd96207d7e5"
+      "sha256": "a620412d762121ef8513068104009bebffd5a6911c22841fee0e6eb8ae1cc9e0"
     },
     {
       "id": "remote-error-unpublished",
@@ -2526,10 +2526,10 @@
       "title": "Remote access \u00b7 exact release not published",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-unpublished.png",
-      "width": 324,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "0a96fe43813962a8647eff82e25444bea08743e032f9358f663c0a3508b83f2b"
+      "sha256": "00f42e07a8cc229f6a35e56ab5348f7b135d8c2d9925fb554158d7c4e301211c"
     },
     {
       "id": "remote-error-vault",
@@ -2537,10 +2537,10 @@
       "title": "Remote access \u00b7 native vault unavailable",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-error-vault.png",
-      "width": 252,
-      "height": 136,
+      "width": 1100,
+      "height": 144,
       "tier": "headless",
-      "sha256": "8825f828da0c442544d25051ac1e1fad564f30f667af42d16a9e109acfb53fd4"
+      "sha256": "3d61b7a07acdc683655c943887e15c74bb832d5852e9c5b1eb330f9c40c4cec9"
     },
     {
       "id": "remote-owner-context",
@@ -2548,10 +2548,10 @@
       "title": "Remote access \u00b7 public owner context",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-owner-context.png",
-      "width": 1083,
-      "height": 412,
+      "width": 1100,
+      "height": 423,
       "tier": "headless",
-      "sha256": "65227c4777e7afd6c9efa2feb00af242e130946165dc01adc54818eff6cd00fa"
+      "sha256": "dae5772ce430409f8a30d0f7c723c153f07303aedd81c05249c160fdba0e1eb1"
     },
     {
       "id": "remote-provisioned",
@@ -2559,10 +2559,10 @@
       "title": "Remote access \u00b7 provisioned is not ready",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-provisioned.png",
-      "width": 288,
-      "height": 217,
+      "width": 1100,
+      "height": 233,
       "tier": "headless",
-      "sha256": "0d6e6c2045f64c04f75941809d69444184079c4c385ce9fb851afdbfd81c4c91"
+      "sha256": "8972540f299e9d24448ff899987c5de4e018e9aa650a1345a1f57539ed69bc18"
     },
     {
       "id": "remote-qualifying",
@@ -2570,10 +2570,10 @@
       "title": "Remote access \u00b7 native qualification",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-qualifying.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "19ad716906f533532ab01f8483a23cd108b4e36617a1830c0f50855ee8f5c9f1"
+      "sha256": "6ef7b4c525b75a5cfbd044e1cfaf41e1089922552a017ebd0d2d00458dbf743d"
     },
     {
       "id": "remote-reconciling",
@@ -2581,10 +2581,10 @@
       "title": "Remote access \u00b7 reconciling",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-reconciling.png",
-      "width": 288,
-      "height": 217,
+      "width": 1100,
+      "height": 233,
       "tier": "headless",
-      "sha256": "0d6e6c2045f64c04f75941809d69444184079c4c385ce9fb851afdbfd81c4c91"
+      "sha256": "8972540f299e9d24448ff899987c5de4e018e9aa650a1345a1f57539ed69bc18"
     },
     {
       "id": "remote-removed",
@@ -2592,10 +2592,10 @@
       "title": "Remote access \u00b7 recorded removal",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-removed.png",
-      "width": 252,
-      "height": 91,
+      "width": 1100,
+      "height": 99,
       "tier": "headless",
-      "sha256": "c03292c472e29515031b7aafaf0f5df93fc9dc4eeed306fc69675d94090017fe"
+      "sha256": "ec44bab4d1a70cfd1e847ce07eaca6bc6a7e999228c6ae62ed2fcd62b652fcfe"
     },
     {
       "id": "remote-review-disable",
@@ -2603,10 +2603,10 @@
       "title": "Remote access \u00b7 revoke and drain",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-disable.png",
-      "width": 634,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "30b41d6cf60a80b0af016280af968283cb4667e89afcefc20e6ba2aff90490c0"
+      "sha256": "06d79dd88e070b4dfbf5b20cc680f41f09862344905836d2576f168d4586016f"
     },
     {
       "id": "remote-review-enable",
@@ -2614,10 +2614,10 @@
       "title": "Remote access \u00b7 explicit enable consent",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-enable.png",
-      "width": 976,
-      "height": 231,
+      "width": 1100,
+      "height": 239,
       "tier": "headless",
-      "sha256": "6bd98c1b16f0ea73ebe0ec1be0dac2e456865aca03fde436656ab1a7aaa031de"
+      "sha256": "26ecdcffbd211c6eefe938529db85a0978342da3be5f3fa8f30b94a7a36e0198"
     },
     {
       "id": "remote-review-inspect",
@@ -2625,10 +2625,10 @@
       "title": "Remote access \u00b7 owner-context review",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-inspect.png",
-      "width": 473,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "7fc5dfc1a1473f45d516fea49eaf64b4112af313ea6ee926dabfa2fa286c5e65"
+      "sha256": "56a63f780d00797fa63750bb0073d8dde67f90e91c11d4bc9b6c2a78597151e1"
     },
     {
       "id": "remote-review-observe",
@@ -2636,10 +2636,10 @@
       "title": "Remote access \u00b7 native observation confirmation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-observe.png",
-      "width": 473,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "fa8e251a3d240bc828018f2c1c16ff327e830d5f7c740ce09b684a34d6943ab0"
+      "sha256": "74a90cc0dcf348a91f0268369f86f3d53887a2b1d6da8c640c6cc1ded980e8b6"
     },
     {
       "id": "remote-review-owner",
@@ -2647,10 +2647,10 @@
       "title": "Remote access \u00b7 exact owner-key approval",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-owner.png",
-      "width": 1083,
-      "height": 617,
+      "width": 1100,
+      "height": 640,
       "tier": "headless",
-      "sha256": "f26ac1f7c0d810c013c0f2fa6b9ad9f37b2bf48b1c8b6b9e0a09e1b539c48814"
+      "sha256": "9c4a7be5210a50f77dccabc779a3936efdf5acbd30d66faa4d9e8e3d4ece1f38"
     },
     {
       "id": "remote-review-recover",
@@ -2658,10 +2658,10 @@
       "title": "Remote access \u00b7 interrupted setup recovery",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-recover.png",
-      "width": 473,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "58c256efe9fb6c5183ea26756963a2acdb44f90ce38b7d71a4e41a8ede269504"
+      "sha256": "0da83f18067aa75d1f2d2cbede83be4dc57cade4d9627d95401341bf9e54e5ac"
     },
     {
       "id": "remote-review-start",
@@ -2669,10 +2669,10 @@
       "title": "Remote access \u00b7 start confirmation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-start.png",
-      "width": 473,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "93b4a490405f9b5290ba70c3d637452e1d062ec14889e8cc81fdee52bf522ff7"
+      "sha256": "4f37f064b189ba6a1e155c6b0b2a381a38c689f15336e0f75a5e6f3173343103"
     },
     {
       "id": "remote-review-uninstall",
@@ -2680,10 +2680,10 @@
       "title": "Remote access \u00b7 uninstall confirmation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-review-uninstall.png",
-      "width": 1028,
-      "height": 195,
+      "width": 1100,
+      "height": 203,
       "tier": "headless",
-      "sha256": "a038737b4189a7743ac68067311026e69f4af1983163b886f7bfa22a02315267"
+      "sha256": "acac840b7e9d0f55f5e3622a2589a7c2cdfc270ea8ec5ad10811cf03a550a58e"
     },
     {
       "id": "remote-share-active",
@@ -2691,10 +2691,10 @@
       "title": "Share exact local shell \u00b7 active response",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-active.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-eligible",
@@ -2702,10 +2702,10 @@
       "title": "Share exact local shell \u00b7 eligible-session selection",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-eligible.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-prepared",
@@ -2713,10 +2713,10 @@
       "title": "Share exact local shell \u00b7 private prepared status",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-prepared.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-recovery",
@@ -2724,10 +2724,10 @@
       "title": "Share exact local shell \u00b7 original-operation recovery",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-recovery.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-released",
@@ -2735,10 +2735,10 @@
       "title": "Share exact local shell \u00b7 released response",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-released.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-revoked",
@@ -2746,10 +2746,10 @@
       "title": "Share exact local shell \u00b7 revoked response",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-revoked.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-uncertain",
@@ -2757,10 +2757,10 @@
       "title": "Share exact local shell \u00b7 uncertain original operation",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-uncertain.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-share-unsupported",
@@ -2768,10 +2768,10 @@
       "title": "Share exact local shell \u00b7 unsupported source",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-share-unsupported.png",
-      "width": 252,
-      "height": 145,
+      "width": 1100,
+      "height": 153,
       "tier": "headless",
-      "sha256": "a0777e71f3b44b19983215efdc63486f4cee135b07b4e3616591aca3a0a20b9b"
+      "sha256": "3e70549d946780af680253c1cf1d5171bb358dce900919478c38e63598146012"
     },
     {
       "id": "remote-stop-requested",
@@ -2779,10 +2779,10 @@
       "title": "Remote access \u00b7 stopping",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-stop-requested.png",
-      "width": 252,
-      "height": 91,
+      "width": 1100,
+      "height": 99,
       "tier": "headless",
-      "sha256": "c03292c472e29515031b7aafaf0f5df93fc9dc4eeed306fc69675d94090017fe"
+      "sha256": "ec44bab4d1a70cfd1e847ce07eaca6bc6a7e999228c6ae62ed2fcd62b652fcfe"
     },
     {
       "id": "remote-unobserved",
@@ -2790,10 +2790,10 @@
       "title": "Remote access \u00b7 not observed",
       "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
       "image": "remote-unobserved.png",
-      "width": 252,
-      "height": 118,
+      "width": 1100,
+      "height": 126,
       "tier": "headless",
-      "sha256": "c6647c69ccf2d0d5673a73147578d9d3c14efb6461fe692c90e95de85eeed01e"
+      "sha256": "a3ce23650f690e8589df9e8f1d2a59eae092bf69e73a18555c8ce24347df36b7"
     },
     {
       "id": "workflow-cancelling",
@@ -3205,46 +3205,46 @@
     {
       "id": "settings-interface-scrolling",
       "section": "settings",
-      "title": "Settings: Interface and Scrolling",
-      "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
+      "title": "Settings: Terminal",
+      "caption": "The first Settings section: terminal font, ligatures and emoji, then scrollback and scroll speed, then mouse and selection.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 1906,
+      "height": 628,
       "tier": "headless",
-      "sha256": "0d6e5dc7d1eb3692d21db770a76458d0d1978c4bfafc8290d39eb1ffc0c7d448"
+      "sha256": "63a79bff63a8af282287162711301b17d9ef551abb898414cef2a705a720adaf"
     },
     {
       "id": "settings-quick-switch",
       "section": "settings",
-      "title": "Settings: Quick switch",
-      "caption": "The single toggle controlling whether held quick-switch modifiers overlay chip numbers.",
+      "title": "Settings: Window & tabs",
+      "caption": "Chip layout and details, the status bar with its dependent durable-name row, quick-switch numbers, and pane appearance, followed by the Keyboard shortcuts drill-in row.",
       "image": "settings-quick-switch.png",
       "width": 874,
-      "height": 644,
+      "height": 609,
       "tier": "headless",
-      "sha256": "1f830e7e5aa933f2bcabbc734ed0d4a54b5694086bf618d02688510cf8dc7991"
+      "sha256": "b174897e7f7c0332bf4b44d11b699bf442e7f852f9f6dd4a89b8512a52ebc7e5"
     },
     {
       "id": "settings-sftp-card",
       "section": "settings",
-      "title": "Settings: SFTP",
-      "caption": "Pane order and the default local directory used when opening new SFTP tabs.",
+      "title": "Settings: Files & documents",
+      "caption": "SFTP pane order and default local directory, plus the Markdown image memory budget.",
       "image": "settings-sftp-card.png",
       "width": 874,
-      "height": 178,
+      "height": 275,
       "tier": "headless",
-      "sha256": "a0ab1da46c6036c7df8faa7333f5cbbf3b4476fdfd3647b1ad4ab9af1c8d9733"
+      "sha256": "d77a9467ec58a16c5fffba4e04b9a849e3fa20aba8e11300892208e4e460a719"
     },
     {
       "id": "settings-terminal-typography",
       "section": "settings",
-      "title": "Settings: Terminal typography",
-      "caption": "Font family, programming ligatures, and emoji presentation, all scoped to terminal cell rendering only.",
+      "title": "Settings: Startup & sessions",
+      "caption": "Workspace restore and close confirmation, the local-shell launch preference, and the New Session tab options (on by default).",
       "image": "settings-terminal-typography.png",
       "width": 874,
-      "height": 261,
+      "height": 411,
       "tier": "headless",
-      "sha256": "e567121d0ef198fd46ed111ac6787345d778be280edb0cbf7792280e44b6e9d7"
+      "sha256": "eebe8ff04cca581918f6e2469a6e3b163115719efeaf536541ad4a922de03438"
     },
     {
       "id": "sftp-workspace-browser",
@@ -3420,7 +3420,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "91cb4510380592e1b9950b57aea015a886890f62352865571e2c1cabb71ca61f"
+      "sha256": "08efc82384df1e3c4027cbed90d92d18279b8e41efa6aff8c9e02c817f36b4a2"
     },
     {
       "id": "chip-context-middle-inactive-narrow",
@@ -3431,7 +3431,7 @@
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "bdb5d6cd7e7b9d119a829bcaa530f24512916bcfe7e3556f5d597864a587441a"
+      "sha256": "2827ef660cc5f10c896e29403bf302a92dc64f87bf8b6584c13068a8fa1ba192"
     },
     {
       "id": "chrome-expanded-menu",
@@ -3464,7 +3464,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "fc2936ccd812c0f793250e3e74cf65db71bdeb8177c3ce0a20795441122a304d"
+      "sha256": "e7aaf0e6dd7411b12fbcba3cf38a2c8d6095f1fee24ddc9c4207f4848cd63e14"
     },
     {
       "id": "open-file-error-narrow",
@@ -3475,7 +3475,7 @@
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "ddc3ebccad6c04a9dc0367b1027009c0e598fa6e48c132f760b7cfbe4c0d95fd"
+      "sha256": "bb06e8f3bdd8fc42407695e49c88a12ff02e4e788fe7e9b189675a355f7fbfd2"
     },
     {
       "id": "open-file-large-ready",
@@ -3486,7 +3486,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "0cb1d27ed69c792e1035ff73a16c442ebb0e045ad44258a1527250b04411611d"
+      "sha256": "e0c8b1900ff9463f7ac3b17cd07c69e8c0df41fdc87897c1c7a0b1c25e8a4a3d"
     },
     {
       "id": "open-file-large-ready-narrow",
@@ -3508,7 +3508,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "255cb80c6f415eff0513f30ffd97964837138ff460af7197e91d2fdac83e362b"
+      "sha256": "350344b12ac82d261c8dc2ed1d22d0cd3857d9f381fb0a3adf5d2cf9a459fabf"
     },
     {
       "id": "open-file-small-ready-narrow",
@@ -3552,7 +3552,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "71aa255eb00e15f166159fc60603c0ad1294847d0430602e795b3a9ac64b9261"
+      "sha256": "742b4063a384e781cb06ab4c6598ae281ebef2b2d268b577986cf64ace060d2d"
     },
     {
       "id": "safety-dirty-document-narrow",
@@ -3563,7 +3563,7 @@
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "b9126953fdee305fe589b1eb4439e46a1739473c6605018f52730947995e7a10"
+      "sha256": "450333e234ac4711ab3b857211d3b0ef7cfc1a9f720e95b5ec2fb834ea8a0a89"
     },
     {
       "id": "safety-live-close",
@@ -3618,7 +3618,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "ac69de1c2f229d0f9438c58fe9927a683016827894fda3396f8d28c2767e9575"
+      "sha256": "0cdd26e19e13aac900180d8d857a2cf17393624cb8ad943d32ded716fd38c70f"
     },
     {
       "id": "save-as-error-narrow",
@@ -3640,7 +3640,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "8119f33d30d6812b27e40d0a7820282eb2cf88feaa3506670b3859213211e748"
+      "sha256": "ab8302aa83ca688a03e0502f9e6d55d19cd0c4104ebd67b256f0c1df1b926cfa"
     },
     {
       "id": "save-as-large-ready-narrow",
@@ -3662,7 +3662,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "e73a8c78c94d606fb4902c96b9d6f76a0bc4f0a88559a49027d4ffeacd9f4e25"
+      "sha256": "1d99a8410e78c2371c0dfcdffc8584ea67ccbe20fdbc5f5465d75c63efb5d9c5"
     },
     {
       "id": "save-as-overwrite-narrow",
@@ -3684,7 +3684,7 @@
       "width": 1180,
       "height": 760,
       "tier": "headless",
-      "sha256": "180956a7e9640ce2cf36395c6689d9e6774d92c59ad863403439ad3c4463f9c0"
+      "sha256": "22ee3a8f95b1d71cfe72c9e80bf4f295b123cdae2146f2fd896b23d8747770d4"
     },
     {
       "id": "save-as-small-ready-narrow",
@@ -3701,7 +3701,7 @@
       "id": "style-about-ready-licenses-baseline",
       "section": "surface-probes",
       "title": "About with packaged update and licenses \u2014 752 \u00d7 516 root",
-      "caption": "The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-about-ready-licenses-baseline.png",
       "width": 752,
       "height": 516,
@@ -3770,7 +3770,7 @@
         "default_focus": null,
         "fixture": "AboutReadyLicenses",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -3795,7 +3795,7 @@
       "id": "style-about-ready-licenses-narrow",
       "section": "surface-probes",
       "title": "About with packaged update and licenses \u2014 360 \u00d7 516 root",
-      "caption": "The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-about-ready-licenses-narrow.png",
       "width": 360,
       "height": 516,
@@ -3864,7 +3864,7 @@
         "default_focus": null,
         "fixture": "AboutReadyLicenses",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -3889,7 +3889,7 @@
       "id": "style-about-ready-licenses-short",
       "section": "surface-probes",
       "title": "About with packaged update and licenses \u2014 360 \u00d7 240 root",
-      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-about-ready-licenses-short.png",
       "width": 360,
       "height": 240,
@@ -3952,7 +3952,7 @@
         "default_focus": null,
         "fixture": "AboutReadyLicenses",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -3977,12 +3977,12 @@
       "id": "style-dirty-document-close-baseline",
       "section": "surface-probes",
       "title": "Final dirty-document close \u2014 752 \u00d7 516 root",
-      "caption": "An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-dirty-document-close-baseline.png",
       "width": 752,
       "height": 516,
       "tier": "headless",
-      "sha256": "710ab7121ba9bdecfb8dbc1ad129e84a48a2687bacf7061c4c7cca39fe5eae38",
+      "sha256": "8930242b2db3104aa2931c49c644021a7b166c405cebf783deac039536c11da7",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4034,7 +4034,7 @@
         "default_focus": "Save",
         "fixture": "DirtyClose",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4059,12 +4059,12 @@
       "id": "style-dirty-document-close-narrow",
       "section": "surface-probes",
       "title": "Final dirty-document close \u2014 360 \u00d7 516 root",
-      "caption": "An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-dirty-document-close-narrow.png",
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "f8d04ee330f4486f7e66da353918744cd6ebb8783a28f93577b168924cbd1285",
+      "sha256": "6aec25a2c40e54e4662350b7013b6c4952d6d71d6ff0ef30c0da4e0b13b9a5f8",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4116,7 +4116,7 @@
         "default_focus": "Save",
         "fixture": "DirtyClose",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4141,12 +4141,12 @@
       "id": "style-dirty-document-close-short",
       "section": "surface-probes",
       "title": "Final dirty-document close \u2014 360 \u00d7 240 root",
-      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-dirty-document-close-short.png",
       "width": 360,
       "height": 240,
       "tier": "headless",
-      "sha256": "ff3fee2b3869edc68fb64664e7c6a9c7158f049398e3cc3ac7e07184ab6d9411",
+      "sha256": "20d189545e9ac6f728c95c0a1f5cd4ba396c467859472e0848d851ea3f29eda6",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4198,7 +4198,7 @@
         "default_focus": "Save",
         "fixture": "DirtyClose",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4223,7 +4223,7 @@
       "id": "style-expanded-overflow-baseline",
       "section": "surface-probes",
       "title": "Expanded overflow over a live synthetic session \u2014 752 \u00d7 516 root",
-      "caption": "Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-expanded-overflow-baseline.png",
       "width": 752,
       "height": 516,
@@ -4317,7 +4317,7 @@
         "default_focus": null,
         "fixture": "ExpandedOverflow",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4342,7 +4342,7 @@
       "id": "style-expanded-overflow-narrow",
       "section": "surface-probes",
       "title": "Expanded overflow over a live synthetic session \u2014 360 \u00d7 516 root",
-      "caption": "Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-expanded-overflow-narrow.png",
       "width": 360,
       "height": 516,
@@ -4436,7 +4436,7 @@
         "default_focus": null,
         "fixture": "ExpandedOverflow",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4461,7 +4461,7 @@
       "id": "style-live-close-long-identity-baseline",
       "section": "surface-probes",
       "title": "Live close with long target identity \u2014 752 \u00d7 516 root",
-      "caption": "A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-live-close-long-identity-baseline.png",
       "width": 752,
       "height": 516,
@@ -4506,7 +4506,7 @@
         "default_focus": "Cancel",
         "fixture": "LongLiveClose",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4531,7 +4531,7 @@
       "id": "style-live-close-long-identity-narrow",
       "section": "surface-probes",
       "title": "Live close with long target identity \u2014 360 \u00d7 516 root",
-      "caption": "A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-live-close-long-identity-narrow.png",
       "width": 360,
       "height": 516,
@@ -4576,7 +4576,7 @@
         "default_focus": "Cancel",
         "fixture": "LongLiveClose",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4601,12 +4601,12 @@
       "id": "style-open-file-deep-error-baseline",
       "section": "surface-probes",
       "title": "Open File missing deep directory \u2014 752 \u00d7 516 root",
-      "caption": "A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-open-file-deep-error-baseline.png",
       "width": 752,
       "height": 516,
       "tier": "headless",
-      "sha256": "38685c5f2c918dc43969fbd6165017b376a25b520abcd6460ee2f0e6adc2ec9d",
+      "sha256": "b54e7a6544b14166e87a143a51dc000f40b0f58f6867b24d65c77440cd220021",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4634,7 +4634,7 @@
         "default_focus": null,
         "fixture": "DeepOpenError",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4659,12 +4659,12 @@
       "id": "style-open-file-deep-error-narrow",
       "section": "surface-probes",
       "title": "Open File missing deep directory \u2014 360 \u00d7 516 root",
-      "caption": "A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-open-file-deep-error-narrow.png",
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "c1e663d4989df1bf3f1c07ee3f5480d2d539960ae85b64bcf85b223e24a24e2a",
+      "sha256": "fc171aaa4ea1b609a7f05d8fa95942d2deca46c8f6c917117d7b2da5ec5323fe",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4692,7 +4692,7 @@
         "default_focus": null,
         "fixture": "DeepOpenError",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4717,12 +4717,12 @@
       "id": "style-open-file-deep-ready-baseline",
       "section": "surface-probes",
       "title": "Open File in a deep owned directory \u2014 752 \u00d7 516 root",
-      "caption": "Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-open-file-deep-ready-baseline.png",
       "width": 752,
       "height": 516,
       "tier": "headless",
-      "sha256": "8fea9904d642ef4704db853f3049f67076077e952195ec922bfe416a9d3837d3",
+      "sha256": "1bf652fe061948d0c7314bf09804ca98d2469a764fa2e72e7200079f6d3b9708",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4750,7 +4750,7 @@
         "default_focus": null,
         "fixture": "DeepOpenReady",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4775,12 +4775,12 @@
       "id": "style-open-file-deep-ready-narrow",
       "section": "surface-probes",
       "title": "Open File in a deep owned directory \u2014 360 \u00d7 516 root",
-      "caption": "Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-open-file-deep-ready-narrow.png",
       "width": 360,
       "height": 516,
       "tier": "headless",
-      "sha256": "b7ca361320de9e90eca8bff5f5f5deb7ed113eb6787fcb8d19018e43ab348f47",
+      "sha256": "8f52053e37e8dd723faff9d3766ecd4c117e6061ace07f0ccf0bab7f6a93136d",
       "geometry": {
         "accessible_identity": null,
         "actions": [
@@ -4808,7 +4808,7 @@
         "default_focus": null,
         "fixture": "DeepOpenReady",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4833,7 +4833,7 @@
       "id": "style-open-file-deep-ready-short",
       "section": "surface-probes",
       "title": "Open File in a deep owned directory \u2014 360 \u00d7 240 root",
-      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-open-file-deep-ready-short.png",
       "width": 360,
       "height": 240,
@@ -4866,7 +4866,7 @@
         "default_focus": null,
         "fixture": "DeepOpenReady",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4891,7 +4891,7 @@
       "id": "style-palette-long-identity-baseline",
       "section": "surface-probes",
       "title": "Filtered palette with long identity and secondary path \u2014 752 \u00d7 516 root",
-      "caption": "An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-palette-long-identity-baseline.png",
       "width": 752,
       "height": 516,
@@ -4920,7 +4920,7 @@
         "default_focus": null,
         "fixture": "LongPalette",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4945,7 +4945,7 @@
       "id": "style-palette-long-identity-narrow",
       "section": "surface-probes",
       "title": "Filtered palette with long identity and secondary path \u2014 360 \u00d7 516 root",
-      "caption": "An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-palette-long-identity-narrow.png",
       "width": 360,
       "height": 516,
@@ -4974,7 +4974,7 @@
         "default_focus": null,
         "fixture": "LongPalette",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -4999,7 +4999,7 @@
       "id": "style-paste-max-preview-baseline",
       "section": "surface-probes",
       "title": "Maximum bounded paste preview \u2014 752 \u00d7 516 root",
-      "caption": "The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-paste-max-preview-baseline.png",
       "width": 752,
       "height": 516,
@@ -5044,7 +5044,7 @@
         "default_focus": "Cancel",
         "fixture": "MaxPaste",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5069,7 +5069,7 @@
       "id": "style-paste-max-preview-narrow",
       "section": "surface-probes",
       "title": "Maximum bounded paste preview \u2014 360 \u00d7 516 root",
-      "caption": "The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-paste-max-preview-narrow.png",
       "width": 360,
       "height": 516,
@@ -5114,7 +5114,7 @@
         "default_focus": "Cancel",
         "fixture": "MaxPaste",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5139,7 +5139,7 @@
       "id": "style-paste-max-preview-short",
       "section": "surface-probes",
       "title": "Maximum bounded paste preview \u2014 360 \u00d7 240 root",
-      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-paste-max-preview-short.png",
       "width": 360,
       "height": 240,
@@ -5184,7 +5184,7 @@
         "default_focus": "Cancel",
         "fixture": "MaxPaste",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5209,7 +5209,7 @@
       "id": "style-save-as-notes-overwrite-baseline",
       "section": "surface-probes",
       "title": "Save As existing NOTES.md \u2014 752 \u00d7 516 root",
-      "caption": "The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-save-as-notes-overwrite-baseline.png",
       "width": 752,
       "height": 516,
@@ -5266,7 +5266,7 @@
         "default_focus": null,
         "fixture": "NotesOverwrite",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5291,7 +5291,7 @@
       "id": "style-save-as-notes-overwrite-narrow",
       "section": "surface-probes",
       "title": "Save As existing NOTES.md \u2014 360 \u00d7 516 root",
-      "caption": "The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-save-as-notes-overwrite-narrow.png",
       "width": 360,
       "height": 516,
@@ -5348,7 +5348,7 @@
         "default_focus": null,
         "fixture": "NotesOverwrite",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5373,7 +5373,7 @@
       "id": "style-save-as-notes-overwrite-short",
       "section": "surface-probes",
       "title": "Save As existing NOTES.md \u2014 360 \u00d7 240 root",
-      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
+      "caption": "Actual application content after its state was verified at 752 \u00d7 516 and the root resized to 360 \u00d7 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.",
       "image": "style-save-as-notes-overwrite-short.png",
       "width": 360,
       "height": 240,
@@ -5430,7 +5430,7 @@
         "default_focus": null,
         "fixture": "NotesOverwrite",
         "native_pixels_per_point": 1.0,
-        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short",
+        "physical_fixture_directory": "/Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short",
         "physical_fixture_identity": "owned checkout paths; publication review required",
         "physical_identity_mode": {
           "cross_worktree_identity": "unqualified",
@@ -5801,7 +5801,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "061ca99d0fedc19eda6df6d1f1bc0c8177c339eba9229328b752cb3a77ab2e22"
+      "sha256": "cd8fadebebe3e756069c9b2226e702e4c6ab0858318bdf9e50ceb79849635416"
     },
     {
       "id": "editor-find-invalid-pattern",
@@ -5812,7 +5812,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8dee9ad447781794203d5072a26706e5c89b29242f6c19ad23d3b14a2ec2414f"
+      "sha256": "32d21fb5e1640c700f2cb3cc1bc2f3f20f5b97ced14fcc444226ea30feb505e8"
     },
     {
       "id": "editor-find-no-match",
@@ -5823,7 +5823,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8f3d53e1ea34230d178a92de39ea6b68ffcba3338ff3cf82772c7931d1108b53"
+      "sha256": "d729fe68a9da2d12364edb15424bdf532801f5a6705881384c88f85a8c87f8c4"
     },
     {
       "id": "editor-recovery-error",
@@ -5834,7 +5834,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "139752ea82d5cf1c63d3516d1b611b6d12ba450c5e9f9177304ed52232ca3616"
+      "sha256": "20db674d2c367888a0ea01962759b6348036d05b748fb14556a47dd9404d703a"
     },
     {
       "id": "editor-save-error",
@@ -5845,7 +5845,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f8017eb3558c9f0bc74ec8f6ca01455456422fd4b1fbaa32c890e4f74b1f1a47"
+      "sha256": "a50973a395eea54cfbd1a7cedef72c4f78ebb07124314769cee4047ad1c6afc6"
     },
     {
       "id": "editor-save-pending",
@@ -5856,7 +5856,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4dec80b7b9b25f59428ac6dad1a5327882db61a11670870738990010994a7123"
+      "sha256": "ed6fafcd081fdb27651559e09892674eceb5f35a110a5180b6db622542d5a58f"
     },
     {
       "id": "editor-source-missing",
@@ -5867,7 +5867,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "17d265b566851297af81bbf4a0185899d84f1ca6d0a45317b0e37534abf56f55"
+      "sha256": "1e54dad7efe566998918d53a9ec4217896f117621d65a3bd3b1482b298df3bed"
     },
     {
       "id": "editor-source-offline",
@@ -6268,13 +6268,13 @@
     {
       "id": "safety-reset-settings",
       "section": "workflow-surfaces",
-      "title": "Reset interface settings",
-      "caption": "Settings > change an interface preference > Reset. Exit: Cancel or deliberate Reset. Synthetic production-widget capture; no live transport, personal profile, vault or clipboard.",
+      "title": "Reset all settings",
+      "caption": "Settings > change a preference > Reset all settings\u2026; exit: Cancel or deliberate Reset. Synthetic production-widget capture; no live transport, personal profile, vault or clipboard.",
       "image": "safety-reset-settings.png",
       "width": 1000,
       "height": 760,
       "tier": "headless",
-      "sha256": "0be01196fad97a594968640e67952457ecd28f0af1d394d3c602160900b74497"
+      "sha256": "c1d1af1c7129507f928845d0ae5c2c9c98fd73f20a2afe99b23deba964a929eb"
     },
     {
       "id": "safety-restart-update",
@@ -6349,9 +6349,9 @@
       "caption": "More actions > Settings. Tall headless viewport exposes the full implemented card stack; scroll in a normal window. Exit: select another chip or close Settings.",
       "image": "settings-all-cards.png",
       "width": 974,
-      "height": 6111,
+      "height": 4012,
       "tier": "headless",
-      "sha256": "e192192354cc191ba37d891aa52a56b921eb09ac750320d797e7a6d62b59727e"
+      "sha256": "84d262e36601d18fc90b8badc12fb214716cb66c0d8e4b95f9a0cbe8833b0f0e"
     },
     {
       "id": "sftp-authentication",
@@ -6773,15 +6773,15 @@
     }
   ],
   "capture": {
-    "started_utc": "2026-11-13T19:03:09.549973+00:00",
-    "source_revision": "6784386549df785c90cd4f9bd6f658b0b20641fc",
+    "started_utc": "2026-11-14T01:12:42.163669+00:00",
+    "source_revision": "b5442194c601f02e8f7f624495173b8ea3737559",
     "source_dirty": true,
-    "source_tree_sha256": "287b6c23c6134f3a26408b68b2748fd8e491fc26e006eb8ca7e20c726d63cf6d",
+    "source_tree_sha256": "2c76ebbe29e0bcbdcb194c3dcb79bb50feab4d16d781ee73a3b30bb32473d041",
     "system": "Darwin",
     "release": "27.2.0",
     "machine": "arm64",
     "scope": "Production egui widgets, headless wgpu; not native compositor or usability acceptance",
     "isolation": "Fresh repository-owned HOME/XDG directories; synthetic fixtures, no personal profile/credentials/clipboard",
-    "completed_utc": "2026-11-13T19:06:09.701310+00:00"
+    "completed_utc": "2026-11-14T01:16:04.456256+00:00"
   }
 }

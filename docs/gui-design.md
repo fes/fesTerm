@@ -248,7 +248,7 @@ sizing actions, an existing-view destination picker and a separate destructive
 footer. Details use compact name/status columns and one quiet horizontal footer.
 Hover reveals a grip/name/menu handle in the top edge of each pane, not a
 permanent header row. The reveal strip does not capture terminal clicks outside
-the actual handle. **Settings > Panes** defaults hover handles off (also for
+the actual handle. **Settings > Window & tabs > Panes** defaults hover handles off (also for
 legacy settings without a saved choice); an explicit saved choice is preserved.
 Disabling hover never disables explicit rearrangement.
 The pane-only high-contrast setting strengthens the focused inset edge without
@@ -2153,15 +2153,51 @@ profiles follow the same order.
 ![Settings surface target](images/gui-mockups/settings.png)
 
 Settings is a singleton application surface represented by its own chip;
-invoking Settings again focuses it. It currently uses compact cards rather
-than a category sidebar, uniformly widthed and shown in this order:
-**Panes**, **Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
-**SFTP**, and **Keyboard bindings**. Keyboard bindings sits last because its
-searchable action table is the tallest card. Only implemented controls
+invoking Settings again focuses it. It uses one scrolling page of compact,
+uniformly widthed cards rather than a category sidebar, ordered by how often a
+user reaches for each group, with the two tallest or most specialised groups
+moved onto drill-in sub-pages:
+
+1. **Terminal** — Font (family, retry, ligatures, emoji presentation),
+   History & scrolling (scrollback limit, scroll speed) and Mouse & selection.
+2. **Startup & sessions** — Workspace restore, close confirmation, Local shell
+   (PowerShell preference where offered, customize before launch) and New
+   Session tab (compact layout, resume unattached local sessions).
+3. **Window & tabs** — session chip layout and details, status bar with its
+   dependent durable-name row, quick-switch numbers and Panes.
+4. **Keyboard shortcuts ›** — drill-in row to the shortcut editor sub-page.
+5. **Files & documents** — SFTP pane order and default local directory, and
+   the Markdown image memory budget.
+6. **Dev Tunnels** — GitHub accounts and the tunnel options in one card.
+7. **Remote access ›** — drill-in row to the local-host sharing sub-page,
+   whose rows use the same Settings toggle rows and note text as the main page.
+8. **Recording** — Allow session recording, then **Recording settings ›** and
+   **Recording library ›** rows that dispatch the existing recording commands.
+9. **Automation (Beta)** — the two Beta switches and an inline status line;
+   live connections, controllers and workflow runs sit on the
+   **Automation activity ›** sub-page.
+10. **Updates & privacy** — automatic update checks.
+11. **Reset all settings…** — the application-wide reset described below.
+
+A dependent row (for example the durable-name row under **Show status bar**,
+or **Extension length** under **Extend lifetime**) is drawn disabled, with its
+reason, while its parent preference is off. Every card adds the same 12 px gap
+below itself. Segmented controls read and Tab left to right, and unselected
+segments keep a subtle boundary. Drill-in rows carry the semantic
+`OpenSubpage` chevron icon, never a literal `>`. Only implemented controls
 appear.
 
-The current **Interface** card groups the persistent chrome/session toggles as
-quiet rows with subtle dividers:
+A sub-page replaces the Settings page body while keeping the Settings chip,
+title and singleton identity. Its header has a **Back** button (focused on
+entry) and the sub-page title. **Back** or Escape returns to the main page with
+focus restored to the row that opened the sub-page. Escape follows the
+layered-dismiss rule: an open popup, a focused text field, or an in-progress
+shortcut recording consumes Escape first, so only a second Escape leaves the
+sub-page. The sub-page shown is per window and lives with the rest of the
+Settings view state.
+
+The **Startup & sessions** and **Window & tabs** cards group the persistent
+chrome/session toggles as quiet rows with subtle dividers:
 
 - **Session chip layout** is an exposed two-choice control: **Single scrolling
   row** (the default, with the explanation that it keeps terminal height
@@ -2208,7 +2244,7 @@ quiet rows with subtle dividers:
   switch that surfaces locally running, unattached `festerm-sessiond`
   sessions as one-click Resume entries in the Launcher.
 
-The separate **Scrolling** card exposes a four-choice **Scrollback limit**
+The **Terminal** card's History & scrolling group exposes a four-choice **Scrollback limit**
 control (`Disabled`, `16 MiB`, `64 MiB`, or `256 MiB`) and a five-step
 **Scroll speed** clickstop (`Very slow` through `Very fast`). The limit is a
 retained-history payload budget for sessions created after the setting changes;
@@ -2220,7 +2256,7 @@ would have moved fesTerm's own scrollback, so a trackpad's stream of
 pixel-sized events is not reported as a full notch each, and the preference
 is not silently bypassed by the programs a user is most likely to scroll.
 
-The **Markdown images** card exposes **Image memory budget**: 64, 128, 256,
+The **Files & documents** card exposes **Markdown image memory budget**: 64, 128, 256,
 512 (default), 1024 or 2048 MiB, without an unlimited option. The managed
 allowance applies immediately across windows, viewers and saved-local editor
 Preview; it preserves admitted images when lowered and explains that new loads
@@ -2231,8 +2267,8 @@ configuration. Reset restores 512 MiB without evicting existing images.
 This allowance excludes decoder-private/native-GPU allocations and is not a
 process-RAM cap (ADR 0030).
 
-The **Terminal typography** card exposes the terminal-family selector plus the
-default-on ligature toggle. JetBrains Mono is embedded; other families download
+The **Terminal** card's Font group exposes the terminal-family selector plus
+the default-on ligature toggle. JetBrains Mono is embedded; other families download
 automatically on selection or restoration of a saved preference after upgrade.
 While preparing or unavailable, use an explicitly temporary JetBrains fallback
 without changing that preference. Show progress/failure here and above tab
@@ -2242,12 +2278,11 @@ The effective family and atlas generation belong to the shared egui context,
 not an individual window. A successful window therefore wins over a sibling
 that is still pending or has failed, and every terminal keeps painting while
 adopting that shared installation.
-The **Quick switch** card currently
-exposes the on-by-default quick-switch-number overlay preference; it no
-longer restates the Command palette/Open Settings chords the **Keyboard
-bindings** card below owns, so a customized binding is never shown twice with
-two different values.
-The **SFTP** card exposes the optional default local starting directory for new
+The **Window & tabs** card exposes the on-by-default quick-switch-number
+overlay preference; it does not restate the Command palette/Open Settings
+chords the **Keyboard shortcuts** sub-page owns, so a customized binding is
+never shown twice with two different values.
+The **Files & documents** card's SFTP rows expose the optional default local starting directory for new
 SFTP tabs. It saves immediately like the other Settings rows, stores any
 non-empty control-character-free path string without parse-time existence
 checks, applies only to future SFTP sessions, and is still overridable per
@@ -2257,12 +2292,20 @@ The two layout choices remain visible rather than hiding a binary decision in a
 selector. Reversible settings apply immediately and save automatically as they
 change; Reset appears beside a changed setting at the narrowest useful scope.
 
+The last card, **Reset all settings…**, restores every application preference
+on this page and its sub-pages - terminal, startup and session, window and
+tab, keyboard shortcut, file and document, Dev Tunnel option, automation, and
+update-check preferences - to its default. Its confirmation lists exactly
+those categories and states what it leaves alone: recording settings,
+signed-in Dev Tunnel accounts, remote access, saved profiles and stored
+credentials. It is the `ResetAllSettings` application command
+([command model](application-command-model.md)).
+
 There is no separate **Configuration** card in Settings. Workspace
-persistence itself remains the explicit off-by-default **Workspace restore**
-toggle: unlike chip layout, status bar, and session-detail visibility (all of
-which apply and save immediately with no opt-in), resurrecting a previous
-run's open tabs is a bigger behavioral change than a cosmetic preference, so
-it stays off until the user turns it on. While off, fesTerm always starts at
+persistence itself is the **Workspace restore** toggle, on by default (see
+above); the Settings row says so. Unlike chip layout, status bar, and
+session-detail visibility, it changes what a launch does, so its effects are
+spelled out here. While off, fesTerm always starts at
 the Launcher and neither reads nor writes the open tab list, its order, or
 the active tab - any workspace snapshot left over from an earlier run (or an
 older fesTerm build that always persisted it) is dropped rather than silently
@@ -2276,7 +2319,7 @@ frame, and moving or resizing a window saves the new geometry once the window
 has settled - a window closing writes a resize that the settling delay is
 still holding. A restored window reopens at its saved size and position, and
 a platform that refuses to report a window's own geometry simply opens at the
-default size wherever it puts it. This is all part of the same opt-in: with
+default size wherever it puts it. This is all part of the same preference: with
 Workspace restore off, no window geometry is written or read either. These
 write-through saves mirror how interface settings and profile CRUD already
 save immediately on every change. There is
@@ -2287,22 +2330,23 @@ behavior relies on. No file watching, configuration editor, or
 credential-storage control is implied.
 
 There is still no category sidebar or general settings search. The
-**Keyboard bindings** card provides searchable application actions grouped
+**Keyboard shortcuts** sub-page provides searchable application actions grouped
 under the scope each one applies in, per-action descriptions, effective and
 default bindings drawn as keycaps, a filter that narrows the catalogue to a
 single scope or to only the customized or unbound actions, assignment and
 unbinding, and individual/all-binding reset. Scope is presentation only: an
 action's context follows from the action itself and is reported with its
 meaning rather than offered as an editable field. Ctrl+Shift+F12 is the fixed
-keyboard recovery route. Widget navigation and terminal protocols are not
+keyboard recovery route; it opens Settings on this sub-page with the search
+focused. Widget navigation and terminal protocols are not
 arbitrary remapping targets. Each action's effective chord appears exactly
-once, in this card; the **Quick switch** card keeps only quick-switch-number
+once, on this sub-page; the **Window & tabs** card keeps only quick-switch-number
 presentation instead of restating chords the editor already owns, so a
 customized binding can never be shown twice with two different values.
 Modifier keycaps use the Command glyph on macOS and spell the remaining
 modifiers out, matching how the palette and chip hints already render chords
 and staying inside the bundled interface face's glyph coverage.
-The action table is not separately scrollable: the Settings page already
+The action table is not separately scrollable: the sub-page already
 scrolls, and a short nested viewport made the catalogue painful to page
 through. Selecting a row expands its editor in place, directly beneath that
 row, so assigning a binding never means scrolling away from the action being

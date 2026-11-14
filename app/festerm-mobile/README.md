@@ -225,7 +225,7 @@ and device; portable packaging tests do not certify them.
 The terminal can use the built-in keyboard or either terminal-user layout:
 **Hold symbols** (long-press letter hints) and **Shell row** (direct punctuation).
 All retain a number row, QWERTY, Ctrl/Alt/Shift and a symbols layer. Set the
-startup choice in **Settings → Default keyboard**; **More → Keyboard** switches
+startup choice in **Settings → Keyboard**; **More → Keyboard** switches
 without changing it. The plain keyboard icon hides input; the centered Space
 bar is unobstructed by switching controls. More also offers Paste and Extended
 keys. Character presses show enlarged key previews. Both terminal keyboards

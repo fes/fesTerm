@@ -27,7 +27,7 @@ SURFACES = [
     ("editor-sftp", "forms.rs", "Profiles + → SFTP; configure remote start folder and authentication. Exit: Cancel or Save.", "SFTPG-01"),
     ("auth-key auth-password auth-key-passphrase", "forms.rs", "Profile Authentication → password or key sheet; encrypted key import asks for passphrase. Exit: Cancel or explicit credential action; all fields empty/synthetic.", "MOB-06"),
     ("host-trust changed-host authentication", "forms.rs, live_ssh.rs", "Explicit SSH connect → first/changed fingerprint review → password request. Exit: Cancel or explicit Trust/authentication decision. Synthetic channel, no SSH worker.", "MOB-06"),
-    ("settings settings-bottom settings-lock settings-lock-bottom", "shell.rs, app_lock.rs", "Settings tab; scroll for trusted hosts, lock, diagnostics and About. Lock variants inject an in-memory FakeLocker. Exit: Profiles/Sessions or Back.", "MOB-01, MOB-09"),
+    ("settings settings-bottom settings-lock settings-lock-bottom", "shell.rs, app_lock.rs", "Settings tab (Terminal, Keyboard, Security, Dev Tunnels, Recording, About); scroll for App lock, trusted hosts, diagnostics and the offline demo. Lock variants inject an in-memory FakeLocker; the lock-bottom capture scrolls App lock (Security) to the top. Exit: Profiles/Sessions or Back.", "MOB-01, MOB-09"),
     ("recording-settings", "shell.rs", "Settings → Recording settings. Edit naming, pacing, appearance or folder defaults; no picker is invoked. Exit: Back to Settings, Save or discard/reload.", "REC-01"),
     ("recording-consent recording-consent-bottom recording-consent-sessions recording-consent-sessions-bottom recording-message recording-library-empty recording-library-error recording-library-options recording-library-confirm recording-library-complete recording-library-incomplete recording-library-source-confirm recording-library-retry recording-export", "recording_ui.rs, recording_library_ui.rs", "Settings → enable recording; terminal More → Record terminal sessions → privacy/session/export choices. Session-selection variants inject a synthetic two-session roster, not connections. Stop → Export recording. Settings → recording library → retained source, incomplete prefix, unused options, retry or delete confirmation. Exit: Close/Keep/Cancel or explicit confirm. Test cfg renders actual native-owner widgets; bounded sources contain only synthetic terminal output in a fresh repository target directory; native encoding/publication always refuses.", "REC-01, REC-02, REC-05"),
     ("files files-selected files-filter files-options files-error files-connecting files-password files-host-trust files-transfers files-conflict", "files.rs, files_ui.rs, files_shell.rs", "Open an SFTP profile or SSH More → Files. Select rows, Filter, pane Sort and view options, Transfers; conflicting transfer opens conflict decision. Connecting/trust/password/failure share the same Files owner. Exit: dismiss sheet, explicit conflict choice, Back or Close. In-memory listings/transfers only.", "SFTPG-01, SFTPG-04, SFTPG-06"),
@@ -107,17 +107,10 @@ def equivalence_reason(members):
                 "`wide_preview` is true; the toolbar also omits that narrow-layout action. "
                 "The tablet-contents request therefore normalizes to the same rail presentation; "
                 "phone/narrow Contents sheets are captured separately.")
-    if kinds == {"mobile"} and states == {"settings", "settings-lock"} and sizes == {(390, 844)}:
-        return ("The phone's initial Settings viewport ends before App lock. Injecting FakeLocker "
-                "changes only the lower section, not these visible pixels; the repeated split-gallery "
-                "phone Settings control has identical geometry. Actual lock controls are visible in "
-                "`tablet-settings-lock-bottom.png`, with phone timeout/Lock now controls in "
-                "`phone-settings-lock-bottom.png`. These top views are not distinct lock screens.")
-    if kinds == {"mobile"} and states == {"settings", "settings-lock"} and sizes == {(834, 1194)}:
-        return ("The portrait tablet's initial Settings viewport now ends at Dev Tunnel hosts, "
-                "before App lock. Injecting FakeLocker changes only the lower section, not these "
-                "visible pixels. Actual lock controls are visible in "
-                "`tablet-settings-lock-bottom.png`; this top view is not a distinct lock screen.")
+    if kinds == {"mobile"} and states == {"settings"} and sizes == {(390, 844)}:
+        return ("The split-keyboard gallery repeats the phone Settings control to show the Split "
+                "segment in context; it has identical geometry and counts once as visible content. "
+                "Lock variants differ because App lock is in the Security section of this viewport.")
     if kinds == {"mobile"} and states <= {"keyboard-shell", "keyboard-hinge"}:
         if sizes == {(390, 844)}:
             return ("Same Shell row keyboard at phone geometry, including the repeated gallery control. "

@@ -313,33 +313,34 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             id: "settings-interface-scrolling",
             section: "settings",
-            title: "Settings: Interface and Scrolling",
-            caption: "The top of Settings: chip layout, session-detail, and workspace-restore \
-                      toggles, followed by scrollback limit and scroll-speed controls.",
+            title: "Settings: Terminal",
+            caption: "The first Settings section: terminal font, ligatures and emoji, then \
+                      scrollback and scroll speed, then mouse and selection.",
             capture: capture_settings_interface_scrolling,
         },
         Scenario {
             id: "settings-terminal-typography",
             section: "settings",
-            title: "Settings: Terminal typography",
-            caption: "Font family, programming ligatures, and emoji presentation, all scoped \
-                      to terminal cell rendering only.",
+            title: "Settings: Startup & sessions",
+            caption: "Workspace restore and close confirmation, the local-shell launch \
+                      preference, and the New Session tab options (on by default).",
             capture: capture_settings_terminal_typography,
         },
         Scenario {
             id: "settings-quick-switch",
             section: "settings",
-            title: "Settings: Quick switch",
-            caption: "The single toggle controlling whether held quick-switch modifiers \
-                      overlay chip numbers.",
+            title: "Settings: Window & tabs",
+            caption: "Chip layout and details, the status bar with its dependent \
+                      durable-name row, quick-switch numbers, and pane appearance, followed \
+                      by the Keyboard shortcuts drill-in row.",
             capture: capture_settings_quick_switch,
         },
         Scenario {
             id: "settings-sftp-card",
             section: "settings",
-            title: "Settings: SFTP",
-            caption: "Pane order and the default local directory used when opening new SFTP \
-                      tabs.",
+            title: "Settings: Files & documents",
+            caption: "SFTP pane order and default local directory, plus the Markdown image \
+                      memory budget.",
             capture: capture_settings_sftp_card,
         },
         // -- keyboard --------------------------------------------------
@@ -2067,7 +2068,7 @@ fn render_settings_card(top_label: Option<&str>, bottom_label: &str) -> image::R
     let top = top_label
         .map(|label| harness.get_by_label(label).rect().top() - 22.0)
         .unwrap_or(0.0);
-    // Cards are separated by a fixed 12px `add_space` gap between one
+    // Cards are separated by the fixed 12px `SETTINGS_CARD_GAP` between one
     // card's bottom border and the next card's top border, and each card's
     // heading sits ~16px inside its own frame's top border (the frame's
     // `inner_margin`). Landing the cut in the middle of that 12px gap --
@@ -2084,19 +2085,24 @@ fn render_settings_card(top_label: Option<&str>, bottom_label: &str) -> image::R
 }
 
 fn capture_settings_interface_scrolling() -> image::RgbaImage {
-    render_settings_card(None, "TERMINAL TYPOGRAPHY")
+    render_settings_card(None, "STARTUP & SESSIONS")
 }
 
 fn capture_settings_terminal_typography() -> image::RgbaImage {
-    render_settings_card(Some("TERMINAL TYPOGRAPHY"), "QUICK SWITCH")
+    render_settings_card(Some("STARTUP & SESSIONS"), "WINDOW & TABS")
 }
 
 fn capture_settings_quick_switch() -> image::RgbaImage {
-    render_settings_card(Some("QUICK SWITCH"), "SFTP")
+    render_settings_card(Some("WINDOW & TABS"), "FILES & DOCUMENTS")
 }
 
 fn capture_settings_sftp_card() -> image::RgbaImage {
-    render_settings_card(Some("SFTP"), "KEYBOARD BINDINGS")
+    let next = if cfg!(feature = "experimental-dev-tunnels") {
+        "DEV TUNNELS"
+    } else {
+        "RECORDING"
+    };
+    render_settings_card(Some("FILES & DOCUMENTS"), next)
 }
 
 // -- keyboard -----------------------------------------------------------
@@ -2494,7 +2500,7 @@ fn gallery_frames_use_production_theme_for_app_and_popup() {
         .dispatch_for_gallery(AppCommand::OpenSettings, &context);
     app.remove_cursor();
     app.run();
-    assert!(app.query_by_label("INTERFACE").is_some());
+    assert!(app.query_by_label("TERMINAL").is_some());
     assert_fill_at(
         &app,
         egui::pos2(9.0, 9.0),

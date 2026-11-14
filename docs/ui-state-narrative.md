@@ -259,9 +259,16 @@ there, the dot is gone for that version.
 
 <!-- section: settings title: Settings -->
 
-Settings is a single scrolling column of cards, each grouping one concern:
-Interface, Scrolling, Terminal typography, Quick switch, SFTP and Keyboard
-bindings. Every row carries a one-line explanation of what the setting
+Settings is a single scrolling column of cards ordered by how often each is
+reached for: Terminal, Startup & sessions, Window & tabs, Files & documents,
+Dev Tunnels, Recording, Automation (Beta), Updates & privacy and finally
+**Reset all settings…**. The two largest or most specialised groups —
+Keyboard shortcuts and Remote access — are drill-in rows that open a sub-page
+inside the same Settings tab, as is the live Automation activity; Back or
+Escape returns to the row that opened it. Preferences that ship on (workspace
+restore, the compact New Session layout, resuming unattached sessions) say
+"On by default", and the reset confirmation lists exactly what it restores
+and what it leaves alone. Every row carries a one-line explanation of what the setting
 actually does, on the principle that a preference nobody can predict the
 effect of is worse than no preference.
 
@@ -270,7 +277,7 @@ matters more than it sounds: an earlier revision nested a scroll area inside
 the page, which left the keyboard list showing three of thirty-five rows
 inside a page that also scrolled.
 
-<!-- section: keyboard title: Keyboard bindings -->
+<!-- section: keyboard title: Keyboard shortcuts -->
 
 The keyboard editor is the most information-dense surface in the product and
 had the most iteration, so it is worth reviewing closely.

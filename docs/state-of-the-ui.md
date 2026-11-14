@@ -7,8 +7,8 @@
 
 **Inventory:** 479 captures; 454 distinct PNG hashes.
 
-**Captured:** 2026-11-13T19:06:09.701310+00:00 (Darwin/arm64); HEAD `6784386549df785c90cd4f9bd6f658b0b20641fc`; dirty sources: `True`.<br>
-**Source-tree SHA-256:** `287b6c23c6134f3a26408b68b2748fd8e491fc26e006eb8ca7e20c726d63cf6d`
+**Captured:** 2026-11-14T01:16:04.456256+00:00 (Darwin/arm64); HEAD `b5442194c601f02e8f7f624495173b8ea3737559`; dirty sources: `True`.<br>
+**Source-tree SHA-256:** `2c76ebbe29e0bcbdcb194c3dcb79bb50feab4d16d781ee73a3b30bb32473d041`
 
 ## How to read this document
 
@@ -619,9 +619,16 @@ The same five sessions with 'Show session details in chips' enabled: each chip c
 
 ## Settings
 
-Settings is a single scrolling column of cards, each grouping one concern:
-Interface, Scrolling, Terminal typography, Quick switch, SFTP and Keyboard
-bindings. Every row carries a one-line explanation of what the setting
+Settings is a single scrolling column of cards ordered by how often each is
+reached for: Terminal, Startup & sessions, Window & tabs, Files & documents,
+Dev Tunnels, Recording, Automation (Beta), Updates & privacy and finally
+**Reset all settings…**. The two largest or most specialised groups —
+Keyboard shortcuts and Remote access — are drill-in rows that open a sub-page
+inside the same Settings tab, as is the live Automation activity; Back or
+Escape returns to the row that opened it. Preferences that ship on (workspace
+restore, the compact New Session layout, resuming unattached sessions) say
+"On by default", and the reset confirmation lists exactly what it restores
+and what it leaves alone. Every row carries a one-line explanation of what the setting
 actually does, on the principle that a preference nobody can predict the
 effect of is worse than no preference.
 
@@ -630,47 +637,47 @@ matters more than it sounds: an earlier revision nested a scroll area inside
 the page, which left the keyboard list showing three of thirty-five rows
 inside a page that also scrolled.
 
-### Settings: Interface and Scrolling
+### Settings: Terminal
 
-The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.
+The first Settings section: terminal font, ligatures and emoji, then scrollback and scroll speed, then mouse and selection.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
-![Settings: Interface and Scrolling](images/ui-state/settings-interface-scrolling.png)
+![Settings: Terminal](images/ui-state/settings-interface-scrolling.png)
 
-### Settings: Quick switch
+### Settings: Window & tabs
 
-The single toggle controlling whether held quick-switch modifiers overlay chip numbers.
+Chip layout and details, the status bar with its dependent durable-name row, quick-switch numbers, and pane appearance, followed by the Keyboard shortcuts drill-in row.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
-![Settings: Quick switch](images/ui-state/settings-quick-switch.png)
+![Settings: Window & tabs](images/ui-state/settings-quick-switch.png)
 
-### Settings: SFTP
+### Settings: Files & documents
 
-Pane order and the default local directory used when opening new SFTP tabs.
+SFTP pane order and default local directory, plus the Markdown image memory budget.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
-![Settings: SFTP](images/ui-state/settings-sftp-card.png)
+![Settings: Files & documents](images/ui-state/settings-sftp-card.png)
 
-### Settings: Terminal typography
+### Settings: Startup & sessions
 
-Font family, programming ligatures, and emoji presentation, all scoped to terminal cell rendering only.
+Workspace restore and close confirmation, the local-shell launch preference, and the New Session tab options (on by default).
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
-![Settings: Terminal typography](images/ui-state/settings-terminal-typography.png)
+![Settings: Startup & sessions](images/ui-state/settings-terminal-typography.png)
 
-## Keyboard bindings
+## Keyboard shortcuts
 
 The keyboard editor is the most information-dense surface in the product and
 had the most iteration, so it is worth reviewing closely.
@@ -704,8 +711,8 @@ that rule answered "is there a way to undo this?" with silence.
 
 Actions grouped by scope, each showing its current chord as keycaps; one customized action carries a 'Customized' badge.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
 ![Keyboard bindings editor, collapsed](images/ui-state/keyboard-editor-collapsed.png)
@@ -714,8 +721,8 @@ Actions grouped by scope, each showing its current chord as keycaps; one customi
 
 Typing into Search narrows the list to matching actions and hides scope groups with no match.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
 ![Keyboard bindings editor filtered by search](images/ui-state/keyboard-editor-filtered.png)
@@ -724,8 +731,8 @@ Typing into Search narrows the list to matching actions and hides scope groups w
 
 'Record shortcut' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
 ![Keyboard bindings editor capturing a chord](images/ui-state/keyboard-editor-press-keys.png)
@@ -734,8 +741,8 @@ Typing into Search narrows the list to matching actions and hides scope groups w
 
 Selecting an action expands its inline editor directly under its own row, showing scope, default, and current chord as read-only context.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
 ![Keyboard bindings editor with an action selected](images/ui-state/keyboard-editor-selected.png)
@@ -1595,15 +1602,15 @@ Quit with a live session. Exit: Cancel preserves sessions; explicit Quit ends th
 
 ![Quit with live sessions](images/ui-state/safety-quit.png)
 
-### Reset interface settings
+### Reset all settings
 
-Settings > change an interface preference > Reset. Exit: Cancel or deliberate Reset. Synthetic production-widget capture; no live transport, personal profile, vault or clipboard.
+Settings > change a preference > Reset all settings…; exit: Cancel or deliberate Reset. Synthetic production-widget capture; no live transport, personal profile, vault or clipboard.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
 **Production:** `app::confirmations`, `app::FesTermApp::ui_content`
 
-![Reset interface settings](images/ui-state/safety-reset-settings.png)
+![Reset all settings](images/ui-state/safety-reset-settings.png)
 
 ### Restart after update with live sessions
 
@@ -1669,8 +1676,8 @@ Connect/start a session while transport startup is pending. Exit: connection suc
 
 More actions > Settings. Tall headless viewport exposes the full implemented card stack; scroll in a normal window. Exit: select another chip or close Settings.
 
-**Enter:** More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.<br>
-**Exit:** Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
+**Enter:** More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.<br>
+**Exit:** Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.<br>
 **Production:** `screens::settings::show_settings`, `keyboard::show_editor`
 
 ![Settings: complete card stack](images/ui-state/settings-all-cards.png)
@@ -4867,7 +4874,7 @@ The real editor and destination picker browse twelve task-loaded synthetic files
 
 ### About with packaged update and licenses — 752 × 516 root
 
-The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > About fesTerm; expand licenses or inspect the captioned synthetic updater state<br>
 **Exit:** Close/Escape returns to the prior owner; no update download, installation or restart is executed.<br>
@@ -4877,7 +4884,7 @@ The existing synthetic ReadyToInstall controller is combined with expanded licen
 
 ### About with packaged update and licenses — 360 × 516 root
 
-The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The existing synthetic ReadyToInstall controller is combined with expanded licenses in the real About dialog; no download or installation occurs. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > About fesTerm; expand licenses or inspect the captioned synthetic updater state<br>
 **Exit:** Close/Escape returns to the prior owner; no update download, installation or restart is executed.<br>
@@ -4887,7 +4894,7 @@ The existing synthetic ReadyToInstall controller is combined with expanded licen
 
 ### About with packaged update and licenses — 360 × 240 root
 
-Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-about-ready-licenses-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > About fesTerm; expand licenses or inspect the captioned synthetic updater state<br>
 **Exit:** Close/Escape returns to the prior owner; no update download, installation or restart is executed.<br>
@@ -4897,7 +4904,7 @@ Actual application content after its state was verified at 752 × 516 and the ro
 
 ### Final dirty-document close — 752 × 516 root
 
-An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Open File > synthetic text/Markdown file > Edit/Preview/Split; perform the captioned Find/options/save/conflict/close trigger<br>
 **Exit:** Close Find/options with Escape; resolve conflicts explicitly. Final dirty close offers Save, Discard changes or Cancel.<br>
@@ -4907,7 +4914,7 @@ An actual edit and final-view close request preserve the document origin, Save d
 
 ### Final dirty-document close — 360 × 516 root
 
-An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+An actual edit and final-view close request preserve the document origin, Save default, Discard changes and Cancel. The source remains unchanged. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Open File > synthetic text/Markdown file > Edit/Preview/Split; perform the captioned Find/options/save/conflict/close trigger<br>
 **Exit:** Close Find/options with Escape; resolve conflicts explicitly. Final dirty close offers Save, Discard changes or Cancel.<br>
@@ -4917,7 +4924,7 @@ An actual edit and final-view close request preserve the document origin, Save d
 
 ### Final dirty-document close — 360 × 240 root
 
-Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-dirty-document-close-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Open File > synthetic text/Markdown file > Edit/Preview/Split; perform the captioned Find/options/save/conflict/close trigger<br>
 **Exit:** Close Find/options with Escape; resolve conflicts explicitly. Final dirty close offers Save, Discard changes or Cancel.<br>
@@ -4927,7 +4934,7 @@ Actual application content after its state was verified at 752 × 516 and the ro
 
 ### Expanded overflow over a live synthetic session — 752 × 516 root
 
-Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Upper window chrome > More actions or right-click the captioned session chip<br>
 **Exit:** Escape/outside click dismisses menu; no chip close/move is dispatched during capture.<br>
@@ -4937,7 +4944,7 @@ Actual More actions exposes the applicable palette and inspector controls, inclu
 
 ### Expanded overflow over a live synthetic session — 360 × 516 root
 
-Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual More actions exposes the applicable palette and inspector controls, including narrow-width collapse. Menu action bounds and row heights are recorded without inventing a menu budget. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-expanded-overflow-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Upper window chrome > More actions or right-click the captioned session chip<br>
 **Exit:** Escape/outside click dismisses menu; no chip close/move is dispatched during capture.<br>
@@ -4947,7 +4954,7 @@ Actual More actions exposes the applicable palette and inspector controls, inclu
 
 ### Live close with long target identity — 752 × 516 root
 
-A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
@@ -4957,7 +4964,7 @@ A real rename and generation-targeted close request preserve the long synthetic 
 
 ### Live close with long target identity — 360 × 516 root
 
-A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+A real rename and generation-targeted close request preserve the long synthetic session identity and Cancel default. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-live-close-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
@@ -4967,7 +4974,7 @@ A real rename and generation-targeted close request preserve the long synthetic 
 
 ### Open File missing deep directory — 752 × 516 root
 
-A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Open File; browse the synthetic ready/error directory described in the caption<br>
 **Exit:** Cancel/Escape preserves the previous surface; select a file only deliberately.<br>
@@ -4977,7 +4984,7 @@ A missing owned path produces the actual directory-task error before resizing; n
 
 ### Open File missing deep directory — 360 × 516 root
 
-A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+A missing owned path produces the actual directory-task error before resizing; no loading fallback is substituted. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-error-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Open File; browse the synthetic ready/error directory described in the caption<br>
 **Exit:** Cancel/Escape preserves the previous surface; select a file only deliberately.<br>
@@ -4987,7 +4994,7 @@ A missing owned path produces the actual directory-task error before resizing; n
 
 ### Open File in a deep owned directory — 752 × 516 root
 
-Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Open File; browse the synthetic ready/error directory described in the caption<br>
 **Exit:** Cancel/Escape preserves the previous surface; select a file only deliberately.<br>
@@ -4997,7 +5004,7 @@ Twelve owned files are loaded by the actual directory task; the ready listing is
 
 ### Open File in a deep owned directory — 360 × 516 root
 
-Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Twelve owned files are loaded by the actual directory task; the ready listing is asserted before resizing. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Open File; browse the synthetic ready/error directory described in the caption<br>
 **Exit:** Cancel/Escape preserves the previous surface; select a file only deliberately.<br>
@@ -5007,7 +5014,7 @@ Twelve owned files are loaded by the actual directory task; the ready listing is
 
 ### Open File in a deep owned directory — 360 × 240 root
 
-Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-open-file-deep-ready-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Open File; browse the synthetic ready/error directory described in the caption<br>
 **Exit:** Cancel/Escape preserves the previous surface; select a file only deliberately.<br>
@@ -5017,7 +5024,7 @@ Actual application content after its state was verified at 752 × 516 and the ro
 
 ### Filtered palette with long identity and secondary path — 752 × 516 root
 
-An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Command palette or configured shortcut; filter/select category as captioned<br>
 **Exit:** Escape dismisses category popup first, then palette, restoring the exact prior viable focus owner.<br>
@@ -5027,7 +5034,7 @@ An actual session rename, synthetic terminal-title protocol metadata and real pa
 
 ### Filtered palette with long identity and secondary path — 360 × 516 root
 
-An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+An actual session rename, synthetic terminal-title protocol metadata and real palette filtering expose the full accessible identity, long secondary path and configured quick-tab shortcut. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-palette-long-identity-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** More actions > Command palette or configured shortcut; filter/select category as captioned<br>
 **Exit:** Escape dismisses category popup first, then palette, restoring the exact prior viable focus owner.<br>
@@ -5037,7 +5044,7 @@ An actual session rename, synthetic terminal-title protocol metadata and real pa
 
 ### Maximum bounded paste preview — 752 × 516 root
 
-The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
@@ -5047,7 +5054,7 @@ The actual paste-policy preview reaches eight lines and 800 characters, with an 
 
 ### Maximum bounded paste preview — 360 × 516 root
 
-The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The actual paste-policy preview reaches eight lines and 800 characters, with an omission notice and Cancel default. No clipboard is read and no bytes are delivered. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
@@ -5057,7 +5064,7 @@ The actual paste-policy preview reaches eight lines and 800 characters, with an 
 
 ### Maximum bounded paste preview — 360 × 240 root
 
-Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-paste-max-preview-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Perform the captioned close/quit/update/paste/file-drop/reset/native takeover/termination action<br>
 **Exit:** Cancel preserves the exact target and live sessions; destructive or input-producing actions require explicit confirmation and are never activated by capture.<br>
@@ -5067,7 +5074,7 @@ Actual application content after its state was verified at 752 × 516 and the ro
 
 ### Save As existing NOTES.md — 752 × 516 root
 
-The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. Gallery-only geometry evidence, not a timing or native acceptance result. Physical fixture paths, where present, belong to this checkout and require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-baseline. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Editor > Save As; select the captioned synthetic destination directory/name<br>
 **Exit:** Cancel/Escape leaves the document intact. Existing targets require explicit confirmation; capture never presses Save.<br>
@@ -5077,7 +5084,7 @@ The actual task loads an owned deep destination containing NOTES.md, producing t
 
 ### Save As existing NOTES.md — 360 × 516 root
 
-The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+The actual task loads an owned deep destination containing NOTES.md, producing the overwrite notice beside the disabled remote destination. Save is never pressed. The same fixture at a narrow root; clipping or inaccessible actions are recorded, not treated as a pass. Owned physical checkout paths require publication review. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-narrow. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Editor > Save As; select the captioned synthetic destination directory/name<br>
 **Exit:** Cancel/Escape leaves the document intact. Existing targets require explicit confirmation; capture never presses Save.<br>
@@ -5087,7 +5094,7 @@ The actual task loads an owned deep destination containing NOTES.md, producing t
 
 ### Save As existing NOTES.md — 360 × 240 root
 
-Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-ui-survey/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
+Actual application content after its state was verified at 752 × 516 and the root resized to 360 × 240. This exposes disclosure scrolling and action reachability; the manifest records missing/off-root controls rather than certifying them. Owned physical checkout paths require publication review. No timing or native acceptance is claimed. Actual physical scene directory: /Volumes/Storage/src/fesTerm-settings-ia/target/ui-gallery-fixtures/surface-batch/style-save-as-notes-overwrite-short. This is real I/O identity, not anonymized or synthetic display metadata; only explicitly matched owned runs qualify that input identity.
 
 **Enter:** Editor > Save As; select the captioned synthetic destination directory/name<br>
 **Exit:** Cancel/Escape leaves the document intact. Existing targets require explicit confirmation; capture never presses Save.<br>

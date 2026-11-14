@@ -267,7 +267,11 @@ fn settings() -> image::RgbaImage {
     );
     harness.run();
     assert!(
-        harness.get_by_label("KEYBOARD BINDINGS").rect().bottom() < 7900.0,
+        harness
+            .get_by_label(crate::screens::RESET_ALL_SETTINGS_LABEL)
+            .rect()
+            .bottom()
+            < 7900.0,
         "last settings card must be in the captured viewport"
     );
     finish(&mut harness)

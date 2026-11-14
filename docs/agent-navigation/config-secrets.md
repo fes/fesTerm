@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "524bd997b40dfabd89670b4ea18f589352c849e2e42a42689a1558d9f72e5d85"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d1ae82c94bd90fb5ef2157f4c1850cb5a3610f12d2446ec06478139bfd53ea3f"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,14 +10,14 @@ Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/
 
 ## Config startup
 
-Use for: When startup chooses a config source or a save writes workspace, profile, or settings changes.
+Use for: Startup chooses a config source, loads it on boot, and persists workspace or profile changes.
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses override path or native config file while keeping the source private.
-- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private config source with save gate and auto-save lifecycle for native writes.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses the override or native config path while keeping the selected source private.
+- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private loader and save gate for startup writes, auto-save reconciliation, and load status.
 
 Evidence:
 - [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Validates override precedence before the native config location.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Shows native directory creation and round-trip workspace save behavior.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Shows native directory creation, private save behavior, and config round-trip.
 
 Caveats:
 - Diagnostics intentionally omit the selected path and source TOML.
@@ -25,7 +25,7 @@ Caveats:
 
 ## Config schema
 
-Use for: When parsing, validating, or serializing a configuration document or workspace snapshot.
+Use for: Parsing, validating, or serializing a configuration document or workspace snapshot.
 
 - [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML document holding profiles, workspace, settings, and accounts.
 - [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Metadata-only tab and window restore state with geometry and profile validation.
@@ -40,7 +40,7 @@ Caveats:
 
 ## Secret boundary
 
-Use for: When a profile password or refresh token is created, rotated, or loaded from native storage.
+Use for: A profile password, refresh token, or credential is created, rotated, or loaded from native storage.
 
 - [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — TOML wrapper that stores a UUID string without exposing secret material in debug output.
 - [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
@@ -55,7 +55,7 @@ Caveats:
 
 ## File security
 
-Use for: When creating or preserving a private config directory or staging file on Unix or Windows.
+Use for: Creating or preserving a private config directory or staging file on Unix or Windows.
 
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Ensures a directory is owned and restricted to the current user.
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a file with a current-user-only DACL and safe publication flow.

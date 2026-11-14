@@ -1056,7 +1056,7 @@ pub fn host_verification_sheet(
         footnote(
             ui,
             if changed {
-                "Connections to a host whose key changed are always refused. If you expect the change, remove the saved key in Settings > Trusted hosts."
+                "Connections to a host whose key changed are always refused. If you expect the change, remove the saved key in Settings > Security > Trusted hosts."
             } else {
                 super::platform_text(
                     "Trusting saves this key on this iPhone. A changed key is refused later.",

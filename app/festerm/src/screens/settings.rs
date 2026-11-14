@@ -7,11 +7,16 @@ use festerm_config::{
     EmojiPresentationPreference, ImageMemoryBudgetPreference, ScrollSpeedPreference,
     ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
 };
-#[cfg(feature = "experimental-dev-tunnels")]
-use festerm_ui_egui::controls::{action_button, ActionButtonRole};
-use festerm_ui_egui::{chrome::ChipLayout, theme};
+use festerm_ui_egui::{
+    chrome::ChipLayout,
+    controls::{action_button, ActionButtonRole},
+    icon::{self, Icon},
+    theme,
+};
 
-use super::{ssh_paragraph, ssh_section_heading, AppCommand, CONTENT_SCROLLBAR_LANE};
+use super::{
+    ssh_back_button, ssh_paragraph, ssh_section_heading, AppCommand, CONTENT_SCROLLBAR_LANE,
+};
 
 /// Renders the Settings application surface.
 ///
@@ -94,6 +99,97 @@ fn settings_sftp_directory_field_id(ui: &Ui) -> egui::Id {
     ui.make_persistent_id("settings_default_sftp_local_directory")
 }
 
+/// The drill-in pages Settings hosts inside its own surface. Each keeps the
+/// Settings singleton identity; Back (or Escape) returns to the main page and
+/// to the row that opened the page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum SettingsPage {
+    #[default]
+    Main,
+    KeyboardShortcuts,
+    #[cfg(feature = "local-host-settings")]
+    RemoteAccess,
+    AutomationActivity,
+}
+
+impl SettingsPage {
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Main => "Settings",
+            Self::KeyboardShortcuts => "Keyboard shortcuts",
+            #[cfg(feature = "local-host-settings")]
+            Self::RemoteAccess => "Remote access",
+            Self::AutomationActivity => "Automation activity",
+        }
+    }
+}
+
+/// Per-window Settings navigation, kept in egui temp memory like the other
+/// Settings view state.
+#[derive(Clone, Copy, Default)]
+struct SettingsNavigation {
+    page: SettingsPage,
+    /// The drill-in row to refocus once the main page is drawn again.
+    return_to: Option<SettingsPage>,
+    /// Focus the sub-page's Back control on its first frame.
+    focus_back: bool,
+    /// Whether a text field had focus when the last frame ended. egui drops
+    /// focus on Escape before any widget runs, so the field that Escape
+    /// should leave has to be remembered from the previous frame.
+    text_focused: bool,
+}
+
+/// Main-page section headings, top to bottom. Drill-in sections are rows
+/// rather than headed cards and are named by their row title.
+#[cfg(test)]
+const SETTINGS_SECTION_ORDER: &[&str] = &[
+    "Terminal",
+    "Startup & sessions",
+    "Window & tabs",
+    "Keyboard shortcuts",
+    "Files & documents",
+    #[cfg(feature = "experimental-dev-tunnels")]
+    "Dev Tunnels",
+    #[cfg(feature = "local-host-settings")]
+    "Remote access",
+    "Recording",
+    "Automation (Beta)",
+    "Updates & privacy",
+    "Reset",
+];
+
+/// The vertical gap between two Settings cards; `settings_card` owns it so
+/// no call site can forget or double it.
+const SETTINGS_CARD_GAP: f32 = 12.0;
+/// The space either side of the rule between two rows inside a card.
+const SETTINGS_ROW_GAP: f32 = 10.0;
+
+fn settings_navigation_id(ui: &Ui) -> egui::Id {
+    ui.id()
+        .with(("settings_navigation", ui.ctx().viewport_id()))
+}
+
+fn settings_drill_in_id(navigation_id: egui::Id, page: SettingsPage) -> egui::Id {
+    navigation_id.with(("drill_in", page))
+}
+
+fn settings_row_separator(ui: &mut Ui) {
+    ui.add_space(SETTINGS_ROW_GAP);
+    ui.separator();
+    ui.add_space(SETTINGS_ROW_GAP);
+}
+
+/// A secondary title inside a merged card ("Font", "Panes", …).
+fn settings_group_label(ui: &mut Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(12.0)
+            .strong()
+            .color(theme::TEXT_SECONDARY),
+    );
+    ui.add_space(4.0);
+}
+
 pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<AppCommand> {
     let SettingsViewModel {
         #[cfg(feature = "local-host-settings")]
@@ -164,6 +260,42 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         state.feedback = None;
     }
     state.sftp_pane_order.get_or_insert(sftp_pane_order);
+
+    let navigation_id = settings_navigation_id(ui);
+    let mut navigation = ui.data(|data| {
+        data.get_temp::<SettingsNavigation>(navigation_id)
+            .unwrap_or_default()
+    });
+    // The fixed Ctrl+Shift+F12 recovery chord asks the keyboard editor to
+    // focus its search; the editor lives on its own sub-page, so go there.
+    // The editor itself consumes the request.
+    if ui.data(|data| {
+        data.get_temp::<bool>(egui::Id::new("keyboard-settings-recovery"))
+            .unwrap_or(false)
+    }) {
+        navigation.page = SettingsPage::KeyboardShortcuts;
+        navigation.return_to = None;
+        navigation.focus_back = false;
+    }
+    // Escape steps back out of a sub-page, but only once nothing nearer owns
+    // it: an open dropdown, a focused text field, or a chord capture in the
+    // keyboard editor (which treats Escape as "cancel capture").
+    if navigation.page != SettingsPage::Main {
+        let ctx = ui.ctx().clone();
+        if !egui::Popup::is_any_open(&ctx)
+            && !navigation.text_focused
+            && !ctx.text_edit_focused()
+            && !crate::keyboard::capture_owns_keys(&ctx)
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            navigation.return_to = Some(navigation.page);
+            navigation.page = SettingsPage::Main;
+        }
+    }
+    let page = navigation.page;
+    let mut open_page = None;
+    let mut go_back = false;
+
     let mut command = None;
     let mut automation_command = SettingsAutomationCommands::default();
     ui.horizontal(|ui| {
@@ -209,7 +341,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
             scroll_style.active_handle_opacity = 0.0;
             scroll_style.active_background_opacity = 0.0;
             ui.spacing_mut().scroll = scroll_style;
+            // One scroll position per page, so returning from a sub-page
+            // lands where the user left the main page.
             egui::ScrollArea::vertical()
+                .id_salt(("settings_scroll", page))
                 .max_height(available_height)
                 .show(ui, |ui| {
                     // The scroll bar itself belongs to this scroll *frame*,
@@ -222,369 +357,26 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                     ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
                     ui.vertical(|ui| {
                         ui.add_space(24.0);
+                        if page != SettingsPage::Main {
+                            ui.horizontal(|ui| {
+                                let back = ssh_back_button(ui);
+                                if navigation.focus_back {
+                                    back.request_focus();
+                                    navigation.focus_back = false;
+                                }
+                                go_back = back.clicked();
+                                ui.add_space(8.0);
+                                ui.heading(page.title());
+                            });
+                            ui.add_space(SETTINGS_CARD_GAP);
+                        }
+                        match page {
+                            SettingsPage::Main => {
                         ui.heading("Settings");
                         ui.add_space(2.0);
 
-                        settings_card(ui, "Recordings", |ui| {
-                            if settings_toggle_row(
-                                ui,
-                                "Allow session recording",
-                                "Off by default. Turning this off stops an active recording; existing recordings remain available in the library.",
-                                session_recording_enabled,
-                            ) {
-                                command = Some(AppCommand::SetSessionRecordingAllowed(
-                                    !session_recording_enabled,
-                                ));
-                            }
-                            if session_recording_enabled && ui.button("Recording settings >").clicked() {
-                                command = Some(AppCommand::OpenRecordingSettings);
-                            }
-                            if recording_preference_unsaved {
-                                ssh_paragraph(ui, "Recording is off for this run, but the saved preference is unconfirmed and may permit recording after restart. Retry saving, or reconcile the configuration if saves are blocked.");
-                                if ui.button("Retry saving recording opt-out").clicked() {
-                                    command = Some(AppCommand::SetSessionRecordingAllowed(false));
-                                }
-                            }
-                            if ui.button("Recording library…").clicked() {
-                                command = Some(AppCommand::OpenRecordingLibrary);
-                            }
-                        });
-                        settings_card(ui, "Panes", |ui| {
-                            if settings_toggle_row(
-                                ui,
-                                "Show pane handles on hover",
-                                "Reveal a compact handle near each pane's top edge. \
-                                 Rearrange panes always shows handles, even when this is off.",
-                                show_pane_handles,
-                            ) {
-                                command = Some(AppCommand::TogglePaneHandles);
-                            }
-                            if settings_toggle_row(
-                                ui,
-                                "High-contrast pane focus",
-                                "Use a stronger outline around the focused pane.",
-                                pane_high_contrast,
-                            ) {
-                                command = Some(AppCommand::TogglePaneHighContrast);
-                            }
-                        });
-                        settings_card(ui, "Interface", |ui| {
-                            if settings_segmented_row(
-                                ui,
-                                "Session chip layout",
-                                "Keep terminal height stable with one scrolling row.",
-                                &[
-                                    ("Single row", !matches!(chip_layout, ChipLayout::Wrap)),
-                                    ("Wrap", matches!(chip_layout, ChipLayout::Wrap)),
-                                ],
-                            )
-                            .is_some()
-                            {
-                                command = Some(AppCommand::ToggleChipLayout);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Show session details in chips",
-                                "Show the terminal title or launch context beneath the \
-                                 session name. Off makes every chip compact and single-line, \
-                                 moving the active session's detail to the status bar.",
-                                show_session_details,
-                            ) {
-                                command = Some(AppCommand::ToggleShowSessionDetails);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Show status bar",
-                                "Display sourced session state, terminal dimensions, and \
-                                 the active session detail when compact chips require it.",
-                                status_bar_visible,
-                            ) {
-                                command = Some(AppCommand::ToggleStatusBar);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Confirm before closing live sessions",
-                                "Ask before terminating a running local process or \
-                                 disconnecting an active remote session.",
-                                confirm_session_close,
-                            ) {
-                                command = Some(AppCommand::ToggleConfirmSessionClose);
-                            }
-                            #[cfg(windows)]
-                            {
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(10.0);
-                                if settings_toggle_row(
-                                    ui,
-                                    "Prefer PowerShell when available",
-                                    "Use pwsh.exe (the Windows app-execution alias, PATH or \
-                                     Program Files) when it exists. Turn this off to use \
-                                     COMSPEC for new default local sessions.",
-                                    prefer_powershell,
-                                ) {
-                                    command = Some(AppCommand::TogglePreferPowershell);
-                                }
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Customize local shell before launch",
-                                "Show executable, arguments, and working-directory fields, \
-                                 prefilled with the defaults, after choosing Local Shell. \
-                                 When off, start the default shell in your home directory \
-                                 immediately. Off by default.",
-                                customize_local_shell,
-                            ) {
-                                command = Some(AppCommand::ToggleCustomizeLocalShell);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Workspace restore",
-                                "Reopen your previously open tabs and the active tab \
-                                 automatically on launch. Off by default.",
-                                restore_workspace,
-                            ) {
-                                command = Some(AppCommand::ToggleRestoreWorkspace);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Compact New Session layout",
-                                "Shrink the New Session tab's launch cards so the \
-                                 saved-profile and running-session panels start higher \
-                                 up the window. Card descriptions are kept. Off by \
-                                 default.",
-                                compact_launcher_grid,
-                            ) {
-                                command = Some(AppCommand::ToggleCompactLauncherGrid);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Resume unattached local sessions from New Session",
-                                "Surface locally running festerm-sessiond persistence \
-                                 sessions that have no attached window, plus locally \
-                                 running tmux and GNU screen sessions, as one-click \
-                                 \"Resume\" entries in their own labeled widgets on the \
-                                 New Session tab. Off by default.",
-                                show_resumable_sessions,
-                            ) {
-                                command = Some(AppCommand::ToggleShowResumableSessions);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Show durable session name in status bar",
-                                "Name the tmux, GNU screen, or fesTerm session daemon \
-                                 session the active terminal is attached to, as \
-                                 \"provider · session name\". This is the durable \
-                                 session's stable identity, which the terminal-provided \
-                                 title cannot supply; it is separate from \"Show session \
-                                 details in chips\" and unaffected by it. Ordinary \
-                                 sessions show nothing. Off by default.",
-                                show_durable_session_in_status_bar,
-                            ) {
-                                command = Some(AppCommand::ToggleDurableSessionInStatusBar);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Check for fesTerm updates automatically",
-                                "Contact GitHub about once a day to see whether a newer \
-                                 fesTerm has been released, and mark the \"More actions\" \
-                                 control when one has. Nothing is downloaded or installed \
-                                 without your say-so, and no profile, session, terminal, \
-                                 device, or configuration data is sent. On by default; turn \
-                                 it off to make fesTerm check only when you ask it to from \
-                                 About fesTerm.",
-                                automatic_update_checks,
-                            ) {
-                                command = Some(AppCommand::ToggleAutomaticUpdateChecks);
-                            }
-                            ui.add_space(10.0);
-                            if ui.button("Reset interface settings to defaults").clicked() {
-                                automation_command.record(AppCommand::ResetInterfaceSettings);
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Automation", |ui| {
-                            if let Some(feedback) = automation_preference_feedback {
-                                ssh_paragraph(ui, feedback);
-                                if automation_preference_retry_available
-                                    && ui.button("Retry saving automation preferences (stay stopped)").clicked()
-                                {
-                                    automation_command.record(AppCommand::RetryAutomationSettings);
-                                }
-                                ui.add_space(10.0);
-                            }
-                            let viewport = ui.ctx().viewport_id();
-                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable local MCP (Beta)",
-                                    "Allow a local assistant adapter to request access. Each connection \
-                                     still needs a separate native grant for exact terminals. Terminal \
-                                     output can contain secrets. Off by default.",
-                                    mcp_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleMcpEnabled);
-                            }
-                            ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable JavaScript workflows (Beta)",
-                                    "Run a selected workflow in an isolated, resource-limited worker \
-                                     after you approve it for one local terminal. Every input it sends \
-                                     needs a separate approval. Off by default.",
-                                    javascript_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
-                            }
-                            if let Some(action) =
-                                workflow_settings(ui, &automation, automation_javascript_enabled)
-                            {
-                                if matches!(&action, AppCommand::OpenWorkflowPicker) {
-                                    command = Some(AppCommand::OpenWorkflowPicker);
-                                }
-                                automation_command.record(action);
-                            }
-                            if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled, automation_window) {
-                                automation_command.record(AppCommand::Automation(action));
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Terminal mouse", |ui| {
-                            ui.label("Shift+right-click opens the fesTerm menu");
-                            ssh_paragraph(
-                                ui,
-                                "Use Shift+right-click for fesTerm's Copy/Paste menu even \
-                                 when a terminal program handles mouse input. Plain right-click \
-                                 stays with that program. Shift+drag selects terminal text. \
-                                 These overrides work in local and SSH sessions.",
-                            );
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Trim trailing spaces in rectangle copy",
-                                "Bounded rectangle copy freezes the visible terminal while output \
-                                 continues. Choose two corners or drag a rectangle, then Enter \
-                                 copies and resumes, or right-click opens Copy and path/link \
-                                 actions; Escape cancels. Turn this off to preserve the \
-                                 selected width, including trailing spaces on every row.",
-                                rectangle_copy_trim_trailing_spaces,
-                            ) {
-                                command = Some(AppCommand::ToggleRectangleCopyTrimTrailingSpaces);
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Scrolling", |ui| {
-                            if let Some(selected) = settings_segmented_row(
-                                ui,
-                                "Scrollback limit",
-                                "Maximum retained history for newly created sessions. \
-                                 Existing sessions keep their current limit.",
-                                &ScrollbackLimitPreference::ALL
-                                    .map(|limit| (limit.label(), limit == scrollback_limit)),
-                            ) {
-                                command = Some(AppCommand::SetScrollbackLimit(
-                                    ScrollbackLimitPreference::ALL[selected],
-                                ));
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            let mut selected_speed = scroll_speed;
-                            if let Some(new_speed) = settings_clickstop_row(
-                                ui,
-                                "Scroll speed",
-                                "How far one trackpad or mouse wheel scroll step moves \
-                                 through scrollback history.",
-                                &ScrollSpeedPreference::ALL,
-                                selected_speed,
-                            ) {
-                                selected_speed = new_speed;
-                            }
-                            if selected_speed != scroll_speed {
-                                command = Some(AppCommand::SetScrollSpeed(selected_speed));
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Markdown images", |ui| {
-                            let mut selected = image_memory_budget;
-                            egui::Sides::new().show(
-                                ui,
-                                |ui| {
-                                    ui.set_max_width((ui.available_width() - 190.0).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Image memory budget").color(theme::TEXT_PRIMARY));
-                                        ssh_paragraph(ui, "Shared image storage and load reservations across all windows. \
-                                            Lowering the limit keeps existing images but blocks new loads \
-                                            until space is available. Decoder-private and renderer memory are not capped.");
-                                    });
-                                },
-                                |ui| {
-                                    egui::ComboBox::from_id_salt("image-memory-budget")
-                                        .selected_text(selected.label())
-                                        .width(160.0)
-                                        .show_ui(ui, |ui| {
-                                            for budget in ImageMemoryBudgetPreference::ALL {
-                                                ui.selectable_value(&mut selected, budget, budget.label());
-                                            }
-                                        })
-                                        .response
-                                        .widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, ui.is_enabled(), "Image memory budget"));
-                                },
-                            );
-                            if selected != image_memory_budget {
-                                command = Some(AppCommand::SetImageMemoryBudget(selected));
-                            }
-                            if image_memory_over_budget {
-                                ui.add_space(6.0);
-                                ssh_paragraph(ui, "Current image reservations exceed this limit. \
-                                    Existing images are kept; new image loads are refused until space is released.");
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Terminal typography", |ui| {
+                        settings_card(ui, "Terminal", |ui| {
+                            settings_group_label(ui, "Font");
                             let mut selected_font = terminal_font;
                             egui::Sides::new().show(
                                 ui,
@@ -631,12 +423,12 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if let Some(status) = &font_download_status {
                                 ssh_paragraph(ui, status);
                             }
-                            if font_download_failed && ui.button("Retry font download").clicked() {
+                            if font_download_failed
+                                && action_button(ui, ActionButtonRole::Secondary, "Retry font download").clicked()
+                            {
                                 command = Some(AppCommand::RetryTerminalFontDownload);
                             }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
+                            settings_row_separator(ui);
                             if settings_toggle_row(
                                 ui,
                                 "Programming ligatures",
@@ -646,9 +438,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             ) {
                                 command = Some(AppCommand::ToggleTerminalLigatures);
                             }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
+                            settings_row_separator(ui);
                             if let Some(selected) = settings_segmented_row(
                                 ui,
                                 "Emoji presentation",
@@ -673,11 +463,165 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                         EmojiPresentationPreference::Monochrome
                                     }));
                             }
+                            ui.add_space(SETTINGS_CARD_GAP);
+                            settings_group_label(ui, "History & scrolling");
+                            if let Some(selected) = settings_segmented_row(
+                                ui,
+                                "Scrollback limit",
+                                "Maximum retained history for newly created sessions. \
+                                 Existing sessions keep their current limit.",
+                                &ScrollbackLimitPreference::ALL
+                                    .map(|limit| (limit.label(), limit == scrollback_limit)),
+                            ) {
+                                command = Some(AppCommand::SetScrollbackLimit(
+                                    ScrollbackLimitPreference::ALL[selected],
+                                ));
+                            }
+                            settings_row_separator(ui);
+                            let mut selected_speed = scroll_speed;
+                            if let Some(new_speed) = settings_clickstop_row(
+                                ui,
+                                "Scroll speed",
+                                "How far one trackpad or mouse wheel scroll step moves \
+                                 through scrollback history.",
+                                &ScrollSpeedPreference::ALL,
+                                selected_speed,
+                            ) {
+                                selected_speed = new_speed;
+                            }
+                            if selected_speed != scroll_speed {
+                                command = Some(AppCommand::SetScrollSpeed(selected_speed));
+                            }
+                            ui.add_space(SETTINGS_CARD_GAP);
+                            settings_group_label(ui, "Mouse & selection");
+                            if settings_toggle_row(
+                                ui,
+                                "Trim trailing spaces in rectangle copy",
+                                "Bounded rectangle copy freezes the visible terminal while output \
+                                 continues. Choose two corners or drag a rectangle, then Enter \
+                                 copies and resumes, or right-click opens Copy and path/link \
+                                 actions; Escape cancels. Turn this off to preserve the \
+                                 selected width, including trailing spaces on every row.",
+                                rectangle_copy_trim_trailing_spaces,
+                            ) {
+                                command = Some(AppCommand::ToggleRectangleCopyTrimTrailingSpaces);
+                            }
+                            ui.add_space(SETTINGS_ROW_GAP);
+                            ui.label(
+                                egui::RichText::new("Shift+right-click opens the fesTerm menu")
+                                    .size(12.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                            ssh_paragraph(
+                                ui,
+                                "Use Shift+right-click for fesTerm's Copy/Paste menu even \
+                                 when a terminal program handles mouse input. Plain right-click \
+                                 stays with that program. Shift+drag selects terminal text. \
+                                 These overrides work in local and SSH sessions.",
+                            );
                         });
 
-                        ui.add_space(12.0);
+                        settings_card(ui, "Startup & sessions", |ui| {
+                            if settings_toggle_row(
+                                ui,
+                                "Workspace restore",
+                                "Reopen your previously open tabs and the active tab \
+                                 automatically on launch. On by default.",
+                                restore_workspace,
+                            ) {
+                                command = Some(AppCommand::ToggleRestoreWorkspace);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "Confirm before closing live sessions",
+                                "Ask before terminating a running local process or \
+                                 disconnecting an active remote session.",
+                                confirm_session_close,
+                            ) {
+                                command = Some(AppCommand::ToggleConfirmSessionClose);
+                            }
+                            ui.add_space(SETTINGS_CARD_GAP);
+                            settings_group_label(ui, "Local shell");
+                            #[cfg(windows)]
+                            {
+                                if settings_toggle_row(
+                                    ui,
+                                    "Prefer PowerShell when available",
+                                    "Use pwsh.exe (the Windows app-execution alias, PATH or \
+                                     Program Files) when it exists. Turn this off to use \
+                                     COMSPEC for new default local sessions.",
+                                    prefer_powershell,
+                                ) {
+                                    command = Some(AppCommand::TogglePreferPowershell);
+                                }
+                                settings_row_separator(ui);
+                            }
+                            if settings_toggle_row(
+                                ui,
+                                "Customize local shell before launch",
+                                "Show executable, arguments, and working-directory fields, \
+                                 prefilled with the defaults, after choosing Local Shell. \
+                                 When off, start the default shell in your home directory \
+                                 immediately. Off by default.",
+                                customize_local_shell,
+                            ) {
+                                command = Some(AppCommand::ToggleCustomizeLocalShell);
+                            }
+                            ui.add_space(SETTINGS_CARD_GAP);
+                            settings_group_label(ui, "New Session tab");
+                            if settings_toggle_row(
+                                ui,
+                                "Compact New Session layout",
+                                "Shrink the New Session tab's launch cards so the \
+                                 saved-profile and running-session panels start higher \
+                                 up the window. Card descriptions are kept. On by \
+                                 default.",
+                                compact_launcher_grid,
+                            ) {
+                                command = Some(AppCommand::ToggleCompactLauncherGrid);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "Resume unattached local sessions from New Session",
+                                "Surface locally running festerm-sessiond persistence \
+                                 sessions that have no attached window, plus locally \
+                                 running tmux and GNU screen sessions, as one-click \
+                                 \"Resume\" entries in their own labeled widgets on the \
+                                 New Session tab. On by default.",
+                                show_resumable_sessions,
+                            ) {
+                                command = Some(AppCommand::ToggleShowResumableSessions);
+                            }
+                        });
 
-                        settings_card(ui, "Quick switch", |ui| {
+                        settings_card(ui, "Window & tabs", |ui| {
+                            if settings_segmented_row(
+                                ui,
+                                "Session chip layout",
+                                "Keep terminal height stable with one scrolling row.",
+                                &[
+                                    ("Single row", !matches!(chip_layout, ChipLayout::Wrap)),
+                                    ("Wrap", matches!(chip_layout, ChipLayout::Wrap)),
+                                ],
+                            )
+                            .is_some()
+                            {
+                                command = Some(AppCommand::ToggleChipLayout);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "Show session details in chips",
+                                "Show the terminal title or launch context beneath the \
+                                 session name. Off makes every chip compact and single-line, \
+                                 moving the active session's detail to the status bar.",
+                                show_session_details,
+                            ) {
+                                command = Some(AppCommand::ToggleShowSessionDetails);
+                            }
+                            settings_row_separator(ui);
                             if settings_toggle_row(
                                 ui,
                                 "Show quick-switch numbers",
@@ -688,176 +632,139 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             ) {
                                 command = Some(AppCommand::ToggleQuickSwitchOverlay);
                             }
-                        });
-
-                        ui.add_space(12.0);
-
-                        #[cfg(feature = "local-host-settings")]
-                        settings_card(ui, "Remote access", |ui| {
-                            if let Some(action) = crate::app::desktop_remote_access::show(
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
                                 ui,
-                                &local_remote_access,
-                                &local_share_targets,
+                                "Show status bar",
+                                "Display sourced session state, terminal dimensions, and \
+                                 the active session detail when compact chips require it.",
+                                status_bar_visible,
                             ) {
-                                command = Some(match action {
-                                    crate::app::desktop_remote_access::Action::SignInAccount => AppCommand::AddDevTunnelAccount,
-                                    action => AppCommand::LocalRemoteAccess(action),
-                                });
+                                command = Some(AppCommand::ToggleStatusBar);
+                            }
+                            ui.add_space(SETTINGS_ROW_GAP);
+                            ui.indent("durable_session_name", |ui| {
+                                if settings_toggle_row_enabled(
+                                    ui,
+                                    "Show durable session name in status bar",
+                                    if status_bar_visible {
+                                        "Name the tmux, GNU screen, or fesTerm session daemon \
+                                         session the active terminal is attached to, as \
+                                         \"provider · session name\". This is the durable \
+                                         session's stable identity, which the terminal-provided \
+                                         title cannot supply; it is separate from \"Show session \
+                                         details in chips\" and unaffected by it. Ordinary \
+                                         sessions show nothing. Off by default."
+                                    } else {
+                                        "Requires the status bar. Turn on Show status bar to \
+                                         name the durable tmux, GNU screen, or fesTerm session \
+                                         daemon session the active terminal is attached to."
+                                    },
+                                    show_durable_session_in_status_bar,
+                                    status_bar_visible,
+                                ) {
+                                    command = Some(AppCommand::ToggleDurableSessionInStatusBar);
+                                }
+                            });
+                            ui.add_space(SETTINGS_CARD_GAP);
+                            settings_group_label(ui, "Panes");
+                            if settings_toggle_row(
+                                ui,
+                                "Show pane handles on hover",
+                                "Reveal a compact handle near each pane's top edge. \
+                                 Rearrange panes always shows handles, even when this is off.",
+                                show_pane_handles,
+                            ) {
+                                command = Some(AppCommand::TogglePaneHandles);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "High-contrast pane focus",
+                                "Use a stronger outline around the focused pane.",
+                                pane_high_contrast,
+                            ) {
+                                command = Some(AppCommand::TogglePaneHighContrast);
                             }
                         });
 
-                        #[cfg(feature = "experimental-dev-tunnels")]
-                        {
-                            settings_card(ui, "GitHub accounts", |ui| {
-                                ssh_paragraph(
-                                    ui,
-                                    "Shared by Dev Tunnel connections.",
-                                );
-                                if dev_tunnel_accounts.is_empty() {
-                                    ssh_paragraph(ui, "No accounts yet.");
-                                }
-                                for (key, login, used_by, status) in &dev_tunnel_accounts {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(format!(
-                                            "@{login} · used by {used_by} profile{}",
-                                            if *used_by == 1 { "" } else { "s" }
-                                        ));
-                                        if status.needs_sign_in() {
-                                            ui.colored_label(theme::STATUS_ERROR, status.label());
-                                        } else {
-                                            ui.weak(status.label());
-                                        }
-                                        if action_button(ui, ActionButtonRole::Secondary, "Sign in again").clicked() {
-                                            command = Some(AppCommand::ReauthenticateDevTunnelAccount {
-                                                account: key.clone(),
-                                            });
-                                        }
-                                        if action_button(ui, ActionButtonRole::Secondary, &format!("Sign out @{login}")).clicked() {
-                                            command = Some(AppCommand::RemoveDevTunnelAccount {
-                                                account: key.clone(),
-                                            });
-                                        }
-                                    });
-                                }
-                                let sign_in_label = if dev_tunnel_accounts.is_empty() {
-                                    "Sign in with GitHub"
-                                } else {
-                                    "Add account"
-                                };
-                                if action_button(ui, ActionButtonRole::Secondary, sign_in_label).clicked() {
-                                    command = Some(AppCommand::AddDevTunnelAccount);
-                                }
-                            });
-                            ui.add_space(12.0);
-                            settings_card(ui, "Dev Tunnels", |ui| {
-                                if settings_toggle_row(
-                                    ui,
-                                    "Show my running tunnels in New Session",
-                                    "List your account's running fesTerm bridge tunnels that \
-                                     have no saved profile, so you can connect without \
-                                     setting one up first. Asks the Dev Tunnels service when \
-                                     New Session opens, at most once a minute. Off by default.",
-                                    show_running_dev_tunnels,
-                                ) {
-                                    command = Some(AppCommand::ToggleShowRunningDevTunnels);
-                                }
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(10.0);
-                                if settings_toggle_row(
-                                    ui,
-                                    "Extend tunnel lifetime on sign-in",
-                                    "When you sign in to or connect a Dev Tunnel you own, \
-                                     ask the service to push its expiry forward. A failed \
-                                     extension never blocks the connection. Off by default.",
-                                    extend_dev_tunnel_lifetime,
-                                ) {
-                                    command = Some(AppCommand::ToggleExtendDevTunnelLifetime);
-                                }
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(10.0);
-                                const DAYS: [u32; 6] = [7, 14, 30, 60, 90, 180];
-                                let labels = DAYS.map(|days| format!("{days} days"));
-                                let options: Vec<(&str, bool)> = DAYS
-                                    .iter()
-                                    .zip(&labels)
-                                    .map(|(days, label)| {
-                                        (label.as_str(), *days == dev_tunnel_extension_days)
-                                    })
-                                    .collect();
-                                if let Some(selected) = settings_segmented_row(
-                                    ui,
-                                    "Extension length",
-                                    "How far from now the tunnel's expiry is moved each \
-                                     time. Other values (1-365 days) can be set in the \
-                                     configuration file.",
-                                    &options,
-                                ) {
-                                    command =
-                                        Some(AppCommand::SetDevTunnelExtensionDays(DAYS[selected]));
-                                }
-                            });
-                            ui.add_space(12.0);
-                        }
+                        settings_drill_in_card(
+                            ui,
+                            settings_drill_in_id(navigation_id, SettingsPage::KeyboardShortcuts),
+                            SettingsPage::KeyboardShortcuts,
+                            &keyboard_shortcuts_summary(&keyboard_bindings),
+                            &mut navigation,
+                            &mut open_page,
+                        );
 
-                        settings_card(ui, "SFTP", |ui| {
-                            ui.horizontal_top(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_max_width((ui.available_width() - 190.0).max(0.0));
-                                    ui.label(
-                                        egui::RichText::new("SFTP pane order")
-                                            .color(theme::TEXT_PRIMARY),
+                        settings_card(ui, "Files & documents", |ui| {
+                            let mut selected_order =
+                                *state.sftp_pane_order.get_or_insert(sftp_pane_order);
+                            let order_labels = [
+                                (SftpPaneOrderPreference::LocalLeft, "Local left · Remote right"),
+                                (SftpPaneOrderPreference::RemoteLeft, "Remote left · Local right"),
+                            ];
+                            egui::Sides::new().show(
+                                ui,
+                                |ui| {
+                                    ui.set_max_width(
+                                        (ui.available_width() - 190.0)
+                                            .max(SETTINGS_MIN_DESCRIPTION_WIDTH),
                                     );
-                                    ssh_paragraph(
-                                        ui,
-                                        "Visual order for the GUI SFTP file manager. Commands and accessibility labels still refer to Local and Remote, never Left and Right.",
-                                    );
-                                });
-                                ui.add_space(16.0);
-                                ui.vertical(|ui| {
-                                    for (value, label) in [
-                                        (
-                                            SftpPaneOrderPreference::LocalLeft,
-                                            "Local left · Remote right",
-                                        ),
-                                        (
-                                            SftpPaneOrderPreference::RemoteLeft,
-                                            "Remote left · Local right",
-                                        ),
-                                    ] {
-                                        let response = ui.radio_value(
-                                            state
-                                                .sftp_pane_order
-                                                .get_or_insert(sftp_pane_order),
-                                            value,
-                                            label,
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("SFTP pane order")
+                                                .color(theme::TEXT_PRIMARY),
                                         );
-                                        if response.changed() {
-                                            command = Some(AppCommand::SetSftpPaneOrder(value));
-                                        }
-                                    }
-                                });
-                            });
-                            ui.add_space(10.0);
-                            ui.horizontal_top(|ui| {
-                                let mut label_id = None;
-                                ui.vertical(|ui| {
-                                    ui.set_max_width((ui.available_width() - 190.0).max(0.0));
-                                    let label = ui.label(
-                                        egui::RichText::new("Default local SFTP directory")
-                                            .color(theme::TEXT_PRIMARY),
+                                        ssh_paragraph(
+                                            ui,
+                                            "Visual order for the GUI SFTP file manager. Commands and accessibility labels still refer to Local and Remote, never Left and Right.",
+                                        );
+                                    });
+                                },
+                                |ui| {
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(180.0, ui.spacing().interact_size.y * 2.0),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            for (value, label) in order_labels {
+                                                if ui
+                                                    .radio_value(&mut selected_order, value, label)
+                                                    .changed()
+                                                {
+                                                    command =
+                                                        Some(AppCommand::SetSftpPaneOrder(value));
+                                                }
+                                            }
+                                        },
                                     );
-                                    label_id = Some(label.id);
-                                    ssh_paragraph(
-                                        ui,
-                                        "Starting local directory for new SFTP tabs. \
-                                         Changing it updates only future sessions; `lcd` \
-                                         affects the live session only.",
+                                },
+                            );
+                            state.sftp_pane_order = Some(selected_order);
+                            settings_row_separator(ui);
+                            let label_id = std::cell::Cell::new(None);
+                            egui::Sides::new().show(
+                                ui,
+                                |ui| {
+                                    ui.set_max_width(
+                                        (ui.available_width() - 190.0)
+                                            .max(SETTINGS_MIN_DESCRIPTION_WIDTH),
                                     );
-                                });
-                                ui.add_space(16.0);
-                                ui.vertical(|ui| {
+                                    ui.vertical(|ui| {
+                                        let label = ui.label(
+                                            egui::RichText::new("Default local SFTP directory")
+                                                .color(theme::TEXT_PRIMARY),
+                                        );
+                                        label_id.set(Some(label.id));
+                                        ssh_paragraph(
+                                            ui,
+                                            "Starting local directory for new SFTP tabs. \
+                                             Changing it updates only future sessions; `lcd` \
+                                             affects the live session only.",
+                                        );
+                                    });
+                                },
+                                |ui| {
                                     let response = ui.add(
                                         TextEdit::singleline(
                                             &mut state.default_sftp_local_directory,
@@ -867,7 +774,9 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                         .desired_width(180.0),
                                     );
                                     let response = response
-                                        .labelled_by(label_id.expect("label should be rendered"));
+                                        .labelled_by(
+                                        label_id.get().expect("label should be rendered"),
+                                    );
                                     if response.changed() {
                                         let trimmed = state.default_sftp_local_directory.trim();
                                         if trimmed.is_empty() {
@@ -892,29 +801,431 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                             );
                                         }
                                     }
-                                });
-                            });
+                                },
+                            );
                             if let Some(feedback) = &state.feedback {
                                 ui.add_space(6.0);
                                 ui.colored_label(theme::STATUS_ERROR, feedback);
                             }
-                        });
-
-                        ui.add_space(12.0);
-
-                        settings_card(ui, "Keyboard bindings", |ui| {
-                            if let Some(action) =
-                                crate::keyboard::show_editor(ui, &keyboard_bindings)
-                            {
-                                command = Some(action);
+                            settings_row_separator(ui);
+                            let mut selected = image_memory_budget;
+                            egui::Sides::new().show(
+                                ui,
+                                |ui| {
+                                    ui.set_max_width((ui.available_width() - 190.0).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new("Markdown image memory budget").color(theme::TEXT_PRIMARY));
+                                        ssh_paragraph(ui, "Shared image storage and load reservations across all windows. \
+                                            Lowering the limit keeps existing images but blocks new loads \
+                                            until space is available. Decoder-private and renderer memory are not capped.");
+                                    });
+                                },
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("image-memory-budget")
+                                        .selected_text(selected.label())
+                                        .width(160.0)
+                                        .show_ui(ui, |ui| {
+                                            for budget in ImageMemoryBudgetPreference::ALL {
+                                                ui.selectable_value(&mut selected, budget, budget.label());
+                                            }
+                                        })
+                                        .response
+                                        .widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, ui.is_enabled(), "Image memory budget"));
+                                },
+                            );
+                            if selected != image_memory_budget {
+                                command = Some(AppCommand::SetImageMemoryBudget(selected));
+                            }
+                            if image_memory_over_budget {
+                                ui.add_space(6.0);
+                                ssh_paragraph(ui, "Current image reservations exceed this limit. \
+                                    Existing images are kept; new image loads are refused until space is released.");
                             }
                         });
+
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        settings_card(ui, "Dev Tunnels", |ui| {
+                            settings_group_label(ui, "GitHub accounts");
+                            ssh_paragraph(ui, "Shared by Dev Tunnel connections.");
+                            if dev_tunnel_accounts.is_empty() {
+                                ssh_paragraph(ui, "No accounts yet.");
+                            }
+                            for (key, login, used_by, status) in &dev_tunnel_accounts {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!(
+                                        "@{login} · used by {used_by} profile{}",
+                                        if *used_by == 1 { "" } else { "s" }
+                                    ));
+                                    if status.needs_sign_in() {
+                                        ui.colored_label(theme::STATUS_ERROR, status.label());
+                                    } else {
+                                        ui.weak(status.label());
+                                    }
+                                    if action_button(ui, ActionButtonRole::Secondary, "Sign in again").clicked() {
+                                        command = Some(AppCommand::ReauthenticateDevTunnelAccount {
+                                            account: key.clone(),
+                                        });
+                                    }
+                                    if action_button(ui, ActionButtonRole::Secondary, &format!("Sign out @{login}")).clicked() {
+                                        command = Some(AppCommand::RemoveDevTunnelAccount {
+                                            account: key.clone(),
+                                        });
+                                    }
+                                });
+                            }
+                            let sign_in_label = if dev_tunnel_accounts.is_empty() {
+                                "Sign in with GitHub"
+                            } else {
+                                "Add account"
+                            };
+                            if action_button(ui, ActionButtonRole::Secondary, sign_in_label).clicked() {
+                                command = Some(AppCommand::AddDevTunnelAccount);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "Show my running tunnels in New Session",
+                                "List your account's running fesTerm bridge tunnels that \
+                                 have no saved profile, so you can connect without \
+                                 setting one up first. Asks the Dev Tunnels service when \
+                                 New Session opens, at most once a minute. Off by default.",
+                                show_running_dev_tunnels,
+                            ) {
+                                command = Some(AppCommand::ToggleShowRunningDevTunnels);
+                            }
+                            settings_row_separator(ui);
+                            if settings_toggle_row(
+                                ui,
+                                "Extend tunnel lifetime on sign-in",
+                                "When you sign in to or connect a Dev Tunnel you own, \
+                                 ask the service to push its expiry forward. A failed \
+                                 extension never blocks the connection. Off by default.",
+                                extend_dev_tunnel_lifetime,
+                            ) {
+                                command = Some(AppCommand::ToggleExtendDevTunnelLifetime);
+                            }
+                            if extend_dev_tunnel_lifetime {
+                                ui.add_space(SETTINGS_ROW_GAP);
+                                ui.indent("dev_tunnel_extension_length", |ui| {
+                                    const DAYS: [u32; 6] = [7, 14, 30, 60, 90, 180];
+                                    let labels = DAYS.map(|days| format!("{days} days"));
+                                    let options: Vec<(&str, bool)> = DAYS
+                                        .iter()
+                                        .zip(&labels)
+                                        .map(|(days, label)| {
+                                            (label.as_str(), *days == dev_tunnel_extension_days)
+                                        })
+                                        .collect();
+                                    if let Some(selected) = settings_segmented_row(
+                                        ui,
+                                        "Extension length",
+                                        "How far from now the tunnel's expiry is moved each \
+                                         time. Other values (1-365 days) can be set in the \
+                                         configuration file.",
+                                        &options,
+                                    ) {
+                                        command = Some(AppCommand::SetDevTunnelExtensionDays(
+                                            DAYS[selected],
+                                        ));
+                                    }
+                                });
+                            }
+                        });
+
+                        #[cfg(feature = "local-host-settings")]
+                        settings_drill_in_card(
+                            ui,
+                            settings_drill_in_id(navigation_id, SettingsPage::RemoteAccess),
+                            SettingsPage::RemoteAccess,
+                            &remote_access_summary(&local_remote_access),
+                            &mut navigation,
+                            &mut open_page,
+                        );
+
+                        settings_card(ui, "Recording", |ui| {
+                            if settings_toggle_row(
+                                ui,
+                                "Allow session recording",
+                                "Off by default. Turning this off stops an active recording; existing recordings remain available in the library.",
+                                session_recording_enabled,
+                            ) {
+                                command = Some(AppCommand::SetSessionRecordingAllowed(
+                                    !session_recording_enabled,
+                                ));
+                            }
+                            if recording_preference_unsaved {
+                                ui.add_space(SETTINGS_ROW_GAP);
+                                ssh_paragraph(ui, "Recording is off for this run, but the saved preference is unconfirmed and may permit recording after restart. Retry saving, or reconcile the configuration if saves are blocked.");
+                                if action_button(ui, ActionButtonRole::Secondary, "Retry saving recording opt-out").clicked() {
+                                    command = Some(AppCommand::SetSessionRecordingAllowed(false));
+                                }
+                            }
+                            if session_recording_enabled {
+                                settings_row_separator(ui);
+                                if settings_drill_in_row(
+                                    ui,
+                                    ui.id().with("recording_settings"),
+                                    "Recording settings",
+                                    Some("Capture, naming, and playback defaults."),
+                                )
+                                .clicked()
+                                {
+                                    command = Some(AppCommand::OpenRecordingSettings);
+                                }
+                            }
+                            settings_row_separator(ui);
+                            if settings_drill_in_row(
+                                ui,
+                                ui.id().with("recording_library"),
+                                "Recording library",
+                                Some("Play, export, or delete saved recordings."),
+                            )
+                            .clicked()
+                            {
+                                command = Some(AppCommand::OpenRecordingLibrary);
+                            }
+                        });
+
+                        settings_card(ui, "Automation (Beta)", |ui| {
+                            if let Some(feedback) = automation_preference_feedback {
+                                ssh_paragraph(ui, feedback);
+                                if automation_preference_retry_available
+                                    && action_button(ui, ActionButtonRole::Secondary, "Retry saving automation preferences (stay stopped)").clicked()
+                                {
+                                    automation_command.record(AppCommand::RetryAutomationSettings);
+                                }
+                                ui.add_space(SETTINGS_ROW_GAP);
+                            }
+                            let viewport = ui.ctx().viewport_id();
+                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable local MCP (Beta)",
+                                    "Allow a local assistant adapter to request access. Each connection \
+                                     still needs a separate native grant for exact terminals. Terminal \
+                                     output can contain secrets. Off by default.",
+                                    mcp_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleMcpEnabled);
+                            }
+                            ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
+                            settings_row_separator(ui);
+                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable JavaScript workflows (Beta)",
+                                    "Run a selected workflow in an isolated, resource-limited worker \
+                                     after you approve it for one local terminal. Every input it sends \
+                                     needs a separate approval. Off by default.",
+                                    javascript_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
+                            }
+                            settings_row_separator(ui);
+                            ssh_paragraph(ui, automation.status);
+                            ui.add_space(4.0);
+                            let summary = automation_activity_summary(&automation);
+                            let response = settings_drill_in_row(
+                                ui,
+                                settings_drill_in_id(navigation_id, SettingsPage::AutomationActivity),
+                                SettingsPage::AutomationActivity.title(),
+                                Some(&summary),
+                            );
+                            settings_drill_in_focus(ui, &response, SettingsPage::AutomationActivity, &mut navigation);
+                            if response.clicked() {
+                                open_page = Some(SettingsPage::AutomationActivity);
+                            }
+                        });
+
+                        settings_card(ui, "Updates & privacy", |ui| {
+                            if settings_toggle_row(
+                                ui,
+                                "Check for fesTerm updates automatically",
+                                "Contact GitHub about once a day to see whether a newer \
+                                 fesTerm has been released, and mark the \"More actions\" \
+                                 control when one has. Nothing is downloaded or installed \
+                                 without your say-so, and no profile, session, terminal, \
+                                 device, or configuration data is sent. On by default; turn \
+                                 it off to make fesTerm check only when you ask it to from \
+                                 About fesTerm.",
+                                automatic_update_checks,
+                            ) {
+                                command = Some(AppCommand::ToggleAutomaticUpdateChecks);
+                            }
+                        });
+
+                        settings_card(ui, "Reset", |ui| {
+                            ssh_paragraph(ui, RESET_ALL_SETTINGS_SUMMARY);
+                            ui.add_space(SETTINGS_ROW_GAP);
+                            if action_button(
+                                ui,
+                                ActionButtonRole::DangerOutline,
+                                RESET_ALL_SETTINGS_LABEL,
+                            )
+                            .clicked()
+                            {
+                                automation_command.record(AppCommand::ResetAllSettings);
+                            }
+                        });
+                            }
+                            SettingsPage::KeyboardShortcuts => {
+                                settings_panel(ui, |ui| {
+                                    if let Some(action) =
+                                        crate::keyboard::show_editor(ui, &keyboard_bindings)
+                                    {
+                                        command = Some(action);
+                                    }
+                                });
+                            }
+                            #[cfg(feature = "local-host-settings")]
+                            SettingsPage::RemoteAccess => {
+                                settings_panel(ui, |ui| {
+                                    if let Some(action) = crate::app::desktop_remote_access::show(
+                                        ui,
+                                        &local_remote_access,
+                                        &local_share_targets,
+                                    ) {
+                                        command = Some(match action {
+                                            crate::app::desktop_remote_access::Action::SignInAccount => AppCommand::AddDevTunnelAccount,
+                                            action => AppCommand::LocalRemoteAccess(action),
+                                        });
+                                    }
+                                });
+                            }
+                            SettingsPage::AutomationActivity => {
+                                settings_card(ui, "JavaScript workflows", |ui| {
+                                    if let Some(action) =
+                                        workflow_settings(ui, &automation, automation_javascript_enabled)
+                                    {
+                                        if matches!(&action, AppCommand::OpenWorkflowPicker) {
+                                            command = Some(AppCommand::OpenWorkflowPicker);
+                                        }
+                                        automation_command.record(action);
+                                    }
+                                });
+                                settings_card(ui, "Local MCP", |ui| {
+                                    if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled, automation_window) {
+                                        automation_command.record(AppCommand::Automation(action));
+                                    }
+                                });
+                            }
+                        }
                     });
                 });
         });
     });
-    ui.data_mut(|data| data.insert_temp(state_id, state));
+    if go_back {
+        navigation.return_to = Some(page);
+        navigation.page = SettingsPage::Main;
+    } else if let Some(next) = open_page {
+        navigation.page = next;
+        navigation.return_to = None;
+        navigation.focus_back = true;
+    }
+    if navigation.page != page {
+        ui.ctx().request_repaint();
+    }
+    navigation.text_focused = ui.ctx().text_edit_focused();
+    ui.data_mut(|data| {
+        data.insert_temp(state_id, state);
+        data.insert_temp(navigation_id, navigation);
+    });
     automation_command.resolve(command)
+}
+
+/// The label shared by every surface that invokes `AppCommand::ResetAllSettings`.
+pub(crate) const RESET_ALL_SETTINGS_LABEL: &str = "Reset all settings…";
+/// What the main-page Reset card says before anyone opens the confirmation.
+const RESET_ALL_SETTINGS_SUMMARY: &str = "Return the preferences on this page, including \
+     keyboard shortcuts, to their defaults. You confirm first, with the full list.";
+/// Every Settings group `AppCommand::ResetAllSettings` returns to its
+/// defaults; the confirmation dialog lists exactly these.
+pub(crate) const RESET_ALL_SETTINGS_CATEGORIES: &[&str] = &[
+    "Terminal: font, ligatures, emoji, scrollback, scroll speed, and selection",
+    "Startup & sessions: workspace restore, close confirmation, local shell, and New Session",
+    "Window & tabs: chips, status bar, quick-switch numbers, and panes",
+    "Keyboard shortcuts: every customized binding",
+    "Files & documents: SFTP pane order and folder, editor, and image memory",
+    "Dev Tunnels options",
+    "Automation: Local MCP and JavaScript workflows turn off",
+    "Updates & privacy",
+];
+/// What `AppCommand::ResetAllSettings` deliberately leaves alone.
+pub(crate) const RESET_ALL_SETTINGS_NOT_AFFECTED: &str = "Recording settings, signed-in Dev \
+     Tunnels accounts, remote access, saved profiles, and stored credentials are not affected.";
+
+fn keyboard_shortcuts_summary(bindings: &festerm_config::KeyboardBindings) -> String {
+    let customized = crate::keyboard::customized_count(bindings);
+    let customized = match customized {
+        0 => "All defaults".to_owned(),
+        1 => "1 customized".to_owned(),
+        count => format!("{count} customized"),
+    };
+    format!("{customized} · Ctrl+Shift+F12 always reopens Settings")
+}
+
+#[cfg(feature = "local-host-settings")]
+fn remote_access_summary(view: &crate::app::desktop_remote_access::View) -> String {
+    let state = match view.access_status() {
+        None => "Not observed",
+        Some(false) => "Off",
+        Some(true) => "On",
+    };
+    let mut summary = format!("Let remote clients reach this computer · {state}");
+    if view.review.is_some() || view.device_code.is_some() || view.share_review.is_some() {
+        summary.push_str(" · review waiting");
+    } else if view.busy {
+        summary.push_str(" · working");
+    }
+    if view.failure.is_some() {
+        summary.push_str(" · needs attention");
+    }
+    summary
+}
+
+fn automation_activity_summary(snapshot: &crate::automation::SettingsSnapshot) -> String {
+    let mut parts = Vec::new();
+    let connections = snapshot.channels.len();
+    if connections > 0 {
+        parts.push(format!(
+            "{connections} MCP connection{}",
+            if connections == 1 { "" } else { "s" }
+        ));
+    }
+    let controllers = snapshot.controllers.len();
+    if controllers > 0 {
+        parts.push(format!(
+            "{controllers} controller{}",
+            if controllers == 1 { "" } else { "s" }
+        ));
+    }
+    if snapshot.workflow.busy() || snapshot.javascript.run.is_some() {
+        parts.push("workflow active".to_owned());
+    }
+    let waiting = snapshot
+        .channels
+        .iter()
+        .filter(|channel| !channel.approved)
+        .count()
+        + usize::from(snapshot.direct_verification.is_some())
+        + usize::from(
+            snapshot
+                .javascript
+                .run
+                .as_ref()
+                .and_then(|run| run.input.as_ref())
+                .is_some_and(|input| !input.approved),
+        );
+    if waiting > 0 {
+        parts.push(format!("{waiting} waiting for your review"));
+    }
+    if parts.is_empty() {
+        "Connections, controllers, and workflow runs. Nothing active.".to_owned()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
@@ -2342,8 +2653,12 @@ fn direct_verification_settings(
     command
 }
 
-fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    let _ = settings_card_response(ui, title, body);
+/// A headed Settings card followed by the shared card gap. Returns the
+/// card's frame rect.
+fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) -> egui::Rect {
+    let rect = settings_card_response(ui, title, body).response.rect;
+    ui.add_space(SETTINGS_CARD_GAP);
+    rect
 }
 
 fn settings_card_response(
@@ -2351,6 +2666,22 @@ fn settings_card_response(
     title: &str,
     body: impl FnOnce(&mut Ui),
 ) -> egui::InnerResponse<()> {
+    settings_frame(ui, |ui| {
+        ssh_section_heading(ui, title);
+        ui.add_space(6.0);
+        body(ui);
+    })
+}
+
+/// A Settings card without a heading, for a sub-page whose own title
+/// already names its content.
+fn settings_panel(ui: &mut Ui, body: impl FnOnce(&mut Ui)) -> egui::Rect {
+    let rect = settings_frame(ui, body).response.rect;
+    ui.add_space(SETTINGS_CARD_GAP);
+    rect
+}
+
+fn settings_frame(ui: &mut Ui, body: impl FnOnce(&mut Ui)) -> egui::InnerResponse<()> {
     crate::software_background::show_frame(
         ui,
         egui::Frame::new()
@@ -2360,11 +2691,119 @@ fn settings_card_response(
             .inner_margin(egui::Margin::same(16)),
         |ui| {
             ui.set_min_width(ui.available_width());
-            ssh_section_heading(ui, title);
-            ui.add_space(6.0);
             body(ui);
         },
     )
+}
+
+/// A main-page section that is only a way into its own sub-page.
+fn settings_drill_in_card(
+    ui: &mut Ui,
+    id: egui::Id,
+    page: SettingsPage,
+    summary: &str,
+    navigation: &mut SettingsNavigation,
+    open_page: &mut Option<SettingsPage>,
+) {
+    settings_panel(ui, |ui| {
+        let response = settings_drill_in_row(ui, id, page.title(), Some(summary));
+        settings_drill_in_focus(ui, &response, page, navigation);
+        if response.clicked() {
+            *open_page = Some(page);
+        }
+    });
+}
+
+/// Returns keyboard focus to the row a sub-page was opened from.
+fn settings_drill_in_focus(
+    ui: &Ui,
+    response: &egui::Response,
+    page: SettingsPage,
+    navigation: &mut SettingsNavigation,
+) {
+    if navigation.return_to == Some(page) {
+        response.request_focus();
+        ui.scroll_to_rect(response.rect, None);
+        navigation.return_to = None;
+    }
+}
+
+/// A full-width row that opens another page: title, optional one-line
+/// summary, and the `OpenSubpage` chevron from the icon system (never a
+/// typed ">"). The whole row is one focusable button named by its title;
+/// the summary stays readable text for assistive technology.
+fn settings_drill_in_row(
+    ui: &mut Ui,
+    id: egui::Id,
+    title: &str,
+    summary: Option<&str>,
+) -> egui::Response {
+    const CHEVRON: f32 = 14.0;
+    let background = ui.painter().add(egui::Shape::Noop);
+    let row = ui.scope_builder(
+        egui::UiBuilder::new().id_salt(id).sense(Sense::click()),
+        |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    egui::Sides::new().show(
+                        ui,
+                        |ui| {
+                            ui.set_max_width(
+                                (ui.available_width() - CHEVRON - 16.0)
+                                    .max(SETTINGS_MIN_DESCRIPTION_WIDTH),
+                            );
+                            ui.vertical(|ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(title).color(theme::TEXT_PRIMARY),
+                                    )
+                                    .selectable(false),
+                                );
+                                if let Some(summary) = summary {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(summary)
+                                                .size(12.0)
+                                                .color(theme::TEXT_SECONDARY),
+                                        )
+                                        .selectable(false),
+                                    );
+                                }
+                            });
+                        },
+                        |ui| {
+                            let (chevron, _) =
+                                ui.allocate_exact_size(egui::Vec2::splat(CHEVRON), Sense::hover());
+                            icon::paint(
+                                ui.painter(),
+                                Icon::OpenSubpage,
+                                chevron,
+                                theme::TEXT_MUTED,
+                            );
+                        },
+                    );
+                });
+        },
+    );
+    let response = row.response;
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), title));
+    if response.hovered() || response.has_focus() {
+        ui.painter().set(
+            background,
+            egui::Shape::rect_filled(response.rect, 6.0, theme::SURFACE_TAB_ACTIVE),
+        );
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect,
+            6.0,
+            Stroke::new(1.0, theme::BORDER_ACTIVE),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response
 }
 
 /// One labeled on/off preference row: a fixed title and state-independent
@@ -2373,26 +2812,52 @@ fn settings_card_response(
 /// whose entire label used to flip between "shown"/"hidden" copy. Returns
 /// whether the switch was clicked this frame; the caller still owns
 /// dispatching the actual `AppCommand`, matching every other control here.
-fn settings_toggle_row(ui: &mut Ui, title: &str, description: &str, value: bool) -> bool {
+pub(crate) fn settings_toggle_row(
+    ui: &mut Ui,
+    title: &str,
+    description: &str,
+    value: bool,
+) -> bool {
+    settings_toggle_row_enabled(ui, title, description, value, true)
+}
+
+/// `settings_toggle_row` for a preference that only applies while another
+/// one is on: disabled rows keep their place but cannot be toggled.
+pub(crate) fn settings_toggle_row_enabled(
+    ui: &mut Ui,
+    title: &str,
+    description: &str,
+    value: bool,
+    enabled: bool,
+) -> bool {
     let mut clicked = false;
-    egui::Sides::new().show(
-        ui,
-        |ui| {
-            // Reserve room for the switch itself (and the `Sides` gap) so
-            // the description wraps at measurement time instead of laying
-            // out as one long unwrapped line that pushes the switch off
-            // the right edge of the card.
-            ui.set_max_width(ui.available_width() - 60.0);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
-                ssh_paragraph(ui, description);
-            });
-        },
-        |ui| {
-            clicked = toggle_switch(ui, value, title).clicked();
-        },
-    );
-    clicked
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                // Reserve room for the switch itself (and the `Sides` gap) so
+                // the description wraps at measurement time instead of laying
+                // out as one long unwrapped line that pushes the switch off
+                // the right edge of the card.
+                ui.set_max_width(ui.available_width() - 60.0);
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
+                    ssh_paragraph(ui, description);
+                });
+            },
+            |ui| {
+                clicked = toggle_switch(ui, value, title).clicked();
+            },
+        );
+    });
+    clicked && enabled
+}
+
+/// Secondary explanatory copy in the shared Settings text role, for surfaces
+/// hosted inside Settings that live outside this module.
+#[cfg(feature = "local-host-settings")]
+pub(crate) fn settings_note(ui: &mut Ui, text: &str) {
+    ssh_paragraph(ui, text);
 }
 
 /// Painter-drawn pill-shaped toggle switch matching the mockup's on/off
@@ -2402,10 +2867,17 @@ fn settings_toggle_row(ui: &mut Ui, title: &str, description: &str, value: bool)
 /// between "shown"/"hidden" copy. An explicit accessible label is set (like
 /// `paint_close_button`'s pattern) since the switch has no text of its own
 /// for screen readers or headless-test queries to find.
-pub(super) fn toggle_switch(ui: &mut Ui, value: bool, accessible_label: &str) -> egui::Response {
+pub(crate) fn toggle_switch(ui: &mut Ui, value: bool, accessible_label: &str) -> egui::Response {
     let desired_size = egui::vec2(40.0, 22.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Checkbox, true, accessible_label));
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::Checkbox,
+            ui.is_enabled(),
+            value,
+            accessible_label,
+        )
+    });
 
     if ui.is_rect_visible(rect) {
         let how_on = ui.ctx().animate_bool(response.id, value);
@@ -2497,13 +2969,31 @@ fn settings_segmented_row(
             });
         },
         |ui| {
-            ui.horizontal(|ui| {
-                for (index, (label, selected)) in options.iter().enumerate() {
-                    if ui.selectable_label(*selected, *label).clicked() && !*selected {
-                        clicked = Some(index);
+            // `Sides` lays its right closure out right-to-left; a plain
+            // `ui.horizontal` would inherit that and show (and Tab through)
+            // the options backwards. Anchor a left-to-right block instead.
+            ui.allocate_ui_with_layout(
+                egui::vec2(control_width, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    for (index, (label, selected)) in options.iter().enumerate() {
+                        let response = ui.selectable_label(*selected, *label);
+                        if !*selected {
+                            // Give unselected segments a visible boundary;
+                            // only the selected one is filled.
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                ui.visuals().widgets.inactive.corner_radius,
+                                Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if response.clicked() && !*selected {
+                            clicked = Some(index);
+                        }
                     }
-                }
-            });
+                },
+            );
         },
     );
     clicked
@@ -2646,6 +3136,7 @@ mod tests {
         for width in [752.0, 360.0] {
             let mut harness = settings_harness_with_width(width);
             harness.run();
+            open_settings_page(&mut harness, "Keyboard shortcuts");
             assert!(harness.query_by_label("Search actions…").is_some());
             assert!(
                 harness.query_by_label("Reset all…").is_some(),
@@ -2662,6 +3153,7 @@ mod tests {
             );
             let mut harness = settings_harness_with_bindings(width, customized);
             harness.run();
+            open_settings_page(&mut harness, "Keyboard shortcuts");
             harness
                 .get_by_role_and_label(accesskit::Role::Button, "New Session")
                 .click();
@@ -4039,7 +4531,7 @@ mod tests {
             Action::Mcp => AppCommand::ToggleMcpEnabled,
             Action::OpenWorkflow => AppCommand::OpenWorkflowPicker,
             Action::ClearWorkflow => AppCommand::Automation(NativeCommand::ClearWorkflow),
-            Action::ResetSettings => AppCommand::ResetInterfaceSettings,
+            Action::ResetSettings => AppCommand::ResetAllSettings,
             Action::Retry => AppCommand::RetryAutomationSettings,
             Action::Approve => AppCommand::Automation(NativeCommand::ApproveObservation {
                 channel: 7,
@@ -4236,16 +4728,40 @@ mod tests {
         );
     }
 
+    fn open_settings_page(harness: &mut Harness<'static, SettingsHarnessState>, title: &str) {
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, title)
+            .click();
+        harness.run();
+    }
+
+    fn focused_button(harness: &Harness<'static, SettingsHarnessState>, label: &str) -> bool {
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, label)
+            .accesskit_node()
+            .is_focused()
+    }
+
+    fn on_keyboard_shortcuts_page(harness: &Harness<'static, SettingsHarnessState>) -> bool {
+        harness.query_by_label("Search actions…").is_some()
+            && harness.query_by_label(RESET_ALL_SETTINGS_LABEL).is_none()
+    }
+
     #[test]
     fn settings_presents_each_shortcut_exactly_once() {
         // Regression test: a read-only "Keyboard" card used to restate the
         // command palette and Settings shortcuts that the bindings editor
         // already lists, so a customized chord could be shown twice with two
-        // different values.
+        // different values. The editor now lives on its own sub-page and the
+        // main page only summarizes it.
         let mut harness = wide_settings_harness();
         harness.run();
+        assert_eq!(harness.query_all_by_label("Open Settings").count(), 0);
+        assert!(harness
+            .query_by_label_contains("All defaults · Ctrl+Shift+F12 always reopens Settings")
+            .is_some());
 
-        assert!(harness.query_by_label("QUICK SWITCH").is_some());
+        open_settings_page(&mut harness, "Keyboard shortcuts");
         assert_eq!(
             harness.query_all_by_label("Open Settings").count(),
             1,
@@ -4255,23 +4771,250 @@ mod tests {
     }
 
     #[test]
-    fn settings_keyboard_bindings_card_is_last() {
+    fn settings_main_page_sections_follow_the_documented_order() {
         let mut harness = wide_settings_harness();
         harness.run();
 
-        let keyboard_top = harness.get_by_label("KEYBOARD BINDINGS").rect().top();
-        for earlier_card in [
+        let mut previous: Option<(&str, f32)> = None;
+        for section in SETTINGS_SECTION_ORDER {
+            // Headed cards expose their uppercase heading; drill-in sections
+            // are a single button named by the section.
+            let top = harness
+                .query_by_label(&section.to_uppercase())
+                .map(|node| node.rect().top())
+                .unwrap_or_else(|| {
+                    harness
+                        .get_by_role_and_label(accesskit::Role::Button, section)
+                        .rect()
+                        .top()
+                });
+            if let Some((earlier, earlier_top)) = previous {
+                assert!(earlier_top < top, "{earlier} must appear before {section}");
+            }
+            previous = Some((section, top));
+        }
+        for retired in [
             "INTERFACE",
             "SCROLLING",
             "TERMINAL TYPOGRAPHY",
             "QUICK SWITCH",
             "SFTP",
+            "KEYBOARD BINDINGS",
+            "DEV TUNNEL ACCOUNTS",
+            "DEV TUNNEL OPTIONS",
         ] {
             assert!(
-                harness.get_by_label(earlier_card).rect().top() < keyboard_top,
-                "{earlier_card} must appear before Keyboard bindings"
+                harness.query_by_label(retired).is_none(),
+                "{retired} was merged into a named section"
             );
         }
+    }
+
+    #[test]
+    fn settings_sub_pages_open_and_return_by_back_or_escape_to_their_row() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+
+        open_settings_page(&mut harness, "Keyboard shortcuts");
+        assert!(on_keyboard_shortcuts_page(&harness));
+        assert!(
+            focused_button(&harness, "Back"),
+            "Back takes focus on entry"
+        );
+        assert!(harness.query_by_label("Keyboard shortcuts").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("TERMINAL").is_some());
+        assert!(
+            focused_button(&harness, "Keyboard shortcuts"),
+            "returning focuses the row the page was opened from"
+        );
+
+        open_settings_page(&mut harness, "Automation activity");
+        assert!(harness.query_by_label("JAVASCRIPT WORKFLOWS").is_some());
+        assert!(harness.query_by_label("LOCAL MCP").is_some());
+        assert!(harness.query_by_label("TERMINAL").is_none());
+        harness.get_by_label("Back").click();
+        harness.run();
+        assert!(harness.query_by_label("TERMINAL").is_some());
+        assert!(focused_button(&harness, "Automation activity"));
+        assert!(
+            harness.state().command.is_none(),
+            "navigation is view state"
+        );
+    }
+
+    #[test]
+    fn settings_recovery_chord_lands_on_the_shortcut_search() {
+        // Ctrl+Shift+F12 opens Settings and asks the keyboard editor to focus
+        // its search; with the editor on a sub-page, Settings has to go there.
+        let mut harness = wide_settings_harness();
+        harness.run();
+        harness
+            .ctx
+            .data_mut(|data| data.insert_temp(egui::Id::new("keyboard-settings-recovery"), true));
+        harness.run();
+        harness.run();
+        assert!(on_keyboard_shortcuts_page(&harness));
+        assert!(harness
+            .get_by_label("Search actions…")
+            .accesskit_node()
+            .is_focused());
+    }
+
+    #[test]
+    fn settings_escape_first_belongs_to_a_focused_field_or_a_chord_capture() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+        open_settings_page(&mut harness, "Keyboard shortcuts");
+
+        harness.get_by_label("Search actions…").click();
+        harness.run();
+        assert!(harness.ctx.text_edit_focused());
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(
+            on_keyboard_shortcuts_page(&harness),
+            "Escape leaves the search field first"
+        );
+
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        harness.get_by_label("Record shortcut").click();
+        harness.run();
+        assert!(crate::keyboard::recording(&harness.ctx));
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(
+            on_keyboard_shortcuts_page(&harness),
+            "Escape during a chord capture never leaves the page"
+        );
+    }
+
+    #[test]
+    fn settings_reset_is_labelled_for_everything_it_resets() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, RESET_ALL_SETTINGS_LABEL)
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ResetAllSettings)
+        ));
+        assert!(RESET_ALL_SETTINGS_CATEGORIES
+            .iter()
+            .any(|category| category.starts_with("Keyboard shortcuts")));
+        assert!(RESET_ALL_SETTINGS_NOT_AFFECTED.contains("Recording settings"));
+    }
+
+    #[test]
+    fn settings_default_on_preferences_say_so() {
+        let defaults = festerm_config::InterfaceSettings::DEFAULT;
+        assert!(defaults.restore_workspace());
+        assert!(defaults.compact_launcher_grid());
+        assert!(defaults.show_resumable_sessions());
+
+        let mut harness = wide_settings_harness();
+        harness.run();
+        for sentence in [
+            "the active tab automatically on launch. On by default.",
+            "Card descriptions are kept. On by default.",
+            "on the New Session tab. On by default.",
+        ] {
+            assert!(
+                harness.query_by_label_contains(sentence).is_some(),
+                "{sentence:?} must say it is on by default"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_dependent_rows_follow_their_parent_preference() {
+        // The durable-session name only shows in the status bar, and the
+        // extension length only matters while extension is on.
+        let mut harness = wide_settings_harness();
+        harness.run();
+        assert!(!harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Show durable session name in status bar",
+            )
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness.query_by_label("Extension length").is_none());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 200.0))
+            .build_ui_state(
+                |ui, clicked: &mut bool| {
+                    *clicked |=
+                        settings_toggle_row_enabled(ui, "Child", "Needs parent.", false, false);
+                },
+                false,
+            );
+        harness.run();
+        let toggle = harness.get_by_role_and_label(accesskit::Role::CheckBox, "Child");
+        assert!(toggle.accesskit_node().is_disabled());
+        toggle.click();
+        harness.run();
+        assert!(!*harness.state(), "a disabled row cannot be toggled");
+    }
+
+    #[test]
+    fn settings_segmented_options_read_and_tab_left_to_right() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 200.0))
+            .build_ui(|ui| {
+                let _ = settings_segmented_row(
+                    ui,
+                    "Order",
+                    "Options must read left to right.",
+                    &[("First", true), ("Second", false), ("Third", false)],
+                );
+            });
+        harness.run();
+        let x = |label| harness.get_by_label(label).rect().left();
+        assert!(x("First") < x("Second") && x("Second") < x("Third"));
+    }
+
+    #[test]
+    fn settings_cards_and_panels_share_one_gap() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 800.0))
+            .build_ui_state(
+                |ui, rects: &mut Vec<egui::Rect>| {
+                    rects.clear();
+                    rects.push(settings_card(ui, "One", |ui| {
+                        ui.label("Body");
+                    }));
+                    rects.push(settings_panel(ui, |ui| {
+                        ui.label("Panel");
+                    }));
+                    rects.push(settings_card(ui, "Two", |ui| {
+                        ui.label("Body");
+                    }));
+                    rects.push(settings_card(ui, "Three", |ui| {
+                        ui.label("Body");
+                    }));
+                },
+                Vec::new(),
+            );
+        harness.run();
+        let rects = harness.state();
+        let gaps: Vec<f32> = rects
+            .windows(2)
+            .map(|pair| pair[1].top() - pair[0].bottom())
+            .collect();
+        assert!(gaps[0] >= SETTINGS_CARD_GAP);
+        assert!(
+            gaps.iter().all(|gap| (gap - gaps[0]).abs() < 0.5),
+            "every card is followed by the same gap: {gaps:?}"
+        );
     }
 
     #[test]
@@ -4350,8 +5093,8 @@ mod tests {
     #[test]
     fn settings_toggle_compact_launcher_grid_control_returns_the_toggle_command() {
         // Regression test for the "Compact New Session layout" preference
-        // (feature request #64): off by default, with its own explicit
-        // toggle in the Interface card.
+        // (feature request #64): on by default, with its own explicit
+        // toggle in the Startup & sessions card.
         let mut harness = settings_harness();
         harness.run();
 
@@ -4605,8 +5348,8 @@ mod tests {
     #[test]
     fn settings_toggle_show_resumable_sessions_control_returns_the_toggle_command() {
         // Regression test for the "Resume unattached local sessions from
-        // New Session" preference (feature request #70): off by default,
-        // with its own explicit toggle in the Interface card.
+        // New Session" preference (feature request #70): on by default,
+        // with its own explicit toggle in the Startup & sessions card.
         let mut harness = settings_harness();
         harness.run();
 
@@ -4890,9 +5633,9 @@ mod tests {
                 .expect("status bar panel state should be recorded")
                 .outer_rect
                 .top();
-        let command_palette_rect = harness.get_by_label("Command palette").rect();
+        let last_control_rect = harness.get_by_label(RESET_ALL_SETTINGS_LABEL).rect();
         assert!(
-            command_palette_rect.max.y <= status_bar_top,
+            last_control_rect.max.y <= status_bar_top,
             "Settings content must stay above the status bar rather than overlapping it"
         );
     }

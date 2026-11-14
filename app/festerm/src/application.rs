@@ -2322,7 +2322,7 @@ mod tests {
                     }
                     application
                         .window_mut(resetting)
-                        .request_reset_interface_settings_for_test(&context);
+                        .request_reset_all_settings_for_test(&context);
                     let expected_disk = match failure {
                         Some(TestSaveFailure::BeforeWrite) => enabled,
                         _ => off,

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "22139e8879c8c3290824fdb80ab279829da1f681cad26e4f952f78ee0803ec10"} -->
+<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7bbb9b4811dbe147255971bac3ece6739f55b0eb5103008e2d93a05c59ea0ddb"} -->
 # Terminal recording and export
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,9 +12,9 @@ Canonical docs: [docs/terminal-recording-design.md](../../docs/terminal-recordin
 
 Use for: Need to start a new recording or trace a selected session into a private source.
 
-- [`begin`](../../app/festerm/src/application/recording.rs) — Validates tabs, settings, and source readiness before capture.
-- [`start_capture`](../../app/festerm/src/application/recording.rs) — Verifies live session identity and binds a prepared private source.
-- [`SessionIdentity`](../../app/festerm/src/application/recording.rs) — Tracks a tab across reconnects and lifecycle changes.
+- [`begin`](../../app/festerm/src/application/recording.rs) — Validates selected tabs, export settings, and source readiness before capture.
+- [`start_capture`](../../app/festerm/src/application/recording.rs) — Verifies session identity and attaches a prepared private source to live terminals.
+- [`SessionIdentity`](../../app/festerm/src/application/recording.rs) — Tracks a tab across reconnects and lifecycle changes before capture is accepted.
 
 Evidence:
 - [`consent_identity_rejects_reconnected_or_replaced_sessions`](../../app/festerm/src/application/recording_tests.rs) — Rejects stale identities before the capture source is accepted.
@@ -29,8 +29,8 @@ Caveats:
 
 Use for: Need to understand why capture stops on lock, sleep, or consent loss.
 
-- [`PrivacyGuard`](../../app/festerm/src/recording_privacy.rs) — Binds a recording to a live monitor and stops on privacy loss.
-- [`PrivacyTask`](../../app/festerm/src/recording_privacy.rs) — Creates the monitor and waits for consent or cancellation.
+- [`PrivacyGuard`](../../app/festerm/src/recording_privacy.rs) — Binds a recording to a live monitor and stops it when privacy is lost.
+- [`PrivacyTask`](../../app/festerm/src/recording_privacy.rs) — Starts the monitor thread and waits for consent, cancellation, or loss.
 - [`request`](../../app/festerm/src/application/recording.rs) — Disables recording, cancels a start, and stops active capture on opt-out.
 
 Evidence:
@@ -44,11 +44,11 @@ Caveats:
 
 ## Export stage
 
-Use for: Need to convert a finished capture into staged videos or preview export metadata.
+Use for: Need to validate a finished capture before video staging and publication.
 
-- [`PrepareTask`](../../crates/festerm-recording-export/src/prepare.rs) — Creates the lease, manifest, and private source before capture.
-- [`ExportCancellation`](../../crates/festerm-recording-export/src/lib.rs) — Coordinates cancellation with retention commitment and cleanup.
-- [`PreviewTask`](../../crates/festerm-recording-export/src/worker.rs) — Verifies a source and computes preview export metadata under cancellation.
+- [`PrepareTask`](../../crates/festerm-recording-export/src/prepare.rs) — Creates the lease, manifest, and private source before the capture can begin.
+- [`PreviewTask`](../../crates/festerm-recording-export/src/worker.rs) — Verifies source integrity and computes export preview metadata under cancellation.
+- [`ExportCancellation`](../../crates/festerm-recording-export/src/lib.rs) — Coordinates cancel requests with irreversible retention and cleanup decisions.
 
 Evidence:
 - [`stages_a_complete_synchronized_set_and_keeps_the_source`](../../crates/festerm-recording-export/tests/export.rs) — Proves synchronized staging writes per-stream videos but retains the source.
@@ -56,7 +56,7 @@ Evidence:
 
 Caveats:
 - Preview and staging must verify source identity and lease freshness before publication.
-- Cancellation is only safe once retention is committed after cleanup.
+- Cancellation is only safe after retention is committed after cleanup.
 - Failure paths must remove staged output but preserve the source for recovery.
 
 ## Recovery timing
@@ -66,8 +66,7 @@ Use for: Need to inspect artifact completion, replay timing, or storage-safety i
 - [`Completion`](../../crates/festerm-recording/src/capture.rs) — Reports complete, incomplete, or failed finalization states with paths.
 - [`PlaybackPlan`](../../crates/festerm-recording/src/playback.rs) — Validates artifact timing and derives synchronized replay frames.
 - [`SharedRecording`](../../crates/festerm-recording/src/shared.rs) — Tracks the live source through completion and recoverable cleanup.
-- [`RecordingSettingsStore`](../../crates/festerm-recording/src/settings_store.rs) — Keeps device-local preferences private and version-checked.
-- [`RecordingLease`](../../crates/festerm-recording/src/settings_store/lease.rs) — Protects shared capture and export work with a replacement-safe lock.
+- [`RecordingLease`](../../crates/festerm-recording/src/settings_store/lease.rs) — Protects shared capture and export work with a replacement-safe exclusion lock.
 
 Evidence:
 - [`lease_excludes_other_operations_and_detects_replacement`](../../crates/festerm-recording/src/settings_store/lease.rs) — Proves a lease blocks concurrent work and detects lock replacement.
@@ -75,6 +74,6 @@ Evidence:
 - [`capture_preserves_the_source_when_its_storage_is_replaced`](../../crates/festerm-recording/tests/capture.rs) — Shows completion fails without removing the original source.
 
 Caveats:
-- Complete, incomplete, and failed outcomes require different cleanup and replay handling.
+- Complete, incomplete, and failed outcomes require distinct cleanup and replay handling.
 - Timeline integrity depends on synchronized stream checkpoints; replay breaks if they diverge.
 - Storage replacements and lease changes must reject unsafe recovery instead of mutating the source.

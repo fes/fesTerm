@@ -119,8 +119,8 @@
         "screens::settings::show_settings",
         "keyboard::show_editor"
       ],
-      "route": "More actions > Settings; scroll to the captioned card. Keyboard > choose action > Record shortcut or search.",
-      "exit": "Cancel key recording or restore its prior binding; select another chip or close Settings. Screenshot fixtures never persist changes.",
+      "route": "More actions > Settings; scroll to the captioned card. Keyboard shortcuts › sub-page > choose action > Record shortcut or search.",
+      "exit": "Cancel key recording or restore its prior binding; Back or Escape leaves a sub-page; select another chip or close Settings. Screenshot fixtures never persist changes.",
       "gui_ids": [
         "SET-01",
         "SET-02",

@@ -887,7 +887,27 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 harness.run_steps(3);
                 harness.get_by_label("More").click();
             }
-            if state.ends_with("-bottom")
+            if state == "settings-lock-bottom" {
+                // App lock sits mid-page in Security, so scroll its first
+                // row to the top instead of past it to About.
+                use egui_kittest::kittest::Queryable;
+                harness.run_steps(3);
+                let top = harness
+                    .get_by_label(festerm_ios_lock::ui_model::PROTECT_LABEL)
+                    .rect()
+                    .top();
+                harness.event(egui::Event::PointerMoved(egui::pos2(
+                    width * 0.5,
+                    height * 0.5,
+                )));
+                harness.event(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -(top - 96.0).max(0.0)),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                });
+                harness.run_steps(10);
+            } else if state.ends_with("-bottom")
                 || matches!(
                     state,
                     "recording-export-calculating" | "recording-export-calculated"

@@ -304,11 +304,11 @@ fn biometry_name(kind: BiometryKind) -> &'static str {
     }
 }
 
-/// Mock-up 15, drawn inside the Settings tab.
+/// Mock-up 15, drawn inside the Settings tab's Security section (the
+/// caller owns the section header).
 pub fn settings_section(ui: &mut Ui, view: &LockView) -> Vec<LockAction> {
     let mut actions = Vec::new();
     let mut next = view.settings;
-    section_header(ui, "App lock", None, false);
     let usable = matches!(view.availability, Availability::Available(_));
     card(ui, |ui| {
         ui.add_enabled_ui(usable || view.settings.enabled, |ui| {

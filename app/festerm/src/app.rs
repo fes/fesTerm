@@ -2355,14 +2355,13 @@ impl FesTermApp {
         );
     }
 
-    /// Applies the reset-interface-settings policy shared by chrome, the
-    /// command palette, and shortcuts: nothing to confirm when settings
+    /// Applies the reset-all-settings policy shared by every invocation surface
+    /// (today the Settings Reset card): nothing to confirm when settings
     /// already equal defaults, otherwise a destructive-adjacent confirmation
     /// (`docs/gui-action-graph.md` SET-02).
-    fn request_reset_interface_settings(&mut self, context: &egui::Context) {
+    fn request_reset_all_settings(&mut self, context: &egui::Context) {
         if self.current_interface_settings() == InterfaceSettings::DEFAULT {
-            self.state
-                .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.state.dispatch(AppCommand::ResetAllSettings, context);
             let before = self.reset_automation_preferences(context);
             if before.mcp || before.javascript || self.automation_preference_retry_available() {
                 self.persist_reset_automation_preferences(before);
@@ -7510,7 +7509,7 @@ impl FesTermApp {
         if self.effective_terminal_font != terminal_font_family(self.state.terminal_font()) {
             if let Some(status) = self.terminal_font_download_status() {
                 ui.label(
-                    egui::RichText::new(format!("{status} See Settings > Terminal typography."))
+                    egui::RichText::new(format!("{status} See Settings > Terminal."))
                         .small()
                         .color(theme::TEXT_SECONDARY),
                 );
@@ -8423,8 +8422,8 @@ impl FesTermApp {
                     self.updates
                         .set_automatic_checks_enabled(self.state.automatic_update_checks());
                 }
-                AppCommand::ResetInterfaceSettings => {
-                    self.request_reset_interface_settings(&ui.ctx().clone());
+                AppCommand::ResetAllSettings => {
+                    self.request_reset_all_settings(&ui.ctx().clone());
                 }
                 AppCommand::TerminateUnattachedSession { session } => {
                     if !self.state.native_termination_pending() {
@@ -12303,6 +12302,11 @@ mod tests {
             .state
             .dispatch(AppCommand::OpenSettings, &context);
         harness.run();
+        // The drill-in row sits below this short window's fold.
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "Keyboard shortcuts")
+            .click_accesskit();
+        harness.run();
         harness.get_by_label("Search actions…").click();
         harness.run();
         harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
@@ -12801,6 +12805,10 @@ mod tests {
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         harness
+            .get_by_role_and_label(accesskit::Role::Button, "Keyboard shortcuts")
+            .click();
+        harness.run();
+        harness
             .get_by_role_and_label(accesskit::Role::Button, "New Session")
             .click();
         harness.run();
@@ -12937,7 +12945,7 @@ mod tests {
             );
         harness
             .state_mut()
-            .request_reset_interface_settings(&egui::Context::default());
+            .request_reset_all_settings(&egui::Context::default());
         harness.run();
         harness.get_by_label("Reset").click();
         harness.run();
@@ -13211,8 +13219,8 @@ mod tests {
                     }
                     "reset" => {
                         app.state.dispatch(AppCommand::ToggleChipLayout, &context);
-                        app.request_reset_interface_settings(&context);
-                        ("reset_interface_settings_confirmation", "Reset")
+                        app.request_reset_all_settings(&context);
+                        ("reset_all_settings_confirmation", "Reset")
                     }
                     _ => unreachable!(),
                 };
@@ -13689,7 +13697,7 @@ mod tests {
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
 
-        app.request_reset_interface_settings(&context);
+        app.request_reset_all_settings(&context);
 
         assert!(app.overlays.pending_settings_reset.is_none());
         assert_eq!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
@@ -13703,7 +13711,7 @@ mod tests {
         app.state.dispatch(AppCommand::ToggleStatusBar, &context);
         assert_ne!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
 
-        app.request_reset_interface_settings(&context);
+        app.request_reset_all_settings(&context);
         assert!(app.overlays.pending_settings_reset.is_some());
 
         let mut harness = Harness::builder()
@@ -13721,9 +13729,7 @@ mod tests {
             InterfaceSettings::DEFAULT
         );
 
-        harness
-            .state_mut()
-            .request_reset_interface_settings(&context);
+        harness.state_mut().request_reset_all_settings(&context);
         harness.step();
         harness.get_by_label("Reset").click();
         harness.step();
@@ -18558,7 +18564,7 @@ mod tests {
         harness
             .state_mut()
             .state
-            .dispatch(AppCommand::ResetInterfaceSettings, &context);
+            .dispatch(AppCommand::ResetAllSettings, &context);
         assert!(harness.state().state.rectangle_copy_trim_trailing_spaces());
     }
 
@@ -20741,9 +20747,10 @@ mod tests {
         let context = egui::Context::default();
         app.state.dispatch(AppCommand::OpenSettings, &context);
         let mut harness = Harness::builder()
-            // Windows adds a PowerShell row to this card, so the harness has
-            // to be tall enough for the toggle to be clickable there too.
-            .with_size(egui::vec2(900.0, 2000.0))
+            // Updates & privacy sits near the end of Settings, so the
+            // harness has to be tall enough for the toggle to be laid out
+            // inside the viewport (and clickable) on every platform.
+            .with_size(egui::vec2(900.0, 5200.0))
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         harness
