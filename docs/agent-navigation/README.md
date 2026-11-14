@@ -16,8 +16,8 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, real-window native validation, macOS app-bridge semantics, and platform wake/privacy hooks for packaged app behavior. |
-| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust app runtime, Android JNI bridge, and offline-first terminal/document flows for iOS and Android. |
+| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, native-window validation, macOS bridge semantics, and wake/privacy hooks that gate packaged runtime behavior. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime, Android JNI boundary, and offline-first terminal/document flows for iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Desktop application shell and screens own fesTerm's egui window lifecycle, pane/session routing, and user-facing launch flows. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
