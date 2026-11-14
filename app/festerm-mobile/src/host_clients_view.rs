@@ -356,6 +356,10 @@ impl MobileApp {
                     });
                 });
             });
+        #[cfg(all(test, unix))]
+        if self.hosts.gallery_display.is_some() {
+            return;
+        }
         if let Some(id) = saved_connect {
             self.connect_saved_host_profile(ctx, &id);
             return;

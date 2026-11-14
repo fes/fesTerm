@@ -8,7 +8,7 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns input routing, render caching, and native/software painting boundaries without session I/O. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the shared session lifecycle, PTY and serial backends, daemon persistence, and host-controlled attachments for recoverable terminals. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML config, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns the app-wide command bus, tab focus lifecycle, and keyboard-dispatch policy for terminal actions and singleton surfaces. |
@@ -16,8 +16,8 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns discovery, consented hosting, and the trusted session boundaries for managed tunnels, enterprise inventory, and PowerShell. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, native-window validation, macOS bridge semantics, and wake/privacy hooks that gate packaged runtime behavior. |
-| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime, Android JNI boundary, and offline-first terminal/document flows for iOS and Android. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop packaging and native-platform hooks that control install metadata, smoke validation, app bridge behavior, wake callbacks, and privacy gating for packaged runtime behavior. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust terminal host, Android JNI glue, lock/SSH lifecycle gating, and host/document flows for offline-first mobile sessions. |
 | [Desktop application shell and screens](app-shell.md) | fesTerm’s desktop shell owns window lifecycle, pane/session routing, and screen-driven launch flows. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |

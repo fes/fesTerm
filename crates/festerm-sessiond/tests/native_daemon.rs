@@ -857,19 +857,18 @@ fn native_bridge_drains_exit_and_takeover_final_frames_before_success() {
         &["emit:READY", "read-line", "echo:INPUT", "exit:0"],
     );
     let exit_selection = bridge_selection(&runtime, &exit_name);
-    let mut exit_bridge = spawn_bridge(&executable, &runtime, &exit_selection);
-    assert!(terminal_contains(
-        &read_bridge_snapshot(exit_bridge.stdout.as_mut().unwrap()),
-        b"READY"
-    ));
+    let (mut exit_bridge, mut exit_output) =
+        spawn_bridge_with_bounded_output(&executable, &runtime, &exit_selection);
+    let mut snapshot = read_bridge_snapshot(&mut exit_output);
     acknowledge_bridge_recovery(exit_bridge.stdin.as_mut().unwrap()).unwrap();
+    wait_for_bridge_ready(&mut exit_output, &mut snapshot);
     write_bridge_client_frame(
         exit_bridge.stdin.as_mut().unwrap(),
         FRAME_INPUT,
         &test_input("goodbye"),
     )
     .unwrap();
-    let output = read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, payload| {
+    let output = read_bridge_frame_until(&mut exit_output, |kind, payload| {
         kind == 1
             && payload
                 .windows(b"INPUT:goodbye".len())
@@ -878,7 +877,7 @@ fn native_bridge_drains_exit_and_takeover_final_frames_before_success() {
     assert!(output
         .windows(b"INPUT:goodbye".len())
         .any(|w| w == b"INPUT:goodbye"));
-    read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, _| kind == 4);
+    read_bridge_frame_until(&mut exit_output, |kind, _| kind == 4);
     assert!(exit_bridge.wait().unwrap().success());
 
     launch_session_with(
@@ -889,19 +888,17 @@ fn native_bridge_drains_exit_and_takeover_final_frames_before_success() {
         &["emit:READY", "spin"],
     );
     let takeover_selection = bridge_selection(&runtime, &takeover_name);
-    let mut first = spawn_bridge(&executable, &runtime, &takeover_selection);
-    assert!(terminal_contains(
-        &read_bridge_snapshot(first.stdout.as_mut().unwrap()),
-        b"READY"
-    ));
+    let (mut first, mut first_output) =
+        spawn_bridge_with_bounded_output(&executable, &runtime, &takeover_selection);
+    let mut snapshot = read_bridge_snapshot(&mut first_output);
     acknowledge_bridge_recovery(first.stdin.as_mut().unwrap()).unwrap();
-    let mut second = spawn_bridge(&executable, &runtime, &takeover_selection);
-    assert!(terminal_contains(
-        &read_bridge_snapshot(second.stdout.as_mut().unwrap()),
-        b"READY"
-    ));
+    wait_for_bridge_ready(&mut first_output, &mut snapshot);
+    let (mut second, mut second_output) =
+        spawn_bridge_with_bounded_output(&executable, &runtime, &takeover_selection);
+    let mut snapshot = read_bridge_snapshot(&mut second_output);
     acknowledge_bridge_recovery(second.stdin.as_mut().unwrap()).unwrap();
-    read_bridge_frame_until(first.stdout.as_mut().unwrap(), |kind, _| kind == 3);
+    wait_for_bridge_ready(&mut second_output, &mut snapshot);
+    read_bridge_frame_until(&mut first_output, |kind, _| kind == 3);
     assert!(first.wait().unwrap().success());
     drop(second.stdin.take());
     assert!(second.wait().unwrap().success());
@@ -2811,6 +2808,27 @@ fn spawn_bridge(
         .unwrap()
 }
 
+#[cfg(unix)]
+fn spawn_bridge_with_bounded_output(
+    executable: &Path,
+    runtime_root: &Path,
+    selection: &BridgeSelection,
+) -> (std::process::Child, UnixStream) {
+    let (stdout, child_stdout) = UnixStream::pair().unwrap();
+    stdout
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let child = bridge_command(executable, runtime_root, selection, false)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            child_stdout,
+        )))
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    (child, stdout)
+}
+
 fn runtime_registry_root(runtime_root: &Path) -> PathBuf {
     runtime_root
         .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
@@ -2899,20 +2917,53 @@ fn write_bridge_client_frame(stream: &mut impl Write, kind: u8, payload: &[u8]) 
     stream.flush()
 }
 
+fn read_bridge_frame(stream: &mut impl Read) -> (u8, Vec<u8>) {
+    let mut header = [0u8; 9];
+    stream.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..4], b"FSO1");
+    let kind = header[4];
+    let length = usize::try_from(u32::from_be_bytes(header[5..9].try_into().unwrap())).unwrap();
+    assert!(length <= 64 * 1024);
+    let mut payload = vec![0; length];
+    stream.read_exact(&mut payload).unwrap();
+    (kind, payload)
+}
+
+fn wait_for_bridge_ready(stream: &mut impl Read, snapshot: &mut Terminal) {
+    for _ in 0..128 {
+        if terminal_contains(snapshot, b"READY") {
+            return;
+        }
+        let (kind, payload) = read_bridge_frame(stream);
+        match kind {
+            1 => snapshot.ingest(&payload),
+            2 | 5 => {}
+            _ => panic!("bridge ended before READY: frame kind {kind}"),
+        }
+    }
+    assert!(
+        terminal_contains(snapshot, b"READY"),
+        "missing bridge READY"
+    );
+}
+
+#[test]
+fn bridge_ready_accepts_snapshot_and_fragmented_output() {
+    let mut snapshot = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+    snapshot.ingest(b"RE");
+    let mut frames = io::Cursor::new(b"FSO1\x01\0\0\0\x01AFSO1\x01\0\0\0\x02DY");
+    wait_for_bridge_ready(&mut frames, &mut snapshot);
+    assert!(terminal_contains(&snapshot, b"READY"));
+    wait_for_bridge_ready(&mut io::empty(), &mut snapshot);
+}
+
 fn read_bridge_frame_until(
     stream: &mut impl Read,
     mut accept: impl FnMut(u8, &[u8]) -> bool,
 ) -> Vec<u8> {
     let mut retained = Vec::new();
     for _ in 0..128 {
-        let mut header = [0u8; 9];
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(&header[..4], b"FSO1");
-        let kind = header[4];
-        let length = usize::try_from(u32::from_be_bytes(header[5..9].try_into().unwrap())).unwrap();
-        assert!(length <= 64 * 1024);
-        let mut payload = vec![0; length];
-        stream.read_exact(&mut payload).unwrap();
+        let (kind, payload) = read_bridge_frame(stream);
         if kind == 1 {
             retained.extend_from_slice(&payload);
         }

@@ -40,6 +40,15 @@ use std::sync::{
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+#[cfg(all(test, unix))]
+#[derive(Default)]
+struct GalleryDisplay {
+    originals: bool,
+    forget_end: Option<bool>,
+    end: bool,
+    busy: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Privacy {
     epoch: AtomicU64,
@@ -288,6 +297,8 @@ impl ForgetReview {
 
 #[derive(Default)]
 pub(super) struct HostUi {
+    #[cfg(all(test, unix))]
+    gallery_display: Option<GalleryDisplay>,
     pub(super) open: bool,
     account: String,
     selected: Option<PublicRecipe>,
@@ -406,6 +417,14 @@ impl HostUi {
     }
 
     fn busy(&self) -> bool {
+        #[cfg(all(test, unix))]
+        if self
+            .gallery_display
+            .as_ref()
+            .is_some_and(|display| display.busy)
+        {
+            return true;
+        }
         self.pending.is_some() || self.worker.is_some()
     }
 
@@ -1713,6 +1732,10 @@ impl MobileApp {
     }
 
     fn host_action(&mut self, ctx: &egui::Context, action: Action) -> Result<(), String> {
+        #[cfg(all(test, unix))]
+        if self.hosts.gallery_display.is_some() {
+            return Err("Synthetic HOST gallery actions are disabled.".into());
+        }
         if matches!(action, Action::Settings) {
             self.hosts.cancel();
             self.hosts.open = false;
@@ -2369,129 +2392,87 @@ impl MobileApp {
             ui.label("Create/End requires an explicit protected-original check under the current owner/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
         }
         for (index, original) in self.hosts.originals.iter().enumerate() {
-            ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
-            if ui
-                .button(format!(
-                    "Review retained original: {}",
-                    original.recipe.name
-                ))
-                .clicked()
-            {
+            let (review, forget) = display::creation_original(
+                ui,
+                &original.recipe.name,
+                &original.intent.creation().logical,
+                original.intent.issued_operation(),
+                self.hosts.original_store.is_some()
+                    && self.hosts.pending.is_none()
+                    && self.hosts.worker.is_none(),
+            );
+            if review {
                 *action = Some(Action::ReviewOriginal(index));
             }
-            if ui
-                .add_enabled(
-                    self.hosts.original_store.is_some()
-                        && self.hosts.pending.is_none()
-                        && self.hosts.worker.is_none(),
-                    egui::Button::new("Forget this local Create retry history..."),
-                )
-                .clicked()
-            {
+            if forget {
                 *action = Some(Action::ReviewForgetCreation(index));
             }
         }
         for (index, original) in self.hosts.ends.iter().enumerate() {
-            ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; protected capture required before sending",
-                    original.intent.target().logical, original.intent.target().generation.get(),
-                    original.intent.operation(), original.intent.is_issued(), original.intent.is_resolved()));
-            if ui
-                .add_enabled(
-                    !original.intent.is_resolved(),
-                    egui::Button::new("Review original End / retry"),
-                )
-                .clicked()
-            {
+            let (review, forget) = display::end_original(
+                ui,
+                original.intent.target(),
+                original.intent.operation(),
+                original.intent.is_issued(),
+                original.intent.is_resolved(),
+                self.hosts.original_store.is_some()
+                    && self.hosts.pending.is_none()
+                    && self.hosts.worker.is_none(),
+            );
+            if review {
                 *action = Some(Action::ReviewOriginalEnd(index));
             }
-            if ui
-                .add_enabled(
-                    self.hosts.original_store.is_some()
-                        && self.hosts.pending.is_none()
-                        && self.hosts.worker.is_none(),
-                    egui::Button::new("Forget this local End retry history..."),
-                )
-                .clicked()
-            {
+            if forget {
                 *action = Some(Action::ReviewForgetEnd(index));
             }
         }
+        #[cfg(all(test, unix))]
+        self.show_host_gallery_recovery(ui);
         if let Some(review) = &mut self.hosts.forget_review {
-            ui.separator();
-            ui.heading("Forget local retry history - NOT End session");
-            ui.label(format!(
-                "Account github:{} · original {:?}",
-                review.account.account_id,
-                review.record.id()
-            ));
-            if let Some(logical) = review.record.logical() {
-                ui.label(format!("Logical session {logical}"));
-            }
-            if let Some(target) = review.record.target() {
-                ui.label(format!(
-                    "Captured native generation {}",
-                    target.generation.get()
-                ));
-            }
-            ui.label(format!(
-                "Privacy epoch {} · request generation {}",
-                review.epoch, review.generation
-            ));
-            ui.label("The protected host/installation/principal above are fixed. Only this local checkpoint is selected. Other originals are preserved.");
-            ui.label("The remote session may still be running and its action may still complete. Forget does NOT End, detach, revoke, prove absence, retry or authorize a replacement. Other clients are not revoked.");
-            ui.checkbox(
+            let (confirm, cancel) = display::forget_review(
+                ui,
+                display::ForgetDisplay {
+                    account: review.account.account_id,
+                    id: review.record.id(),
+                    logical: review.record.logical(),
+                    target: review.record.target(),
+                    epoch: review.epoch,
+                    generation: review.generation,
+                },
                 &mut review.confirmed,
-                "I explicitly abandon only this original's local retry history",
             );
-            if ui
-                .add_enabled(
-                    review.confirmed,
-                    egui::Button::new("Confirm local Forget once"),
-                )
-                .clicked()
-            {
+            if confirm {
                 *action = Some(Action::ConfirmForget);
             }
-            if ui.button("Cancel local Forget (keep history)").clicked() {
+            if cancel {
                 *action = Some(Action::CancelForget);
             }
         }
         if let Some(review) = &mut self.hosts.end_review {
-            ui.separator();
-            ui.heading("Confirm End session — not Close tab");
-            ui.label(format!(
-                "Account github:{} · logical {} · native generation {} · original operation {}",
-                review.account.account_id,
-                review.intent.target().logical,
-                review.intent.target().generation.get(),
-                review.intent.operation()
-            ));
-            ui.label(format!(
-                "Native privacy epoch {} · foreground request generation {}",
-                review.epoch, review.generation
-            ));
-            ui.label("The protected host/installation/principal above and this exact generation are fixed. Native PID/namespace stay host-journal-owned; inventory does not expose a PID.");
-            ui.label("End stops the remote process. Closing a persistent attachment does not. Stop-requested/timeout/denial is NOT confirmation that it ended or is absent.");
-            ui.checkbox(
+            let (confirm, cancel) = display::end_review(
+                ui,
+                display::EndDisplay {
+                    account: review.account.account_id,
+                    target: review.intent.target(),
+                    operation: review.intent.operation(),
+                    epoch: review.epoch,
+                    generation: review.generation,
+                },
                 &mut review.confirmed,
-                "I explicitly authorize End for this exact host and generation",
             );
-            if ui
-                .add_enabled(
-                    review.confirmed,
-                    egui::Button::new("Confirm exact End once"),
-                )
-                .clicked()
-            {
+            if confirm {
                 *action = Some(Action::ConfirmEnd);
             }
-            if ui.button("Cancel End (no request)").clicked() {
+            if cancel {
                 *action = Some(Action::CancelEnd);
             }
         }
         ui.label("Originals are protected in the native vault before a mutation can be sent. After restart explicitly approve this same owner/account, reopen originals, review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
     }
 }
+
+#[path = "host_clients_display.rs"]
+mod display;
 
 #[path = "host_clients_view.rs"]
 mod view;

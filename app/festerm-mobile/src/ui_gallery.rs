@@ -126,6 +126,28 @@ const EXTRA_STATES: &[&str] = &[
     "recording-library-retry-recovered",
 ];
 
+#[cfg(all(feature = "host-clients", unix))]
+const HOST_STATES: &[&str] = &[
+    "hosts-before-discovery",
+    "hosts-found",
+    "hosts-sessions",
+    "hosts-unavailable",
+    "hosts-unknown",
+    "hosts-approval-unavailable",
+    "hosts-new",
+    "hosts-profile",
+    "hosts-owner",
+    "hosts-receipt",
+    "hosts-import",
+    "hosts-recovery",
+    "hosts-originals",
+    "hosts-forget-create",
+    "hosts-forget-end",
+    "hosts-end",
+    "hosts-original-review",
+    "hosts-working",
+];
+
 fn fixture_rows() -> Vec<model::Profile> {
     [
         ("prod-web", ProfileKind::Ssh, "web.example.net", "deploy"),
@@ -327,12 +349,7 @@ fn configure(app: &mut MobileApp, state: &str) {
     ]);
     match state {
         #[cfg(all(feature = "host-clients", unix))]
-        "hosts-before-discovery"
-        | "hosts-found"
-        | "hosts-sessions"
-        | "hosts-unavailable"
-        | "hosts-new"
-        | "hosts-profile" => app.configure_host_gallery(state),
+        state if HOST_STATES.contains(&state) => app.configure_host_gallery(state),
         "keyboard-hold" | "keyboard-shell" | "keyboard-symbols" | "keyboard-preview"
         | "keyboard-hinge" => {
             if state == "keyboard-hinge" {
@@ -676,16 +693,175 @@ fn capture_mobile_ui_gallery() {
 #[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
 fn capture_host_client_ui_gallery() {
     capture_gallery(
-        &[
-            "hosts-before-discovery",
-            "hosts-found",
-            "hosts-sessions",
-            "hosts-unavailable",
-            "hosts-new",
-            "hosts-profile",
-        ],
+        HOST_STATES,
         &[("phone", 390.0, 844.0, 0.0), ("tablet", 834.0, 1194.0, 0.0)],
     );
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+fn prepare_host_gallery(
+    harness: &mut Harness<'_, MobileApp>,
+    state: &str,
+    width: f32,
+    height: f32,
+) {
+    use egui_kittest::kittest::Queryable;
+
+    harness.run_steps(3);
+    if matches!(state, "hosts-owner" | "hosts-receipt") {
+        harness
+            .get_by_label(if state == "hosts-owner" {
+                "First connection · advanced"
+            } else {
+                "Owner public key"
+            })
+            .click();
+        harness.run_steps(3);
+    }
+    if matches!(
+        state,
+        "hosts-import"
+            | "hosts-recovery"
+            | "hosts-originals"
+            | "hosts-forget-create"
+            | "hosts-forget-end"
+            | "hosts-end"
+    ) {
+        harness.get_by_label("Details & recovery").click();
+        harness.run_steps(3);
+        if state == "hosts-import" {
+            scroll_host_gallery_to(harness, "Import public profiles", width, height);
+            harness.get_by_label("Import public profiles").click();
+            harness.run_steps(3);
+        }
+    }
+    let anchor = match state {
+        "hosts-owner" => Some("Independent host fingerprint"),
+        "hosts-receipt" => Some("Owner public key"),
+        "hosts-import" => Some("I reviewed this public metadata"),
+        "hosts-recovery" => Some("Explicitly reopen protected original actions (no network retry)"),
+        "hosts-originals" => {
+            Some("Synthetic public display only; no protected checkpoint or HOST action exists.")
+        }
+        "hosts-forget-create" | "hosts-forget-end" => {
+            Some("Forget local retry history - NOT End session")
+        }
+        "hosts-end" => Some("Confirm End session — not Close tab"),
+        _ => None,
+    };
+    if let Some(label) = anchor {
+        scroll_host_gallery_to(harness, label, width, height);
+    }
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+fn scroll_host_gallery_to(
+    harness: &mut Harness<'_, MobileApp>,
+    label: &str,
+    width: f32,
+    height: f32,
+) {
+    use egui_kittest::kittest::Queryable;
+
+    let top = harness.get_by_label(label).rect().top();
+    harness.event(egui::Event::PointerMoved(egui::pos2(
+        width * 0.5,
+        height * 0.5,
+    )));
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -(top - 96.0).max(0.0)),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    harness.run_steps(10);
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+#[test]
+fn gallery_host_review_states_render_current_widgets_without_dispatch() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    for (width, height) in [(390.0, 844.0), (834.0, 1194.0)] {
+        for &state in HOST_STATES {
+            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            configure(&mut app, state);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            prepare_host_gallery(&mut harness, state, width, height);
+            match state {
+                "hosts-owner" => {
+                    harness.get_by_label("Independent host fingerprint");
+                }
+                "hosts-receipt" => {
+                    harness.get_by_label("Approve this key on the host");
+                }
+                "hosts-unknown" => {
+                    harness.get_by_label("Some session states are unknown.");
+                }
+                "hosts-approval-unavailable" => {
+                    harness.get_by_label("Protected owner approval unavailable.");
+                }
+                "hosts-import" => {
+                    harness.get_by_label("I reviewed this public metadata");
+                    assert!(harness
+                        .get_by_label("Import profiles")
+                        .accesskit_node()
+                        .is_disabled());
+                }
+                "hosts-recovery" => {
+                    harness.get_by_label("Review another host").click();
+                    harness.run_steps(3);
+                    harness.get_by_label(
+                        "Explicitly reopen protected original actions (no network retry)",
+                    );
+                }
+                "hosts-originals" => {
+                    harness
+                        .get_by_label("Review retained original: Synthetic retained shell")
+                        .click();
+                    harness.run_steps(3);
+                }
+                "hosts-forget-create" | "hosts-forget-end" => {
+                    harness
+                        .get_by_label(
+                            "I explicitly abandon only this original's local retry history",
+                        )
+                        .click();
+                    harness.run_steps(3);
+                    assert!(harness
+                        .get_by_label("Confirm local Forget once")
+                        .accesskit_node()
+                        .is_disabled());
+                }
+                "hosts-end" => {
+                    harness
+                        .get_by_label(
+                            "I explicitly authorize End for this exact host and generation",
+                        )
+                        .click();
+                    harness.run_steps(3);
+                    assert!(harness
+                        .get_by_label("Confirm exact End once")
+                        .accesskit_node()
+                        .is_disabled());
+                }
+                "hosts-working" => {
+                    harness.get_by_label("Working…");
+                }
+                _ => {}
+            }
+            assert!(!harness.output().shapes.is_empty(), "{state}");
+            assert_eq!(harness.state().sink.diagnostics.byte_count, 0, "{state}");
+        }
+    }
 }
 
 #[test]
@@ -873,6 +1049,10 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 .ctx
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
+            #[cfg(all(feature = "host-clients", unix))]
+            if HOST_STATES.contains(&state) {
+                prepare_host_gallery(&mut harness, state, width, height);
+            }
             if state == "files-options" {
                 use egui_kittest::kittest::Queryable;
                 harness.run_steps(3);
@@ -930,6 +1110,7 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
             if state.starts_with("files-")
                 || state.starts_with("host-setup")
                 || state == "recording-export-calculating"
+                || state == "hosts-working"
             {
                 harness.run_steps(3);
             } else {
@@ -1017,7 +1198,10 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                 harness.step();
             } else {
                 harness.remove_cursor();
-                if state.starts_with("files-") || state == "recording-export-calculating" {
+                if state.starts_with("files-")
+                    || state == "recording-export-calculating"
+                    || state == "hosts-working"
+                {
                     harness.run_steps(3);
                 } else {
                     harness.run();

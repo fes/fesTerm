@@ -750,8 +750,73 @@ fn mobile_host_quick_create_history_continuation_requires_review_of_retained_ori
 
 #[cfg(unix)]
 impl MobileApp {
+    pub(super) fn show_host_gallery_recovery(&self, ui: &mut egui::Ui) {
+        use festerm_host_protocol::{Epoch, IssuedOperation};
+
+        let Some(gallery) = &self.hosts.gallery_display else {
+            return;
+        };
+        if !gallery.originals && !gallery.end {
+            return;
+        }
+        let target = host_client::Target {
+            logical: "00000000-0000-4000-8000-000000000007".parse().unwrap(),
+            generation: GenerationId::new(9).unwrap(),
+        };
+        let creation_operation: OperationId =
+            "00000000-0000-4000-8000-000000000010".parse().unwrap();
+        let end_operation: OperationId = "00000000-0000-4000-8000-000000000011".parse().unwrap();
+        ui.label("Synthetic public display only; no protected checkpoint or HOST action exists.");
+        if gallery.end {
+            let mut confirmed = false;
+            let _ = display::end_review(
+                ui,
+                display::EndDisplay {
+                    account: 7,
+                    target: &target,
+                    operation: &end_operation,
+                    epoch: 0,
+                    generation: self.hosts.generation,
+                },
+                &mut confirmed,
+            );
+            return;
+        }
+        let _ = display::creation_original(
+            ui,
+            "Synthetic retained shell",
+            &target.logical,
+            Some(IssuedOperation {
+                id: creation_operation,
+                epoch: Epoch::new(1).unwrap(),
+            }),
+            false,
+        );
+        let _ = display::end_original(ui, &target, &end_operation, true, false, false);
+        if let Some(end) = gallery.forget_end {
+            let id = if end {
+                OriginalId::End(end_operation)
+            } else {
+                OriginalId::Creation("00000000-0000-4000-8000-000000000012".parse().unwrap())
+            };
+            let mut confirmed = false;
+            let _ = display::forget_review(
+                ui,
+                display::ForgetDisplay {
+                    account: 7,
+                    id: &id,
+                    logical: Some(&target.logical),
+                    target: end.then_some(&target),
+                    epoch: 0,
+                    generation: self.hosts.generation,
+                },
+                &mut confirmed,
+            );
+        }
+    }
+
     pub(crate) fn configure_host_gallery(&mut self, state: &str) {
-        let (_root, mut fixture, _, _) = recovery_fixture_with_login("sample-dev");
+        let (_root, mut fixture, account, _) = recovery_fixture_with_login("sample-dev");
         fixture.hosts.locator = "fixture.test".into();
         fixture.hosts.hosts = vec![
             TunnelSummary {
@@ -786,6 +851,7 @@ impl MobileApp {
         fixture.surface = Surface::Tabs;
         fixture.shell.tab = crate::shell::Tab::Profiles;
         fixture.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+        let mut gallery = GalleryDisplay::default();
         match state {
             "hosts-before-discovery" => {
                 fixture.hosts.clear_review();
@@ -798,6 +864,17 @@ impl MobileApp {
             "hosts-unavailable" => {
                 fixture.hosts.error = Some("Host timed out. Try again.".into());
             }
+            "hosts-unknown" => {
+                let inventory = fixture.hosts.inventory.as_mut().unwrap();
+                inventory.unknown.push(host_client::Target {
+                    logical: LogicalSessionId::new(),
+                    generation: GenerationId::new(3).unwrap(),
+                });
+            }
+            "hosts-approval-unavailable" => {
+                fixture.hosts.clear_approval();
+                fixture.hosts.error = Some("Protected owner approval unavailable.".into());
+            }
             "hosts-new" => {
                 fixture.hosts.quick_new = true;
                 fixture.hosts.quick_name = "release".into();
@@ -808,9 +885,83 @@ impl MobileApp {
                 fixture.hosts.session_name = "work".into();
                 fixture.hosts.create_if_missing = true;
             }
+            "hosts-owner" => fixture.hosts.clear_approval(),
+            "hosts-receipt" => fixture.hosts.enrolled = false,
+            "hosts-import" => {
+                fixture.hosts.import =
+                    r#"{"note":"Synthetic public metadata for review only."}"#.into();
+            }
+            "hosts-originals" | "hosts-forget-create" | "hosts-forget-end" => {
+                gallery.originals = true;
+                gallery.forget_end = match state {
+                    "hosts-forget-create" => Some(false),
+                    "hosts-forget-end" => Some(true),
+                    _ => None,
+                };
+            }
+            "hosts-end" => gallery.end = true,
+            "hosts-working" => gallery.busy = true,
+            "hosts-original-review" => {
+                let context = fixture.hosts.context().unwrap();
+                let recipe = fixture.hosts.selected.clone().unwrap();
+                fixture
+                    .hosts
+                    .creation_intent(&context, recipe, account)
+                    .unwrap();
+                fixture
+                    .host_action(&egui::Context::default(), Action::ReviewOriginal(0))
+                    .unwrap();
+            }
             _ => {}
         }
+        fixture.hosts.gallery_display = Some(gallery);
         *self = fixture;
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_gallery_recovery_displays_cannot_dispatch() {
+    for state in [
+        "hosts-owner",
+        "hosts-receipt",
+        "hosts-unknown",
+        "hosts-approval-unavailable",
+        "hosts-import",
+        "hosts-recovery",
+        "hosts-originals",
+        "hosts-forget-create",
+        "hosts-forget-end",
+        "hosts-end",
+        "hosts-original-review",
+        "hosts-working",
+    ] {
+        let mut app = app().with_profiles(crate::profiles::testing::profiles());
+        app.configure_host_gallery(state);
+        assert!(app.hosts.original_store.is_none(), "{state}");
+        assert!(app.hosts.end_review.is_none() && app.hosts.forget_review.is_none());
+        if state != "hosts-original-review" {
+            assert!(app.hosts.originals.is_empty() && app.hosts.ends.is_empty());
+        } else {
+            assert_eq!(app.hosts.originals.len(), 1);
+            assert!(app.hosts.originals[0].intent.issued_operation().is_none());
+            assert!(app.hosts.receipt.is_none() && !app.hosts.enrolled);
+        }
+        for action in [
+            Action::FindAccount(0),
+            Action::Import,
+            Action::Create,
+            Action::ConfirmEnd,
+            Action::ConfirmForget,
+        ] {
+            assert_eq!(
+                app.host_action(&egui::Context::default(), action)
+                    .unwrap_err(),
+                "Synthetic HOST gallery actions are disabled.",
+                "{state}"
+            );
+        }
+        assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
     }
 }
 
