@@ -1,5 +1,28 @@
 # Milestone Progress Narrative
 
+## Restoring mobile HOST review routes
+
+The post-redesign screenshot inventory omitted several older HOST review
+surfaces. The mobile gallery now exercises the current owner, original-action,
+Forget and End widgets at phone and tablet sizes instead of restoring stale
+images, bringing the mobile inventory to 366 captures. Its ephemeral
+memory-backed test receipt and inert public display data cannot dispatch HOST
+work or establish native-vault, protected-recovery or live-service acceptance.
+
+## Keeping crash recovery tests stable under contention
+
+A workspace run exposed a transient Busy while a test re-adopted the same
+reserved daemon generation. The fixture now forces that contention, verifies
+the launching record remains intact, and retries only Busy with the original
+operation before checking the same native identity. No production recovery
+policy or authority changed. A parallel nextest run and Ubuntu CI also exposed
+Busy in cancellation/revocation and capacity-retirement fixtures. They now
+force lease contention and retry only Busy for the same target through the
+existing bounded helper. A separate bridge test waits for
+READY across the recovery snapshot and ordered output frames rather than
+assuming PTY output precedes the snapshot; its exit and takeover final-frame
+assertions remain.
+
 ## Making host-based Dev Tunnels task-oriented
 
 The host foundations exposed protected operations through a recipe-management

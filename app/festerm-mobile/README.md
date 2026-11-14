@@ -23,11 +23,15 @@ uses synthetic profiles/listings/documents and bounded recording sources, and
 renders actual recording-owner widgets through test-only cfg. Mobile encoding
 and publication refuse in this headless host. No native app, credentials,
 clipboard, real connection or OS picker is used. These are not native iOS or
-Android acceptance screenshots.
+Android acceptance screenshots. The HOST generator requires Unix and trusted
+private storage; an unavailable generator fails rather than producing an
+incomplete catalog.
 Every PNG has separate entry/exit/source routes. Manifests include a working-tree
 input fingerprint checked unchanged before/after capture. Recording task phases
 and HOST protected-history screens use inert public display seams into the actual
-renderers; they cannot create tasks, protected receipts or dispatch HOST work.
+renderers. HOST setup uses an ephemeral memory-backed test owner receipt and an
+unissued in-memory Create intent for one review; it creates no protected
+checkpoint or native-vault grant and cannot dispatch HOST work.
 
 ## Opt-in ADR 0084 HOST client
 
