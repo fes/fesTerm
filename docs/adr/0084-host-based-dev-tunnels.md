@@ -2312,3 +2312,36 @@ Planned tests must be replaced by actual registered test functions as slices lan
 Run the repository traceability checker and relevant focused tests per slice,
 then required workspace/package checks for release. Automated fixtures do not
 substitute for native service and physical-device evidence.
+
+### Validation impact: reviewed Windows EOC CA 03 compatibility
+
+`HOST-05`/`HOST-06` publisher admission accepts exactly two reviewed, ordered
+Microsoft CA chains: AOC CA 03 or EOC CA 03, each followed by the same pinned
+PCA 2021 and Root 2020. The EOC certificate's DER bytes were independently
+retrieved from Microsoft's HTTPS PKI repository and matched the official host
+bundle's native verified chain. The [public source and exact pins](../host-release-artifacts.md#windows-native-publisher-policy)
+remain compiled authority, never candidate or configuration metadata.
+
+Both chains retain identical subject/profile/EKU, native signature, RFC3161
+timestamp and fresh-revocation requirements. Deterministic tests cover both
+accepted chains, every certificate-byte mutation, and mixed, reordered,
+truncated and extended rejection. This compatibility change adds no publisher
+override, certificate-store import, fallback or service/runtime authority.
+Native pure package qualification remains separate from GUI installation,
+cloud resource, owner approval and session lifecycle acceptance; existing
+HOST classifications and GUI action edges are unchanged.
+
+
+### Validation impact: service-supported HOST port protocol
+
+New protected HOST create intents pin the service-supported `auto` protocol;
+receipt and host-token qualification must match that exact intent. Missing
+legacy fields retain `tcp` and cannot silently acquire today's request body.
+An explicit Reconcile may retire an unsubmitted, unbound legacy intent only
+after native-account-authenticated exact-resource absence, with the original
+bytes durably archived and the old ticket fenced across crashes. Submitted or
+uncertain originals remain retained. A later reviewed Enable is required.
+
+Focused protocol, crash/recovery and exact-snapshot tests cover these fences.
+The installed signed host runtime needs the same implementation; GUI changes
+and portable tests alone do not qualify HOSTSETUP-01 or cross-platform sessions.

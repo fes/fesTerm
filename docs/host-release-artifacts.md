@@ -32,8 +32,9 @@ unknown schema/package/target values and noncanonical hashes are rejected.
 Schema 1 is not accepted as schema 2: it never guaranteed host CLI inclusion.
 
 `scripts/build_host_manifest.py` binds the actual archive length and SHA-256
-after the existing package/notice checks. The protected release publish job
-requires the existing updater private key/password and requires the configured
+after the existing package/notice checks. The protected `authenticate-helpers`
+release job (publication or explicit nonpublishing candidate mode) requires the
+existing updater private key/password and requires the configured
 public key to equal `packaging/updater.pub`. Pinned cargo-packager 0.11.8 signs
 the **exact manifest bytes**, using its existing base64-encoded Minisign
 signature format (including authenticated trusted comment). The independent
@@ -299,8 +300,18 @@ PKI certificate downloads, never candidate certificates or manifest metadata:
 | Chain certificate | Authoritative Microsoft source | DER SHA256 |
 | --- | --- | --- |
 | Microsoft ID Verified CS AOC CA 03 | [public certificate](https://www.microsoft.com/pkiops/certs/Microsoft%20ID%20Verified%20CS%20AOC%20CA%2003.crt) | `acaa07d57d4274b290d86c156aa0d6c5633e3cd92d43751e6a0f797c5b2dff4d` |
+| Microsoft ID Verified CS EOC CA 03 | [public certificate](https://www.microsoft.com/pkiops/certs/Microsoft%20ID%20Verified%20CS%20EOC%20CA%2003.crt) | `bff5c1a54b421e0cc12372f221fa56e6f1b0305a9c071a2af1bf45893d2a4623` |
 | Microsoft ID Verified Code Signing PCA 2021 | [public certificate](https://www.microsoft.com/pkiops/certs/Microsoft%20ID%20Verified%20Code%20Signing%20PCA%202021.crt) | `3d29798cc5d3f0644a7e0dc9cb1cade523ea5ec83b335109b605bfeaa7d5f5c1` |
 | Microsoft Identity Verification Root Certificate Authority 2020 | [public certificate](https://www.microsoft.com/pkiops/certs/microsoft%20identity%20verification%20root%20certificate%20authority%202020.crt), [Microsoft repository](https://www.microsoft.com/pkiops/docs/repository.htm) | `5367f20c7ade0e2bca790915056d086b720c33c1fa2a2661acf787e3292e1270` |
+
+Only two complete, ordered CA chains are approved: AOC CA 03 → PCA 2021 →
+Root 2020, or EOC CA 03 → the same PCA and root. An arbitrary intermediate
+under that root, mixed/reordered chains, and extra or missing certificates
+are refused. The EOC CA 03 certificate observed in the official 0.17.1 Windows
+ARM64 host bundle was independently downloaded from Microsoft's HTTPS PKI
+repository and matched byte-for-byte; its signature chain also verified under
+the independently retrieved, already-pinned PCA and root. Candidate metadata
+does not authorize a new pin.
 
 These are additional restrictions on OS chain trust, not custom trust anchors.
 [Microsoft certificate-management guidance](https://learn.microsoft.com/en-us/azure/artifact-signing/concept-certificate-management)

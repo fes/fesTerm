@@ -226,9 +226,8 @@ impl Failure {
             Self::BundleNotPublished => "The signed host bundle for this build is not published.",
             Self::AcquisitionUnavailable => "Host component download failed. Retry explicitly.",
             Self::SignedBundle => "Host component verification failed. Nothing was installed.",
-            Self::CloudUncertain | Self::Reconciliation => {
-                "Cleanup is incomplete. Keep access off and review Recovery."
-            }
+            Self::CloudUncertain => "Host setup could not finish. Review Recovery before retrying.",
+            Self::Reconciliation => "Cleanup is incomplete. Keep access off and review Recovery.",
             Self::PrivateStorage => "Protected host storage is unavailable. Review Recovery.",
             Self::PlatformPrerequisite => {
                 "Host setup is not qualified for this startup policy or platform."
@@ -333,6 +332,22 @@ impl View {
         matches!(&self.scope, Scope::Present(snapshot) if matches!(
             snapshot.phase, Phase::EnableRequested | Phase::Provisioned | Phase::Reconciling
         ))
+    }
+
+    /// Recorded setup state, without implying a live endpoint observation.
+    pub fn access_summary(&self) -> &'static str {
+        match &self.scope {
+            Scope::Unobserved => "Not observed",
+            Scope::Absent => "Off",
+            Scope::Present(snapshot) => match snapshot.phase {
+                Phase::EnableRequested => "Setup pending",
+                Phase::Provisioned => "Configured",
+                Phase::Reconciling => "Recovery pending",
+                Phase::StopRequested => "Disabling",
+                Phase::CleanupPending => "Cleanup pending",
+                Phase::Disabled | Phase::Removed => "Off",
+            },
+        }
     }
 
     pub fn access_status(&self) -> Option<bool> {

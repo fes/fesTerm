@@ -92,8 +92,8 @@ class HostManifestTests(unittest.TestCase):
 
     def test_signed_metadata_workflow_uses_existing_key_and_verifies_before_publication(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        step = workflow.split("      - name: Prepare standalone helper metadata and verifier without signing secrets\n")[1]
-        step = step.split("      - name: Generate release notes")[0]
+        job = workflow.split("  authenticate-helpers:\n", 1)[1].split("  publish:\n", 1)[0]
+        step = job.split("      - name: Prepare standalone helper metadata and verifier without signing secrets\n", 1)[1]
         self.assertIn("secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY", step)
         self.assertIn('test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"', step)
         self.assertIn('for platform in linux macos windows', step)
@@ -136,6 +136,37 @@ class HostManifestTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exactly", result.stderr)
 
+    @unittest.skipIf(os.name == "nt" or not shutil.which("sha256sum"), "Unix helper payload admission")
+    def test_candidate_helper_consumer_checks_both_families_and_exact_payload_before_signing(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Verify standalone helper payloads before authentication\n", 1)[1].split("      - uses:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        output = self.root / "dist"
+        for platform in bundle.PLATFORMS:
+            for arch in bundle.ARCHITECTURES:
+                for host in (False, True):
+                    bundle.build_bundle(self.root, self.binary_dir, output, "1.2.3", platform, arch,
+                                        notices=b"synthetic notices\n", host=host)
+        (self.root / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
+        environment = {"PATH": os.environ["PATH"], "TMPDIR": str(self.root),
+                       "VERSION": "1.2.3", "HEADLESS_HELPERS": "true"}
+
+        def verify():
+            return subprocess.run(["bash", "-c", script], cwd=self.root, env=environment,
+                                  capture_output=True, text=True, timeout=30)
+
+        result = verify()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        extra = output / "unexpected-payload"
+        extra.write_bytes(b"extra")
+        self.assertNotEqual(verify().returncode, 0)
+        extra.unlink()
+        archive = output / "fesTerm-host-1.2.3-linux-x86_64.tar.gz"
+        archive.write_bytes((output / "fesTerm-tunnel-1.2.3-linux-x86_64.tar.gz").read_bytes())
+        result = verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly", result.stderr)
+
     def test_host_is_required_by_manifest_producer_and_native_signer_paths(self):
         legacy = bundle.build_bundle(
             self.root, self.binary_dir, self.root / "legacy", "1.2.3",
@@ -154,8 +185,9 @@ class HostManifestTests(unittest.TestCase):
 
     def test_signing_secrets_are_absent_from_build_generation_and_verification_steps(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        publish_environment = workflow.split("  publish:\n", 1)[1].split("    steps:\n", 1)[0]
-        self.assertNotIn("CARGO_PACKAGER_SIGN_PRIVATE_KEY", publish_environment)
+        publish = workflow.split("  publish:\n", 1)[1]
+        self.assertNotIn("CARGO_PACKAGER_SIGN_PRIVATE_KEY", publish)
+        workflow = workflow.split("  authenticate-helpers:\n", 1)[1].split("  publish:\n", 1)[0]
         installation, remainder = workflow.split(
             "      - name: Install pinned cargo-packager for helper metadata signatures\n", 1
         )[1].split(
@@ -167,7 +199,7 @@ class HostManifestTests(unittest.TestCase):
         signing, remainder = remainder.split(
             "      - name: Authenticate standalone helper release metadata\n", 1
         )
-        verification = remainder.split("      - name: Generate release notes", 1)[0]
+        verification = remainder.split("      - uses: actions/upload-artifact", 1)[0]
         for step in (installation, preparation, verification):
             self.assertNotIn("secrets.", step)
             self.assertNotIn("CARGO_PACKAGER_SIGN_PRIVATE_KEY", step)

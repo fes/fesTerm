@@ -10,7 +10,7 @@ use tunnels::{
     contracts::{
         ClusterRecommendationResponse, Tunnel, TunnelAccessControl, TunnelAccessControlEntry,
         TunnelAccessControlEntryType, TunnelPort, PROD_DNS_NAME, PROVIDERS_GITHUB,
-        TUNNEL_PROTOCOL_TCP,
+        TUNNEL_PROTOCOL_AUTO, TUNNEL_PROTOCOL_TCP,
     },
     management::Authorization,
 };
@@ -18,6 +18,26 @@ use zeroize::Zeroizing;
 
 pub const HOST_LABEL: &str = "festerm-host-v1";
 pub const HOST_PORT: u16 = 2222;
+
+/// Part of the immutable protected create intent, not an inner HOST transport
+/// or authorization setting. Missing legacy fields must never imply `auto`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum CreateProtocol {
+    #[serde(rename = "auto")]
+    Auto,
+    #[default]
+    #[serde(rename = "tcp")]
+    LegacyTcp,
+}
+
+impl CreateProtocol {
+    fn wire_value(self) -> &'static str {
+        match self {
+            Self::Auto => TUNNEL_PROTOCOL_AUTO,
+            Self::LegacyTcp => TUNNEL_PROTOCOL_TCP,
+        }
+    }
+}
 
 /// Public metadata, not permission to create a resource. The setup controller
 /// durably reserves these exact values before submitting a request.
@@ -30,6 +50,8 @@ pub struct Resource {
     pub ownership_label: String,
     pub port: u16,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub create_protocol: CreateProtocol,
 }
 
 impl Resource {
@@ -310,6 +332,11 @@ fn prepare_create(
     resource: &Resource,
     description: &str,
 ) -> Result<PreparedCreate, Error> {
+    // The service rejects the old TCP create protocol. Never reinterpret a
+    // legacy reservation (including an uncertain original) as a new auto body.
+    if resource.create_protocol != CreateProtocol::Auto {
+        return Err(Error::Response);
+    }
     if description.trim().is_empty()
         || description.len() > 80
         || description.chars().any(char::is_control)
@@ -346,7 +373,7 @@ fn prepare_create(
         }),
         ports: vec![TunnelPort {
             port_number: resource.port,
-            protocol: Some(TUNNEL_PROTOCOL_TCP.into()),
+            protocol: Some(resource.create_protocol.wire_value().into()),
             labels: vec![HOST_LABEL.into()],
             ..Default::default()
         }],
@@ -465,7 +492,7 @@ fn receipt(bytes: &[u8], resource: &Resource) -> Result<Receipt, Error> {
         || tunnel.ports.len() != 1
         || !tunnel.ports.iter().all(|port| {
             port.port_number == resource.port
-                && port.protocol.as_deref() == Some(TUNNEL_PROTOCOL_TCP)
+                && port.protocol.as_deref() == Some(resource.create_protocol.wire_value())
                 && port.labels == [HOST_LABEL]
                 && port.access_control.as_ref().is_none_or(same_acl)
                 && port
@@ -539,6 +566,7 @@ mod tests {
             account_id: 42,
             ownership_label: "festerm-owned-22222222222242228222222222222222".into(),
             port: HOST_PORT,
+            create_protocol: CreateProtocol::Auto,
             labels: vec![
                 HOST_LABEL.into(),
                 "festerm-owned-22222222222242228222222222222222".into(),
@@ -554,8 +582,60 @@ mod tests {
             "accessControl": {"entries": [{
                 "type": "Users", "provider": "github", "subjects": ["42"], "scopes": ["connect"],
             }]},
-            "ports": [{"portNumber": HOST_PORT, "protocol": "tcp", "labels": [HOST_LABEL]}],
+            "ports": [{"portNumber": HOST_PORT, "protocol": "auto", "labels": [HOST_LABEL]}],
         })
+    }
+
+    #[test]
+    fn host_cloud_create_protocol_is_pinned_and_missing_legacy_never_becomes_auto() {
+        let current = resource();
+        let mut encoded = serde_json::to_value(&current).unwrap();
+        assert_eq!(encoded["create_protocol"], "auto");
+        let auto: Resource = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(auto.create_protocol, CreateProtocol::Auto);
+        encoded.as_object_mut().unwrap().remove("create_protocol");
+        let legacy: Resource = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(legacy.create_protocol, CreateProtocol::LegacyTcp);
+        assert_eq!(legacy.create_protocol.wire_value(), "tcp");
+        assert!(matches!(
+            prepare_create(&identity(), &legacy, "Fixture"),
+            Err(Error::Response)
+        ));
+        for protocol in ["unknown", "https", "TCP", ""] {
+            encoded["create_protocol"] = serde_json::json!(protocol);
+            assert!(serde_json::from_value::<Resource>(encoded.clone()).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_cloud_receipt_and_host_token_require_the_pinned_protocol() {
+        let identity = identity();
+        let current = resource();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &current).unwrap();
+        for protocol in ["tcp", "http", "https", "unknown"] {
+            let mut body = response();
+            body["ports"][0]["protocol"] = protocol.into();
+            body["accessTokens"] = serde_json::json!({"host":"PRIVATE_SCOPED_HOST"});
+            assert_eq!(
+                receipt(&serde_json::to_vec(&body).unwrap(), &current),
+                Err(Error::IdentityChanged)
+            );
+            let http = Fake::new(vec![(200, body)]);
+            assert_eq!(
+                host_token(&http, &identity, &exact, &CancellationToken::new()).await,
+                Err(Error::IdentityChanged)
+            );
+        }
+        let mut legacy = current.clone();
+        legacy.create_protocol = CreateProtocol::LegacyTcp;
+        let mut body = response();
+        body["ports"][0]["protocol"] = "tcp".into();
+        let old_receipt = receipt(&serde_json::to_vec(&body).unwrap(), &legacy).unwrap();
+        assert_ne!(old_receipt.resource, exact.resource);
+        assert_eq!(
+            receipt(&serde_json::to_vec(&response()).unwrap(), &legacy),
+            Err(Error::IdentityChanged)
+        );
     }
 
     #[tokio::test]
@@ -819,6 +899,7 @@ mod tests {
         );
         assert_eq!(body["ports"].as_array().unwrap().len(), 1);
         assert_eq!(body["ports"][0]["portNumber"], HOST_PORT);
+        assert_eq!(body["ports"][0]["protocol"], "auto");
         assert!(body.get("accessTokens").is_none());
         assert!(body.get("endpoints").is_none());
         assert!(body.get("name").is_none());

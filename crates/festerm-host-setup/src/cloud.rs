@@ -11,14 +11,18 @@ use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
 use festerm_tunnel_client::{
     host::{
-        CreateError, Management, Observation, PreparedCreate, Receipt, Resource, HOST_LABEL,
-        HOST_PORT,
+        CreateError, CreateProtocol, Management, Observation, PreparedCreate, Receipt, Resource,
+        HOST_LABEL, HOST_PORT,
     },
     identity::{self, DevicePrompt, Identity},
     Error as AccountError, Https,
 };
 use serde::{Deserialize, Serialize};
-use std::{fs::File, io, path::Path};
+use std::{
+    fs::File,
+    io,
+    path::{Path, PathBuf},
+};
 use tokio_util::sync::CancellationToken;
 
 const RECORD: &str = "host-cloud.json";
@@ -474,6 +478,13 @@ impl<'a> CloudHostAdapter<'a> {
                 if record.account_id != expected_github_subject {
                     return Err(refused("host.cloud_account_changed"));
                 }
+                if retired_original(directory, &record)?.is_some()
+                    && (record.resource.is_some() || ticket.epoch() <= record.ticket.epoch())
+                {
+                    return Err(refused(
+                        "host.cloud_protocol_retirement_requires_new_enable",
+                    ));
+                }
                 // A new foreground ticket may reuse the same disabled identity,
                 // resource and protected credential, never another account.
                 record.ticket = ticket.clone();
@@ -703,6 +714,23 @@ impl<'a> CloudHostAdapter<'a> {
         let _operation = self.operation()?;
         let mut record = self.load()?;
         self.require_scope(&record, foreground)?;
+        self.store.with_locked(|directory, _| {
+            if retired_original(directory, &record)?.is_some() {
+                return Err(refused("host.cloud_protocol_retirement_requires_reconcile"));
+            }
+            Ok(())
+        })?;
+        // Never change an old (possibly uncertain) request body by applying
+        // today's protocol default. Recovery/retirement needs separate proof.
+        if record
+            .resource
+            .as_ref()
+            .is_some_and(|resource| resource.create_protocol == CreateProtocol::LegacyTcp)
+        {
+            return Err(refused(
+                "host.cloud_legacy_protocol_requires_reconciliation",
+            ));
+        }
         // A cancelled pending request may be observed for late cleanup, but
         // can never reach the submission branch.
         if !record.submitted {
@@ -726,6 +754,7 @@ impl<'a> CloudHostAdapter<'a> {
                 labels: vec![HOST_LABEL.into(), ownership_label.clone()],
                 ownership_label,
                 port: HOST_PORT,
+                create_protocol: CreateProtocol::Auto,
             };
             resource.validate().map_err(account_error)?;
             record.resource = Some(resource);
@@ -846,18 +875,24 @@ impl<'a> CloudHostAdapter<'a> {
         Ok(self.store.snapshot()?.phase)
     }
 
-    /// Recover a pending operation without interactive authentication or
-    /// another create. Proven unsubmitted reservations need no credential store.
+    /// Explicitly reviewed recovery without interactive authentication or
+    /// another create. Legacy retirement requires authenticated exact absence;
+    /// other proven unsubmitted reservations need no credential store.
     /// Acknowledged Disabled uncertainty is retained until separate enable
     /// consent; reporting that lifecycle phase is not cloud absence.
     pub async fn reconcile(&self, cancel: &CancellationToken) -> io::Result<Phase> {
         {
             let _operation = self.operation()?;
             let record = self.load()?;
-            if !record.submitted {
+            if !record.submitted
+                && !legacy_protocol(&record)
+                && !self.store.with_locked(|directory, _| {
+                    Ok(retired_original(directory, &record)?.is_some())
+                })?
+            {
                 return self.resolve_no_submission(&record);
             }
-            if retained_unbound(&record, &self.store.snapshot()?) {
+            if !legacy_protocol(&record) && retained_unbound(&record, &self.store.snapshot()?) {
                 return Ok(Phase::Disabled);
             }
         }
@@ -875,6 +910,15 @@ impl<'a> CloudHostAdapter<'a> {
     ) -> io::Result<Phase> {
         let _operation = self.operation()?;
         let mut record = self.load()?;
+        if self
+            .store
+            .with_locked(|directory, _| Ok(retired_original(directory, &record)?.is_some()))?
+            || legacy_protocol(&record)
+        {
+            return self
+                .retire_legacy_protocol(&mut record, cancel, network, secrets)
+                .await;
+        }
         if !record.submitted {
             return self.resolve_no_submission(&record);
         }
@@ -914,6 +958,101 @@ impl<'a> CloudHostAdapter<'a> {
 
     // Both callers hold the operation lease: no local create can still be
     // in flight when the durable journal proves submission never happened.
+    /// Explicit Reconcile only: an exact authenticated absence may retire an
+    /// unbound, unsubmitted legacy intent. An archive fences the old ticket even
+    /// if a crash leaves the cleared journal before lifecycle release.
+    async fn retire_legacy_protocol(
+        &self,
+        record: &mut Record,
+        cancel: &CancellationToken,
+        network: &impl Network,
+        secrets: &dyn SecretStore,
+    ) -> io::Result<Phase> {
+        let before = self.store.snapshot()?;
+        retirement_scope(record, &before)?;
+        let original = self.store.with_locked(|directory, current| {
+            if current != &before {
+                return Err(refused("host.cloud_retirement_scope_changed"));
+            }
+            retired_original(directory, record)
+        })?;
+        if let Some(original) = original.as_ref().filter(|_| record.resource.is_none()) {
+            self.store.with_locked(|directory, current| {
+                if cancel.is_cancelled() || current != &before {
+                    return Err(refused("host.cloud_retirement_scope_changed"));
+                }
+                validate(original, current, directory, || self.os_user())?;
+                let current_record =
+                    read(directory)?.ok_or_else(|| refused("host.cloud_not_configured"))?;
+                if &current_record != record
+                    || retired_original(directory, &current_record)?.as_ref() != Some(original)
+                {
+                    return Err(refused("host.cloud_retirement_scope_changed"));
+                }
+                Ok(())
+            })?;
+            if before.phase != Phase::Disabled {
+                self.store
+                    .confirm_no_resources_if_current(&before, &record.ticket)?;
+            }
+            return Ok(Phase::Disabled);
+        }
+        if !legacy_protocol(record) {
+            return Err(refused("host.cloud_retirement_scope_changed"));
+        }
+        let identity = self.load_identity(record, network, secrets, cancel).await?;
+        let resource = record
+            .resource
+            .as_ref()
+            .ok_or_else(|| refused("host.cloud_reservation_missing"))?;
+        let observed = network
+            .observe(&identity, resource, cancel)
+            .await
+            .map_err(account_error)?;
+        network
+            .confirm(&identity, cancel)
+            .await
+            .map_err(account_error)?;
+        if observed != Observation::Absent {
+            return Err(refused("host.cloud_legacy_resource_still_present"));
+        }
+        self.store.with_locked(|directory, current| {
+            if cancel.is_cancelled() || current != &before {
+                return Err(refused("host.cloud_retirement_scope_changed"));
+            }
+            validate(record, current, directory, || self.os_user())?;
+            retirement_scope(record, current)?;
+            let bytes = storage::read_private(directory, Path::new(RECORD), 16 * 1024)?;
+            let existing: Record = serde_json::from_slice(&bytes)
+                .map_err(|_| refused("host.cloud_journal_invalid"))?;
+            if &existing != record {
+                return Err(refused("host.cloud_retirement_scope_changed"));
+            }
+            if let Some(archived) = retired_original(directory, record)? {
+                if archived != *record {
+                    return Err(refused("host.cloud_retirement_archive_changed"));
+                }
+            } else {
+                crate::protected_state::publish_new(directory, &retirement_path(record), &bytes)?;
+            }
+            // Archive is durable first. It bars every old-ticket provision,
+            // including a restart between this write and lifecycle release.
+            let mut cleared = record.clone();
+            cleared.resource = None;
+            cleared.creation_name = None;
+            write(directory, &cleared)?;
+            *record = cleared;
+            Ok(())
+        })?;
+        if before.phase != Phase::Disabled {
+            self.store
+                .confirm_no_resources_if_current(&before, &record.ticket)?;
+        } else if self.store.snapshot()? != before {
+            return Err(refused("host.cloud_retirement_scope_changed"));
+        }
+        Ok(Phase::Disabled)
+    }
+
     fn resolve_no_submission(&self, record: &Record) -> io::Result<Phase> {
         let snapshot = self.store.snapshot()?;
         if snapshot.phase == Phase::Disabled
@@ -1313,6 +1452,89 @@ fn validate(
         if ticket != &record.ticket {
             return Err(refused("host.cloud_foreground_consent_expired"));
         }
+    }
+    Ok(())
+}
+
+fn legacy_protocol(record: &Record) -> bool {
+    record
+        .resource
+        .as_ref()
+        .is_some_and(|r| r.create_protocol == CreateProtocol::LegacyTcp)
+}
+fn retirement_path(record: &Record) -> PathBuf {
+    PathBuf::from(format!(
+        "host-cloud-retired-protocol-{}.json",
+        record.ticket.epoch()
+    ))
+}
+fn retired_original(directory: &File, current: &Record) -> io::Result<Option<Record>> {
+    let bytes = match storage::read_private(directory, &retirement_path(current), 16 * 1024) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let original: Record = serde_json::from_slice(&bytes)
+        .map_err(|_| refused("host.cloud_retirement_archive_changed"))?;
+    if !legacy_protocol(&original)
+        || original.submitted
+        || original.receipt.is_some()
+        || !original.authenticated
+        || original.creation_name.is_none()
+    {
+        return Err(refused("host.cloud_retirement_archive_changed"));
+    }
+    original
+        .resource
+        .as_ref()
+        .unwrap()
+        .validate()
+        .map_err(account_error)?;
+    if original.resource.as_ref().unwrap().account_id != original.account_id
+        || original.creation_name.as_ref().is_some_and(|name| {
+            name.trim().is_empty() || name.len() > 80 || name.chars().any(char::is_control)
+        })
+    {
+        return Err(refused("host.cloud_retirement_archive_changed"));
+    }
+    if current == &original
+        && storage::read_private(directory, Path::new(RECORD), 16 * 1024)?.as_slice()
+            != bytes.as_slice()
+    {
+        return Err(refused("host.cloud_retirement_archive_changed"));
+    }
+    let mut cleared = original.clone();
+    cleared.resource = None;
+    cleared.creation_name = None;
+    if current != &original && current != &cleared {
+        return Err(refused("host.cloud_retirement_archive_changed"));
+    }
+    Ok(Some(original))
+}
+fn retirement_scope(record: &Record, snapshot: &Snapshot) -> io::Result<()> {
+    if record.submitted
+        || record.receipt.is_some()
+        || snapshot.binding.is_some()
+        || !record.authenticated
+    {
+        return Err(refused("host.cloud_retirement_unavailable"));
+    }
+    let current = match snapshot.phase {
+        Phase::EnableRequested => {
+            snapshot.epoch == record.ticket.epoch()
+                && snapshot.pending_ticket() == Some(&record.ticket)
+        }
+        Phase::Reconciling => {
+            snapshot.epoch > record.ticket.epoch()
+                && snapshot.pending_ticket() == Some(&record.ticket)
+        }
+        Phase::Disabled => {
+            snapshot.epoch >= record.ticket.epoch() && snapshot.pending_ticket().is_none()
+        }
+        _ => false,
+    };
+    if !current {
+        return Err(refused("host.cloud_retirement_scope_changed"));
     }
     Ok(())
 }
@@ -3296,6 +3518,321 @@ mod tests {
             assert_eq!(recovered.creation_name, reserved.creation_name);
             assert!(!store.snapshot().unwrap().settings.allow_creation);
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_legacy_protocol_reservations_fail_closed_without_rewriting_originals() {
+        for submitted in [false, true] {
+            for protocol in [None, Some("tcp"), Some("unknown")] {
+                let (_root, store, secrets) = fixture();
+                let adapter = CloudHostAdapter::fixture(&store);
+                let foreground = foreground(&adapter);
+                let network = FixtureNetwork::new(&store);
+                let cancel = CancellationToken::new();
+                adapter
+                    .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+                    .await
+                    .unwrap();
+                network.state.borrow_mut().prepare_error = Some(AccountError::Response);
+                assert!(adapter
+                    .provision_with(&foreground, &cancel, &network, &secrets)
+                    .await
+                    .is_err());
+                let original = adapter.load().unwrap();
+                assert_eq!(
+                    original.resource.as_ref().unwrap().create_protocol,
+                    CreateProtocol::Auto
+                );
+                assert!(!original.submitted);
+                let mut encoded = serde_json::to_value(&original).unwrap();
+                encoded["submitted"] = submitted.into();
+                match protocol {
+                    Some(protocol) => encoded["resource"]["create_protocol"] = protocol.into(),
+                    None => {
+                        encoded["resource"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("create_protocol");
+                    }
+                }
+                let bytes = serde_json::to_vec(&encoded).unwrap();
+                store
+                    .with_locked(|directory, _| {
+                        storage::replace_private(directory, Path::new(RECORD), &bytes)
+                    })
+                    .unwrap();
+                let before = store.snapshot().unwrap();
+                let empty_secrets = MemorySecretStore::new();
+                let error = adapter
+                    .provision_with(&foreground, &cancel, &network, &empty_secrets)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    if protocol == Some("unknown") {
+                        "host.cloud_journal_invalid"
+                    } else {
+                        "host.cloud_legacy_protocol_requires_reconciliation"
+                    }
+                );
+                assert_eq!(store.snapshot().unwrap(), before);
+                store
+                    .with_locked(|directory, _| {
+                        assert_eq!(
+                            storage::read_private(directory, Path::new(RECORD), 16 * 1024)?
+                                .as_slice(),
+                            bytes.as_slice()
+                        );
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(network.state.borrow().creates, 0);
+                assert_eq!(network.state.borrow().observes, 1);
+                assert_eq!(network.state.borrow().sign_ins, 1);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_legacy_retirement_crash_order_fences_old_ticket_and_requires_new_enable() {
+        for crash in 0..4 {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::fixture(&store);
+            let old = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&old, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            network.state.borrow_mut().prepare_error = Some(AccountError::Response);
+            assert!(adapter
+                .provision_with(&old, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            let mut legacy = adapter.load().unwrap();
+            legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            adapter.save(&legacy).unwrap();
+            if crash == 0 {
+                // Actual pre-pin on-disk schema: the archive preserves even
+                // the omitted field verbatim instead of canonicalizing it.
+                let mut old_bytes = serde_json::to_value(&legacy).unwrap();
+                old_bytes["resource"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("create_protocol");
+                store
+                    .with_locked(|directory, _| {
+                        storage::replace_private(
+                            directory,
+                            Path::new(RECORD),
+                            &serde_json::to_vec(&old_bytes).unwrap(),
+                        )
+                    })
+                    .unwrap();
+            }
+            let bytes = store
+                .with_locked(|directory, _| {
+                    Ok(storage::read_private(directory, Path::new(RECORD), 16 * 1024)?.to_vec())
+                })
+                .unwrap();
+            if crash > 0 {
+                store
+                    .with_locked(|directory, _| {
+                        crate::protected_state::publish_new(
+                            directory,
+                            &retirement_path(&legacy),
+                            &bytes,
+                        )
+                    })
+                    .unwrap();
+            }
+            if crash >= 2 {
+                let mut cleared = legacy.clone();
+                cleared.resource = None;
+                cleared.creation_name = None;
+                adapter.save(&cleared).unwrap();
+            }
+            if crash == 3 {
+                let observed = store.snapshot().unwrap();
+                store.revoke().unwrap();
+                assert!(store
+                    .confirm_no_resources_if_current(&observed, &legacy.ticket)
+                    .is_err());
+                assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
+            }
+            // Neither an uncleared archive nor a cleared journal can create on
+            // the old enable ticket, including the crash-between-files state.
+            assert!(adapter
+                .provision_with(&old, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            assert_eq!(network.state.borrow().creates, 0);
+            assert_eq!(
+                adapter
+                    .reconcile_with(&cancel, &network, &secrets)
+                    .await
+                    .unwrap(),
+                Phase::Disabled
+            );
+            let cleared = adapter.load().unwrap();
+            assert!(cleared.resource.is_none() && cleared.creation_name.is_none());
+            store
+                .with_locked(|directory, _| {
+                    assert_eq!(
+                        storage::read_private(directory, &retirement_path(&legacy), 16 * 1024)?
+                            .as_slice(),
+                        bytes.as_slice()
+                    );
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(
+                network.state.borrow().observes,
+                if crash >= 2 { 1 } else { 2 }
+            );
+            assert!(adapter
+                .provision_with(&old, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            let fresh = foreground(&adapter);
+            assert!(fresh.record.ticket.epoch() > legacy.ticket.epoch());
+            network.state.borrow_mut().prepare_error = None;
+            assert_eq!(
+                adapter
+                    .provision_with(&fresh, &cancel, &network, &secrets)
+                    .await
+                    .unwrap(),
+                Phase::Provisioned
+            );
+            let new = adapter.load().unwrap();
+            let new = new.resource.as_ref().unwrap();
+            assert_eq!(new.create_protocol, CreateProtocol::Auto);
+            assert_ne!(new.tunnel_id, legacy.resource.as_ref().unwrap().tunnel_id);
+            assert_eq!(network.state.borrow().creates, 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_legacy_retirement_refusals_preserve_original_bytes() {
+        for scenario in 0..8 {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::fixture(&store);
+            let old = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&old, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            network.state.borrow_mut().prepare_error = Some(AccountError::Response);
+            assert!(adapter
+                .provision_with(&old, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            let mut legacy = adapter.load().unwrap();
+            legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            if scenario == 0 || scenario >= 6 {
+                legacy.submitted = true;
+            }
+            if scenario >= 6 {
+                legacy.receipt = Some(Receipt {
+                    resource: legacy.resource.clone().unwrap(),
+                    created: "2026-11-09T00:00:00Z".into(),
+                });
+            }
+            adapter.save(&legacy).unwrap();
+            if scenario == 7 {
+                store
+                    .record_provisioned(
+                        &legacy.ticket,
+                        binding(&legacy, legacy.receipt.as_ref().unwrap()),
+                    )
+                    .unwrap();
+            }
+            let bytes = store
+                .with_locked(|directory, _| {
+                    Ok(storage::read_private(directory, Path::new(RECORD), 16 * 1024)?.to_vec())
+                })
+                .unwrap();
+            let before = store.snapshot().unwrap();
+            match scenario {
+                1 => network.state.borrow_mut().observe_error = Some(AccountError::Denied),
+                2 => {
+                    network.state.borrow_mut().created = Some(Receipt {
+                        resource: legacy.resource.clone().unwrap(),
+                        created: "2026-11-09T00:00:00Z".into(),
+                    })
+                }
+                3 => cancel.cancel(),
+                4 => {
+                    let mut corrupt = legacy.clone();
+                    corrupt.account_id = 43;
+                    store
+                        .with_locked(|directory, _| {
+                            crate::protected_state::publish_new(
+                                directory,
+                                &retirement_path(&legacy),
+                                &encode(&corrupt)?,
+                            )
+                        })
+                        .unwrap();
+                }
+                5 => network.state.borrow_mut().revoke_observe = true,
+                _ => {}
+            }
+            assert!(adapter
+                .reconcile_with(&cancel, &network, &secrets)
+                .await
+                .is_err());
+            store
+                .with_locked(|directory, _| {
+                    assert_eq!(
+                        storage::read_private(directory, Path::new(RECORD), 16 * 1024)?.as_slice(),
+                        bytes.as_slice()
+                    );
+                    Ok(())
+                })
+                .unwrap();
+            if scenario != 5 {
+                assert_eq!(store.snapshot().unwrap(), before);
+            }
+            assert_eq!(network.state.borrow().creates, 0);
+            assert!(adapter
+                .provision_with(&old, &CancellationToken::new(), &network, &secrets)
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_protocol_cannot_replace_an_existing_exact_receipt() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let foreground = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        let original = adapter.load().unwrap();
+        assert_eq!(
+            original.resource.as_ref().unwrap().create_protocol,
+            CreateProtocol::Auto
+        );
+        let mut changed = original.receipt.clone().unwrap();
+        changed.resource.create_protocol = CreateProtocol::LegacyTcp;
+        let mut pending = original.clone();
+        assert_eq!(
+            pin_receipt(&mut pending, changed).unwrap_err().to_string(),
+            "host.cloud_generation_changed"
+        );
+        assert!(pending == original);
     }
 
     #[tokio::test(start_paused = true)]

@@ -1168,11 +1168,7 @@ fn keyboard_shortcuts_summary(bindings: &festerm_config::KeyboardBindings) -> St
 
 #[cfg(feature = "local-host-settings")]
 fn remote_access_summary(view: &crate::app::desktop_remote_access::View) -> String {
-    let state = match view.access_status() {
-        None => "Not observed",
-        Some(false) => "Off",
-        Some(true) => "On",
-    };
+    let state = view.access_summary();
     let mut summary = format!("Let remote clients reach this computer · {state}");
     if view.review.is_some() || view.device_code.is_some() || view.share_review.is_some() {
         summary.push_str(" · review waiting");

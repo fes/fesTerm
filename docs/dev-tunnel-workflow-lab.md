@@ -7,6 +7,49 @@ ordinary tests. It does not create GitHub accounts, automate password entry,
 accept credentials in job payloads, enroll an owner, weaken host verification,
 or claim native GUI or iOS acceptance.
 
+## Protected create protocol and legacy reservations
+
+New HOST cloud intents pin `create_protocol = "auto"` in the protected resource.
+Microsoft's [port protocol contract](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands#advanced-manage-dev-tunnel-ports)
+supports `auto`, `http`, and `https`; the native campaign observed a definitive
+HTTP 400 for the previous `tcp` request. The outer service protocol does not
+change the inner SSH/HOST handshake, owner approval, private account ACL, or
+shell creation grants. Receipt and host-token checks require the exact pinned
+protocol as well as the existing resource and account bindings.
+
+A protected resource without this field decodes as the legacy `tcp` intent.
+Unknown values refuse. Provisioning never converts a legacy reservation to
+`auto`, clears it, or issues a replacement ID. It refuses before credential
+loading or network work, preserving both submitted/uncertain and unsubmitted
+originals. `submitted = false` alone is not migration evidence.
+
+Use the existing explicitly reviewed **Reconcile** action for an unsubmitted,
+unbound legacy reservation with no receipt. It confirms the native account,
+requires an authenticated exact-resource absence, then rechecks the exact
+protected record, lifecycle snapshot and cancellation before retiring anything.
+A present resource, submitted/uncertain original, receipt, binding, account
+failure, or changed epoch refuses and preserves the journal. This path does
+not delete a cloud resource or stop sessions.
+
+Before clearing the reservation, Reconcile durably archives the exact original
+private bytes. That archive also fences the old ticket: a crash before clearing,
+or after clearing but before lifecycle release, cannot create a replacement on
+that ticket. A subsequent Reconcile validates the archive and finishes only
+that old lifecycle operation. Corrupt or mismatched archives refuse. After
+Reconcile reaches Disabled, use a new reviewed **Enable** to obtain a later
+epoch and a new pinned `auto` intent. The original archive remains preserved.
+Do not delete or edit the private journal to continue the campaign. Uninstall
+cannot retire an unbound reservation because it requires a bound receipt and
+confirmed native stop; it is not a substitute for this recovery.
+
+The previously released signed `festerm-host` 0.17.1 runtime contains the same
+old protocol assumption. Updating the desktop source alone does not qualify
+that runtime. Native campaign execution requires a reviewed, authenticated
+candidate host bundle built with the protocol pin and exact receipt checks;
+record its source, manifest and executable hashes separately from the old
+signed bundle. Older runtimes reject the newly pinned resource schema rather
+than receiving a silently changed intent.
+
 ## Scope and required fixtures
 
 Use dedicated ordinary-user host and client VMs. The service-client runner

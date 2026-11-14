@@ -506,7 +506,27 @@ impl Store {
     /// Adapter evidence must establish that an uncertain submission created no
     /// resources. A timeout or missing reply is not sufficient.
     pub fn confirm_no_resources(&self, ticket: &Ticket) -> io::Result<()> {
+        self.confirm_no_resources_current(None, ticket)
+    }
+
+    #[cfg(feature = "cloud")]
+    pub(crate) fn confirm_no_resources_if_current(
+        &self,
+        expected: &Snapshot,
+        ticket: &Ticket,
+    ) -> io::Result<()> {
+        self.confirm_no_resources_current(Some(expected), ticket)
+    }
+
+    fn confirm_no_resources_current(
+        &self,
+        expected: Option<&Snapshot>,
+        ticket: &Ticket,
+    ) -> io::Result<()> {
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.foreground_scope_changed"));
+            }
             pending(record, ticket)?;
             if record.binding.is_some() {
                 return Err(refused("host.existing_identity_requires_stop"));
@@ -632,6 +652,25 @@ mod tests {
         let root = storage::private_test_directory();
         let store = Store::create(&root.path().join("host"), Origin::Headless, settings()).unwrap();
         (root, store)
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn host_cloud_absence_release_requires_exact_epoch_even_when_old_ticket_survives() {
+        let (_root, store) = fixture();
+        let ticket = store.request_enable(&settings()).unwrap();
+        let observed = store.snapshot().unwrap();
+        store.revoke().unwrap();
+        let advanced = store.snapshot().unwrap();
+        assert_eq!(advanced.pending_ticket(), Some(&ticket));
+        assert!(store
+            .confirm_no_resources_if_current(&observed, &ticket)
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), advanced);
+        store
+            .confirm_no_resources_if_current(&advanced, &ticket)
+            .unwrap();
+        assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
     }
 
     #[test]

@@ -155,7 +155,7 @@ fn local_remote_access_controls(
     {
         command = Some(AppCommand::OpenSettings);
     }
-    if let Some(failure) = view.host.failure {
+    if let Some(failure) = view.host.failure.filter(|_| draft.expose) {
         let notice = match failure {
             Failure::SignIn => "GitHub sign-in required. Sign in again in Settings.",
             Failure::NativeVault => "Unlock the credential store, then retry in Settings.",
@@ -3059,6 +3059,57 @@ mod tests {
             harness.state().1.is_none(),
             "the checkbox only changes the saved draft"
         );
+        // A private catalog draft stays quiet until an exact running-session
+        // review for this profile needs an actionable error.
+        harness.state_mut().0.expose = false;
+        let mut view = harness
+            .ctx
+            .data(|data| {
+                data.get_temp::<LocalRemoteAccessView>(egui::Id::new("local_remote_access_view"))
+            })
+            .unwrap();
+        view.host.failure = Some(crate::app::desktop_remote_access::Failure::OwnerApproval);
+        set_local_remote_access_view(&harness.ctx, view.clone());
+        harness.run();
+        assert!(harness
+            .query_by_label("Review owner approval in Settings before sharing.")
+            .is_none());
+        assert!(harness
+            .query_by_label("Review owner approval in Advanced / Recovery.")
+            .is_none());
+        let target = crate::app::desktop_remote_access::ShareTarget {
+            source: None,
+            tab: TabId::next_for_test(),
+            profile: harness.state().0.original_id.clone(),
+            lifecycle_generation: 7,
+            identity: festerm_sessiond::NativeSessionIdentity {
+                name: "private-shell".into(),
+                pid: 123,
+                created_at_unix_ms: 456,
+                endpoint: "fixture-private-endpoint".into(),
+            },
+        };
+        view.targets = vec![target.clone()];
+        view.host.share_review = Some(target.clone());
+        set_local_remote_access_view(&harness.ctx, view.clone());
+        harness.run();
+        harness
+            .get_by_label("Advanced · running session access")
+            .click();
+        harness.run();
+        harness.get_by_label("Review owner approval in Advanced / Recovery.");
+        assert!(!harness.state().0.expose);
+        // A different generation must not inherit that operation's failure.
+        view.host
+            .share_review
+            .as_mut()
+            .unwrap()
+            .lifecycle_generation += 1;
+        set_local_remote_access_view(&harness.ctx, view);
+        harness.run();
+        assert!(harness
+            .query_by_label("Review owner approval in Advanced / Recovery.")
+            .is_none());
         harness.state_mut().0.durable_session.enabled = false;
         harness.run();
         assert!(harness

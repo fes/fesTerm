@@ -4900,6 +4900,12 @@ review/three gates and a separate one-run owner authorization. See
 [the fixed inputs, evidence and operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
+The compiled policy accepts only the two explicitly reviewed AOC CA 03 or
+EOC CA 03 chains under the same pinned PCA/root, with all subject, profile,
+timestamp and fresh-revocation checks retained. The EOC CA 03 DER pin was
+independently verified against Microsoft's public PKI download; this adds no
+automatic CA discovery or generic OS-trusted-publisher fallback. See the
+[exact approved chains](host-release-artifacts.md#windows-native-publisher-policy).
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
 implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25
 preflight tests with no skips (including both real PowerShell 0/37 fixtures)
@@ -5134,3 +5140,14 @@ verify the previous selection remains. Reauthorize the same user without a
 duplicate entry. Sign out one account and verify the other remains available
 and the removed account's profiles never silently use the remaining identity.
 These native/service checks remain pending.
+
+
+Native Dev Tunnels workflow campaign follow-up (HOSTSETUP-01 / GUI:HOST-04):
+Linux native screenshots exposed pending setup presented as On, unrelated host
+failures on private profile drafts, and recovery buttons collapsing into narrow
+text columns. Settings now reports the recorded phase (Configured still makes
+no endpoint-readiness claim), private drafts with no sharing opt-in suppress the
+unrelated error, and recovery actions use separate rows. Focused model/layout
+regressions cover pending/unobserved phases and 500/900-point widths. Re-capture
+both native sides with the final signed candidate before accepting the workflow;
+these source corrections do not establish remote shell, catalog or NxN passes.

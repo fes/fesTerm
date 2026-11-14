@@ -162,7 +162,10 @@ pub(crate) fn show(
                 field(ui, "Archive · absolute path", &mut draft.archive);
             });
         });
-        ui.horizontal_wrapped(|ui| {
+        // Each recovery action gets its own row. At native DPI, a wrapped
+        // horizontal row can leave only a few pixels for the final button,
+        // turning its label into a column of single characters.
+        ui.vertical(|ui| {
             if action_button(ui, ActionButtonRole::Secondary, "Refresh local status").clicked() {
                 action = Some(Action::Refresh);
             }
@@ -223,6 +226,9 @@ pub(crate) fn show(
         if let Some(operation) = view.review {
             ui.group(|ui| {
                 ui.label(format!("Confirm {operation:?} for the exact observed installation and epoch?"));
+                if operation == Operation::Reconcile {
+                    settings_note(ui, "Recovery can retire an unsupported request only after verifying that its cloud host is absent. Review Enable again afterward.");
+                }
                 match operation {
                     Operation::Enable => {
                         ui.label(format!("Name: {} · creation {} · startup {:?}", draft.friendly_name, draft.allow_creation, draft.settings().startup));
@@ -329,6 +335,13 @@ pub(crate) fn show_session_sharing(
         .sharing
         .clone()
         .filter(|sharing| Some(&sharing.target) == target);
+    // A private catalog preference does not suppress errors from an explicit
+    // exact-session operation. Keep them scoped to the matching review/status.
+    if scoped.share_review.is_some() || scoped.sharing.is_some() {
+        if let Some(failure) = scoped.failure {
+            ui.colored_label(theme::STATUS_ERROR, failure.notice());
+        }
+    }
     let mut action = None;
     ui.add_enabled_ui(!view.busy, |ui| action = sharing_review(ui, &scoped));
     action

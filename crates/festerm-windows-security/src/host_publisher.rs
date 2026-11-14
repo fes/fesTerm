@@ -32,6 +32,19 @@ const APPROVED_CHAIN: [[u8; 32]; 3] = [
     ],
 ];
 
+// Independently retrieved Microsoft ID Verified CS EOC CA 03. This is a
+// second exact chain, not permission to accept other issuers under the root.
+const APPROVED_EOC_CHAIN: [[u8; 32]; 3] = [
+    [
+        0xbf, 0xf5, 0xc1, 0xa5, 0x4b, 0x42, 0x1e, 0x0c, 0xc1, 0x23, 0x72, 0xf2, 0x21, 0xfa, 0x56,
+        0xe6, 0xf1, 0xb0, 0x30, 0x5a, 0x9c, 0x07, 0x1a, 0x2a, 0xf1, 0xbf, 0x45, 0x89, 0x3d, 0x2a,
+        0x46, 0x23,
+    ],
+    APPROVED_CHAIN[1],
+    APPROVED_CHAIN[2],
+];
+const APPROVED_CHAINS: [[[u8; 32]; 3]; 2] = [APPROVED_CHAIN, APPROVED_EOC_CHAIN];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Revocation {
     FreshGood,
@@ -73,7 +86,9 @@ fn admit(evidence: &Evidence<'_>) -> io::Result<()> {
                     .count()
                     == 1
             })
-        || evidence.chain != APPROVED_CHAIN
+        || !APPROVED_CHAINS
+            .iter()
+            .any(|approved| evidence.chain == approved)
         || !evidence.native_signature_and_digest
         || !evidence.trusted_rfc3161
         || evidence.revocation != Revocation::FreshGood
@@ -92,75 +107,88 @@ pub use native::verify;
 mod tests {
     use super::*;
 
-    #[test]
-    fn windows_publisher_policy_accepts_only_approved_profile_and_fresh_native_proofs() {
-        let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
-        let mut evidence = Evidence {
+    fn verified_evidence<'a>(ekus: &'a [String], chain: &'a [[u8; 32]]) -> Evidence<'a> {
+        Evidence {
             subject_matches: true,
-            ekus: &ekus,
-            chain: &APPROVED_CHAIN,
+            ekus,
+            chain,
             native_signature_and_digest: true,
             trusted_rfc3161: true,
             revocation: Revocation::FreshGood,
-        };
-        admit(&evidence).unwrap();
-        for revocation in [Revocation::Revoked, Revocation::Unknown, Revocation::Stale] {
-            evidence.revocation = revocation;
+        }
+    }
+
+    #[test]
+    fn windows_publisher_policy_accepts_only_approved_profile_and_fresh_native_proofs() {
+        let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
+        for chain in &APPROVED_CHAINS {
+            let mut evidence = verified_evidence(&ekus, chain);
+            admit(&evidence).unwrap();
+            for revocation in [Revocation::Revoked, Revocation::Unknown, Revocation::Stale] {
+                evidence.revocation = revocation;
+                assert!(admit(&evidence).is_err());
+            }
+            evidence.revocation = Revocation::FreshGood;
+            evidence.subject_matches = false;
+            assert!(admit(&evidence).is_err());
+            evidence.subject_matches = true;
+            evidence.native_signature_and_digest = false;
+            assert!(admit(&evidence).is_err());
+            evidence.native_signature_and_digest = true;
+            evidence.trusted_rfc3161 = false;
             assert!(admit(&evidence).is_err());
         }
-        evidence.revocation = Revocation::FreshGood;
-        evidence.subject_matches = false;
-        assert!(admit(&evidence).is_err());
-        evidence.subject_matches = true;
-        evidence.chain = &APPROVED_CHAIN[..2];
-        assert!(admit(&evidence).is_err());
-        evidence.chain = &APPROVED_CHAIN;
-        evidence.native_signature_and_digest = false;
-        assert!(admit(&evidence).is_err());
-        evidence.native_signature_and_digest = true;
-        evidence.trusted_rfc3161 = false;
-        assert!(admit(&evidence).is_err());
     }
 
     #[test]
     fn windows_publisher_policy_rejects_missing_wrong_and_duplicate_ekus() {
-        for index in 0..3 {
-            let mut ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST]
-                .map(str::to_owned)
-                .to_vec();
-            ekus[index] = "1.2.3.4".into();
-            let mut evidence = Evidence {
-                subject_matches: true,
-                ekus: &ekus,
-                chain: &APPROVED_CHAIN,
-                native_signature_and_digest: true,
-                trusted_rfc3161: true,
-                revocation: Revocation::FreshGood,
-            };
-            assert!(admit(&evidence).is_err());
-            evidence.ekus = &[];
-            assert!(admit(&evidence).is_err());
-            let duplicates = [PROFILE, CODE_SIGNING, PUBLIC_TRUST, PROFILE].map(str::to_owned);
-            evidence.ekus = &duplicates;
-            assert!(admit(&evidence).is_err());
+        for chain in &APPROVED_CHAINS {
+            for index in 0..3 {
+                let mut ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST]
+                    .map(str::to_owned)
+                    .to_vec();
+                ekus[index] = "1.2.3.4".into();
+                let mut evidence = verified_evidence(&ekus, chain);
+                assert!(admit(&evidence).is_err());
+                evidence.ekus = &[];
+                assert!(admit(&evidence).is_err());
+                let duplicates = [PROFILE, CODE_SIGNING, PUBLIC_TRUST, PROFILE].map(str::to_owned);
+                evidence.ekus = &duplicates;
+                assert!(admit(&evidence).is_err());
+            }
         }
     }
 
     #[test]
     fn windows_publisher_policy_pins_full_chain_not_candidate_ca_names() {
         let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
-        for index in 0..3 {
-            let mut chain = APPROVED_CHAIN;
-            chain[index][0] ^= 1;
-            assert!(admit(&Evidence {
-                subject_matches: true,
-                ekus: &ekus,
-                chain: &chain,
-                native_signature_and_digest: true,
-                trusted_rfc3161: true,
-                revocation: Revocation::FreshGood,
-            })
-            .is_err());
+        for approved in APPROVED_CHAINS {
+            for certificate in 0..3 {
+                for byte in 0..32 {
+                    let mut mutated = approved;
+                    mutated[certificate][byte] ^= 1;
+                    assert!(admit(&verified_evidence(&ekus, &mutated)).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn windows_publisher_policy_rejects_mixed_reordered_and_incomplete_chains() {
+        let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
+        for (index, approved) in APPROVED_CHAINS.iter().enumerate() {
+            let other_issuer = APPROVED_CHAINS[1 - index][0];
+            // Every certificate is approved somewhere, but these are not an
+            // approved chain. Membership in a bag of pins is insufficient.
+            let mixed = [approved[0], other_issuer, approved[2]];
+            assert!(admit(&verified_evidence(&ekus, &mixed)).is_err());
+            let reordered = [approved[0], approved[2], approved[1]];
+            assert!(admit(&verified_evidence(&ekus, &reordered)).is_err());
+            let extended = [approved[0], other_issuer, approved[1], approved[2]];
+            assert!(admit(&verified_evidence(&ekus, &extended)).is_err());
+            for length in 0..3 {
+                assert!(admit(&verified_evidence(&ekus, &approved[..length])).is_err());
+            }
         }
     }
 

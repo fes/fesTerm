@@ -1298,3 +1298,63 @@ fn desktop_remote_access_sign_in_delivery_controls_do_not_replace_pending_work()
     assert!(controller.view.device_code.is_none());
     assert!(controller.pending.is_none());
 }
+
+#[test]
+fn desktop_remote_access_summary_does_not_claim_pending_or_unobserved_access_is_on() {
+    let mut view = View::default();
+    assert_eq!(view.access_summary(), "Not observed");
+    view.scope = Scope::Absent;
+    assert_eq!(view.access_summary(), "Off");
+    let Scope::Present(mut snapshot) = provisioned_scope() else {
+        panic!("fixture")
+    };
+    for (phase, label) in [
+        (Phase::EnableRequested, "Setup pending"),
+        (Phase::Provisioned, "Configured"),
+        (Phase::Reconciling, "Recovery pending"),
+        (Phase::StopRequested, "Disabling"),
+        (Phase::CleanupPending, "Cleanup pending"),
+        (Phase::Disabled, "Off"),
+        (Phase::Removed, "Off"),
+    ] {
+        Arc::make_mut(&mut snapshot).phase = phase;
+        view.scope = Scope::Present(snapshot.clone());
+        assert_eq!(view.access_summary(), label);
+    }
+}
+
+#[test]
+fn desktop_remote_access_recovery_buttons_remain_readable_at_native_small_window_widths() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for width in [500.0, 900.0] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(width, 1800.0))
+            .build_ui_state(
+                |ui, view: &mut View| {
+                    show(ui, view, &[]);
+                },
+                View {
+                    scope: Scope::Absent,
+                    ..View::default()
+                },
+            );
+        harness.run();
+        harness.get_by_label("Advanced / Recovery").click();
+        harness.run();
+        for label in [
+            "Refresh local status",
+            "Observe native process…",
+            "Review native owner context…",
+            "Review interrupted setup recovery…",
+            "Review Start…",
+            "Review Disable…",
+            "Review Uninstall / retry cleanup…",
+        ] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.width() > 90.0 && rect.height() < 60.0,
+                "{label} collapsed at width {width}: {rect:?}"
+            );
+        }
+    }
+}
