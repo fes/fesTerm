@@ -2168,16 +2168,16 @@ moved onto drill-in sub-pages:
 4. **Keyboard shortcuts ›** — drill-in row to the shortcut editor sub-page.
 5. **Files & documents** — SFTP pane order and default local directory, and
    the Markdown image memory budget.
-6. **Dev Tunnels** — GitHub accounts and the tunnel options in one card.
-7. **Remote access ›** — drill-in row to the local-host sharing sub-page,
-   whose rows use the same Settings toggle rows and note text as the main page.
-8. **Recording** — Allow session recording, then **Recording settings ›** and
+6. **Dev Tunnels** — GitHub accounts and the tunnel options in one card,
+   ending with the **Remote access ›** drill-in row to the local-host sharing
+   sub-page. Its rows use the same Settings toggle rows and note text as the main page.
+7. **Recording** — Allow session recording, then **Recording settings ›** and
    **Recording library ›** rows that dispatch the existing recording commands.
-9. **Automation (Beta)** — the two Beta switches and an inline status line;
+8. **Automation (Beta)** — the two Beta switches and an inline status line;
    live connections, controllers and workflow runs sit on the
    **Automation activity ›** sub-page.
-10. **Updates & privacy** — automatic update checks.
-11. **Reset all settings…** — the application-wide reset described below.
+9. **Updates & privacy** — automatic update checks.
+10. **Reset all settings…** — the application-wide reset described below.
 
 A dependent row (for example the durable-name row under **Show status bar**,
 or **Extension length** under **Extend lifetime**) is drawn disabled, with its
