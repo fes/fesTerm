@@ -108,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", required=True, help="provisioned physical device UDID; never logged in receipts")
     parser.add_argument("--preflight-only", action="store_true", help="validate prerequisites without building or signing")
     parser.add_argument("--live-ssh", action="store_true", help="include the opt-in transient SSH connection UI (default: offline fixture)")
+    parser.add_argument("--host-clients", action="store_true", help="include host-oriented Dev Tunnels and live SSH client workflows")
     args = parser.parse_args(argv)
     if platform.system() != "Darwin":
         parser.error("Physical-device packaging requires macOS, full Xcode and local development signing")
@@ -128,28 +129,28 @@ def main(argv: list[str] | None = None) -> int:
     sdk_version = run("xcrun", "--sdk", "iphoneos", "--show-sdk-version", text=True).stdout.strip()
     xcode = run("xcodebuild", "-version", text=True).stdout.strip()
     # Uses exactly the existing dependency exclusion policy; no desktop backend.
-    spike.check_dependencies(TARGET, live_ssh=args.live_ssh)
-    mode = "live-ssh" if args.live_ssh else "offline-fixture"
-    features = ["live-ssh"] if args.live_ssh else []
+    spike.check_dependencies(TARGET, live_ssh=args.live_ssh, host_clients=args.host_clients)
+    mode = "host-clients" if args.host_clients else "live-ssh" if args.live_ssh else "offline-fixture"
+    features = ["host-clients"] if args.host_clients else ["live-ssh"] if args.live_ssh else []
     if args.preflight_only:
         print(f"Development profile, identity, device membership, Xcode SDK and {mode} dependency graph validated; no build or install")
         return 0
     run("rustup", "target", "add", TARGET, timeout=600)
     env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=spike.MINIMUM_IOS)
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", TARGET,
-        *(["--features", "live-ssh"] if args.live_ssh else []),
+        *(["--features", ",".join(features)] if features else []),
         "--target-dir", str(ROOT / "target"), env=env, timeout=1800)
     output = ROOT / "target" / "ios-device"
     output.mkdir(parents=True, exist_ok=True)
     # Fresh private output avoids stale Simulator signatures/resources or reuse
     # of another team's profile. No archive/upload of private device metadata.
-    prefix = "development-live-ssh-" if args.live_ssh else "development-"
+    prefix = "development-host-clients-" if args.host_clients else "development-live-ssh-" if args.live_ssh else "development-"
     directory = Path(tempfile.mkdtemp(prefix=prefix, dir=output))
     bundle = directory / "fesTermSpike.app"
     bundle.mkdir()
     executable = bundle / "festerm-mobile"
     shutil.copy2(ROOT / "target" / TARGET / "debug" / "festerm-mobile", executable)
-    (bundle / "Info.plist").write_bytes(plistlib.dumps(device_bundle_info(args.bundle_id, args.live_ssh)))
+    (bundle / "Info.plist").write_bytes(plistlib.dumps(device_bundle_info(args.bundle_id, args.live_ssh or args.host_clients)))
     (bundle / "embedded.mobileprovision").write_bytes(profile_bytes)
     entitlement_file = directory / "development-entitlements.plist"
     entitlement_file.write_bytes(plistlib.dumps(entitlements))

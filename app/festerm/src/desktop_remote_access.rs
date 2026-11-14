@@ -168,6 +168,8 @@ impl Operation {
 pub enum Action {
     Edit(Draft),
     SignInAccount,
+    CopySignInCode,
+    OpenSignInBrowser,
     RequestAccess(bool),
     Refresh,
     Review(Operation),
@@ -278,6 +280,8 @@ pub struct View {
     pub cleanup: Option<CleanupContext>,
     pub cleanup_verified_for_manual_review: bool,
     pub device_code: Option<DeviceCode>,
+    pub device_copied: Option<bool>,
+    pub device_opened: Option<bool>,
     pub share_review: Option<ShareTarget>,
     pub sharing: Option<ShareStatus>,
     pub share_operation_input: String,
@@ -467,6 +471,7 @@ pub(crate) struct Controller {
     share_epoch: Option<Arc<AtomicU64>>,
     share_review_epoch: Option<u64>,
     startup_observation_attempted: bool,
+    device_actions: super::tunnel_browser::DeviceActions,
 }
 
 impl Controller {
@@ -495,6 +500,7 @@ impl Controller {
             share_epoch: None,
             share_review_epoch: None,
             startup_observation_attempted: false,
+            device_actions: super::tunnel_browser::DeviceActions::default(),
         }
     }
 
@@ -552,6 +558,20 @@ impl Controller {
     }
 
     pub fn action(&mut self, action: Action, context: &egui::Context) {
+        if matches!(action, Action::CopySignInCode | Action::OpenSignInBrowser) {
+            if let Some(code) = &self.view.device_code {
+                let delivery = match action {
+                    Action::CopySignInCode => super::tunnel_browser::DeviceAction::Copy,
+                    _ => super::tunnel_browser::DeviceAction::OpenBrowser,
+                };
+                #[cfg(not(test))]
+                self.device_actions.handle(delivery, &code.0);
+                #[cfg(test)]
+                let _ = (delivery, code);
+                (self.view.device_copied, self.view.device_opened) = self.device_actions.delivery();
+            }
+            return;
+        }
         if matches!(action, Action::Cancel) {
             self.cancel(context);
             return;
@@ -563,6 +583,9 @@ impl Controller {
         self.view.failure = None;
         match action {
             Action::SignInAccount => self.view.failure = Some(Failure::SignIn),
+            Action::CopySignInCode | Action::OpenSignInBrowser => {
+                unreachable!("handled before worker admission")
+            }
             Action::RequestAccess(requested) => {
                 self.view.access_requested = Some(requested);
                 self.view.share_review = None;
@@ -851,6 +874,9 @@ impl Controller {
         self.generation = self.generation.wrapping_add(1);
         self.view.cancelling = true;
         self.view.device_code = None;
+        self.view.device_copied = None;
+        self.view.device_opened = None;
+        self.device_actions = super::tunnel_browser::DeviceActions::default();
         self.view.failure = Some(Failure::Cancelled);
         if pending.operation == Operation::Enable {
             self.view.bundle_status = BundleStatus::Cancelled;
@@ -895,7 +921,22 @@ impl Controller {
             if pending.generation == self.generation {
                 while let Ok(progress) = pending.progress.try_recv() {
                     match progress {
-                        Progress::DeviceCode(code) => self.view.device_code = Some(code),
+                        Progress::DeviceCode(code) => {
+                            if self
+                                .view
+                                .device_code
+                                .as_ref()
+                                .is_none_or(|current| current.0.as_str() != code.0.as_str())
+                            {
+                                self.device_actions =
+                                    super::tunnel_browser::DeviceActions::default();
+                                #[cfg(not(test))]
+                                self.device_actions.initial(&code.0);
+                                (self.view.device_copied, self.view.device_opened) =
+                                    self.device_actions.delivery();
+                            }
+                            self.view.device_code = Some(code);
+                        }
                         Progress::Bundle(status) => self.view.bundle_status = status,
                     }
                 }
@@ -908,6 +949,9 @@ impl Controller {
             if let Some(result) = result {
                 if pending.generation == self.generation {
                     self.view.device_code = None;
+                    self.view.device_copied = None;
+                    self.view.device_opened = None;
+                    self.device_actions = super::tunnel_browser::DeviceActions::default();
                     if pending.operation == Operation::Enable {
                         self.view.bundle_status = match &result {
                             Ok(report) if report.failure.is_none() => BundleStatus::Complete,

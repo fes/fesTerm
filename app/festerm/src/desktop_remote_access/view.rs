@@ -18,16 +18,22 @@ pub(crate) fn show(
     if settings_toggle_row_enabled(
         ui,
         "Allow remote access to this computer",
-        "Lets a signed-in GitHub account reach shells on this computer. Nothing is enabled \
-         until you review Enable.",
+        "Share selected durable sessions through this host.",
         requested,
         !view.busy,
     ) {
         requested = !requested;
         action = Some(Action::RequestAccess(requested));
     }
-    if requested && !view.access_enabled() {
-        ui.label("Requested — not yet enabled.");
+    if requested
+        && !matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+    {
+        ui.label("Setup pending. Remote access is not enabled yet.");
+    }
+    if requested
+        && matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+    {
+        ui.label("Host configured. Connection status not checked.");
     }
     if !requested && view.access_enabled() {
         ui.colored_label(
@@ -39,12 +45,32 @@ pub(crate) fn show(
         ui.colored_label(theme::STATUS_ERROR, failure.notice());
     }
     if let Some(code) = &view.device_code {
-        ui.label("Complete the explicit sign-in at https://github.com/login/device");
         ui.monospace(code.0.as_str());
-        settings_note(
-            ui,
-            "No browser opens automatically. Do not share this one-time code.",
-        );
+        match view.device_copied {
+            Some(true) => {
+                ui.label("Code copied. Paste it into GitHub.");
+            }
+            Some(false) => {
+                ui.colored_label(
+                    theme::STATUS_ERROR,
+                    "Could not copy code. Copy it here or try again.",
+                );
+            }
+            None => {
+                ui.label("Enter this code on GitHub.");
+            }
+        }
+        if view.device_opened == Some(false) {
+            ui.colored_label(theme::STATUS_ERROR, "Could not open browser. Try again.");
+        }
+        ui.horizontal(|ui| {
+            if action_button(ui, ActionButtonRole::Secondary, "Copy again").clicked() {
+                action = Some(Action::CopySignInCode);
+            }
+            if action_button(ui, ActionButtonRole::Secondary, "Open browser").clicked() {
+                action = Some(Action::OpenSignInBrowser);
+            }
+        });
     }
     let mut draft = view.draft.clone();
     ui.add_enabled_ui(!view.busy, |ui| {
@@ -76,13 +102,12 @@ pub(crate) fn show(
                 action = Some(Action::SignInAccount);
             }
             if bound.is_some() {
-                settings_note(ui, "This installation keeps its verified account. Disable and complete removal before choosing another account.");
+                settings_note(ui, "To change accounts, disable access and remove this host first.");
             }
             if settings_toggle_row_enabled(
                 ui,
                 "Allow remote clients to create shell sessions",
-                "Off by default. Otherwise remote clients only list, attach to, and detach \
-                 from existing shells.",
+                "Off by default. Existing shared sessions remain accessible.",
                 draft.allow_creation,
                 true,
             ) {
@@ -159,26 +184,37 @@ pub(crate) fn show(
                 }
             }
         });
-        if let Some(binding) = &view.owner_binding {
-            ui.collapsing("Public owner binding for independent client review", |ui| {
-                ui.monospace(binding);
+        });
+        if matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned) {
+            ui.collapsing("Connect another device", |ui| {
+                if action_button(ui, ActionButtonRole::Secondary, "Get host approval details…").clicked() {
+                    action = Some(Action::Review(Operation::InspectOwner));
+                }
+                if let Some(binding) = &view.owner_binding {
+                    ui.horizontal_wrapped(|ui| {
+                        if action_button(ui, ActionButtonRole::Secondary, "Copy host details").clicked() {
+                            ui.ctx().copy_text(binding.clone());
+                        }
+                        if let Ok(owner) = serde_json::from_str::<festerm_tunnel_bridge::owner_auth::OwnerBinding>(binding) {
+                            if action_button(ui, ActionButtonRole::Secondary, "Copy host fingerprint").clicked() {
+                                ui.ctx().copy_text(owner.host.host_key_fingerprint);
+                            }
+                        }
+                    });
+                    ui.collapsing("Public owner binding for independent client review", |ui| {
+                        ui.monospace(binding);
+                    });
+                }
+                ui.strong("Approve a client");
+                settings_note(ui, "Get the host details first. Then copy the public key and fingerprint shown on the connecting device.");
+                field(ui, "Owner public key · 64 hex characters", &mut draft.owner_public_key);
+                field(ui, "Independently confirmed owner fingerprint", &mut draft.owner_fingerprint);
+                ui.checkbox(&mut draft.approve_creation, "Also approve creation for this owner key");
+                if action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
+                    action = Some(Action::Review(Operation::ApproveOwner));
+                }
             });
         }
-        ui.collapsing("Explicit owner-key approval · native vault only", |ui| {
-            settings_note(ui, "First review native owner context to pin its current policy revision. Changed or revoked policy requires a new review.");
-            field(ui, "Owner public key · 64 hex characters", &mut draft.owner_public_key);
-            field(
-                ui,
-                "Independently confirmed owner fingerprint",
-                &mut draft.owner_fingerprint,
-            );
-            ui.checkbox(&mut draft.approve_creation, "Also approve creation for this owner key");
-            settings_note(ui, "Inventory and existing attach/detach only unless separately approved. No explicit-end or temporary grant.");
-            if action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
-                action = Some(Action::Review(Operation::ApproveOwner));
-            }
-        });
-        });
         if matches!(view.scope, Scope::Unobserved)
             && action_button(ui, ActionButtonRole::Secondary, "Refresh local status").clicked()
         {

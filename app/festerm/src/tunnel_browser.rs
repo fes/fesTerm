@@ -113,6 +113,11 @@ pub(super) struct DeviceActions {
 }
 
 impl DeviceActions {
+    #[cfg(feature = "local-host-settings")]
+    pub(super) fn delivery(&self) -> (Option<bool>, Option<bool>) {
+        (self.copied, self.opened)
+    }
+
     fn initial_with(&mut self, copy: impl FnOnce() -> bool, open: impl FnOnce() -> bool) {
         if self.attempted {
             return;

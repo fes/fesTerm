@@ -3972,7 +3972,7 @@ mod tests {
             "Built-in keyboard",
             "Split",
             "Custom keyboard haptics",
-            "Set up a host",
+            "Legacy tunnel setup",
             "fesTerm",
             "Offline demo terminal",
         ];
@@ -3984,6 +3984,13 @@ mod tests {
             tops.windows(2).all(|pair| pair[0] < pair[1]),
             "{order:?} at {tops:?}"
         );
+        assert!(harness.query_by_label("Set up a host").is_none());
+        assert!(harness.query_by_label("Copy host installer…").is_none());
+        #[cfg(feature = "live-ssh")]
+        harness.get_by_label("Sign in with GitHub");
+        harness.get_by_label("Legacy tunnel setup").click();
+        harness.run();
+        harness.get_by_label("Copy host installer…");
     }
 
     #[test]

@@ -2410,7 +2410,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2420,7 +2420,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2430,7 +2430,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2440,7 +2440,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 

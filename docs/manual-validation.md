@@ -729,6 +729,25 @@ separately owned HOST-03–05 slice, not implemented or claimed by this incremen
 
 ## Host-based Dev Tunnel UI redesign evidence
 
+The follow-up workflow repair removes automatic new-profile discovery, keeps
+create-if-missing explicit and editable, consolidates ordinary local sharing on
+the protected profile catalog, and renders shared profiles on mobile. Public
+metadata may be deliberately retargeted for future connections; protected
+receipts, live attachments and already-issued operations retain their original
+binding. Host-side GUI approval remains separate from discovery and sign-in.
+The iOS builders expose an explicit `--host-clients` mode and TestFlight selects
+the HOST client graph; build receipts are not device execution evidence.
+
+The opt-in `dev-tunnel-workflow` VM adapter mode exercises real GitHub and Dev
+Tunnels service/client integration for the controlled `fes-festerm1` account.
+See [the operator procedure](dev-tunnel-workflow-lab.md). Missing native sign-in,
+protected owner receipt, isolated fixture or host approval is **blocked**, not
+passed. Creation-off/on phases use stable owned logical IDs and exact detach;
+there is no account signup, password login, global cleanup or anonymous access.
+The password record remains local-only outside the repository. Native GUI
+setup/approval, clipboard/browser delivery, host-disable behavior and physical
+iOS acceptance remain separate checks; this runner cannot qualify them.
+
 The November 2026 desktop/iOS redesign requires synthetic normal/error captures
 for accounts, sign-in, host settings, eligible local sharing, discovery,
 authorized sessions, named durable creation and profile connection. Capture
@@ -4955,6 +4974,17 @@ records/credentials; do not delete the installation directory or grant creation
 consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
+
+**HOSTSETUP-01 public placement:** The 2026-11-14 Linux VM run reached native
+GitHub authorization, then failed before submitting cloud creation. A read-only
+probe confirmed the stored controlled identity and GitHub account, authenticated
+placement denial (401/403), and a valid anonymous response from the same public
+recommendations endpoint; the protected journal remained unchanged. The HOST
+client now mirrors Microsoft's SDK with one anonymous retry of this placement
+GET only. Regression fixtures cover both denial statuses, cancellation, response
+failures and continued authenticated refusal for resource operations. Repeating
+native setup and the cross-platform campaign on the corrected candidate remains
+required; this diagnosis does not qualify hosting or GUI acceptance.
 
 **HOSTSETUP-01 desktop-local Settings increment:** Automated headless rendering
 and application-command fixtures cover inert drafts/default-private shells,

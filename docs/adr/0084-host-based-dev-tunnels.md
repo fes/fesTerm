@@ -6,6 +6,20 @@
 - **Extends:** ADRs 0025, 0038, 0057, 0061, 0066, 0067, 0070 and 0071.
 - **Scope:** Owner-requested staged implementation and Copilot handoff; stage-1 contract primitives exist, not platform or whole-ADR acceptance.
 
+## Workflow repair validation impact
+
+The Desktop/iOS workflow repair covers GUI `HOST-01`–`HOST-04`: explicitly scoped
+discovery (including new editors), future-only recipe retargeting, one ordinary
+profile-catalog opt-in, mobile shared-profile Ensure/attachment, and GUI owner
+approval with native device-code delivery. These UI changes do not transfer
+protected trust, retarget an issued action, change daemon ownership or grant
+execution through public metadata. iOS HOST packaging is explicit in development
+builds and selected by TestFlight. The bounded opt-in
+[service-client lab campaign](../dev-tunnel-workflow-lab.md) has separate
+creation-off/on phases and blocked prerequisites; GUI/native service, physical
+iOS and whole-ADR acceptance remain open. See the
+[validation registry](../manual-validation.md#host-based-dev-tunnel-ui-redesign-evidence).
+
 ## Context
 
 The current bridge exposes one exact persistent daemon generation. Standalone

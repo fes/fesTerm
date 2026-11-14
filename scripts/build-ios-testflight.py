@@ -45,7 +45,7 @@ spec.loader.exec_module(spike)
 BUNDLE_ID = "com.feslabs.fesTerm"
 TEAM_ID = "F884J4784J"
 TARGET = "aarch64-apple-ios"
-FEATURES = "live-ssh"
+FEATURES = "host-clients"
 DISPLAY_NAME = "fesTerm"
 ICON_SOURCE = ROOT / "assets/app-icon/app-icon-1024.png"
 OUTPUT = ROOT / "target" / "ios-testflight"
@@ -274,7 +274,7 @@ def sdk_keys() -> dict[str, str]:
 
 def archive(args, key: tuple[Path, str, str], version: str, build: str) -> Path:
     run(sys.executable, "scripts/build_app_notices.py", "--check")
-    spike.check_dependencies(TARGET, live_ssh=True)
+    spike.check_dependencies(TARGET, host_clients=True)
     run("rustup", "target", "add", TARGET)
     sdk = run("xcrun", "--sdk", "iphoneos", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
     env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=spike.MINIMUM_IOS)
@@ -310,6 +310,15 @@ def archive(args, key: tuple[Path, str, str], version: str, build: str) -> Path:
             raise RuntimeError("export produced no .ipa")
         ipa = found[0]
     check_ipa(ipa, args.team, version, build)
+    (work / "build-receipt.json").write_text(json.dumps({
+        "status": "packaged",
+        "prototype_mode": "host-clients",
+        "cargo_features": [FEATURES],
+        "target": TARGET,
+        "version": version,
+        "build": build,
+        "native_validation": "not-run",
+    }, indent=2) + "\n")
     return ipa
 
 

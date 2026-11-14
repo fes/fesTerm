@@ -493,13 +493,9 @@ impl RecipeBook {
             MetadataCommand::Edit(recipe) => {
                 let index = self.index(&recipe.id)?;
                 let id = recipe.id.clone();
-                // Editing never retargets a logical session or host. Make a
-                // new recipe instead; live sessions keep their own snapshot.
-                if self.0[index].host != recipe.host
-                    || self.0[index].logical_session != recipe.logical_session
-                {
-                    return Err(RecipeError::Invalid);
-                }
+                // Explicit local editing may select another host/session. This
+                // replaces public metadata only; live attachments and pending
+                // operations retain their exact snapshots and protected approval.
                 next.0[index] = recipe;
                 MetadataOutcome::Saved(id)
             }

@@ -210,6 +210,27 @@ impl MobileApp {
                                 if self.hosts.quick_new {
                                     self.show_host_quick_form(ui, &mut action);
                                 } else {
+                                    if self.hosts.profile_host_review.is_some() {
+                                        section_header(ui, "Choose profile host", None, false);
+                                        for (index, recipe) in recipes.iter().enumerate() {
+                                            let name = recipe
+                                                .host_hint
+                                                .as_ref()
+                                                .map(|hint| hint.name.as_str())
+                                                .unwrap_or("Saved host");
+                                            if secondary(
+                                                ui,
+                                                &format!("Use saved host · {name}"),
+                                                !self.hosts.busy(),
+                                            ) {
+                                                action =
+                                                    Some(Action::SelectSavedProfileHost(index));
+                                            }
+                                        }
+                                        if secondary(ui, "Cancel host selection", true) {
+                                            action = Some(Action::CancelProfileHost);
+                                        }
+                                    }
                                     section_header(ui, "GitHub accounts", None, false);
                                     if accounts.is_empty() {
                                         footnote(ui, "Sign in to find your hosts.");
@@ -231,7 +252,9 @@ impl MobileApp {
                                     if secondary(ui, "Manage accounts in Settings", true) {
                                         action = Some(Action::Settings);
                                     }
-                                    if !recipes.is_empty() {
+                                    if !recipes.is_empty()
+                                        && self.hosts.profile_host_review.is_none()
+                                    {
                                         section_header(ui, "Saved profiles", None, false);
                                         card(ui, |ui| {
                                             for recipe in &recipes {
@@ -333,6 +356,15 @@ impl MobileApp {
                                         {
                                             action = Some(Action::NewReview);
                                         }
+                                        if self.hosts.original_store.is_none()
+                                            && secondary(
+                                                ui,
+                                                "Check protected history",
+                                                !self.hosts.busy(),
+                                            )
+                                        {
+                                            action = Some(Action::RecoverOriginals);
+                                        }
                                         self.show_host_recovery(ui, &mut action);
                                         ui.collapsing("Import public profiles", |ui| {
                                             ui.add(
@@ -400,25 +432,25 @@ impl MobileApp {
             ui.label("Verify host");
             footnote(
                 ui,
-                "Use a protected approval, or prepare a key for approval on the host.",
+                "On the host, open Settings → Dev Tunnels → Remote access → Connect another device.",
             );
             if self.hosts.selected.is_some() && primary(ui, "Load protected approval", !busy) {
                 *action = Some(Action::Load);
             }
-            ui.collapsing("First connection · advanced", |ui| {
+            ui.collapsing("Connect this device", |ui| {
                 ui.label("Independent host fingerprint");
                 ui.text_edit_singleline(&mut self.hosts.fingerprint);
-                ui.label("Host owner binding (JSON)");
+                ui.label("Host connection details");
                 ui.add(
                     egui::TextEdit::multiline(&mut *self.hosts.prerequisite)
-                        .hint_text("Owner binding from this host")
+                        .hint_text("Paste the host's connection details")
                         .char_limit(4096),
                 );
                 ui.checkbox(
                     &mut self.hosts.trust,
                     "I independently verified this host, account and owner binding",
                 );
-                if primary(ui, "Prepare owner key", self.hosts.trust && !busy) {
+                if primary(ui, "Prepare this device", self.hosts.trust && !busy) {
                     *action = Some(Action::Prepare);
                 }
             });
@@ -426,7 +458,7 @@ impl MobileApp {
         }
         if !self.hosts.enrolled {
             let receipt = self.hosts.receipt.as_ref().expect("checked receipt");
-            ui.label("Approve this key on the host");
+            ui.label("On the host, choose Approve a client and paste this device's public key and fingerprint.");
             ui.collapsing("Owner public key", |ui| {
                 let key = receipt
                     .public_key()
@@ -435,7 +467,10 @@ impl MobileApp {
                     .collect::<String>();
                 ui.label(&key);
                 if let Ok(fingerprint) = owner_key_fingerprint(&receipt.public_key()) {
-                    ui.label(fingerprint);
+                    ui.label(&fingerprint);
+                    if secondary(ui, "Copy fingerprint", true) {
+                        ui.ctx().copy_text(fingerprint);
+                    }
                 }
                 if secondary(ui, "Copy public key", true) {
                     ui.ctx().copy_text(key);
@@ -451,6 +486,12 @@ impl MobileApp {
         if self.hosts.inventory.is_none() {
             if primary(ui, "List authorized sessions", !busy) {
                 *action = Some(Action::Resolve);
+            }
+            return;
+        }
+        if self.hosts.profile_host_review.is_some() {
+            if primary(ui, "Use this host", !busy) {
+                *action = Some(Action::UseProfileHost);
             }
             return;
         }
@@ -498,6 +539,21 @@ impl MobileApp {
                 }
             });
         }
+        if inventory.capabilities.profiles {
+            section_header(ui, "Shared profiles", None, false);
+            if inventory.profiles.is_empty() {
+                footnote(ui, "No shared profiles.");
+            }
+            for (index, profile) in inventory.profiles.iter().enumerate() {
+                if secondary(
+                    ui,
+                    &format!("Connect · {}", profile.name),
+                    inventory.capabilities.ensure_profile && inventory.capabilities.attach && !busy,
+                ) {
+                    *action = Some(Action::EnsureProfile(index));
+                }
+            }
+        }
         if self.hosts.quick_creation_allowed() && secondary(ui, "+ New session", !busy) {
             *action = Some(Action::QuickNew);
         }
@@ -538,12 +594,6 @@ impl MobileApp {
                 ) {
                     *action = Some(Action::Create);
                 }
-            }
-        }
-        if self.hosts.original_store.is_none() {
-            footnote(ui, "Check protected retry history before Create or End.");
-            if secondary(ui, "Check protected history", !busy) {
-                *action = Some(Action::RecoverOriginals);
             }
         }
         if secondary(ui, "Refresh sessions", !busy) {
@@ -629,6 +679,9 @@ impl MobileApp {
                 ui.label(format!("Logical session · {}", recipe.logical_session));
             });
         }
+        if secondary(ui, "Choose another host…", !self.hosts.busy()) {
+            *action = Some(Action::ChooseProfileHost);
+        }
         ui.label("Profile name");
         ui.add(egui::TextEdit::singleline(&mut self.hosts.profile_name).hint_text("Profile name"));
         ui.checkbox(
@@ -637,28 +690,30 @@ impl MobileApp {
         );
         if self.hosts.create_if_missing {
             ui.label("Session name");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.hosts.session_name)
-                    .hint_text("Session name")
-                    .char_limit(128),
-            );
-            footnote(
-                ui,
-                "Durable session. Creation permission is checked on Connect.",
-            );
-            footnote(
-                ui,
-                "Uses this profile's logical session identity, not a global name match.",
-            );
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.hosts.session_name)
+                        .hint_text("Session name")
+                        .char_limit(128),
+                )
+                .changed()
+            {
+                self.hosts.reconcile_profile_session_name();
+            }
         } else {
             section_header(ui, "Existing session", None, false);
             if let Some(inventory) = &self.hosts.inventory {
                 for (index, session) in inventory.sessions.iter().enumerate() {
-                    ui.selectable_value(
-                        &mut self.hosts.existing_session,
-                        Some(index),
-                        &session.name,
-                    );
+                    if ui
+                        .selectable_value(
+                            &mut self.hosts.existing_session,
+                            Some(index),
+                            &session.name,
+                        )
+                        .clicked()
+                    {
+                        self.hosts.session_name = session.name.clone();
+                    }
                 }
             } else {
                 footnote(ui, "The saved session identity is kept. List authorized sessions to choose another.");

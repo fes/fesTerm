@@ -21,6 +21,21 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if [ "${FESTERM_RUN_DEV_TUNNEL_LAB:-}" = "1" ]; then
+    if python3 scripts/check_dev_tunnel_workflow.py --run; then
+        printf 'suite=dev-tunnel-workflow status=pass scope=real-service-host-client gui=unrun\n' >>"$result_path"
+    else
+        campaign_exit=$?
+        if [ "$campaign_exit" -eq 2 ]; then
+            printf 'suite=dev-tunnel-workflow status=blocked reason=native-operator-prerequisites\n' >>"$result_path"
+        else
+            printf 'suite=dev-tunnel-workflow status=fail\n' >>"$result_path"
+        fi
+        status=fail
+    fi
+else
+    printf 'suite=dev-tunnel-workflow status=skipped reason=explicit-controlled-account-opt-in-required\n' >>"$result_path"
+fi
 if { [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; } &&
     [ -n "${FESTERM_ADR84_UPDATE_HELPER:-}" ]; then
     if cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud \

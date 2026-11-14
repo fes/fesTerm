@@ -21,7 +21,7 @@ function Test-FesTermJob {
         $Job.platform -eq 'windows' -and
         @('native-smoke', 'os-input-smoke', 'optional-validation', 'running-session-stress',
             'keyboard-routing-check', 'keyboard-routing-native',
-            'windows-conpty-prompt-stress') -contains $Job.mode -and
+            'windows-conpty-prompt-stress', 'dev-tunnel-workflow') -contains $Job.mode -and
         @($Job.payload.PSObject.Properties).Count -eq 0
 }
 
@@ -77,6 +77,21 @@ $ccName = if (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang-cl.exe')) { 
 Push-Location $sourcePath
 try {
     switch ($job.mode) {
+        'dev-tunnel-workflow' {
+            $resultPath = Join-Path $ArtifactDirectory 'dev-tunnel-workflow.txt'
+            if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
+                -not (Test-Path -LiteralPath (Join-Path $llvmBinPath "$ccName.exe"))) {
+                throw 'Windows Build Tools and Clang are required for HOST client evidence builds.'
+            }
+            $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+            $runnerScript = Join-Path $sourcePath 'scripts\check_dev_tunnel_workflow.py'
+            $campaignCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=$ccName && python `"$runnerScript`" --run --result `"$resultPath`""
+            Invoke-NativeCommand { cmd.exe /d /c $campaignCommand }
+            if ($LASTEXITCODE -ne 0) {
+                throw 'HOST service-client campaign failed or its explicit native prerequisites are blocked; inspect the content-free result.'
+            }
+            Require-PassStatus $resultPath
+        }
         { $_ -in @('running-session-stress', 'keyboard-routing-check',
                 'windows-conpty-prompt-stress') } {
             $resultPath = Join-Path $ArtifactDirectory "$($job.mode).txt"

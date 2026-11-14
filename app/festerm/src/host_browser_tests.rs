@@ -134,7 +134,7 @@ fn selected_host_desktop_imported_recipe_cannot_become_protected_owner_approval(
 
 #[test]
 fn selected_host_desktop_foreground_review_cancels_on_recipe_editor_or_credential_change() {
-    for changed in 0..4 {
+    for changed in 0..5 {
         let (mut app, context) = fixture();
         let browser = app.host_browser.as_ref().unwrap();
         let cancel = browser.cancel.clone();
@@ -151,6 +151,17 @@ fn selected_host_desktop_foreground_review_cancels_on_recipe_editor_or_credentia
             1 => {
                 let mut recipe = browser.recipe.clone();
                 recipe.name = "Changed recipe".into();
+                let (configuration, _) = app
+                    .state
+                    .configuration()
+                    .with_host_recipe_command(MetadataCommand::Edit(recipe))
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            4 => {
+                let mut recipe = browser.recipe.clone();
+                recipe.host.id = festerm_host_protocol::HostId::new();
+                recipe.logical_session = host_client::LogicalSessionId::new();
                 let (configuration, _) = app
                     .state
                     .configuration()
@@ -453,4 +464,41 @@ fn background_host_discovery_always_leaves_one_connection_permit_free() {
     drop(interactive);
     drop(running);
     assert!(reserve_with_headroom(&budgets).is_some());
+}
+
+#[test]
+fn discovered_host_reuses_only_unambiguous_same_account_exact_locator_identity() {
+    use crate::screens::host_workspace::{remember_host, HostSessions};
+    let context = egui::Context::default();
+    let configuration = Configuration::empty();
+    let reference = HostReference {
+        id: festerm_host_protocol::HostId::new(),
+        account: AccountReference::Github { account_id: 42 },
+    };
+    let remembered = HostSessions {
+        reference: reference.clone(),
+        hint: HostHint {
+            name: "Build host".into(),
+            locator: "build.use".into(),
+        },
+        sessions: Vec::new(),
+    };
+    remember_host(&context, remembered.clone());
+    assert_eq!(
+        known_host_reference(&context, &configuration, 42, "build.use"),
+        Some(reference.clone())
+    );
+    assert!(known_host_reference(&context, &configuration, 43, "build.use").is_none());
+    assert!(known_host_reference(&context, &configuration, 42, "other.use").is_none());
+    remember_host(
+        &context,
+        HostSessions {
+            reference: HostReference {
+                id: festerm_host_protocol::HostId::new(),
+                ..reference
+            },
+            ..remembered
+        },
+    );
+    assert!(known_host_reference(&context, &configuration, 42, "build.use").is_none());
 }

@@ -171,6 +171,19 @@ Write-OptionalResult "`nsuite=private-session-sharing-native status=skipped reas
 Write-OptionalResult "`nsuite=owned-migration-native status=skipped reason=unix-fixture-only-not-windows-acceptance"
 try {
 
+if ($env:FESTERM_RUN_DEV_TUNNEL_LAB -eq '1') {
+    Invoke-NativeCommand { python "$PSScriptRoot\check_dev_tunnel_workflow.py" --run }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=dev-tunnel-workflow status=pass scope=real-service-host-client gui=unrun"
+    } else {
+        $campaignStatus = if ($LASTEXITCODE -eq 2) { 'blocked' } else { 'fail' }
+        Write-OptionalResult "`nsuite=dev-tunnel-workflow status=$campaignStatus"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=dev-tunnel-workflow status=skipped reason=explicit-controlled-account-opt-in-required"
+}
+
 if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {
     try {
         Invoke-WindowsPublisherValidation
