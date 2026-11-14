@@ -142,7 +142,7 @@
         390,
         844
       ],
-      "sha256": "27c2df48bcbb9a54e3c1c44a4a721933dbd01ea5b22b2bd58b4fd65f1d556460",
+      "sha256": "898629244e7837619f4c7e15f803ae8cb50231ed7ded80cb10f2fefa32c3f830",
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-owner",
       "viewport_class": "phone"
@@ -158,7 +158,7 @@
         390,
         844
       ],
-      "sha256": "a3437626fc87733ce60f7a247a9a405280888e313ab15ea09d4344ecd716e825",
+      "sha256": "85a75565b2e045c272990f93a44fd10fbacc7940993dea6b451f339092678aa1",
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-receipt",
       "viewport_class": "phone"
@@ -430,7 +430,7 @@
         834,
         1194
       ],
-      "sha256": "5b788ba298efaced150295be60d85336c2c98410827b735ce1db88ff28541c86",
+      "sha256": "2b4709a5bb5a7e5e865495358332a525f89b76c1b907168ca9d0ef8e6db5030e",
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-owner",
       "viewport_class": "tablet"
@@ -446,7 +446,7 @@
         834,
         1194
       ],
-      "sha256": "13194701c05d4463e1da0b744e662a79876f11f05c3ad0a9961f3864ab12a4b6",
+      "sha256": "3537125b377c0223ed6a2bf8b457512d587953237286b97ce661754820e68c2c",
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-receipt",
       "viewport_class": "tablet"
@@ -584,9 +584,9 @@
   "native_validation": "not-run",
   "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
   "schema_version": 1,
-  "source_commit": "a4fc3a9b276cd92448b4c0781f3fb36666f1efde",
+  "source_commit": "bea03abe2578e280c10d3c20fc60dcf9ad8402cb",
   "source_dirty": true,
-  "captured_at_utc": "2026-11-14T19:02:22.837206+00:00",
+  "captured_at_utc": "2026-11-14T19:27:07.777055+00:00",
   "native_android": false,
   "features": [
     "host-clients"
@@ -1040,7 +1040,7 @@
     "crates/festerm-sessiond/src/private_storage.rs": "2afa8773cee712447b1097a4e5d3c30edfe6fe68237bf37cc7f92e6a8ee341e9",
     "crates/festerm-sessiond/src/remote.rs": "4c3fb06dce8a60b671579bc45dcd41d8f9238994d653b392595f6bc128bf0af0",
     "crates/festerm-sessiond/tests/detached_native.rs": "587535bef94ca2794e619a9baebdba3459e61cdad8f26207e203ab7d280b5635",
-    "crates/festerm-sessiond/tests/host_control.rs": "75dbffffba7ae8c7bbd4a339d8270d1391e0005d98b01c848f422c662f117c66",
+    "crates/festerm-sessiond/tests/host_control.rs": "be183b4ea5b1a41f314f4468c274e1391cba378be8be284ae6e3e88969f9632b",
     "crates/festerm-sessiond/tests/mobile_tunnel_loopback.rs": "2011178aa5047f4647d677e334db46f77d0f36547d4da90e02a5c77975fe7525",
     "crates/festerm-sessiond/tests/native_daemon.rs": "7304e5316cd3f51051862091c0ffb5a3fc916579d4d896819487dcb3a614ec15",
     "crates/festerm-sessiond/tests/remote_ssh.rs": "90eaa035f0578082f7d01930d576e4a3b428f8b1794e4635e5a762cd9663a628",
@@ -1674,5 +1674,5 @@
     "vendor/winrm-rs/tests/proptest_wire_format.rs": "f09a12f08863af6244e0161a0ea5d2ac360cb9b1c42039c4c177fba2eafbf1ed",
     "vendor/winrm-rs/tests/security_regression.rs": "17b7725dc66e0944ce3a4eae624c83018be1ad4b87924339bdab24f800f11d6c"
   },
-  "source_fingerprint_sha256": "03b9aa0f292595667656ac2705abd910bcf35ee1ace69d5b7a3c33be24c345d4"
+  "source_fingerprint_sha256": "74d3dbb829425315313e15f3091614dfd7ed9888d251ccaf514687c4dbea7937"
 }

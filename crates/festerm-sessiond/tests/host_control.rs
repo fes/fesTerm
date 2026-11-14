@@ -226,6 +226,39 @@ fn retry_busy<T>(
     outcome.unwrap()
 }
 
+fn lock_generation_lease(fixture: &Fixture, target: &Target) -> fs::File {
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let name = format!("host-daemon-{}.lock", target.generation.get());
+    let lock = storage::open_private_file(&directory, Path::new(&name), false).unwrap();
+    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lock) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
+        Err(error) => panic!("owned generation lease failed: {error}"),
+    })
+    .unwrap();
+    lock
+}
+
+fn retry_after_generation_contention<T>(
+    fixture: &Fixture,
+    target: &Target,
+    mut operation: impl FnMut() -> Result<T, ControlError>,
+) -> Result<T, ControlError> {
+    let mut lock = Some(lock_generation_lease(fixture, target));
+    retry_busy(|| {
+        let result = operation();
+        if let Some(lock) = lock.take() {
+            assert!(
+                matches!(&result, Err(ControlError::Busy)),
+                "HOST control forced lease contention actual={}",
+                control_result_diagnostic(&result)
+            );
+            drop(lock);
+        }
+        result
+    })
+}
+
 impl Fixture {
     fn new() -> Self {
         // Shared temp directories are world-writable and rejected by the
@@ -486,10 +519,12 @@ fn operation_capacity_rotates_scopes_without_resurrection_or_resume_outage() {
         ),
         Err(ControlError::Stale)
     ));
-    fixture
-        .control()
-        .end(&fixture.owner, &running.target, allow)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .end(&fixture.owner, &running.target, allow)
+    })
+    .unwrap();
     fixture.wait_absent(&running.target);
     let replacement = fixture.ensure(&creation);
     assert!(replacement.recreated);
@@ -527,10 +562,12 @@ fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_genera
     let mut creation = fixture.creation(Lifetime::Persistent {});
     creation.logical = "ffffffff-ffff-4fff-8fff-ffffffffffff".parse().unwrap();
     let running = fixture.ensure(&creation);
-    fixture
-        .control()
-        .end(&fixture.owner, &running.target, allow)
-        .unwrap();
+    retry_after_generation_contention(&fixture, &running.target, || {
+        fixture
+            .control()
+            .end(&fixture.owner, &running.target, allow)
+    })
+    .unwrap();
     fixture.wait_absent(&running.target);
     let mut state = fixture.state();
     let original = state["sessions"][creation.logical.as_str()].clone();
@@ -1412,14 +1449,7 @@ fn crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generat
     record["phase"] = "Launching".into();
     record["identity"] = serde_json::Value::Null;
     storage::replace_private(&directory, name, &serde_json::to_vec(&state).unwrap()).unwrap();
-    let lease_name = format!("host-daemon-{}.lock", running.target.generation.get());
-    let lease = storage::open_private_file(&directory, Path::new(&lease_name), false).unwrap();
-    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lease) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
-        Err(error) => panic!("owned generation lease failed: {error}"),
-    })
-    .unwrap();
+    let lease = lock_generation_lease(&fixture, &running.target);
     let contended = fixture.control().ensure(
         &fixture.owner,
         &operation,
@@ -1729,10 +1759,12 @@ fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_re
     let creation = fixture.creation(Lifetime::Persistent {});
     let running = fixture.ensure(&creation);
     let before_revoke = fixture.state();
-    fixture
-        .control()
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .revoke_local(&fixture.owner, &creation.logical)
+    })
+    .unwrap();
     // Lease publication committed, but model a crash before journal publication.
     fixture.save_state(&before_revoke);
     let observation = fixture
@@ -2420,28 +2452,10 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
         AttachmentCancellation::Committed(Some(lease.clone()))
     );
     let pending = fixture.attach(&running.target, &AttachmentId::new(), true);
-    let directory = storage::private_directory(&fixture.root, false).unwrap();
-    let lease_name = format!("host-daemon-{}.lock", running.target.generation.get());
-    let lease_lock = storage::open_private_file(&directory, Path::new(&lease_name), false).unwrap();
-    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lease_lock) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
-        Err(error) => panic!("owned generation lease failed: {error}"),
-    })
-    .unwrap();
-    let mut lease_lock = Some(lease_lock);
-    retry_busy(|| {
-        let result = fixture
+    retry_after_generation_contention(&fixture, &running.target, || {
+        fixture
             .control()
-            .revoke_local(&fixture.owner, &creation.logical);
-        if let Some(lease_lock) = lease_lock.take() {
-            assert!(
-                matches!(&result, Err(ControlError::Busy)),
-                "revocation must refuse while the generation lease is held: {result:?}"
-            );
-            drop(lease_lock);
-        }
-        result
+            .revoke_local(&fixture.owner, &creation.logical)
     })
     .unwrap();
     pending.session.acknowledge_recovery_adoption();
@@ -2449,6 +2463,7 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
     thread::sleep(Duration::from_millis(100));
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
     // Revocation fences pending ownership, not the persistent process policy.
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
     let name = PathBuf::from(format!(
         "host-daemon-{}.json",
         running.target.generation.get()
