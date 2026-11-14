@@ -64,7 +64,10 @@ fn provisioned_scope() -> Scope {
 
 #[test]
 fn desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed() {
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1000.0, 1200.0))
         .build_ui_state(
@@ -93,6 +96,16 @@ fn desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_
     assert!(harness
         .query_by_label("Owner public key · 64 hex characters")
         .is_none());
+    assert_eq!(
+        harness
+            .get_by_role_and_label(
+                egui::accesskit::Role::CheckBox,
+                "Allow remote access to this computer",
+            )
+            .accesskit_node()
+            .toggled(),
+        Some(egui::accesskit::Toggled::False)
+    );
     harness
         .get_by_role_and_label(
             egui::accesskit::Role::CheckBox,
@@ -113,10 +126,30 @@ fn desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_
     assert!(!controller.view.busy);
     harness.state_mut().0 = controller.view();
     harness.run();
+    assert_eq!(
+        harness
+            .get_by_role_and_label(
+                egui::accesskit::Role::CheckBox,
+                "Allow remote access to this computer",
+            )
+            .accesskit_node()
+            .toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
     harness.get_by_label("GitHub account");
     harness.get_by_role_and_label(
         egui::accesskit::Role::CheckBox,
         "Allow remote clients to create shell sessions",
+    );
+    assert_eq!(
+        harness
+            .get_by_role_and_label(
+                egui::accesskit::Role::CheckBox,
+                "Allow remote clients to create shell sessions",
+            )
+            .accesskit_node()
+            .toggled(),
+        Some(egui::accesskit::Toggled::False)
     );
     assert!(harness
         .query_by_label("GitHub numeric account ID (verified during sign-in)")

@@ -2871,7 +2871,12 @@ pub(crate) fn toggle_switch(ui: &mut Ui, value: bool, accessible_label: &str) ->
     let desired_size = egui::vec2(40.0, 22.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
     response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::Checkbox, ui.is_enabled(), accessible_label)
+        WidgetInfo::selected(
+            WidgetType::Checkbox,
+            ui.is_enabled(),
+            value,
+            accessible_label,
+        )
     });
 
     if ui.is_rect_visible(rect) {
