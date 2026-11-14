@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4aaeb4e8545cb32add448624f8445594c538ca765bfdea1f9b8c7a9b07e7b305"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "00e86eafcfc68649a18504555cadfd556041071dcb4bc5b5123a357d65ee98f3"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns discovery, consented hosting, and the trusted session boundaries for managed tunnels, enterprise inventory, and PowerShell.
+This domain owns session discovery, consented hosting, trusted host inventory, and PowerShell/enterprise session boundaries for managed Dev Tunnels.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -13,7 +13,6 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 Use for: When inventory must be refreshed across native, tmux, screen, and hosted roots
 
 - [`Inventory`](../../app/festerm/src/discovery.rs) — Coalesces native, tmux, screen, and hosted roots into one bounded inventory.
-- [`Discovery`](../../app/festerm/src/discovery.rs) — Runs one refresh worker and only republishes visible inventory changes.
 - [`LocalBindDraft`](../../app/festerm/src/local_bind.rs) — Resolves Automatic vs fixed source IP and validates bind policy before connect.
 
 Evidence:
@@ -59,13 +58,27 @@ Caveats:
 Use for: When wiring enterprise Dev Center inventory or PowerShell session flows to trusted consent boundaries
 
 - [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Dev Center sign-in, bounded project and Dev Box inventory, and browser handoff.
-- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Structured lifecycle for HTTPS/NTLM and SSH PowerShell sessions and cancellation.
+- [`PowerShellTab`](../../app/festerm/src/powershell.rs) — HTTPS/NTLM and SSH PowerShell lifecycle with explicit cancellation and close state.
 
 Evidence:
-- [`docs/powershell-enterprise.md`](../../docs/powershell-enterprise.md) — Documents the trust boundary between enterprise sign-in, remote session selection, and consented takeover.
 - [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Failure and completion states stay distinct instead of masquerading as success.
+- [`docs/powershell-enterprise.md`](../../docs/powershell-enterprise.md) — Documents the trust boundary between enterprise sign-in, remote session selection, and consented takeover.
 
 Caveats:
 - Worker-side data stays off the UI thread and budgets are enforced.
 - HTTPS and SSH transport choices are explicit and non-ambiguous.
-- Session lifecycle uses distinct failed and closed states rather than success masquerading.
+- Session lifecycle keeps failed and closed states distinct rather than masking success.
+
+## Client recipes
+
+Use for: When portable host recipes, session behavior, or browser-driven tunnel setup metadata must be verified
+
+- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable saved recipe metadata that excludes credentials, grants, and host trust.
+
+Evidence:
+- [`saved`](../../crates/festerm-client-recipes/tests/recipes.rs) — Validates recipe serialization, metadata bounds, and import/export invariants.
+
+Caveats:
+- Portable metadata is intentionally public; no host identity or trust is serialized.
+- Recipe IDs and host hints are validated offline and bounded by public metadata rules.
+- Connection behavior distinguishes resume and create semantics rather than inferring absence.
