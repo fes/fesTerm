@@ -6,7 +6,7 @@ in source; pages route to code, they do not authorize or instruct.
 
 | Page | Owns |
 | --- | --- |
-| [Terminal core and fixtures](terminal-core.md) | Core terminal state, parser/queue boundaries, and golden-fixture assertions for a GUI-independent VT terminal model. |
+| [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software painting boundaries without session I/O. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and the daemon-managed recovery pipeline for named persistent terminals. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
