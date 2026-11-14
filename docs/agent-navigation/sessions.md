@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7a487a929b1dca058dc82dcda547dc1b1e7aef5b96b80d2e9a4207361e1d406d"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0403741c0dc4a46132a5131bb7a4c2287532a319425671853b11bc35993a05e7"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -41,7 +41,7 @@ Caveats:
 
 Use for: When a named, recoverable session must be resumed, reconnected, or mirrored for persistence.
 
-- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed session client for resume, reconnect, and recovery sync.
+- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery sync.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains terminal replies while ingesting bytes.
 
 Evidence:
@@ -56,7 +56,7 @@ Caveats:
 
 Use for: When session output is pumped into the terminal or reply flow must be coordinated with backend-owned replies.
 
-- [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input, resize, diagnostics, and generation tracking.
+- [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input, resize, and generation tracking.
 - [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while suppressing duplicate backend replies and respecting byte budgets.
 
 Evidence:
