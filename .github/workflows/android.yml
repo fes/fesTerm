@@ -1,6 +1,21 @@
 name: Android mobile host
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/festerm-android/**'
+      - 'app/festerm-mobile/**'
+      - 'crates/**'
+      - 'vendor/**'
+      - 'assets/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'packaging/THIRD_PARTY_NOTICES.txt'
+      - 'scripts/*android*'
+      - 'scripts/tests/test_android*'
+      - '.github/workflows/android.yml'
+      - '.github/workflows/android-play-release.yml'
   pull_request:
     paths:
       - 'app/festerm-android/**'
@@ -16,6 +31,10 @@ on:
       - '.github/workflows/android.yml'
       - '.github/workflows/android-play-release.yml'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -39,6 +58,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-${{ matrix.abi }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Select Java 17
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
@@ -86,6 +106,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-play-bundle
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Select Java 17
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"

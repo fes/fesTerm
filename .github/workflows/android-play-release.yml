@@ -115,6 +115,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-play-bundle
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Select Java 17
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"

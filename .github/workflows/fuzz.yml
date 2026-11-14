@@ -43,6 +43,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-fuzz
         run: cargo +nightly install cargo-fuzz --locked

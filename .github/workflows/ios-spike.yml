@@ -33,6 +33,10 @@ on:
     - cron: '17 8 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
 
@@ -55,6 +59,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ios-spike
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prepare the selected CoreSimulator service before compilation
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 4
