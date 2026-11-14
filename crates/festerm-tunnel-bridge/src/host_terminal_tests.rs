@@ -367,6 +367,17 @@ mod native_routes {
         .await
     }
 
+    async fn wait_for_pending_clear(fixture: &NativeFixture, target: &HostTarget) {
+        let lease_name = format!("host-daemon-{}.json", target.generation.get());
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while !fixture.checkpoint(&lease_name, 4096)["pending"].is_null() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("native attachment cancellation did not clear pending lease");
+    }
+
     async fn pending_using(
         fixture: &NativeFixture,
         source: Arc<Policy>,
@@ -850,8 +861,8 @@ mod native_routes {
         let held_policy = source.0.clone().lock_owned().await;
         drop(unadopted.unwrap());
         assert!(pending_server.await.unwrap().is_err());
-        tokio::time::sleep(Duration::from_millis(200)).await;
         drop(held_policy);
+        wait_for_pending_clear(&fixture, &target).await;
         assert_eq!(
             festerm_sessiond::list_running_sessions_in(&fixture.root)
                 .unwrap()
@@ -888,7 +899,7 @@ mod native_routes {
         .await;
         drop(cancelled.unwrap());
         assert!(cancelled_server.await.unwrap().is_err());
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        wait_for_pending_clear(&fixture, &target).await;
         let (pending, server) = pending(&fixture, source, target, true, &budgets, &scheduler).await;
         let mut pending = pending.unwrap_or_else(|error| {
             panic!("HOST terminal stage=temporary-cancel/final-takeover actual={error:?}")

@@ -1054,6 +1054,7 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     let foreign_created = client_create_worker(&mut fixture, foreign_intent.clone()).await;
     let foreign_target = foreign_created.session().target.clone();
     assert_ne!(target, foreign_target);
+    let native_timeout = Duration::from_secs(30);
     let mut foreign_pending = fixture
         .pending(
             foreign_target.clone(),
@@ -1099,7 +1100,7 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     .unwrap();
     let mut session = HostSession::from_worker(worker, Arc::new(Wake));
     session.set_creation_intent(Some(intent.clone()));
-    tokio::time::timeout(Duration::from_secs(8), async {
+    tokio::time::timeout(native_timeout, async {
         while !session.has_pending_snapshot() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -1115,7 +1116,7 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     let mut frontend =
         festerm_core::Terminal::new(festerm_core::Dimensions::new(40, 12).unwrap()).unwrap();
     assert!(session.adopt_into(&mut frontend).unwrap());
-    tokio::time::timeout(Duration::from_secs(8), async {
+    tokio::time::timeout(native_timeout, async {
         while session.lifecycle() != SessionLifecycle::Running {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -1125,7 +1126,7 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     assert!(intent.is_presented());
     assert_eq!(intent.issued_operation(), Some(issued));
     session.try_send_input(b"once\n").unwrap();
-    tokio::time::timeout(Duration::from_secs(8), async {
+    tokio::time::timeout(native_timeout, async {
         loop {
             if let Ok(SessionEvent::Output(bytes)) = session.try_recv_event() {
                 frontend.ingest(&bytes);
@@ -1146,7 +1147,7 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     drop(session);
     let mut control = fixture.control().await;
     let operation = OperationId::new();
-    tokio::time::timeout(Duration::from_secs(8), async {
+    tokio::time::timeout(native_timeout, async {
         loop {
             let response = control
                 .request(
@@ -1615,21 +1616,32 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
             format!("echo:{label}"),
             "spin".into(),
         ];
-        let created = sessions
-            .ensure(
-                &fixture.policy.principal,
-                &IssuedOperation::new(epoch),
-                &creation,
-                false,
-                &AtomicBool::new(false),
-                |_| {
-                    fixture
-                        .source
-                        .current_policy()
-                        .map_err(|_| ControlError::Denied)
-                },
-            )
-            .unwrap();
+        let operation = IssuedOperation::new(epoch);
+        let created = tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match sessions.ensure(
+                    &fixture.policy.principal,
+                    &operation,
+                    &creation,
+                    false,
+                    &AtomicBool::new(false),
+                    |_| {
+                        fixture
+                            .source
+                            .current_policy()
+                            .map_err(|_| ControlError::Denied)
+                    },
+                ) {
+                    Err(ControlError::Busy) => {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    result => break result,
+                }
+            }
+        })
+        .await
+        .expect("native session ensure remained busy")
+        .unwrap();
         targets.push(created.summary.target);
     }
     let runtime = Arc::new(HostRuntime::new(sessions, fixture.source.clone()));

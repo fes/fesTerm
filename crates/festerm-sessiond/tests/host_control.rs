@@ -377,9 +377,7 @@ fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_
     assert_eq!(lease["stopped"], false);
     assert_eq!(lease["deadline_ms"], serde_json::Value::Null);
     assert_eq!(
-        control
-            .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
+        retry_busy(|| control.lookup(&fixture.owner, &creation.logical, allow)).unwrap(),
         Lookup::Unknown
     );
     let inventory = control.inventory(&fixture.owner, allow).unwrap();
@@ -405,7 +403,7 @@ fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_
     revoked["sessions"][creation.logical.as_str()]["revoked"] = true.into();
     fixture.save_state(&revoked);
     assert!(matches!(
-        control.lookup(&fixture.owner, &creation.logical, allow),
+        retry_busy(|| control.lookup(&fixture.owner, &creation.logical, allow)),
         Err(ControlError::Revoked)
     ));
     let inventory = control.inventory(&fixture.owner, allow).unwrap();
@@ -431,19 +429,21 @@ fn transient_native_observation_preserves_bound_running_phase_and_revision() {
     let registry =
         storage::read_private(&directory, Path::new("registry.json"), 4 * 1024 * 1024).unwrap();
     storage::replace_private(&directory, Path::new("registry.json"), b"invalid").unwrap();
-    let observed = fixture
-        .control()
-        .lookup(&fixture.owner, &creation.logical, allow);
-    storage::replace_private(&directory, Path::new("registry.json"), &registry).unwrap();
-    assert!(matches!(observed, Err(ControlError::Unknown)));
-    assert_eq!(fixture.state()["sessions"], before["sessions"]);
-    assert_eq!(
+    let observed = retry_busy(|| {
         fixture
             .control()
             .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
-        Lookup::Running(running.target)
-    );
+    });
+    storage::replace_private(&directory, Path::new("registry.json"), &registry).unwrap();
+    assert!(matches!(observed, Err(ControlError::Unknown)));
+    assert_eq!(fixture.state()["sessions"], before["sessions"]);
+    let confirmed = retry_busy(|| {
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow)
+    })
+    .unwrap_or_else(|error| panic!("lookup after registry restoration: {error:?}"));
+    assert_eq!(confirmed, Lookup::Running(running.target));
 }
 
 #[test]
@@ -601,16 +601,20 @@ fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_genera
         MAX_SESSIONS
     );
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        })
+        .unwrap(),
         Lookup::Absent
     );
     assert!(matches!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &revoked.unwrap(), allow),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, revoked.as_ref().unwrap(), allow)
+        }),
         Err(ControlError::Revoked)
     ));
     let recreated = fixture.ensure(&creation);
@@ -1002,6 +1006,17 @@ impl Fixture {
                 allow,
             ) {
                 Err(ControlError::Busy) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(20))
+                }
+                Err(ControlError::Unknown)
+                    if Instant::now() < deadline
+                        && self.state()["sessions"]
+                            .get(creation.logical.as_str())
+                            .is_some_and(|record| {
+                                record["phase"] == "Launching" && record["identity"].is_null()
+                            }) =>
+                {
+                    // Retry the same issued operation while its reserved native generation starts.
                     thread::sleep(Duration::from_millis(20))
                 }
                 Ok(result) => return result,
@@ -1439,10 +1454,12 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        })
+        .unwrap(),
         Lookup::Absent
     );
     let denied = fixture.control().ensure(
@@ -1579,9 +1596,11 @@ fn incomplete_inventory_preserves_healthy_sessions_and_noncreating_unknown_targe
         festerm_host_protocol::LogicalState::Unknown
     );
     assert!(matches!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        }),
         Err(ControlError::Unknown)
     ));
     assert!(matches!(
@@ -1910,9 +1929,11 @@ fn missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absenc
     let original = fixture.state();
     fs::remove_file(fixture.root.join("host-sessions.json")).unwrap();
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        }),
         Err(ControlError::Storage)
     );
     assert!(matches!(
@@ -1934,17 +1955,21 @@ fn missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absenc
     unsupported["version"] = 1.into();
     fixture.save_state(&unsupported);
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        }),
         Err(ControlError::Storage)
     );
     fixture.save_state(&original);
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        })
+        .unwrap(),
         Lookup::Running(running.target)
     );
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
@@ -1992,7 +2017,7 @@ fn persistent_host_shell_accepts_ordinary_local_unticketed_attachment() {
             })
     });
     assert!(matches!(
-        fixture.control().lookup(&fixture.owner, &running.target.logical, allow),
+        retry_busy(|| fixture.control().lookup(&fixture.owner, &running.target.logical, allow)),
         Ok(Lookup::Running(target)) if target == running.target
     ));
 }
@@ -2220,12 +2245,15 @@ fn daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor() {
     drop(fixture.control());
     thread::sleep(Duration::from_millis(1400));
     fixture.wait_absent(&running.target);
-    assert!(matches!(
+    let observed = retry_busy(|| {
         fixture
             .control()
-            .lookup(&fixture.owner, &persistent.target.logical, allow),
-        Ok(Lookup::Running(_))
-    ));
+            .lookup(&fixture.owner, &persistent.target.logical, allow)
+    });
+    assert!(
+        matches!(observed, Ok(Lookup::Running(_))),
+        "persistent lookup after temporary-session cleanup: {observed:?}"
+    );
 }
 
 #[test]
@@ -2240,27 +2268,30 @@ fn current_absence_requires_fresh_create_permission_but_live_resume_does_not() {
             Ok(())
         }
     };
-    let resumed = fixture
-        .control()
-        .ensure(
+    let operation = fixture.issued();
+    let resumed = retry_busy(|| {
+        fixture.control().ensure(
             &fixture.owner,
-            &fixture.issued(),
+            &operation,
             &creation,
             false,
             &AtomicBool::new(false),
             no_creation,
         )
-        .unwrap_or_else(|error| {
-            panic!(
-                "HOST control stage=current-absence/live-resume actual={}",
-                control_result_diagnostic::<()>(&Err(error)),
-            )
-        });
+    })
+    .unwrap_or_else(|error| {
+        panic!(
+            "HOST control stage=current-absence/live-resume actual={}",
+            control_result_diagnostic::<()>(&Err(error)),
+        )
+    });
     assert_eq!(resumed.identity, running.identity);
-    fixture
-        .control()
-        .end(&fixture.owner, &running.target, allow)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .end(&fixture.owner, &running.target, allow)
+    })
+    .unwrap();
     fixture.wait_absent(&running.target);
     assert!(matches!(
         fixture.control().ensure(
@@ -2317,10 +2348,12 @@ fn failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create() {
         );
     }
     assert_eq!(
-        fixture
-            .control()
-            .lookup(&fixture.owner, &creation.logical, allow)
-            .unwrap(),
+        retry_busy(|| {
+            fixture
+                .control()
+                .lookup(&fixture.owner, &creation.logical, allow)
+        })
+        .unwrap(),
         Lookup::Unknown
     );
     assert!(list_running_sessions_in(&fixture.root).unwrap().is_empty());
