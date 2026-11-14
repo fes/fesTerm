@@ -101,6 +101,9 @@ pub enum Icon {
     SectionExpanded,
     /// A disclosure group whose contents are currently hidden.
     SectionCollapsed,
+    /// A row that opens its own sub-page (for example a Settings drill-in),
+    /// distinct from `SectionCollapsed`, which expands content in place.
+    OpenSubpage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -268,8 +271,9 @@ mod tests {
             Icon::SectionCollapsed,
             Icon::SectionExpanded,
             Icon::SortOrder,
+            Icon::OpenSubpage,
         ];
-        assert_eq!(icons.len(), 63);
+        assert_eq!(icons.len(), 64);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

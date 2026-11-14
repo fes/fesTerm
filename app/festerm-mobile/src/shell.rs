@@ -550,38 +550,9 @@ fn settings_screen(
     if let Some(notice) = data.notice {
         footnote(ui, notice);
     }
-    #[cfg(feature = "live-ssh")]
-    {
-        section_header(ui, "GitHub accounts", None, false);
-        card(ui, |ui| {
-            for (id, login) in &data.tunnel_accounts {
-                ui.push_id(id, |ui| {
-                    ui.label(format!("@{login}"));
-                    if button(ui, ButtonKind::Secondary, "Sign in again", true).clicked() {
-                        actions.push(ShellAction::ReauthenticateTunnelAccount(id.clone()));
-                    }
-                    if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
-                        actions.push(ShellAction::SignOutTunnelAccount(id.clone()));
-                    }
-                });
-            }
-            if button(ui, ButtonKind::Primary, "Add GitHub account", true).clicked() {
-                actions.push(ShellAction::AddTunnelAccount);
-            }
-        });
-    }
-    if true {
-        section_header(ui, "Demo", None, false);
-        card(ui, |ui| {
-            let mut row = RowSpec::new("Offline demo terminal");
-            row.icon = Some(Icon::LocalTerminal);
-            row.subtitle = Some("Local fixture; input is discarded");
-            row.trailing = Trailing::Chevron;
-            if list_row(ui, &row).clicked() {
-                actions.push(ShellAction::OpenDemo);
-            }
-        });
-    }
+    // Section names and order follow desktop Settings (`docs/gui-design.md`
+    // "Settings"): Terminal · Keyboard · Security · Dev Tunnels · Recording ·
+    // About.
     section_header(ui, "Terminal", None, false);
     let mut index = TextSize::ALL
         .iter()
@@ -595,7 +566,7 @@ fn settings_screen(
         ui,
         "Text size for terminals. Pinch to zoom a single session.",
     );
-    section_header(ui, "Default keyboard", None, false);
+    section_header(ui, "Keyboard", None, false);
     card(ui, |ui| {
         for (index, kind) in KeyboardKind::ALL.into_iter().enumerate() {
             let mut row = RowSpec::new(kind.label());
@@ -613,9 +584,8 @@ fn settings_screen(
     });
     footnote(
         ui,
-        "Used when fesTerm starts. Switching from More > Keyboard or the globe key also changes this default.",
+        "Default keyboard, used when fesTerm starts. Switching from More > Keyboard or the globe key also changes this default.",
     );
-    section_header(ui, "Split keyboard", None, false);
     let mut index = SplitMode::ALL
         .iter()
         .position(|mode| *mode == data.split_keyboard)
@@ -632,9 +602,8 @@ fn settings_screen(
     }
     footnote(
         ui,
-        "Terminal keyboards split into left and right halves. Auto splits on wide landscape screens and around a fold or hinge.",
+        "Split keyboard: terminal keyboards split into left and right halves. Auto splits on wide landscape screens and around a fold or hinge.",
     );
-    section_header(ui, "Keyboard feedback", None, false);
     card(ui, |ui| {
         let mut enabled = state.keyboard_haptics_enabled;
         widgets::switch_row(
@@ -648,20 +617,15 @@ fn settings_screen(
             actions.push(ShellAction::SetKeyboardHaptics(enabled));
         }
     });
-    #[cfg(all(feature = "live-ssh", unix))]
-    recording_access(ui, state, actions);
-    #[cfg(not(all(feature = "live-ssh", unix)))]
-    let _ = state;
-    section_header(ui, "Dev Tunnel hosts", None, false);
-    card(ui, |ui| {
-        let mut row = RowSpec::new("Set up a host");
-        row.icon = Some(Icon::DevTunnel);
-        row.subtitle = Some("Review and copy the one-line installer");
-        row.trailing = Trailing::Chevron;
-        if list_row(ui, &row).clicked() {
-            actions.push(ShellAction::OpenHostSetup);
-        }
-    });
+    section_header(ui, "Security", None, false);
+    if let Some(lock) = &data.lock {
+        actions.extend(
+            super::app_lock::settings_section(ui, lock)
+                .into_iter()
+                .map(ShellAction::Lock),
+        );
+    }
+    // A sub-section of Security, like App lock's "Background grace".
     section_header(
         ui,
         "Trusted hosts",
@@ -689,33 +653,62 @@ fn settings_screen(
             "Forgetting a key makes fesTerm ask again on the next connection.",
         );
     }
-    if let Some(lock) = &data.lock {
-        actions.extend(
-            super::app_lock::settings_section(ui, lock)
-                .into_iter()
-                .map(ShellAction::Lock),
-        );
-    }
-    section_header(ui, "Diagnostics", None, false);
+    section_header(ui, "Dev Tunnels", None, false);
+    #[cfg(feature = "live-ssh")]
     card(ui, |ui| {
-        for (index, (name, value)) in data.diagnostics.iter().enumerate() {
-            let mut row = RowSpec::new(name);
-            row.trailing = Trailing::Text(value);
-            row.divider = index > 0;
-            ui.add_enabled_ui(false, |ui| list_row(ui, &row));
+        for (id, login) in &data.tunnel_accounts {
+            ui.push_id(id, |ui| {
+                ui.label(format!("@{login}"));
+                if button(ui, ButtonKind::Secondary, "Sign in again", true).clicked() {
+                    actions.push(ShellAction::ReauthenticateTunnelAccount(id.clone()));
+                }
+                if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
+                    actions.push(ShellAction::SignOutTunnelAccount(id.clone()));
+                }
+            });
+        }
+        if button(ui, ButtonKind::Primary, "Add GitHub account", true).clicked() {
+            actions.push(ShellAction::AddTunnelAccount);
         }
     });
+    card(ui, |ui| {
+        let mut row = RowSpec::new("Set up a host");
+        row.icon = Some(Icon::DevTunnel);
+        row.subtitle = Some("Review and copy the one-line installer");
+        row.trailing = Trailing::Chevron;
+        if list_row(ui, &row).clicked() {
+            actions.push(ShellAction::OpenHostSetup);
+        }
+    });
+    #[cfg(all(feature = "live-ssh", unix))]
+    recording_access(ui, state, actions);
+    #[cfg(not(all(feature = "live-ssh", unix)))]
+    let _ = state;
     section_header(ui, "About", None, false);
     card(ui, |ui| {
         let mut row = RowSpec::new("fesTerm");
         row.trailing = Trailing::Text(env!("CARGO_PKG_VERSION"));
         ui.add_enabled_ui(false, |ui| list_row(ui, &row));
+        for (name, value) in data.diagnostics {
+            let mut row = RowSpec::new(name);
+            row.trailing = Trailing::Text(value);
+            row.divider = true;
+            ui.add_enabled_ui(false, |ui| list_row(ui, &row));
+        }
+        let mut row = RowSpec::new("Offline demo terminal");
+        row.icon = Some(Icon::LocalTerminal);
+        row.subtitle = Some("Local fixture; input is discarded");
+        row.trailing = Trailing::Chevron;
+        row.divider = true;
+        if list_row(ui, &row).clicked() {
+            actions.push(ShellAction::OpenDemo);
+        }
     });
 }
 
 #[cfg(all(feature = "live-ssh", unix))]
 fn recording_access(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<ShellAction>) {
-    section_header(ui, "Recordings", None, false);
+    section_header(ui, "Recording", None, false);
     if let Some(error) = &state.recording_error {
         footnote(ui, error);
     }
@@ -756,7 +749,7 @@ fn recording_access(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<Shell
             actions.push(ShellAction::SetSessionRecordingEnabled(enabled));
         }
         if state.session_recording_enabled {
-            let mut row = RowSpec::new("Recording settings >");
+            let mut row = RowSpec::new("Recording settings");
             row.icon = Some(Icon::Settings);
             row.trailing = Trailing::Chevron;
             if list_row(ui, &row).clicked() {
@@ -764,8 +757,14 @@ fn recording_access(ui: &mut Ui, state: &mut ShellState, actions: &mut Vec<Shell
             }
         }
         #[cfg(any(test, target_os = "android", target_os = "ios"))]
-        if button(ui, ButtonKind::Secondary, "Open recording library", true).clicked() {
-            actions.push(ShellAction::OpenRecordingLibrary);
+        {
+            let mut row = RowSpec::new("Recording library");
+            row.subtitle = Some("Play, export, or delete saved recordings");
+            row.trailing = Trailing::Chevron;
+            row.divider = state.session_recording_enabled;
+            if list_row(ui, &row).clicked() {
+                actions.push(ShellAction::OpenRecordingLibrary);
+            }
         }
     });
 }

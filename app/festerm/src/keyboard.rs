@@ -461,6 +461,17 @@ pub fn recording(ctx: &egui::Context) -> bool {
         .unwrap_or(false)
 }
 
+/// True while a chord capture owns this frame's keys: either the editor is
+/// still armed, or the shortcut dispatcher has parked this frame's events for
+/// it. Surrounding surfaces must leave Escape to the capture then.
+pub fn capture_owns_keys(ctx: &egui::Context) -> bool {
+    recording(ctx)
+        || ctx.data(|data| {
+            data.get_temp::<Vec<egui::Event>>(egui::Id::new(RECORDED_EVENTS_ID))
+                .is_some()
+        })
+}
+
 /// Hands this frame's input to the editor instead of the shortcut dispatcher.
 /// The events are deliberately not forwarded anywhere else: a chord being
 /// recorded must not also reach the terminal or trigger its own action. The
@@ -556,6 +567,15 @@ fn recorded_chord(key: egui::Key, modifiers: egui::Modifiers, mac: bool) -> Opti
 
 fn customized(bindings: &KeyboardBindings, action: Action) -> bool {
     bindings.0.iter().any(|entry| entry.action == action)
+}
+
+/// How many actions carry a non-default chord; Settings summarizes this on
+/// its Keyboard shortcuts drill-in row.
+pub fn customized_count(bindings: &KeyboardBindings) -> usize {
+    Action::ALL
+        .into_iter()
+        .filter(|action| customized(bindings, *action))
+        .count()
 }
 
 /// Splitting on '+' is safe because the schema spells keys by name

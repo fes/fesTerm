@@ -74,7 +74,14 @@ pub(crate) use profiles::{set_local_host_views, LocalHostView};
 pub(crate) use profiles::{set_local_remote_access_view, LocalRemoteAccessView};
 mod settings;
 use settings::toggle_switch;
-pub(crate) use settings::{show_settings, SettingsViewModel};
+#[cfg(test)]
+pub(crate) use settings::RESET_ALL_SETTINGS_LABEL;
+#[cfg(feature = "local-host-settings")]
+pub(crate) use settings::{settings_note, settings_toggle_row_enabled};
+pub(crate) use settings::{
+    show_settings, SettingsViewModel, RESET_ALL_SETTINGS_CATEGORIES,
+    RESET_ALL_SETTINGS_NOT_AFFECTED,
+};
 
 /// One selectable launch option in the Launcher list: the fixed default
 /// local shell, or a saved local/SSH profile.

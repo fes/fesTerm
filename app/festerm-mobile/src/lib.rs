@@ -3949,6 +3949,44 @@ mod tests {
     }
 
     #[test]
+    fn settings_sections_follow_the_shared_desktop_order() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })))
+        .with_profiles(profiles::testing::profiles());
+        app.surface = Surface::Tabs;
+        app.shell.tab = shell::Tab::Settings;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 3200.0))
+            .build_ui_state(
+                |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                app,
+            );
+        harness.run();
+        // Terminal · Keyboard (default, split, haptics) · Dev Tunnels ·
+        // About (version, then the demo terminal, which no longer leads).
+        let order = [
+            "Built-in keyboard",
+            "Split",
+            "Custom keyboard haptics",
+            "Set up a host",
+            "fesTerm",
+            "Offline demo terminal",
+        ];
+        let tops: Vec<f32> = order
+            .iter()
+            .map(|label| harness.get_by_label(label).rect().top())
+            .collect();
+        assert!(
+            tops.windows(2).all(|pair| pair[0] < pair[1]),
+            "{order:?} at {tops:?}"
+        );
+    }
+
+    #[test]
     fn settings_split_control_changes_only_the_split_mode() {
         use egui_kittest::{kittest::Queryable, Harness};
         use terminal_keyboard::SplitMode;
@@ -3999,7 +4037,7 @@ mod tests {
         harness.run();
 
         assert!(!harness.state().shell.session_recording_enabled);
-        assert!(harness.query_by_label("Recording settings >").is_none());
+        assert!(harness.query_by_label("Recording settings").is_none());
         let source = tempfile::tempdir().unwrap();
         let error = harness
             .state_mut()
@@ -4015,8 +4053,8 @@ mod tests {
         harness.get_by_label("Allow session recording").click();
         harness.run();
         assert!(harness.state().shell.session_recording_enabled);
-        assert!(harness.query_by_label("Recording settings >").is_some());
-        harness.get_by_label("Recording settings >").click();
+        assert!(harness.query_by_label("Recording settings").is_some());
+        harness.get_by_label("Recording settings").click();
         harness.run();
         assert!(harness.state().shell.recording_settings_open);
     }

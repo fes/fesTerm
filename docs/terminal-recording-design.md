@@ -64,7 +64,7 @@ smoke. The remaining native and usability scenarios are `TR-01`–`TR-03` in
    the recording incomplete. Legacy recovery cannot be auto-enrolled safely;
    once its screen is ready, start a new recording and include it explicitly.
 4. The confirmation shows the saved export location and a preview of the
-   recording subdirectory and MP4 names from **Settings > Recordings**. The
+   recording subdirectory and MP4 names from **Settings > Recording > Recording settings**. The
    user configures a location on first use and may override it for this
    recording. Desktop offers a one-recording override of its default-on
    deletion setting. Mobile always retains the source until explicit deletion
@@ -106,7 +106,7 @@ explicit recover/delete controls.
 
 ## Recording settings, naming and directory layout
 
-**Settings > Recordings** provides a saved export root folder, a recording
+**Settings > Recording > Recording settings** provides a saved export root folder, a recording
 subdirectory naming template, and an MP4 filename template, with a live preview
 of the resulting layout. It also holds the pacing defaults described under
 [Pacing settings](#pacing-settings) and the recording-wide appearance used by
@@ -285,7 +285,7 @@ characters.
 
 ### Pacing settings
 
-**Settings > Recordings > Pacing** provides defaults that the stop/export
+**Settings > Recording > Recording settings > Pacing** provides defaults that the stop/export
 sheet shows and lets the user change for one export. Every option is applied
 as a single piecewise time warp shared by all streams in the recording, so
 the per-session MP4s stay aligned.

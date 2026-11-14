@@ -78,14 +78,14 @@ impl FesTermApp {
     #[cfg(test)]
     pub(crate) fn reset_automation_preferences_for_test(&mut self, context: &egui::Context) {
         self.state
-            .dispatch(crate::tabs::AppCommand::ResetInterfaceSettings, context);
+            .dispatch(crate::tabs::AppCommand::ResetAllSettings, context);
         let before = self.reset_automation_preferences(context);
         self.persist_reset_automation_preferences(before);
     }
 
     #[cfg(test)]
-    pub(crate) fn request_reset_interface_settings_for_test(&mut self, context: &egui::Context) {
-        self.request_reset_interface_settings(context);
+    pub(crate) fn request_reset_all_settings_for_test(&mut self, context: &egui::Context) {
+        self.request_reset_all_settings(context);
     }
 
     fn automation_preferences(&mut self) -> Shared {

@@ -90,6 +90,7 @@ The intended first enum surface is:
 | `Reattach` | `reattach.svg` | Attach an already-running session to a tab |
 | `SectionExpanded`, `SectionCollapsed` | matching filename | Disclosure group state |
 | `Disclosure` | `disclosure.svg` | A control that opens a menu below itself |
+| `OpenSubpage` | `open-subpage.svg` | A row that opens its own sub-page (Settings drill-in) |
 
 `SshRemote` is drawn as a terminal whose lower-right corner opens around a
 network globe. Keep the upper-right rounded corner and its short vertical

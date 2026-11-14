@@ -590,8 +590,8 @@ monochrome fallback; it never changes cell allocation or discovers arbitrary
 system/user font files.
 
 fesTerm writes the whole configuration document through immediately whenever
-one of these controls changes (or after an explicit Settings **Reset interface
-settings to defaults** action), using the same selected startup location and
+one of these controls changes (or after an explicit Settings **Reset all
+settings…** action), using the same selected startup location and
 atomic replacement path as workspace and profile saves. The in-memory UI
 change always applies immediately regardless of whether the write succeeds; a
 failed write only means the change will not survive a restart, and Settings

@@ -366,6 +366,19 @@ local origin authorizes Preview reads. `SetImageMemoryBudget` changes the shared
 live allowance through the composition root and its normal settings persistence
 path; widgets do not own separate limits, loaders or configuration writes.
 
+`ResetAllSettings` (labelled **Reset all settings…** wherever it is offered;
+today only the last Settings card, with no palette entry) asks for confirmation
+and then restores every application preference shown in Settings - terminal,
+startup and session, window and tab, keyboard shortcut, file and document, Dev
+Tunnel option, automation and update-check preferences - to its default through
+the normal settings persistence path. It does not touch recording settings,
+signed-in Dev Tunnel accounts, remote access, saved profiles or stored
+credentials, and its confirmation says so. Moving between the Settings main
+page and its drill-in sub-pages (Keyboard shortcuts, Remote access, Automation
+activity) is per-window view state inside the Settings surface, not an
+application command; the controls on those sub-pages still emit their existing
+commands. See [Settings](gui-design.md#settings).
+
 ## UI Events vs. Application Commands
 
 Low-level terminal interaction remains separate from application commands.

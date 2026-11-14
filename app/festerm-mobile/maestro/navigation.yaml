@@ -6,6 +6,9 @@ name: Navigate between top-level screens
 - assertVisible: "Profiles"
 - tapOn: "Sessions"
 - tapOn: "Settings"
+- scrollUntilVisible:
+    element:
+      text: "Offline demo terminal"
 - assertVisible: "Offline demo terminal"
 - tapOn: "Profiles"
 - assertVisible: "Open offline demo"

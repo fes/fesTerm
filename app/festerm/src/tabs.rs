@@ -3249,10 +3249,12 @@ pub enum AppCommand {
     TerminateUnattachedSession {
         session: crate::discovery::NativeSession,
     },
-    /// Resets chip layout and status-bar visibility to their defaults after
-    /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
-    /// user-configurable").
-    ResetInterfaceSettings,
+    /// Returns every Settings preference (`InterfaceSettings`, including
+    /// keyboard bindings) to its default after explicit confirmation. The
+    /// confirmation lists `screens::RESET_ALL_SETTINGS_CATEGORIES`; recording
+    /// settings, accounts, remote access, and profiles are not touched
+    /// (`docs/application-command-model.md`).
+    ResetAllSettings,
     /// Creates or edits a profile (docs/gui-design.md "Profile editing").
     /// Both are the same upsert-by-identifier write; the composition root
     /// (`FesTermApp::screen_command`) fully intercepts this to persist
@@ -5399,7 +5401,7 @@ impl AppState {
                     }
                 });
             }
-            AppCommand::ResetInterfaceSettings => {
+            AppCommand::ResetAllSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
@@ -12976,7 +12978,7 @@ mod tests {
         assert!(!state.show_pane_handles());
         state.adopt_configuration(configuration);
         assert!(state.show_pane_handles());
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.show_pane_handles());
         assert!(!state.interface_settings().show_pane_handles());
     }
@@ -12998,7 +13000,7 @@ mod tests {
         assert!(!state.pane_high_contrast());
         state.adopt_configuration(configuration);
         assert!(state.pane_high_contrast());
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.pane_high_contrast());
         assert!(!state.interface_settings().pane_high_contrast());
     }
@@ -13017,13 +13019,13 @@ mod tests {
     }
 
     #[test]
-    fn reset_interface_settings_also_restores_show_session_details() {
+    fn reset_all_settings_also_restores_show_session_details() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
         assert!(state.show_session_details());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.show_session_details());
     }
 
@@ -13036,7 +13038,7 @@ mod tests {
         state.dispatch(AppCommand::ToggleRestoreWorkspace, &context);
         assert!(!state.restore_workspace());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(state.restore_workspace());
     }
 
@@ -13049,7 +13051,7 @@ mod tests {
         state.dispatch(AppCommand::ToggleConfirmSessionClose, &context);
         assert!(state.confirm_session_close());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.confirm_session_close());
     }
 
@@ -13063,7 +13065,7 @@ mod tests {
         assert!(!state.prefer_powershell());
         assert!(!state.interface_settings().prefer_powershell());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(state.prefer_powershell());
     }
 
@@ -13077,7 +13079,7 @@ mod tests {
         assert!(state.customize_local_shell());
         assert!(state.interface_settings().customize_local_shell());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.customize_local_shell());
     }
 
@@ -13128,7 +13130,7 @@ mod tests {
         let enabled = state.interface_settings();
         assert!(enabled.mcp_enabled());
         assert!(enabled.javascript_enabled());
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.mcp_enabled());
         assert!(!state.javascript_enabled());
         let replacement = Configuration::empty()
@@ -13172,7 +13174,7 @@ mod tests {
             EmojiPresentationPreference::Monochrome
         );
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
         assert!(state.terminal_ligatures());
         assert_eq!(
@@ -13220,7 +13222,7 @@ mod tests {
             ScrollSpeedPreference::VerySlow
         );
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert_eq!(state.scroll_speed(), ScrollSpeedPreference::Normal);
     }
 
@@ -13261,7 +13263,7 @@ mod tests {
         };
         assert_eq!(second.terminal.scrollback_stats().limit_bytes(), 0);
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert_eq!(state.scrollback_limit(), ScrollbackLimitPreference::MiB64);
     }
 
@@ -13346,7 +13348,7 @@ mod tests {
             .interface_settings()
             .show_durable_session_in_status_bar());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.show_durable_session_in_status_bar());
     }
 
@@ -13361,7 +13363,7 @@ mod tests {
         assert!(!state.show_resumable_sessions());
         assert!(!state.interface_settings().show_resumable_sessions());
 
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(state.show_resumable_sessions());
     }
 

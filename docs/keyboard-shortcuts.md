@@ -56,9 +56,9 @@ not expanded. Errors preserve the typed path for correction.
 
 ### Keyboard binding editor
 
-Open **Settings → Keyboard bindings**, or press the fixed
-**Ctrl+Shift+F12** recovery chord to open Settings and focus the searchable
-editor. Actions are grouped under the scope they apply in and can be narrowed
+Open **Settings → Keyboard shortcuts ›**, or press the fixed
+**Ctrl+Shift+F12** recovery chord to open Settings on that sub-page with the
+editor's search focused. Actions are grouped under the scope they apply in and can be narrowed
 by search or by the **Show** filter (a single scope, only customized actions,
 or only unbound ones). Each row carries the action's effective chord as
 keycaps and a **Customized** badge once it has been overridden. Selecting a

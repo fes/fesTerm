@@ -1,4 +1,5 @@
 use super::*;
+use crate::screens::{settings_note, settings_toggle_row_enabled};
 use festerm_ui_egui::{
     controls::{action_button, ActionButtonRole},
     theme,
@@ -14,13 +15,15 @@ pub(crate) fn show(
     let mut requested = view
         .access_requested
         .unwrap_or_else(|| view.access_enabled());
-    if ui
-        .add_enabled(
-            !view.busy,
-            egui::Checkbox::new(&mut requested, "Allow remote access to this computer"),
-        )
-        .changed()
-    {
+    if settings_toggle_row_enabled(
+        ui,
+        "Allow remote access to this computer",
+        "Lets a signed-in GitHub account reach shells on this computer. Nothing is enabled \
+         until you review Enable.",
+        requested,
+        !view.busy,
+    ) {
+        requested = !requested;
         action = Some(Action::RequestAccess(requested));
     }
     if requested && !view.access_enabled() {
@@ -38,7 +41,10 @@ pub(crate) fn show(
     if let Some(code) = &view.device_code {
         ui.label("Complete the explicit sign-in at https://github.com/login/device");
         ui.monospace(code.0.as_str());
-        ui.small("No browser opens automatically. Do not share this one-time code.");
+        settings_note(
+            ui,
+            "No browser opens automatically. Do not share this one-time code.",
+        );
     }
     let mut draft = view.draft.clone();
     ui.add_enabled_ui(!view.busy, |ui| {
@@ -70,16 +76,22 @@ pub(crate) fn show(
                 action = Some(Action::SignInAccount);
             }
             if bound.is_some() {
-                ui.small("This installation keeps its verified account. Disable and complete removal before choosing another account.");
+                settings_note(ui, "This installation keeps its verified account. Disable and complete removal before choosing another account.");
             }
-            ui.checkbox(
-                &mut draft.allow_creation,
+            if settings_toggle_row_enabled(
+                ui,
                 "Allow remote clients to create shell sessions",
-            );
+                "Off by default. Otherwise remote clients only list, attach to, and detach \
+                 from existing shells.",
+                draft.allow_creation,
+                true,
+            ) {
+                draft.allow_creation = !draft.allow_creation;
+            }
             let disable_to_configure = matches!(&view.scope, Scope::Present(snapshot)
                 if snapshot.phase == Phase::Provisioned && snapshot.settings != draft.settings());
             if disable_to_configure {
-                ui.small("Changes are not applied. Disable access, then re-enable to review the retained preferences. Durable shells stay running.");
+                settings_note(ui, "Changes are not applied. Disable access, then re-enable to review the retained preferences. Durable shells stay running.");
                 if action_button(ui, ActionButtonRole::DangerOutline, "Review Disable to change host settings…").clicked() {
                     action = Some(Action::Review(Operation::Disable));
                 }
@@ -89,32 +101,36 @@ pub(crate) fn show(
         }
         ui.collapsing("Advanced / Recovery", |ui| {
         ui.label(view.observation_label());
-        ui.small("Selecting an account is not host authentication. Enable separately verifies the selected account and native-vault consent.");
+        settings_note(ui, "Selecting an account is not host authentication. Enable separately verifies the selected account and native-vault consent.");
             if let Some(failure) = view.failure {
-                ui.small(failure.message());
+                settings_note(ui, failure.message());
             }
         field(ui, "Friendly name", &mut draft.friendly_name);
-        ui.checkbox(
-            &mut draft.startup_at_sign_in,
+        if settings_toggle_row_enabled(
+            ui,
             "Start at my sign-in (only where the native policy is qualified)",
-        );
-        ui.small("Default: manual startup; creation off. No pre-login option.");
+            "Default: manual startup; creation off. No pre-login option.",
+            draft.startup_at_sign_in,
+            true,
+        ) {
+            draft.startup_at_sign_in = !draft.startup_at_sign_in;
+        }
         ui.label(format!(
             "Official host bundle · {} · {} / {}",
             festerm_host_setup::VERSION, std::env::consts::OS, std::env::consts::ARCH
         ));
-        ui.small(view.bundle_status.label());
+        settings_note(ui, view.bundle_status.label());
         if let Scope::Present(snapshot) = &view.scope {
             ui.monospace(format!("Installation {} · epoch {} · {:?}",
                 snapshot.installation, snapshot.epoch, snapshot.phase));
         }
         if let Some(process) = &view.process {
-            ui.small(format!("Native process: {process}. Not endpoint readiness."));
+            settings_note(ui, &format!("Native process: {process}. Not endpoint readiness."));
         }
         ui.label("Enable acquires only this exact build's official native host bundle. No installer script runs from Settings.");
         ui.collapsing("Advanced · explicit signed local bundle", |ui| {
             ui.checkbox(&mut draft.manual_bundle, "Use manually selected signed files instead of official acquisition");
-            ui.small("An explicit alternative, never a download, sign-in or vault failure fallback.");
+            settings_note(ui, "An explicit alternative, never a download, sign-in or vault failure fallback.");
             ui.add_enabled_ui(draft.manual_bundle, |ui| {
                 field(ui, "Manifest · absolute path", &mut draft.manifest);
                 field(ui, "Signature · absolute path", &mut draft.signature);
@@ -149,7 +165,7 @@ pub(crate) fn show(
             });
         }
         ui.collapsing("Explicit owner-key approval · native vault only", |ui| {
-            ui.small("First review native owner context to pin its current policy revision. Changed or revoked policy requires a new review.");
+            settings_note(ui, "First review native owner context to pin its current policy revision. Changed or revoked policy requires a new review.");
             field(ui, "Owner public key · 64 hex characters", &mut draft.owner_public_key);
             field(
                 ui,
@@ -157,7 +173,7 @@ pub(crate) fn show(
                 &mut draft.owner_fingerprint,
             );
             ui.checkbox(&mut draft.approve_creation, "Also approve creation for this owner key");
-            ui.small("Inventory and existing attach/detach only unless separately approved. No explicit-end or temporary grant.");
+            settings_note(ui, "Inventory and existing attach/detach only unless separately approved. No explicit-end or temporary grant.");
             if action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
                 action = Some(Action::Review(Operation::ApproveOwner));
             }
@@ -183,7 +199,7 @@ pub(crate) fn show(
                     }
                     Operation::ApproveOwner => {
                         ui.label("Approve this exact public key/fingerprint and selected permissions? Native vault errors never select file storage.");
-                        ui.small("Cancelling in-flight permission work fences this host; persistent shells remain untouched.");
+                        settings_note(ui, "Cancelling in-flight permission work fences this host; persistent shells remain untouched.");
                     }
                     Operation::Disable => {
                         ui.label("Revoke first, drain host leases and stop remote exposure. Persistent shells are NOT stopped or restarted.");
@@ -216,7 +232,7 @@ pub(crate) fn show(
         if !share_targets.is_empty() || view.share_review.is_some() || view.sharing.is_some() {
         ui.collapsing("Session sharing / Recovery", |ui| {
         ui.label("Share one existing local persistent shell");
-        ui.small("Private by default. No share-all, profile metadata grant, persistent conversion or restart.");
+        settings_note(ui, "Private by default. No share-all, profile metadata grant, persistent conversion or restart.");
         for target in share_targets {
             if action_button(ui, ActionButtonRole::Secondary, &format!(
                     "Review {} · generation {}…",
@@ -229,7 +245,7 @@ pub(crate) fn show(
             }
         }
         if share_targets.is_empty() {
-            ui.small("No eligible attached local native persistent shells. Nonpersistent shells are not converted.");
+            settings_note(ui, "No eligible attached local native persistent shells. Nonpersistent shells are not converted.");
         }
         if let Some(next) = sharing_review(ui, view) {
             action = Some(next);
@@ -298,10 +314,10 @@ fn sharing_review(ui: &mut egui::Ui, view: &View) -> Option<Action> {
                     let retained = view.sharing.as_ref().filter(|sharing| &sharing.target == target);
                     if !retained.is_some_and(|sharing| matches!(sharing.phase, SharePhase::Active | SharePhase::Revoked)) {
                         let label = if retained.is_some_and(|sharing| matches!(sharing.phase, SharePhase::Prepared | SharePhase::Uncertain)) {
-                            ui.small("Retry only the original Bind. This does not revoke any prior Switch or create a replacement operation.");
+                            settings_note(ui, "Retry only the original Bind. This does not revoke any prior Switch or create a replacement operation.");
                             "Resume original Bind · no new Switch"
                         } else {
-                            ui.small("Bind prepares this exact generation privately. A separate explicit Switch authorizes exposure. The local shell and frontend stay untouched.");
+                            settings_note(ui, "Bind prepares this exact generation privately. A separate explicit Switch authorizes exposure. The local shell and frontend stay untouched.");
                             "Confirm Bind privately · no exposure"
                         };
                         if action_button(ui, ActionButtonRole::Accent, label).clicked() {
@@ -319,7 +335,7 @@ fn sharing_review(ui: &mut egui::Ui, view: &View) -> Option<Action> {
                     action = Some(Action::RecoverShare(original));
                 }
                 if !view.share_operation_input.is_empty() {
-                    ui.small("These recovery controls use this reviewed session and the typed ORIGINAL operation, not the status group below.");
+                    settings_note(ui, "These recovery controls use this reviewed session and the typed ORIGINAL operation, not the status group below.");
                     for (step, label) in [
                         (ShareStep::Resume, "Resume original protected status · no switch"),
                         (ShareStep::Release, "Release reviewed original operation · keep shell"),
@@ -349,13 +365,13 @@ fn sharing_review(ui: &mut egui::Ui, view: &View) -> Option<Action> {
                     sharing.phase
                 ));
                 if sharing.phase == SharePhase::Prepared {
-                    ui.small("PRIVATE: explicitly review the same session and current owner context before Switch.");
+                    settings_note(ui, "PRIVATE: explicitly review the same session and current owner context before Switch.");
                     if action_button(ui, ActionButtonRole::Accent, "Confirm Switch · expose this exact generation").clicked() {
                         action = Some(Action::SwitchShare);
                     }
                 }
                 if sharing.phase == SharePhase::Uncertain {
-                    ui.small("Outcome uncertain. Keep this ORIGINAL operation. Do not retry with a replacement session or operation.");
+                    settings_note(ui, "Outcome uncertain. Keep this ORIGINAL operation. Do not retry with a replacement session or operation.");
                 }
                 ui.collapsing("Sharing operation / Recovery", |ui| {
                 ui.monospace(format!(
@@ -400,7 +416,7 @@ fn cleanup(ui: &mut egui::Ui, view: &View) {
             context.installation, context.epoch, context.account_id, context.cluster,
             context.tunnel_id, context.ownership_label, context.incarnation
         ));
-        ui.small("Keep CleanupPending while present or uncertain. Only an authenticated verified-absence retry commits Removed. Nothing opens or deletes automatically.");
+        settings_note(ui, "Keep CleanupPending while present or uncertain. Only an authenticated verified-absence retry commits Removed. Nothing opens or deletes automatically.");
     }
 }
 

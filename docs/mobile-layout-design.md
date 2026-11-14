@@ -209,7 +209,7 @@ Terminal is active. Files and Markdown open from More → Files and from file ro
 
 ### Optional terminal-user keyboards
 
-Settings → Default keyboard selects **Built-in keyboard** (the unchanged
+Settings → Keyboard selects **Built-in keyboard** (the unchanged
 initial default), **Terminal: Hold symbols**, or **Terminal: Shell row**.
 The setting is saved for app startup. The globe **Switch keyboard** key, in
 both the terminal keyboards' utility strip and the built-in keyboard's

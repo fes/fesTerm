@@ -1103,17 +1103,19 @@ impl FesTermApp {
         let mut confirm = false;
         crate::software_background::show_modal(
             context,
-            egui::Modal::new(egui::Id::new("reset_interface_settings_confirmation"))
+            egui::Modal::new(egui::Id::new("reset_all_settings_confirmation"))
                 .backdrop_color(egui::Color32::from_black_alpha(128)),
             |ui| {
-                prepare_confirmation(ui, context, 360.0);
+                prepare_confirmation(ui, context, 420.0);
                 confirmation_body(ui, |ui| {
-                    ui.heading("Reset interface settings?");
+                    ui.heading("Reset all settings?");
                     ui.add_space(6.0);
-                    ui.label(
-                    "Interface layout, workspace behavior, and terminal typography will return \
-                     to their defaults.",
-                );
+                    ui.label("These return to their defaults:");
+                    for category in crate::screens::RESET_ALL_SETTINGS_CATEGORIES {
+                        ui.label(format!("• {category}"));
+                    }
+                    ui.add_space(6.0);
+                    ui.label(crate::screens::RESET_ALL_SETTINGS_NOT_AFFECTED);
                 });
                 ui.add_space(12.0);
                 ui.horizontal_wrapped(|ui| {
@@ -1137,8 +1139,7 @@ impl FesTermApp {
             self.cancel_settings_reset_confirmation();
         } else if confirm {
             self.overlays.pending_settings_reset = None;
-            self.state
-                .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.state.dispatch(AppCommand::ResetAllSettings, context);
             let before = self.reset_automation_preferences(context);
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());

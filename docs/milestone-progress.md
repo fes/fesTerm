@@ -15709,3 +15709,38 @@ and contention lasting past that bound, is still reported as
 remaining gap is that an Ensure replay cannot reconcile its own uncommitted
 `Launching` record. Until a Lookup or List reconciles the record, the replay
 returns `Stale`. That gap is a separate follow-up and is not part of this fix.
+
+## Restructuring Settings around what people look for
+
+Settings had grown one card at a time, in the order features shipped. An
+independent review found typography split from scrolling, an "Interface"
+card mixing startup, chrome and New Session rows, the tallest card (the
+keyboard editor) in the middle of the page, and Dev Tunnel accounts and
+options in separate cards. Three on-by-default preferences said "Off by
+default", and `docs/gui-design.md` contradicted itself about workspace
+restore. **Reset** restored far more than its "interface settings" label
+claimed. Segmented controls read and tabbed right to left, card gaps varied
+between 3 and 15 px, unselected segments had no boundary, and Remote access
+used its own checkbox styling. Drill-in rows used a literal `>`, which mobile
+then doubled with its own chevron.
+
+The page is now ordered by how often each group is used: Terminal, Startup &
+sessions, Window & tabs, Files & documents, Dev Tunnels (accounts and options
+together), Recording, Automation (Beta), Updates & privacy, then **Reset all
+settings…**. Keyboard shortcuts, Remote access and the live Automation
+activity are drill-in rows, drawn with a new semantic `OpenSubpage` icon. Each
+opens a sub-page in the same Settings tab. Back is focused on entry. Back or
+Escape returns to the main page with focus on the row that opened the
+sub-page. Escape still goes first to a popup, a focused field or an
+in-progress shortcut recording. Because egui clears focus on Escape before any
+widget runs, the page remembers whether a text field had focus at the end of
+the previous frame.
+
+`settings_card` now owns the single 12 px gap. Dependent rows are disabled
+while their parent preference is off. Remote access reuses the shared toggle
+rows and note text. The reset command became `ResetAllSettings`; its dialog
+lists what it restores and what it does not touch. Mobile shares the
+vocabulary: Terminal, Keyboard (default keyboard, split and haptics merged),
+Security (App lock and Trusted hosts), Dev Tunnels, Recording and About, which
+now holds the offline demo. No defaults changed. Each of these behaviours is
+covered by a focused test.
