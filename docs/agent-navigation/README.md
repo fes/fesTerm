@@ -11,14 +11,14 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and the daemon-managed recovery pipeline for named persistent terminals. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML config, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns the app-wide command bus, tab focus lifecycle, and keyboard-dispatch policy for terminal actions and singleton surfaces. |
+| [Application commands, tabs, and input routing](app-commands.md) | This domain owns the app-wide command bus, tab focus lifecycle, and keyboard-dispatch policy for terminal actions and singleton surfaces. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing. |
 | [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, real-window native validation, macOS app-bridge semantics, and platform wake/privacy hooks for packaged app behavior. |
-| [Mobile hosts (iOS and Android)](mobile.md) | Mobile hosts own the shared Rust app runtime, Android JNI service bridge, and offline-first SSH/files/document flows for iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | Desktop shell root for fesTerm's egui app, covering startup, multi-window policy, pane/session routing, and durable lifecycle diagnostics. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust app runtime, Android JNI bridge, and offline-first terminal/document flows for iOS and Android. |
+| [Desktop application shell and screens](app-shell.md) | Desktop application shell and screens own fesTerm's egui window lifecycle, pane/session routing, and user-facing launch flows. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

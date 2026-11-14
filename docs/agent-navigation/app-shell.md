@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "893f77a387854bf036d5b387768c6d401042535f2ee5759e0ec6aaf4c724cc6f"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "365e1eb78f75e35c6db4d05168111f388977b1b2e2e204f2a0600cf923c04b6f"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop shell root for fesTerm's egui app, covering startup, multi-window policy, pane/session routing, and durable lifecycle diagnostics.
+Desktop application shell and screens own fesTerm's egui window lifecycle, pane/session routing, and user-facing launch flows.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -12,8 +12,8 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 
 Use for: When the app boots, parses launch args, and creates the primary window.
 
-- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap, activation parsing, and eframe startup
-- [`FesTermApplication`](../../app/festerm/src/application.rs) — cross-window app root and restored-window policy
+- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and eframe startup
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — multi-window app root and restored-window policy
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — proves app-owned session pumps and window lifecycle behavior
@@ -37,14 +37,14 @@ Evidence:
 
 Caveats:
 - Pane menus and overlays consume input before terminal adapters see raw events.
-- Terminal fonts are installed once per context and request repaint after setup.
 - Session pumping and geometry writes are side effects of logic, not rendering.
+- Terminal fonts are installed once per context and request repaint after setup.
 
 ## Launch screens
 
 Use for: When a user opens Launcher, profile editor, or settings and issues a connection action.
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — saved profiles, forms, and connect/save dispatch for profile flows
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — saved profile forms and connect/save dispatch for profile flows
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — global settings, keyboard bindings, and automation preferences
 
 Evidence:
