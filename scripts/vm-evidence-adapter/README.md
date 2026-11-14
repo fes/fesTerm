@@ -50,10 +50,15 @@ creation-policy phases exercise shared profile start/resume, private profile exc
 generic create permission, actual encrypted terminal roundtrips, exact detach and
 durable-generation survival. It never automates password login, enrolls an owner,
 accepts secrets from a job, deletes cloud resources or ends unrelated shells.
-Windows execution is explicitly **blocked** until an owned Job capability
-is implemented; a Windows host can be tested from a Unix client. Missing
-operator metadata, account credentials or owner approval is **blocked**,
-never pass. GUI acceptance is always separately marked **unrun**. See
+Windows execution uses a kill-on-close Job with restricted stdio inheritance:
+create suspended, assign and verify Job membership, then resume. Parent exit
+and timeout both terminate the exact Job and require it to become empty.
+Missing Job capability, refused assignment or unconfirmed cleanup is **blocked**.
+The native Windows runner regression at `d0cf0a37` passed 18 tests with one
+Unix-permission-mode skip under official CPython 3.13.17 ARM64 embedded; it does
+not qualify authenticated service or GUI behavior. Missing operator metadata,
+account credentials or owner approval remains **blocked**, never pass.
+GUI acceptance is always separately marked **unrun**. See
 [the operator procedure](../../docs/dev-tunnel-workflow-lab.md) before adding this
 mode to a host's private allowlist and updating its adapter pin.
 

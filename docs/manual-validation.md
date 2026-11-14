@@ -4975,6 +4975,17 @@ consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
 
+**HOSTSETUP-01 public placement:** The 2026-11-14 Linux VM run reached native
+GitHub authorization, then failed before submitting cloud creation. A read-only
+probe confirmed the stored controlled identity and GitHub account, authenticated
+placement denial (401/403), and a valid anonymous response from the same public
+recommendations endpoint; the protected journal remained unchanged. The HOST
+client now mirrors Microsoft's SDK with one anonymous retry of this placement
+GET only. Regression fixtures cover both denial statuses, cancellation, response
+failures and continued authenticated refusal for resource operations. Repeating
+native setup and the cross-platform campaign on the corrected candidate remains
+required; this diagnosis does not qualify hosting or GUI acceptance.
+
 **HOSTSETUP-01 desktop-local Settings increment:** Automated headless rendering
 and application-command fixtures cover inert drafts/default-private shells,
 explicit review, edited-consent invalidation, bounded cross-window Busy,

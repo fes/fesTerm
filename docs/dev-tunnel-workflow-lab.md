@@ -10,15 +10,30 @@ or claim native GUI or iOS acceptance.
 ## Scope and required fixtures
 
 Use dedicated ordinary-user host and client VMs. The service-client runner
-currently executes on Linux/macOS clients. Windows is explicitly **blocked**
-until the runner has a correct owned Job capability; taskkill after parent exit
-cannot bound orphan descendants. A Windows host can still be exercised from a
-qualified Unix client. Keep the host's signed service
-running while the client campaign executes. The VM lab must have a pinned,
+bounds Linux/macOS children with an owned process group. Windows uses an owned
+kill-on-close Job: the child starts suspended with restricted inherited stdio
+handles, is assigned and verified before resume, and the Job is terminated and
+confirmed empty after either parent exit or timeout. Unavailable Job APIs,
+refused assignment or unconfirmed cleanup are **blocked**, never pass.
+Keep the host's signed service running while the client campaign executes. The VM lab must have a pinned,
 reviewed fesTerm adapter that includes `dev-tunnel-workflow`, and the private host
 configuration must explicitly allow that mode. The job payload remains `{}`.
 The shared lab's usual exact-source staging, exclusive lock and watchdog apply.
 Do not change unrelated VM security, permissions, snapshots or services.
+
+The native runner regression suite is separate from the authenticated service
+campaign:
+
+```sh
+python -m unittest discover -s scripts/tests -p test_dev_tunnel_workflow.py -v
+```
+
+At source `d0cf0a37ae0f4e1f23d15a52f590e5ea92b9b7c2`, the 2026-11-14 Windows
+run using official CPython 3.13.17 ARM64 embedded passed 18 tests with one
+Unix-permission-mode test skipped. The native Win32 layout/handle test and real
+parent-exit, descendant cleanup, timeout and bounded-output cases executed.
+This is process-ownership evidence only: authenticated service, native GUI and
+iOS acceptance remain separate and unrun by this regression command.
 
 On the host, use the normal fesTerm Settings/profile UI to:
 

@@ -257,12 +257,22 @@ async fn recommend(
     identity: &Identity,
     cancel: &CancellationToken,
 ) -> Result<String, Error> {
-    let reply = send(
+    let reply = match send(
         http,
         request(identity, Method::GET, None, "/clusters/recommendations")?,
         cancel,
     )
-    .await?;
+    .await
+    {
+        // Match the Microsoft SDK's placement-only retry: provider authorization
+        // can be rejected before this public endpoint reaches its controller.
+        Err(Error::Denied) => {
+            let mut anonymous = request(identity, Method::GET, None, "/clusters/recommendations")?;
+            anonymous.headers_mut().remove(header::AUTHORIZATION);
+            send(http, anonymous, cancel).await?
+        }
+        result => result?,
+    };
     if reply.status != 200 {
         return Err(Error::Response);
     }
@@ -546,6 +556,145 @@ mod tests {
             }]},
             "ports": [{"portNumber": HOST_PORT, "protocol": "tcp", "labels": [HOST_LABEL]}],
         })
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_retries_denied_authorization_once_anonymously() {
+        for denied in [401, 403] {
+            let http = Fake::new(vec![
+                (denied, serde_json::json!({})),
+                (
+                    200,
+                    serde_json::json!({"recommendedClusterId":"usw2","isFallback":false,"recommendations":[]}),
+                ),
+            ]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new())
+                    .await
+                    .unwrap(),
+                "usw2"
+            );
+            let requests = http.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].method(), Method::GET);
+            assert_eq!(requests[1].method(), Method::GET);
+            assert_eq!(requests[0].url(), requests[1].url());
+            assert_eq!(requests[1].url().as_str(), "https://global.rel.tunnels.api.visualstudio.com/clusters/recommendations?api-version=2023-09-27-preview");
+            assert!(requests[0].headers()[header::AUTHORIZATION].is_sensitive());
+            assert!(!requests[1].headers().contains_key(header::AUTHORIZATION));
+            let mut original_headers = requests[0].headers().clone();
+            original_headers.remove(header::AUTHORIZATION);
+            assert_eq!(&original_headers, requests[1].headers());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_does_not_retry_other_failures_or_repeat_anonymous_denial() {
+        for (status, expected) in [
+            (404, Error::Response),
+            (429, Error::RateLimited),
+            (500, Error::Network),
+            (409, Error::IdentityChanged),
+            (200, Error::Response),
+        ] {
+            let http = Fake::new(vec![(status, serde_json::json!({}))]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new()).await,
+                Err(expected)
+            );
+            assert_eq!(http.requests.lock().unwrap().len(), 1);
+        }
+        for status in [401, 403] {
+            let http = Fake::new(vec![
+                (401, serde_json::json!({})),
+                (status, serde_json::json!({})),
+            ]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new()).await,
+                Err(Error::Denied)
+            );
+            assert_eq!(http.requests.lock().unwrap().len(), 2);
+        }
+        let http = Fake::new(vec![]);
+        assert_eq!(
+            recommend(
+                &http,
+                &identity_with_expiry(Some(1)),
+                &CancellationToken::new()
+            )
+            .await,
+            Err(Error::Expired)
+        );
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_cancellation_prevents_anonymous_retry() {
+        struct CancelOnReply {
+            cancel: CancellationToken,
+            requests: Mutex<Vec<Request>>,
+        }
+        impl Transport for CancelOnReply {
+            fn send(&self, request: Request) -> ReplyFuture<'_> {
+                Box::pin(async move {
+                    self.requests.lock().unwrap().push(request);
+                    self.cancel.cancel();
+                    Ok(Reply {
+                        status: 401,
+                        bytes: Zeroizing::new(Vec::new()),
+                    })
+                })
+            }
+        }
+        let cancel = CancellationToken::new();
+        let http = CancelOnReply {
+            cancel: cancel.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            recommend(&http, &identity(), &cancel).await,
+            Err(Error::Cancelled)
+        );
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        let http = Fake::new(vec![]);
+        assert_eq!(
+            recommend(&http, &identity(), &cancel).await,
+            Err(Error::Cancelled)
+        );
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_resource_operations_never_retry_denied_authorization_anonymously() {
+        let identity = identity();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &resource()).unwrap();
+        let cancel = CancellationToken::new();
+        for status in [401, 403] {
+            for operation in 0..3 {
+                let http = Fake::new(vec![(status, serde_json::json!({}))]);
+                match operation {
+                    0 => {
+                        let prepared =
+                            prepare_create(&identity, &resource(), "Fixture host").unwrap();
+                        assert_eq!(
+                            submit(&http, prepared, &cancel).await,
+                            Err(CreateError::Rejected(Error::Denied))
+                        );
+                    }
+                    1 => assert_eq!(
+                        observe(&http, &identity, &resource(), &cancel).await,
+                        Err(Error::Denied)
+                    ),
+                    _ => assert_eq!(
+                        host_token(&http, &identity, &exact, &cancel).await,
+                        Err(Error::Denied)
+                    ),
+                }
+                let requests = http.requests.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert!(requests[0].headers()[header::AUTHORIZATION].is_sensitive());
+            }
+        }
     }
 
     #[tokio::test]
