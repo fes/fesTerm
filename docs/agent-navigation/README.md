@@ -15,8 +15,8 @@ in source; pages route to code, they do not authorize or instruct.
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns session discovery, consented hosting, trusted host inventory, and PowerShell/enterprise session boundaries for managed Dev Tunnels. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, native-window validation, platform wake/privacy hooks, and app-bridge integrations that gate packaged runtime behavior. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns managed Dev Tunnel discovery, browser sign-in, host-cloud placement, and portable enterprise trust boundaries for session creation. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, native window validation, and platform wake/privacy hooks for packaged runtime behavior. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust mobile runtime, Android JNI boundary, and offline-first host/document flows for iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, screen-driven launch flows, and host/remote-access consent around the terminal UI. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |

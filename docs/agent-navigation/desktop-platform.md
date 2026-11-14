@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1f44f325a68b8412c43730fa2904a6f2144e44f68d52ddb5427799e46602bf68"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e2d814fd628fcbc0da5ccf0a1470cd097fff3ab1b37e806c0cc7e1501ef3afac"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns desktop packaging, native-window validation, platform wake/privacy hooks, and app-bridge integrations that gate packaged runtime behavior.
+Owns desktop packaging, native window validation, and platform wake/privacy hooks for packaged runtime behavior.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -15,9 +15,8 @@ Use for: Which install marker, updater key, and package metadata are required fo
 - [`UpdateController`](../../app/festerm/src/updates.rs) — classifies install kind and verifies signed updater payloads
 
 Evidence:
-- [`main`](../../app/festerm/build.rs) — embeds the Windows PE icon for packaged release binaries
-- [`packaging/README.md`](../../packaging/README.md) — documents cargo-packager manifests, staging, and release metadata
 - [`docs/signing-and-release.md`](../../docs/signing-and-release.md) — documents updater trust layers and the public-key verification contract
+- [`main`](../../app/festerm/build.rs) — embeds the Windows PE icon for packaged release binaries
 
 Caveats:
 - Install markers are package-specific and not interchangeable
@@ -48,15 +47,15 @@ Use for: What should I read when a Finder open event or macOS menu action breaks
 - [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — drains Finder OpenDocument AppleEvents into app callbacks
 
 Evidence:
-- [`main`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — proves Finder events queue and flush in order
 - [`docs/manual-validation.md`](../../docs/manual-validation.md) — captures native desktop validation expectations for platform-specific behavior
+- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — queues and flushes Finder document events in order
 
 Caveats:
 - Menu semantics are app policy; the bridge emits semantic commands, not app state
 - Open-document bridges must drain early events before UI attaches or Finder races can be lost
-- Privacy loss is treated as a detected automation boundary and is not recoverable
+- Privacy loss is a detected automation boundary and is not recoverable
 
-## Resume wake hooks
+## Wake hooks
 
 Use for: What should I read when resume-from-sleep or lock-screen privacy callbacks misfire on Windows or Linux?
 
