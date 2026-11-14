@@ -826,8 +826,9 @@ mod tests {
             }
         }
 
-        fn emit_shield(&self, active: bool) {
-            self.active.store(active, Ordering::Release);
+        fn emit_brief_shield_transition(&self) {
+            self.active.store(true, Ordering::Release);
+            self.active.store(false, Ordering::Release);
             self.runtime.block_on(async {
                 let iface = self
                     .user_server
@@ -835,7 +836,7 @@ mod tests {
                     .interface::<_, FakeShield>(SCREENSAVER_PATH)
                     .await
                     .unwrap();
-                FakeShield::active_changed(iface.signal_emitter(), active)
+                FakeShield::active_changed(iface.signal_emitter(), true)
                     .await
                     .unwrap();
             });
@@ -974,8 +975,7 @@ mod tests {
     fn a_brief_shield_transition_revokes_consent_once() {
         let fixture = Fixture::start(false, false, true);
         assert!(fixture.monitor.is_ok());
-        fixture.emit_shield(true);
-        fixture.emit_shield(false);
+        fixture.emit_brief_shield_transition();
         fixture.wait_for_loss();
     }
 

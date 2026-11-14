@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ef440f85d43ba52db3cb01ec8c378c7af2363726b17ddbd5c3a92464fda03ca8"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ced48db2247730d6bca5723748e6b20c60be249c5c2d565beea74446e9320ac1"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns desktop packaging, real-window smoke validation, native macOS app bridges, and OS wake callbacks for packaged app behavior.
+This domain owns desktop packaging, real-window native validation, macOS app-bridge semantics, and platform wake/privacy hooks for packaged app behavior.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,11 +12,11 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Which install marker, updater key, and package metadata are required for a release build?
 
-- [`main`](../../app/festerm/build.rs) — embeds the Windows PE icon for packaged release binaries
-- [`UpdateController`](../../app/festerm/src/updates.rs) — classifies install kind and verifies signed update payloads
+- [`main`](../../app/festerm/build.rs) — embeds the Windows PE icon in packaged release binaries
+- [`UpdateController`](../../app/festerm/src/updates.rs) — classifies installation kind and verifies signed update payloads
 
 Evidence:
-- [`packaging/README.md`](../../packaging/README.md) — documents cargo-packager manifests, staging, and release-signing metadata
+- [`packaging/README.md`](../../packaging/README.md) — documents cargo-packager manifests, staging, and signing metadata
 - [`docs/signing-and-release.md`](../../docs/signing-and-release.md) — documents updater trust layers and the public-key verification contract
 
 Caveats:
@@ -48,7 +48,7 @@ Use for: What should I read when a Finder open event or macOS menu action breaks
 - [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — drains Finder document-open AppleEvents into app callbacks and queues
 
 Evidence:
-- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — proves Finder OpenDocument events are queued and ordered correctly
+- [`crates/festerm-macos-window/tests/open_document_appleevent.rs`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — proves Finder OpenDocument events are queued and ordered correctly
 - [`docs/manual-validation.md`](../../docs/manual-validation.md) — captures native desktop validation expectations for platform-specific behavior
 
 Caveats:
@@ -56,7 +56,7 @@ Caveats:
 - Open-document bridges must drain early events before UI attaches or Finder races can be lost.
 - Privacy loss is treated as a detected automation boundary and is not recoverable.
 
-## Resume callbacks
+## Resume wake hooks
 
 Use for: What should I read when resume-from-sleep or lock-screen privacy callbacks misfire on Windows or Linux?
 
@@ -71,3 +71,19 @@ Caveats:
 - These monitors treat only the resume edge as wake and ignore suspend.
 - Linux support depends on systemd-logind; without it there is no wake signal.
 - Signal delivery is not proof of final recipient state or session fencing.
+
+## GNOME lock privacy
+
+Use for: What should I read when GNOME screen-lock or session privacy checks fail closed on Linux?
+
+- [`GnomePrivacyMonitor`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — verifies GNOME Shell and screen-shield state before granting recording consent
+- [`RecordingPrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — binds GNOME monitor and logind session privacy into a single fail-closed gate
+
+Evidence:
+- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — requires a real GNOME shell and shield transition to revoke consent
+- [`only_explicit_gnome_desktops_are_supported`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — accepts GNOME-only environments and rejects unsupported desktops
+
+Caveats:
+- The GNOME monitor requires a trusted gnome-shell owner and matching logind user session.
+- Privacy loss is a hard revocation event, not a recoverable session state.
+- Wayland runtime, session ownership, and desktop detection must match or install fails closed.

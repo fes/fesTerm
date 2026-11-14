@@ -25,13 +25,65 @@ pub fn executable() -> &'static Path {
             String::from_utf8_lossy(&output.stderr)
         );
         let path = artifact_path(&output.stdout);
-        assert!(
-            path.is_file(),
-            "Cargo-reported PTY child is missing: {path:?}"
-        );
-        path
+        stable_copy(&path)
     });
     CHILD.as_path()
+}
+
+/// Copies the child out of Cargo's output directory.
+///
+/// Cargo replaces the uplifted executable on every build, even a fresh one.
+/// When test processes run in parallel (for example under Nextest), another
+/// process's build can briefly remove the path this process is about to
+/// spawn. A content-addressed copy is never replaced once published.
+fn stable_copy(source: &Path) -> PathBuf {
+    let mut last_error = None;
+    for _ in 0..200 {
+        match try_stable_copy(source) {
+            Ok(path) => return path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_error = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(error) => panic!("copy the PTY child {source:?}: {error}"),
+        }
+    }
+    panic!("Cargo-reported PTY child is missing: {source:?}: {last_error:?}")
+}
+
+fn try_stable_copy(source: &Path) -> std::io::Result<PathBuf> {
+    let bytes = std::fs::read(source)?;
+    let file_name = source.file_name().expect("the PTY child path names a file");
+    let directory = source
+        .parent()
+        .expect("the PTY child has a parent directory")
+        .join("festerm-pty-test-child-stable")
+        .join(format!("{:016x}", fnv1a(&bytes)));
+    let destination = directory.join(file_name);
+    if destination.is_file() {
+        return Ok(destination);
+    }
+    std::fs::create_dir_all(&directory)?;
+    let staging = directory.join(format!(
+        ".{}.{}.tmp",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::write(&staging, &bytes)?;
+    std::fs::set_permissions(&staging, std::fs::metadata(source)?.permissions())?;
+    if let Err(error) = std::fs::rename(&staging, &destination) {
+        let _ = std::fs::remove_file(&staging);
+        if !destination.is_file() {
+            return Err(error);
+        }
+    }
+    Ok(destination)
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn artifact_path(messages: &[u8]) -> PathBuf {
@@ -83,6 +135,27 @@ mod tests {
             );
             assert_eq!(artifact_path(messages.as_bytes()), PathBuf::from(path));
         }
+    }
+
+    #[test]
+    fn stable_copy_survives_cargo_replacing_the_uplifted_child() {
+        let root =
+            std::env::temp_dir().join(format!("festerm-pty-child-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("festerm-pty-test-child");
+        std::fs::write(&source, b"child v1").unwrap();
+
+        let first = stable_copy(&source);
+        assert_eq!(stable_copy(&source), first);
+        std::fs::remove_file(&source).unwrap();
+        assert_eq!(std::fs::read(&first).unwrap(), b"child v1");
+
+        std::fs::write(&source, b"child v2").unwrap();
+        let second = stable_copy(&source);
+        assert_ne!(second, first);
+        assert_eq!(std::fs::read(&second).unwrap(), b"child v2");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

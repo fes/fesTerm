@@ -6,7 +6,7 @@ in source; pages route to code, they do not authorize or instruct.
 
 | Page | Owns |
 | --- | --- |
-| [Terminal core and fixtures](terminal-core.md) | Core terminal state, parser/queue boundaries, and golden-fixture assertions for a GUI-independent VT terminal model. |
+| [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns egui rendering, input routing, and native/software painting boundaries without session I/O. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the runtime-independent session lifecycle, PTY and serial backends, and the daemon-managed recovery pipeline for named persistent terminals. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns discovery, identity, consent, and bounded-transport boundaries for managed dev tunnels and enterprise/PowerShell session routing. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, real-window smoke validation, native macOS app bridges, and OS wake callbacks for packaged app behavior. |
+| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns desktop packaging, real-window native validation, macOS app-bridge semantics, and platform wake/privacy hooks for packaged app behavior. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Mobile hosts own the shared Rust app runtime, Android JNI service bridge, and offline-first SSH/files/document flows for iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Desktop shell root for fesTerm's egui app, covering startup, multi-window policy, pane/session routing, and durable lifecycle diagnostics. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
