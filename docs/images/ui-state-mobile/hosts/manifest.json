@@ -68,6 +68,38 @@
       "viewport_class": "phone"
     },
     {
+      "image": "phone-hosts-unknown.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "dd9840721e3770117ea0420f36197f38e985cb3a4389df76fec70dc48d1ad828",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-unknown",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-approval-unavailable.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "9ee54f04f9e709a92e14d0effcbf7261a028f520938c3476edec8fe03247dadc",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-approval-unavailable",
+      "viewport_class": "phone"
+    },
+    {
       "image": "phone-hosts-new.png",
       "logical_size": [
         390.0,
@@ -97,6 +129,166 @@
       "sha256": "bec6c65524bcb97370c2f267b67f9eb3843df78b7efff65223e3396fdc37e560",
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-profile",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-owner.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "861febb4ff57612e84131ea156061ce13e0fc30d61ce222a75102ad35ec4bd0b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-owner",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-receipt.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "a2b7d82c02c3858060bb243b8962c7922bb524f06496dea4ed9c5d4d3bf5457b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-receipt",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-import.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "0c492a7ac036e4ab151927ee38b748245d4098d5a11ecac39a48a063eaa4a597",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-import",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-recovery.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "7b4dc78ce3ce8baed3998e94f752b6482f3dd68e2d0d36b317e5a7970d098ea1",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-recovery",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-originals.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "5f9bdf2c284bf6479dce818d07e29d9c6e284a520bebf180a4f8e188339630fc",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-originals",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-forget-create.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "50770d4b72db85443cada155acd62b3334bc21693b98a9275c6fe527e00bc916",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-forget-create",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-forget-end.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "ce8e75d9960caa6bc24ac64a9e54760115ef5c14f5ac891e3d2204ff947f928f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-forget-end",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-end.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "5344b8077c19f4d2c493ff49204b062909b173117c7dea17a08f1ada7b99a48a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-end",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-original-review.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "c21b615360cd211b4557b350158874462e0b8fa93b514664d912d13bce51427f",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-original-review",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-working.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "1629d39d23bf222158e4548038de015e7e591fadaec1f074adda5a1ee1da490e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-working",
       "viewport_class": "phone"
     },
     {
@@ -164,6 +356,38 @@
       "viewport_class": "tablet"
     },
     {
+      "image": "tablet-hosts-unknown.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "53714b9fe1ef78134834b55b5eda27862b4906b88aba4fee989b7a739f0023f5",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-unknown",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-approval-unavailable.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "ed4b6c06980c48d778177b02b286132349b3b3d6fc25a03aeaa7d3c1f1dc92b2",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-approval-unavailable",
+      "viewport_class": "tablet"
+    },
+    {
       "image": "tablet-hosts-new.png",
       "logical_size": [
         834.0,
@@ -194,22 +418,182 @@
       "simulated_keyboard_occlusion_fraction": 0.0,
       "state": "hosts-profile",
       "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-owner.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "7695077c4909957d3849b348970d7d14a0d66ccdebf505732ed28a72179dc853",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-owner",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-receipt.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "437df721012c54b61a56849beab66e7c10f764191bebb9af2cb7b8b521c65ca6",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-receipt",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-import.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "1943bd88379d3411edfb47c29be1303ed78ac9329d6668e0c4c77cfb2674b8c6",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-import",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-recovery.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "16e93ca2e171438544e81e0977dcff9ced0552cd4eaae82ded51d22cc5057b2b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-recovery",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-originals.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "0c9b72d857b6adab3d3a4b3571aa37b4cddb711189f6c130fff554c004531946",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-originals",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-forget-create.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "ffa4489e624688f8133aa5abb0a0aedf084b503360b384016139eb5b54844a01",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-forget-create",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-forget-end.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "05e6cb8d38727de715d96f95e3810e68e50a43ede1d96be800f7c48c1ccd573c",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-forget-end",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-end.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "89be9de02e531f2b6fc014b380bfa67a4144dc1dedb38a483aa44b3d73e70980",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-end",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-original-review.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "886f6b13ebe6660606c8da1a00d983dfd54f615b4da15f18e2edd09d59595ee0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-original-review",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-working.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "1bcf46566fb6eab11121d66641e51656f474e99ddb36827d0e54314126b0aa42",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-working",
+      "viewport_class": "tablet"
     }
   ],
   "native_ios": false,
   "native_validation": "not-run",
   "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
   "schema_version": 1,
-  "source_commit": "b5442194c601f02e8f7f624495173b8ea3737559",
+  "source_commit": "7a29259eca442775605ff99247cd3d4e3cca1886",
   "source_dirty": true,
-  "captured_at_utc": "2026-11-14T01:27:58.729821+00:00",
+  "captured_at_utc": "2026-11-14T18:44:38.729191+00:00",
   "native_android": false,
   "features": [
     "host-clients"
   ],
   "source_files_sha256": {
-    "Cargo.lock": "f40940d07b9a22d5e9bd3261c2ac03de4c2562eb863ab3d53b2f7f1807961b0c",
-    "Cargo.toml": "d22aa83f842c31dc4adc4333cd369e02a4c1eab1ff391a56d3904bd5646f469f",
+    "Cargo.lock": "1fade08a11f8c542c44641a447d8c5f1f1910a15285d3cef20d2577afe237079",
+    "Cargo.toml": "8d69d8e2ffc610b2274bf20daf9d93e11dd396cfb9568f49dba827842713068d",
     "app/festerm-mobile/Cargo.toml": "271d94bdbebb4702847be118c623f20d232bdb20cf97ff918ce2bcff4d86c6e2",
     "app/festerm-mobile/src/accessibility.rs": "5cacb87758a5f5b251e2e221e9458b1ec7434322d6731fe70eafc27965f61af7",
     "app/festerm-mobile/src/app_lock.rs": "dfc2ec02767a0b9e392486a01bf268c07a4202f276db987f08f9cd17525ebb8a",
@@ -222,9 +606,10 @@
     "app/festerm-mobile/src/files_shell.rs": "6c0fdcdd6c712cbc49c50f180355590b7352d43af41833f846327af8ef664a88",
     "app/festerm-mobile/src/files_ui.rs": "d08314b8cc82b8096bb64d3dcc45346eb8765730aa098d43146fd260d501f7de",
     "app/festerm-mobile/src/forms.rs": "813c6450115ef6a39b869c8e2fdc066e266b418f208e51357e037d35faf67922",
-    "app/festerm-mobile/src/host_clients.rs": "dd284fc8667155628df5f9186e66fa4c7426dff67d26ff2e027fcba70353a9b5",
-    "app/festerm-mobile/src/host_clients_tests.rs": "6dbb7527cd51466f96158570dae07f0a6f667fca82292d50c4388d93c2fc9621",
-    "app/festerm-mobile/src/host_clients_view.rs": "e881b837627ec1bfc5b50206b5a1a3fe899f8673355b3bf1bf97c598181ac1be",
+    "app/festerm-mobile/src/host_clients.rs": "62fe77e686bb21606704e94213ca921bdddc2c2796d9fe963d9e8441356ca952",
+    "app/festerm-mobile/src/host_clients_display.rs": "f53d2e61742664c1ab017fb08fcb6731b4a38dedbc56804dd1fb307cea279b2e",
+    "app/festerm-mobile/src/host_clients_tests.rs": "7b27c9e6320eaa49fa16e42026f4b51881ed8522afbe46634a5cbe26b04088e9",
+    "app/festerm-mobile/src/host_clients_view.rs": "0da1c0141a3a728d1a2d022c1ee9ab3a083945ab7bdbe8dfa3d8d665581483bb",
     "app/festerm-mobile/src/host_setup.rs": "b1a0deb65ba89db641d65e87da6c8d8d1aef9979684f106c4bebb586e7828bed",
     "app/festerm-mobile/src/key_press.rs": "561fe2c1704db48de8c3cb893000b73a5aa9591e30c3312c9eab8dc46a60db3e",
     "app/festerm-mobile/src/lib.rs": "aba7da9e9854752169760e0454bee9af0d424f8268b8b93735d49b3027531a5a",
@@ -253,7 +638,7 @@
     "app/festerm-mobile/src/tunnel_link.rs": "d2a57eafa7f466e1e80492e7336ec7f69fb2d54ee988d6de7450b0f10676cc39",
     "app/festerm-mobile/src/tunnel_shell.rs": "69473b149d42744b290bc82d932391cdcb25b23a4ba13c0409239b08093f1336",
     "app/festerm-mobile/src/tunnel_tests.rs": "502020ea1affd058320476c61fd3c0e657e89b359f38538316709692c37f44fb",
-    "app/festerm-mobile/src/ui_gallery.rs": "cd6d0813c9dc4963351cda6f116111bbe0e27209b9c5562f66c73683e62ca193",
+    "app/festerm-mobile/src/ui_gallery.rs": "f1232c11b93d06b0bed230bcdfa64fb5f2a624715a92b72bf8019afd46231d23",
     "app/festerm-mobile/src/widgets.rs": "b91287b349e2cdc6d1bec45acf77679b40fd49aa3b53fbb9e31836e8d5f20305",
     "app/festerm-mobile/src/workspaces.rs": "249337d9f65872d6d1834c10122b8a60631f9813293725d082770d37b9deee53",
     "assets/app-icon/README.md": "78cdd193619802aea1ebcfc4fc9ef27467f97c002096ba254f25f4bc7a962086",
@@ -543,7 +928,7 @@
     "crates/festerm-linux-power/Cargo.toml": "d0ef699ef6b07f85660dd48c6997e3cb75a22273df231f275932aa6dd5d5b5ca",
     "crates/festerm-linux-power/src/lib.rs": "441f96cc5a72d94c9c97080498dc45844d094c28e642eaea527b529e06892ea9",
     "crates/festerm-linux-power/src/privacy.rs": "e1c28eeb48e9dddbf558498d9e46b20acbc0b57f56b5f99b3c901643184a3ed7",
-    "crates/festerm-linux-power/src/privacy/gnome.rs": "f6ddd2d886e962938cf31cafc97ca9aa3fa8554bce5d46d4074e76f882cf22a1",
+    "crates/festerm-linux-power/src/privacy/gnome.rs": "7e4afbcaca264a04c500f62763a5f72923cfdaa25219e711e2eabf354a708770",
     "crates/festerm-macos-window/Cargo.toml": "6a5100d9328ed5d58665e88cc37578b59d319ba126430ed00b1158b1e2152325",
     "crates/festerm-macos-window/src/lib.rs": "e096a4f07640dbeed4100bbff2009a2962f36521facd7827480cfd598dfd99ca",
     "crates/festerm-macos-window/src/privacy.rs": "d88e51c474fb39be666793b0cf0d1e9640a8e13c0f9fd56cb825abae9c407906",
@@ -655,9 +1040,9 @@
     "crates/festerm-sessiond/src/private_storage.rs": "2afa8773cee712447b1097a4e5d3c30edfe6fe68237bf37cc7f92e6a8ee341e9",
     "crates/festerm-sessiond/src/remote.rs": "4c3fb06dce8a60b671579bc45dcd41d8f9238994d653b392595f6bc128bf0af0",
     "crates/festerm-sessiond/tests/detached_native.rs": "587535bef94ca2794e619a9baebdba3459e61cdad8f26207e203ab7d280b5635",
-    "crates/festerm-sessiond/tests/host_control.rs": "73f02cb0bca5d3f8dbfea77f047e801abf7f17c16104d97fac3da8d97fb55a2b",
+    "crates/festerm-sessiond/tests/host_control.rs": "907aa22f0f4cd5d1ac108551a67654479b5fe8607051412fe522acff85a6ee4c",
     "crates/festerm-sessiond/tests/mobile_tunnel_loopback.rs": "2011178aa5047f4647d677e334db46f77d0f36547d4da90e02a5c77975fe7525",
-    "crates/festerm-sessiond/tests/native_daemon.rs": "528bb7a532d0c998d3c02793010f512078ecff36edbcc3eb35b4190e34fd8178",
+    "crates/festerm-sessiond/tests/native_daemon.rs": "7304e5316cd3f51051862091c0ffb5a3fc916579d4d896819487dcb3a614ec15",
     "crates/festerm-sessiond/tests/remote_ssh.rs": "90eaa035f0578082f7d01930d576e4a3b428f8b1794e4635e5a762cd9663a628",
     "crates/festerm-sftp/Cargo.toml": "0e671b3ac260e1d7c98673fa50b04ef7d4d5761ae645183af19806835c659230",
     "crates/festerm-sftp/src/cancel.rs": "605bef586a3c0bbf3ea03d84488983095fbad9340f812e9a0782084a23f282f2",
@@ -691,7 +1076,7 @@
     "crates/festerm-test-support/src/captures.rs": "077b24717f3f248c64572a2c26a5c3becaa4caaca9d002aba0aa170252666369",
     "crates/festerm-test-support/src/lib.rs": "e2d3442a5ea26a9f7b2d6436624521b7a7382706ca5d08fd1df1c3f15fead97a",
     "crates/festerm-test-support/src/powershell.rs": "5de360735374cfc2b104ea05cfe768b994098d44aa4182f06d667e33f6e5e034",
-    "crates/festerm-test-support/src/pty_child.rs": "50ddc02b6990e7aa740f076ef8363d1e3e907e07aa6cbfc23d53d6a0660cde79",
+    "crates/festerm-test-support/src/pty_child.rs": "191e7a723d49640885599c9b019bfdf901bd7e3b85991cee47030c6d691e216a",
     "crates/festerm-test-support/src/replies.rs": "0a22ee34cbb65e2748f383a07233df00eb4ed74a4526a29a0db151f54cfbe4eb",
     "crates/festerm-test-support/src/tui_workload.rs": "32ace9d954a5af70aaef15565529369df3cc4e04e73cf32ba08ef997ffc3d661",
     "crates/festerm-test-support/tests/fixtures.rs": "7dd0a40f3436874d500b9ff1c243865c5b41e27e03dd4704a22e49d3be88fd64",
@@ -719,11 +1104,11 @@
     "crates/festerm-tunnel-bridge/src/host_control_tests.rs": "80d1e1cb19b74a72d4fa791bd9429a40387bacaaea23ed1efd334d52661474bb",
     "crates/festerm-tunnel-bridge/src/host_identity.rs": "fce877b0a2a31594224b6b6be0827211133c4520f6ba2371e30191ad94f65c73",
     "crates/festerm-tunnel-bridge/src/host_runtime.rs": "02dde416cd7d2bda8577602e5791d4c310d650d14853f9aceea0f946692fbe67",
-    "crates/festerm-tunnel-bridge/src/host_runtime/tests.rs": "2c7674c46f35e175dbaebc614f4da677621f469d94f5d196cfde9a66750e47cc",
+    "crates/festerm-tunnel-bridge/src/host_runtime/tests.rs": "b8e78151209e1f8c8fcf9897382dce6211596d9a76d4864120b3bf3c857f175e",
     "crates/festerm-tunnel-bridge/src/host_terminal.rs": "8f8280764492181fcb07d026597e82d2dd55f93355abd352c1fc7e58ffac9159",
     "crates/festerm-tunnel-bridge/src/host_terminal/client.rs": "72c0f94af92c52b8dd284cec69ee51c1caf8ab2765c093cf58a89bb713b30df7",
     "crates/festerm-tunnel-bridge/src/host_terminal/native.rs": "460f4b7ca037d327b49214a22f3d30396e1a0193c3891644a1419d734108d286",
-    "crates/festerm-tunnel-bridge/src/host_terminal_tests.rs": "d12ba4bcccad8555bf04eda3f826e20864bd2cca7ac45d1d212b20873c1eded2",
+    "crates/festerm-tunnel-bridge/src/host_terminal_tests.rs": "d592ecb12a05d742dc2e61885941a32fd2dd0b1cf6061eb62226ec0a7f4eaea0",
     "crates/festerm-tunnel-bridge/src/lib.rs": "cbd37b6660c745ae7eeafbdf615849a93a435decf6d8839ac07a152fd6341315",
     "crates/festerm-tunnel-bridge/src/main.rs": "e57ae9baa44d7af926fdb9f583fed04bc38397e780ae84dcdf391cb58328091a",
     "crates/festerm-tunnel-bridge/src/managed_setup.rs": "4385a9e67b22301b7cfcb857ae84c43139ccbd12b7105409ce5b867c4d402b07",
@@ -820,7 +1205,7 @@
     "crates/festerm-windows-security/tests/support/stdout_probe_control.rs": "61dd8a334c1987361f8c2e6968700323d59f8c8baf6e4dc75708c436594b029a",
     "crates/festerm-windows-security/tests/windows_stdout_probe.rs": "ca144b42f12bcd2f643787681b0a59182f21867efc6b8f5866f13f18bf1d7f9e",
     "crates/festerm-windows-security/tests/windows_stdout_probe_control.rs": "5539c667c7a72a9e439dc77649cdc3566039ed3f611b824097e497322ddf6104",
-    "scripts/capture-mobile-ui.py": "82aae0631938ea58e43e8d686a271ab6bab5671e9542b4f8ce80e8a8265e8cfa",
+    "scripts/capture-mobile-ui.py": "cccf92d3b15fa927e05a82535e9bc0cb1c5c56bf78eee00c78a278a38cc69098",
     "vendor/accesskit_android/Cargo.toml": "0ffe8004d9c8fd43dbfcf0e4773b268338b4384e3066bf817974d2665ee02115",
     "vendor/accesskit_android/src/action.rs": "8c75bce1af9da5814edf07db304e94fc0c7e6ad0de682851928fc7977e217942",
     "vendor/accesskit_android/src/adapter.rs": "0ef282b832afb3ca97e81337a0a00babdc72043c77675ee676b7a70b21447cfe",
@@ -1289,5 +1674,5 @@
     "vendor/winrm-rs/tests/proptest_wire_format.rs": "f09a12f08863af6244e0161a0ea5d2ac360cb9b1c42039c4c177fba2eafbf1ed",
     "vendor/winrm-rs/tests/security_regression.rs": "17b7725dc66e0944ce3a4eae624c83018be1ad4b87924339bdab24f800f11d6c"
   },
-  "source_fingerprint_sha256": "2b4512cf7d016404c971dfcf1a2d50515920a51f989f91893849620f8ae8c4cb"
+  "source_fingerprint_sha256": "c0e9176919289c3ce507275ce67d8ac7637a923c3683f1ccb2ff4d2cedb164d3"
 }

@@ -35,7 +35,18 @@ SURFACES = [
     ("signin signin-loading signin-error", "tunnel_link.rs, tunnel_shell.rs", "Dev Tunnel profile → Sign in with GitHub; code, preparing and error variants. Exit: Cancel, or explicit browser/code action (not invoked here).", "MOB-06"),
     ("host-setup host-setup-linux host-setup-windows host-script host-script-linux host-script-windows", "host_setup.rs", "Settings → Set up a host (also available from Dev Tunnel editor); choose macOS/Linux/Windows, View script. Exit: Back to command or Done. Never copies or runs the installer.", "MOB-06"),
     ("hosts-before-discovery hosts-found hosts-sessions hosts-unavailable", "host_clients.rs, host_clients_view.rs", "Profiles → Dev Tunnel hosts (host-clients feature) → Find hosts for the signed-in account → select a host; its sessions list opens beneath it. Unavailable shows a retained host with a timeout refusal. Exit: Back/close the Dev Tunnel window or choose another host. Fixture uses in-memory host/session metadata; no service or native vault is contacted.", "HOST-01, HOST-03"),
+    ("hosts-unknown", "host_clients_view.rs", "Selected host → refresh authorized sessions → some session states are unknown. Exit: close the host window or explicitly refresh; synthetic inventory does not imply absence or permission to create.", "HOST-02, HOST-03"),
+    ("hosts-approval-unavailable", "host_clients.rs, host_clients_view.rs", "Selected host → review protected owner approval → approval unavailable. Exit: close the host window or explicitly retry approval in a real session; the fixture contacts no vault or service.", "HOST-01"),
     ("hosts-new hosts-profile", "host_clients_view.rs", "Selected host → New session (name a new session) or Save as profile (profile name, session name, create if missing). Exit: Cancel returns to the selected host; nothing is created or connected by capture.", "HOST-02"),
+    ("hosts-owner", "host_clients_view.rs", "Selected host → First connection · advanced → review the independently obtained host fingerprint. Exit: close the host window or select another host; no trust decision is submitted.", "HOST-01"),
+    ("hosts-receipt", "host_clients_view.rs", "Selected host → Owner public key → review the test owner key and separate host-local approval instructions. Exit: close the host window; no real owner is approved.", "HOST-01"),
+    ("hosts-import", "host_clients_view.rs", "Selected host → Details & recovery → Import public profiles → review public metadata. Exit: collapse the section or close the host window; the synthetic text is not imported.", "HOST-01"),
+    ("hosts-recovery", "host_clients.rs, host_clients_view.rs", "Selected host → Details & recovery → review protected-original recovery prerequisites. Exit: close the host window or select another host; no protected originals are reopened.", "HOST-02, HOST-03"),
+    ("hosts-originals", "host_clients.rs, host_clients_display.rs", "Selected host → Details & recovery → review retained Create and End originals. Exit: close the host window or select an original; synthetic public display rows have no protected checkpoint or dispatch.", "HOST-02, HOST-03"),
+    ("hosts-forget-create hosts-forget-end", "host_clients.rs, host_clients_display.rs", "Selected host → Details & recovery → review local Create or End retry history → Forget. Exit: Cancel keeps the history; the default-No fixture displays only public data and cannot forget a checkpoint.", "HOST-02, HOST-03"),
+    ("hosts-end", "host_clients.rs, host_clients_display.rs", "Selected host → Details & recovery → review End for an exact generation. Exit: Cancel sends no request; the default-No fixture has no End intent and cannot dispatch.", "HOST-03"),
+    ("hosts-original-review", "host_clients.rs, host_clients_view.rs", "Details & recovery → review a retained original → re-approve the original host and owner before retrying. Exit: close the host window or select another host; the fixture uses an unissued in-memory Create intent and never retries.", "HOST-02"),
+    ("hosts-working", "host_clients.rs, host_clients_view.rs", "Selected host → begin a foreground HOST operation → working status. Exit: cancel or wait for completion in a real session; the gallery has no worker or request.", "HOST-01, HOST-02"),
     ("recording-preparing", "recording_ui.rs", "Terminal More → Record terminal sessions → Start recording → preparation sheet/status. Inert display flag, no PrepareTask or worker. Exit: Cancel preparation, Close or completed preparation.", "REC-01"),
     ("recording-active recording-finalizing", "recording_ui.rs", "Explicit Start recording → active status → Stop recording → finalizing status. Inert display flags, no session recording or worker. Exit: Stop recording or completed finalization to export review.", "REC-01"),
     ("recording-export-calculating recording-export-calculated", "recording_ui.rs", "Stop recording / library retry → Export recording → Calculate duration → calculating/estimated-duration review. Inert display values, no PreviewTask or forged ExportPreview. Exit: Keep, dismiss, recalculate or explicitly export in a real session.", "REC-02"),
@@ -210,7 +221,7 @@ Unchanged-source fingerprint (SHA-256 of the canonical sorted per-file SHA-256 m
 workspace crate/vendor code, manifests/lockfile and rendering assets **before and
 after all captures**, refusing attribution if any input changes. Thus dirty files
 are identified by their actual contents, not merely the base Git SHA. Each of the
-four manifests retains that complete input map plus every PNG's dimensions/hash.
+{len(manifests)} manifests retain that complete input map plus every PNG's dimensions/hash.
 
 ## What these pictures establish
 
@@ -225,13 +236,13 @@ Stable IDs refer to [the GUI action graph](gui-action-graph.md); they are workfl
 associations, not new acceptance evidence.
 
 No personal configuration, credentials, actual connections, clipboard reads,
-native Files grants, installed app or external service was used. HOST End review
-uses only fixed synthetic public target/operation IDs, never an approved context
-or End intent; its checkbox is unchecked and no End is sent.
-HOST receipt/original/Forget pictures use the same
-production presentation helpers with public display data only: no Receipt,
-ReviewedForget, native owner key, protected checkpoint or grant is manufactured;
-all their action dispatch is disabled. Recording task-only pictures use inert
+native Files grants, installed app or external service was used. HOST fixtures
+use an ephemeral memory-backed test owner receipt, created under trusted private
+storage, to arrange several states; one original-review fixture also constructs
+an unissued in-memory Create intent. The original, Forget and End review widgets
+receive synthetic public display data, not a protected checkpoint, reviewed
+Forget or End intent; confirmation is unchecked and HOST dispatch is disabled.
+No native vault or real owner approval is used. Recording task-only pictures use inert
 display flags/progress/duration, never task handles or native workers. Android
 export-notice pictures exercise the actual Android presentation helper without
 constructing a provider journal or publication receipt. Recording fixtures use
@@ -255,7 +266,7 @@ explicitly rather than replaced with invented mockups:
 | Native biometric/passcode prompt and app-switcher privacy cover | Settings → App lock → enable/Lock now or background/resume; exit authenticate/cancel | Requires a native window and device authentication/passcode capability. `app_lock.rs::LockHost::gate`; `festerm-ios-lock/src/ios.rs::LaContextLocker::authenticate`, `LockBridge::sync`; Android `native.rs::authenticate` / `privacy`. MOB-09. Surrounding shared unlock/settings widgets are pictured; fake lock outcomes do not prove OS authentication. |
 | Microphone/speech consent, system speech capture, native keyboard and hardware IME | Mic / focus text field; exit Cancel/Insert/hide keyboard | Requires native speech permission/service and native keyboard/IME input. `dictation.rs::begin_dictation` / `show_dictation`, `festerm-ios-window/src/speech.rs`; Android `native.rs::speech_command` / `keyboard_mode`. MOB-02/07/08. Draft phases are pictured; no microphone or permission is requested. |
 | Native recording encoder/folder picker/provider publication and genuine native-task execution (shared preparation/active/finalizing/calculation/progress/error/scanning/staging/journal widgets **are pictured**) | Enable in Settings → Record terminal sessions → Start → Stop → Calculate / Export; exit Cancel/Keep or finish | Requires native `RecordingFolderPicker`, Apple/Android encoder and a genuine user-selected destination. `recording_ui.rs::prepare_recording`, `start_recording_preview`, `start_confirmed_recording_export`; `recording_tasks.rs::encoder_factory`, `preflight`, `publish`. REC-01/02/05. Inert display evidence is not native task/lifecycle acceptance. |
-| Genuine protected HOST receipt/original recovery and Forget dispatch (not pictured; the redesigned host window renders these only from genuine protected state) | Hosts → Prepare/load native owner → approve exact host → reopen originals → review/Forget; exit Cancel or explicit authorized confirmation | Legal memory-vault setup is blocked specifically by `/Volumes/Storage` being mode `0775`: `ReceiptIndex::in_app_sandbox` → `approval_storage::trusted_directory` → `festerm_unix_security::trusted_private_storage_ancestor` rejects `mode & 0o022 != 0`, mapped to `Failure::OriginalStorage`. A trusted existing sandbox whose every ancestor passes owner/mode/ACL validation is required for `originals::testing::memory_fixture`; genuine native evidence additionally requires the native vault and approved HOST. The gallery does not change mount/OS permissions, substitute another path or bypass validation. `host_clients.rs::host_action`, `show_host_recovery`; `host_clients_view.rs::show_hosts_in_bounds`; HOST-01/02/03. |
+| Genuine native HOST owner approval, protected-original recovery and Forget/End dispatch (shared review widgets are pictured) | Hosts → Prepare/load native owner → approve exact host → reopen originals → review/Forget or End; exit Cancel or explicit authorized confirmation | Requires an approved HOST, native vault and trusted private storage with valid ancestors. The gallery uses a temporary memory-backed test receipt and inert public display data; it neither loads a protected checkpoint nor sends a HOST operation. `host_clients.rs::host_action`, `show_host_recovery`; `host_clients_view.rs::show_hosts_in_bounds`; HOST-01/02/03. |
 | Native touch selection handles, system text edit menu, share/export/provider error UI, accessibility overlays and device rotation/keyboard animation | Long press selection / invoke OS action; dismiss or return | Requires actual native touch/IME/accessibility/provider and window events. `terminal_gesture.rs`, `widgets.rs`, `documents.rs` and `festerm-ios-window` adapters; MOB-02, EDIT-09, MD-02. Shared field/preview menus are pictured; synthetic pointer input is not evidence of native OS handles/overlays. |
 
 No mobile serial, local PTY launcher, enterprise/PowerShell screen, desktop
@@ -272,9 +283,13 @@ From the repository root, use a **new** directory (existing paths are refused):
 CARGO_BUILD_JOBS=2 python3 scripts/capture-mobile-ui.py --output docs/images/ui-state-mobile-fresh --index-output docs/state-of-mobile-ui-fresh.md
 ```
 
-The script runs the four ignored actual-widget generators with `--features
-host-clients`, verifies all PNG hashes, and requires a catalog route for each
-image. Captures do not qualify native iOS/Android behavior.
+The script runs the five ignored actual-widget generators with `--features
+host-clients`, requires a manifest from each generator, verifies all PNG hashes,
+and requires a catalog route for each image. The HOST generator requires Unix;
+an unavailable generator fails the capture instead of silently omitting images.
+HOST fixtures require a source tree on trusted private storage when its normal
+ancestors do not pass private-storage checks; never relax those checks. Captures
+do not qualify native iOS/Android behavior.
 
 ## Identical presentations and fixture requests
 
@@ -341,6 +356,11 @@ def main(argv=None):
             ),
             check=True, timeout=600,
         )
+        if not (destination / "manifest.json").is_file():
+            raise RuntimeError(
+                f"Capture generator {test} produced no manifest at {destination}; "
+                "it may be unavailable on this platform"
+            )
     if source_snapshot() != sources:
         raise RuntimeError("Capture inputs changed during rendering; retain this attempt and rerun from unchanged sources")
     for path in sorted(output.rglob("manifest.json")):

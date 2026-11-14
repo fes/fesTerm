@@ -19,8 +19,11 @@ profile or permission/security repair is permitted. Capability-specific
 omissions and prerequisites remain explicit in the experimental route catalog
 and mobile catalog; synthetic refusal pictures are not successful authority.
 
-The 2026-11-13 refresh publishes 479 desktop and 342 mobile headless
-captures taken after the host-based Dev Tunnel redesign (#738). An earlier
+The 2026-11-13 refresh published 479 desktop and 342 mobile headless
+captures taken after the host-based Dev Tunnel redesign (#738). A subsequent
+mobile refresh publishes 366 captures, adding synthetic HOST owner, recovery
+and default-No confirmation views without qualifying native-vault or live HOST
+operations. An earlier
 2026-11-12 native pass took 29 macOS, 18 Linux and 27 Windows
 keyboard-reachable frames from clean Parallels lab VMs (host-side
 `prlctl send-key-event` input, `prlctl capture` frames, a fresh 0700 private
