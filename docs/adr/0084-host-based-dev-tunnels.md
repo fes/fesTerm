@@ -2377,3 +2377,15 @@ cover these boundaries. The [lab campaign](../dev-tunnel-workflow-lab.md) now
 includes desktop and iOS/Android clients against all three desktop servers with
 creation disabled/enabled. Fresh matching signed helpers, native service/UI
 verification and physical-mobile evidence remain separate acceptance gates.
+
+### Validation impact: foreground native owner prompts
+
+Desktop `HOST-01`/`HOST-02` allow human-paced native vault prompts within a
+300-second Prepare/Load bound, or a 330-second Inventory bound. Synchronous
+credential loading precedes the separate unchanged 30-second network resolution
+timeout. Cancellation and deadline expiry reject late results while retaining
+admission until the native worker returns; neither authorizes a connection.
+A blocked-worker regression covers completion beyond the old deadlines, absolute
+expiry and permit retention. Native Allow/deny/unlock interaction and narrow-modal
+error readability remain manual checks in the existing validation procedure.
+This is frontend scheduling/presentation only; helper policy is unchanged.

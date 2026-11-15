@@ -162,6 +162,28 @@ fn valid_session_name(name: &str) -> bool {
 
 pub(super) const MAX_PARALLEL_DISCOVERIES: usize = 3;
 const MAX_QUEUED_DISCOVERIES: usize = 32;
+// Native vault prompts are human-paced. Only service resolution consumes the
+// separate network budget; a cancelled native call retains its admission permit
+// until it returns and cannot publish a late result.
+const OWNER_VAULT_BUDGET: Duration = Duration::from_secs(300);
+const HOST_RESOLUTION_BUDGET: Duration = Duration::from_secs(30);
+
+fn owner_worker_budget(action: &Action) -> Duration {
+    OWNER_VAULT_BUDGET
+        + if matches!(action, Action::Inventory) {
+            HOST_RESOLUTION_BUDGET
+        } else {
+            Duration::ZERO
+        }
+}
+
+fn deliver_owner_completion<T>(
+    sender: &mpsc::SyncSender<T>,
+    cancel: &CancellationToken,
+    result: T,
+) -> bool {
+    !cancel.is_cancelled() && sender.try_send(result).is_ok()
+}
 
 /// Reserves a discovery permit only when another permit would still remain,
 /// so background host refreshes never take the last connection slot.
@@ -1588,7 +1610,7 @@ impl FesTermApp {
                 if let Some(message) = &browser.feedback {
                     ui.label(
                         if message.len() > 140 { "The connection needs attention." } else { message });
-                    if message.len() > 140 { ui.collapsing("Details", |ui| { ui.label(message); }); }
+                    if message.len() > 140 { ui.collapsing("Details", |ui| { ui.add(egui::Label::new(message).wrap()); }); }
                 }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
                     if browser.receipt.is_none() {
@@ -2152,11 +2174,7 @@ impl FesTermApp {
         browser.generation = generation;
         let cancel = cancel.child_token();
         let pending_cancel = cancel.clone();
-        let duration = Duration::from_secs(if matches!(action, Action::Inventory) {
-            45
-        } else {
-            15
-        });
+        let duration = owner_worker_budget(&action);
         let spawned = std::thread::Builder::new().name("festerm-host-approval".into()).spawn(move || {
             let _permit = permit;
             let result = (|| {
@@ -2168,19 +2186,21 @@ impl FesTermApp {
                 }.map_err(|error| error.message().to_owned())?;
                 if cancel.is_cancelled() { return Err("Host review cancelled; protected preparation may have completed locally. No connection was authorized.".into()); }
                 if !matches!(action, Action::Inventory) { return Ok(ResultEvent::Prepared(receipt)); }
+                let identity = load_host_identity(&account, store.as_ref())?;
+                if cancel.is_cancelled() { return Err("Host resolution cancelled.".into()); }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "The selected-host resolver worker could not start.".to_owned())?;
                 let resolved = runtime.block_on(async {
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled() => Err("Host resolution cancelled.".into()),
-                        value = tokio::time::timeout(Duration::from_secs(30), resolve_host(&account, store.as_ref(), &locator, &cancel)) =>
+                        value = tokio::time::timeout(HOST_RESOLUTION_BUDGET, resolve_host(&identity, &locator, &cancel)) =>
                             value.map_err(|_| "Host resolution timed out. No session is known to be absent.".to_owned())?,
                     }
                 })?;
                 Ok(ResultEvent::Resolved(Box::new((receipt, resolved))))
             })();
-            if !cancel.is_cancelled() { let _ = sender.try_send(result); wake.request_repaint(); }
+            if deliver_owner_completion(&sender, &cancel, result) { wake.request_repaint(); }
         });
         match spawned {
             Ok(_) => {
@@ -2196,12 +2216,10 @@ impl FesTermApp {
     }
 }
 
-async fn resolve_host(
+fn load_host_identity(
     account: &DevTunnelAccount,
     store: &dyn SecretStore,
-    locator: &str,
-    cancel: &CancellationToken,
-) -> Result<ResolvedTunnel, RequestFailure> {
+) -> Result<Identity, RequestFailure> {
     let client = identity::registered_client_id()
         .ok_or("Account sign-in is not configured in this build.")?;
     let secret = store.get(account.credential_reference()).map_err(|_| "The selected account's native credential is unavailable. No sign-in or fallback was attempted.")?;
@@ -2211,7 +2229,15 @@ async fn resolve_host(
     if identity.needs_sign_in() {
         return Err(RequestFailure::expired());
     }
-    service::resolve_host(&identity, locator, cancel).await.map_err(|error| {
+    Ok(identity)
+}
+
+async fn resolve_host(
+    identity: &Identity,
+    locator: &str,
+    cancel: &CancellationToken,
+) -> Result<ResolvedTunnel, RequestFailure> {
+    service::resolve_host(identity, locator, cancel).await.map_err(|error| {
         if error == festerm_tunnel_client::Error::Tunnel {
             RequestFailure::from("The selected endpoint does not advertise the HOST protocol. No legacy bridge fallback was attempted.")
         } else {

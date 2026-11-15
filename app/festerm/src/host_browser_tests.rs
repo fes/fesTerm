@@ -202,6 +202,63 @@ fn selected_host_desktop_foreground_timeout_fences_late_worker_without_parent_lo
 }
 
 #[test]
+fn native_owner_prompt_budget_keeps_admission_until_worker_drains() {
+    for action in [Action::Prepare, Action::Load, Action::Inventory] {
+        for complete_before_deadline in [true, false] {
+            let (mut app, _) = fixture();
+            let started = Instant::now();
+            let browser = app.host_browser.as_mut().unwrap();
+            let cancel = browser.cancel.child_token();
+            let (_ui_sender, receiver) = mpsc::sync_channel(1);
+            browser.receiver = Some(receiver);
+            browser.pending_deadline =
+                Some((started + owner_worker_budget(&action), cancel.clone()));
+            let permit = ConnectionPermit::reserve(&app.state.host_client_budgets).unwrap();
+            let occupied: Vec<_> = (0..3)
+                .map(|_| ConnectionPermit::reserve(&app.state.host_client_budgets).unwrap())
+                .collect();
+            let (release, blocked) = mpsc::sync_channel(1);
+            let (sender, grants) = mpsc::sync_channel(1);
+            let worker_cancel = cancel.clone();
+            let worker = std::thread::spawn(move || {
+                let _permit = permit;
+                // Models a synchronous native prompt which cannot be interrupted.
+                blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+                deliver_owner_completion(&sender, &worker_cancel, "prepared grant")
+            });
+            let browser = app.host_browser.as_mut().unwrap();
+            browser.expire_pending(started + Duration::from_secs(46));
+            assert!(browser.busy());
+            assert!(!cancel.is_cancelled());
+            browser
+                .expire_pending(started + owner_worker_budget(&action) - Duration::from_nanos(1));
+            assert!(browser.busy());
+            if !complete_before_deadline {
+                browser.expire_pending(started + owner_worker_budget(&action));
+                assert!(cancel.is_cancelled());
+                assert!(!browser.cancel.is_cancelled());
+                assert!(!browser.busy());
+            }
+            // UI timeout never frees a permit still held by a native call.
+            assert!(ConnectionPermit::reserve(&app.state.host_client_budgets).is_err());
+            release.send(()).unwrap();
+            assert_eq!(worker.join().unwrap(), complete_before_deadline);
+            if complete_before_deadline {
+                assert_eq!(grants.recv().unwrap(), "prepared grant");
+            } else {
+                assert!(grants.try_recv().is_err());
+            }
+            assert!(ConnectionPermit::reserve(&app.state.host_client_budgets).is_ok());
+            drop(occupied);
+            let browser = app.host_browser.as_mut().unwrap();
+            browser.receiver = None;
+            browser.pending_deadline = None;
+            assert_unallocated(&app);
+        }
+    }
+}
+
+#[test]
 fn selected_host_desktop_foreground_honors_saved_attach_generation_and_refuses_creation() {
     let (mut app, _) = fixture();
     let browser = app.host_browser.as_mut().unwrap();

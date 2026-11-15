@@ -4735,8 +4735,12 @@ development wrapper, not installed or production services:
    recovery before activation/input. Respect exact-generation and logical resume
    restrictions; it must not substitute existing attachment for AlwaysCreate.
    Exercise account credential
-   replacement, editor/recipe replacement, cancellation, 15-second vault and
-   45-second resolver deadlines, and late completion while admission stays charged.
+   replacement, editor/recipe replacement and cancellation. Allow normal native
+   vault prompts beyond 45 seconds: Prepare/Load have a 300-second foreground
+   bound; Inventory has 330 seconds including its separate 30-second service
+   resolution timeout. Verify expiry rejects late completion while admission
+   stays charged until the native call returns. Check expanded timeout Details
+   wraps inside the modal at narrow widths.
    Detach requires its correlated receipt; loss never replays input.
 6. Separately approve the exact displayed launch arguments, working directory
    and lifetime. Verify visible create/ensure, creation and temporary permissions
