@@ -203,27 +203,12 @@ impl ApprovedContext {
         }
         // The worker is already admitted. Vault access is blocking and never
         // runs in a GUI callback. It cannot generate a replacement on failure.
-        let permit = Arc::new(permit);
-        let charge = permit.clone();
         let approved = self.approved.clone();
         let reference = self.reference;
-        let key_cancel = cancel.clone();
-        let key = tokio::task::spawn_blocking(move || {
-            let _charge = charge;
-            if key_cancel.is_cancelled() {
-                return Err(Failure::Control(Error::Cancelled));
-            }
+        let (key, permit) = open_native_owner_key(permit, cancel, move || {
             ClientOwnerKey::open_native(reference, &approved).map_err(Failure::OwnerKey)
-        });
-        let key = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
-            value = tokio::time::timeout(Duration::from_secs(15), key) =>
-                value.map_err(|_| Failure::Control(Error::Deadline))?
-                    .map_err(|_| Failure::WorkerUnavailable)?
-                    ?,
-        };
-        let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
+        })
+        .await?;
         let stream = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
@@ -236,6 +221,43 @@ impl ApprovedContext {
             authenticate_client(stream, permit, key, self.approved, role, cancel.clone()).await?;
         Ok((stream, permit, self.binding))
     }
+}
+
+// Native consent can require multiple human-paced vault prompts. This does
+// not change relay connection, authentication or control-operation deadlines.
+const NATIVE_OWNER_KEY_BUDGET: Duration = Duration::from_secs(300);
+
+async fn open_native_owner_key<T, F>(
+    permit: ConnectionPermit,
+    cancel: &CancellationToken,
+    open: F,
+) -> Result<(T, ConnectionPermit), Failure>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, Failure> + Send + 'static,
+{
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled.into());
+    }
+    let permit = Arc::new(permit);
+    let charge = permit.clone();
+    let key_cancel = cancel.clone();
+    let key = tokio::task::spawn_blocking(move || {
+        let _charge = charge;
+        if key_cancel.is_cancelled() {
+            return Err(Failure::Control(Error::Cancelled));
+        }
+        open()
+    });
+    let key = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
+        value = tokio::time::timeout(NATIVE_OWNER_KEY_BUDGET, key) =>
+            value.map_err(|_| Failure::Control(Error::Deadline))?
+                .map_err(|_| Failure::WorkerUnavailable)??,
+    };
+    let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
+    Ok((key, permit))
 }
 
 /// Original editor/tab request plus its account/endpoint and lifecycle epoch.
