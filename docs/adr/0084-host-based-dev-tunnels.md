@@ -2394,3 +2394,44 @@ This is frontend scheduling/presentation only; helper policy is unchanged.
 The shared HOST client also allows a 300-second native owner-key prompt before
 its separate 15-second relay connection budget. Cancellation retains admission
 until the blocking native key read returns; stale results cannot authorize use.
+
+### Native client proof snapshot and local freshness
+
+The selected-host client reads the exact native owner reference once per control
+or terminal connection, under the admitted 300-second native-key budget. The
+record domain and complete approved installation/host/account/principal binding
+are validated before extracting a single-use signing snapshot. Its expected
+public key is derived from that read, as in the previous first-read/reopen path;
+a locally replaced key is not automatically enrolled or trusted by the host.
+The crate-private snapshot has no Clone, serialization, Debug or signing-key
+accessor. It retains a zeroizing seed only for this attempt and has a fixed
+30-second monotonic proof-authority expiry starting at successful extraction.
+It is neither a reusable signer nor a configuration or global cache.
+
+Vault prompting completes before relay connection and the unchanged 15-second
+wire authentication deadline. The snapshot is consumed on the actual pinned SSH
+channel, preserving challenge/domain/channel/host/principal/fingerprint/public-key
+checks. Cancellation and expiry are checked before signing and again before proof
+publication; no await separates the final signing check from the signature.
+Separate control and terminal connections require separate native snapshots.
+Cancelled or detached blocking work retains its admission charge until it drains.
+Expiry bounds proof authority, not real-time RAM erasure under a stalled thread;
+seed and temporary signing material are zeroized when their owning scopes drop.
+
+This explicitly changes local deletion/replacement timing: an already loaded
+snapshot can finish this one proof within its original 30-second window even if
+its local vault entry is subsequently deleted or replaced. A later attempt reads
+the vault again; missing or changed bindings fail, and a replacement public key
+still requires host enrollment. Account/request invalidation cancels the existing
+worker token rather than retargeting its snapshot. Host-side revocation remains
+fresh at challenge issuance, proof verification and each protected operation; its policy and
+15-second deadline are unchanged. Existing public native and explicit headless
+proof APIs retain their original reread semantics. No protocol or server
+compatibility change is introduced.
+
+Validation impact: GUI `HOST-01`/`HOST-02` and owner-authentication regressions
+cover one-read proofs, bounded local deletion/replacement semantics, foreign
+channels/identities, expired or cancelled queued work and denied proof publication.
+Existing fresh-policy revocation and admission tests remain required. Actual
+native prompt completion, same-user account invalidation and cross-platform
+terminal adoption remain manual/native acceptance gates.

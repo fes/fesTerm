@@ -4749,7 +4749,13 @@ development wrapper, not installed or production services:
    the 15-second relay connection bound and existing proof/control deadlines.
    Check normal approval, cancellation and late-key refusal at this phase too.
    Check expanded timeout Details
-   wraps inside the modal at narrow widths.
+   wraps inside the modal at narrow widths. Each following control or terminal
+   connection may separately prompt for its owner key within 300 seconds. After
+   that read, one proof has at most 30 seconds of authority; relay and wire
+   authentication retain their individual 15-second bounds. Cancel/account removal
+   must prevent proof publication. Local deletion/replacement after extraction
+   affects subsequent reads, while this one bounded snapshot may finish; host
+   revocation must still reject the proof using fresh policy.
    Detach requires its correlated receipt; loss never replays input.
 6. Separately approve the exact displayed launch arguments, working directory
    and lifetime. Verify visible create/ensure, creation and temporary permissions

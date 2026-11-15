@@ -33,6 +33,8 @@ pub use headless_store::ExplicitHeadlessFileStore;
 mod channel;
 #[cfg(all(test, feature = "relay"))]
 pub(crate) use channel::fixture_key;
+#[cfg(feature = "host-routing")]
+pub(crate) use channel::NativeOwnerAttempt;
 #[cfg(feature = "client")]
 pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof};
 #[cfg(feature = "relay")]

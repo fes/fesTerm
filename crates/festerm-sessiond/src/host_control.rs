@@ -76,6 +76,12 @@ fn storage_error(error: io::Error) -> ControlError {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy)]
 enum AttachFailureDiagnostic<'a> {
+    JournalAdmission(ControlError),
+    PolicyAdmission(ControlError),
+    DaemonLeaseAcquire(&'a io::Error),
+    DaemonLeaseRead(&'a io::Error),
+    TemporaryTransferRefusal,
+    PendingRefusal,
     ReservePublish(&'a io::Error),
     NativeConnect(&'a crate::PersistentSessionError),
     ConnectedPersistentRefusal,
@@ -90,9 +96,9 @@ enum AttachFailureDiagnostic<'a> {
 fn attach_failure_diagnostics_enabled(
     temporary: bool,
     takeover: bool,
-    previously_attached: bool,
+    _previously_attached: bool,
 ) -> bool {
-    temporary || (!takeover && previously_attached)
+    temporary || !takeover
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -112,6 +118,30 @@ impl AttachFailureDiagnostic<'_> {
         }
         let uncertain = ControlError::CommittedButNotPublished;
         let (step, error, control) = match self {
+            Self::JournalAdmission(control) => ("journal-admission", None, control),
+            Self::PolicyAdmission(control) => ("policy-admission", None, control),
+            Self::DaemonLeaseAcquire(error) => (
+                "daemon-lease-acquire",
+                Some(error),
+                if crate::lock_is_contended(error) {
+                    ControlError::Busy
+                } else {
+                    ControlError::Storage
+                },
+            ),
+            Self::DaemonLeaseRead(error) => (
+                "daemon-lease-read",
+                Some(error),
+                if crate::lock_is_contended(error) {
+                    ControlError::Busy
+                } else {
+                    ControlError::Storage
+                },
+            ),
+            Self::TemporaryTransferRefusal => {
+                ("temporary-transfer-refusal", None, ControlError::Busy)
+            }
+            Self::PendingRefusal => ("pending-refusal", None, ControlError::Busy),
             Self::ReservePublish(error) => ("reserve-publish", Some(error), uncertain),
             Self::UnwindAcquire(error) => ("unwind-acquire", Some(error), uncertain),
             Self::UnwindRead(error) => ("unwind-read", Some(error), uncertain),
@@ -145,6 +175,47 @@ mod attach_diagnostic_tests {
     use super::*;
 
     #[test]
+    fn first_persistent_attach_diagnostics_keep_boundary_without_private_error_text() {
+        assert!(attach_failure_diagnostics_enabled(false, false, false));
+        let error = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "SECRET /private/path account credential",
+        );
+        for (diagnostic, boundary) in [
+            (
+                AttachFailureDiagnostic::DaemonLeaseAcquire(&error),
+                "daemon-lease-acquire",
+            ),
+            (
+                AttachFailureDiagnostic::DaemonLeaseRead(&error),
+                "daemon-lease-read",
+            ),
+        ] {
+            assert_eq!(diagnostic.message(true).unwrap(), format!("host attach boundary={boundary} control=Storage io_kind=PermissionDenied raw_os=None"));
+        }
+        for (diagnostic, boundary) in [
+            (
+                AttachFailureDiagnostic::JournalAdmission(ControlError::Busy),
+                "journal-admission",
+            ),
+            (
+                AttachFailureDiagnostic::PolicyAdmission(ControlError::Busy),
+                "policy-admission",
+            ),
+            (
+                AttachFailureDiagnostic::TemporaryTransferRefusal,
+                "temporary-transfer-refusal",
+            ),
+            (AttachFailureDiagnostic::PendingRefusal, "pending-refusal"),
+        ] {
+            assert_eq!(
+                diagnostic.message(true).unwrap(),
+                format!("host attach boundary={boundary} control=Busy")
+            );
+        }
+    }
+
+    #[test]
     fn native_attachment_failure_diagnostics_include_temporary_takeover() {
         for temporary in [false, true] {
             for takeover in [false, true] {
@@ -154,7 +225,7 @@ mod attach_diagnostic_tests {
                         takeover,
                         previously_attached,
                     );
-                    assert_eq!(enabled, temporary || (!takeover && previously_attached));
+                    assert_eq!(enabled, temporary || !takeover);
                     assert_eq!(
                         AttachFailureDiagnostic::UnwindCommitted
                             .message(enabled)
@@ -2369,12 +2440,28 @@ impl SessionControl {
         notifier: Arc<dyn SessionEventNotifier>,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<PendingAttachment, ControlError> {
-        let mut tx = self.transaction()?;
+        let mut tx = self.transaction().inspect_err(|_error| {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::JournalAdmission(*_error).report(true);
+        })?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
-        let (record, admission) = self.exact(&mut tx, owner, target, Effect::Attach, &mut admit)?;
-        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
-            .map_err(storage_error)?;
-        let mut lease = guard.read().map_err(storage_error)?;
+        let (record, admission) = self
+            .exact(&mut tx, owner, target, Effect::Attach, &mut admit)
+            .inspect_err(|_error| {
+                #[cfg(any(test, feature = "test-support"))]
+                AttachFailureDiagnostic::PolicyAdmission(*_error).report(true);
+            })?;
+        let guard =
+            LeaseGuard::acquire(record.root(&self.root), record.generation).map_err(|error| {
+                #[cfg(any(test, feature = "test-support"))]
+                AttachFailureDiagnostic::DaemonLeaseAcquire(&error).report(true);
+                storage_error(error)
+            })?;
+        let mut lease = guard.read().map_err(|error| {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::DaemonLeaseRead(&error).report(true);
+            storage_error(error)
+        })?;
         if lease.expired() {
             return Err(ControlError::Ended);
         }
@@ -2406,6 +2493,8 @@ impl SessionControl {
             .as_ref()
             .is_some_and(|lease| &lease.attachment != attachment);
         if transfer && !takeover {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::TemporaryTransferRefusal.report(diagnose);
             return Err(ControlError::Busy);
         }
         let ticket = Some(OperationId::new());
@@ -2415,6 +2504,8 @@ impl SessionControl {
             .as_ref()
             .is_some_and(|pending| pending.deadline_ms > now_ms())
         {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::PendingRefusal.report(diagnose);
             return Err(ControlError::Busy);
         }
         lease.pending = Some(PendingLeaseAttachment {

@@ -79,6 +79,61 @@ fn refusal(error: ControlError) -> Refusal {
     }
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum BusyBoundary {
+    CapabilitiesPolicy,
+    CapabilitiesReplyBudget,
+    AttachPolicy,
+    AttachBudget,
+    BackendAttach,
+}
+
+#[cfg(test)]
+impl BusyBoundary {
+    fn message(self, reason: Refusal) -> Option<&'static str> {
+        if reason != Refusal::Busy {
+            return None;
+        }
+        Some(match self {
+            Self::CapabilitiesPolicy => "host terminal busy boundary=capabilities-policy",
+            Self::CapabilitiesReplyBudget => {
+                "host terminal busy boundary=capabilities-reply-budget"
+            }
+            Self::AttachPolicy => "host terminal busy boundary=attach-policy",
+            Self::AttachBudget => "host terminal busy boundary=attach-budget",
+            Self::BackendAttach => "host terminal busy boundary=backend-attach",
+        })
+    }
+
+    fn report(self, reason: Refusal) {
+        if let Some(message) = self.message(reason) {
+            eprintln!("{message}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn terminal_busy_diagnostic_boundaries_are_static_and_do_not_describe_other_refusals() {
+    for (boundary, name) in [
+        (BusyBoundary::CapabilitiesPolicy, "capabilities-policy"),
+        (
+            BusyBoundary::CapabilitiesReplyBudget,
+            "capabilities-reply-budget",
+        ),
+        (BusyBoundary::AttachPolicy, "attach-policy"),
+        (BusyBoundary::AttachBudget, "attach-budget"),
+        (BusyBoundary::BackendAttach, "backend-attach"),
+    ] {
+        assert_eq!(
+            boundary.message(Refusal::Busy).unwrap(),
+            format!("host terminal busy boundary={name}")
+        );
+        assert!(boundary.message(Refusal::Denied).is_none());
+    }
+}
+
 fn retry_before_effect<T>(
     deadline: Instant,
     cancelled: impl Fn() -> bool,
@@ -511,6 +566,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         Ok(caps) => caps,
         Err(error) => {
             let reason = refusal(control(error));
+            #[cfg(test)]
+            BusyBoundary::CapabilitiesPolicy.report(reason);
             refused(&mut stream, &hello, reason).await?;
             return Err(Error::Refused(reason));
         }
@@ -527,6 +584,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
     )
     .await;
     if let Err(Error::Contract(ContractError::Busy)) = reply {
+        #[cfg(test)]
+        BusyBoundary::CapabilitiesReplyBudget.report(Refusal::Busy);
         refused(&mut stream, &hello, Refusal::Busy).await?;
         return Err(Error::Refused(Refusal::Busy));
     }
@@ -562,6 +621,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             return Err(error.into());
         }
         let reason = refusal(control(error));
+        #[cfg(test)]
+        BusyBoundary::AttachPolicy.report(reason);
         refused(&mut stream, &request, reason).await?;
         return Err(Error::Refused(reason));
     }
@@ -592,6 +653,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         Ok(charges) => charges,
         Err(error) => {
             let reason = refusal(control(error));
+            #[cfg(test)]
+            BusyBoundary::AttachBudget.report(reason);
             refused(&mut stream, &request, reason).await?;
             return Err(Error::Refused(reason));
         }
@@ -716,6 +779,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         };
         if let Err(error) = started {
             let reason = refusal(error);
+            #[cfg(test)]
+            BusyBoundary::BackendAttach.report(reason);
             let response = Envelope::new(
                 request.host.clone(),
                 request.operation.clone(),

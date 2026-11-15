@@ -3,7 +3,7 @@
 //! protected owner context; this module never enrolls, signs in or discovers.
 
 use crate::{
-    host_runtime::{authenticate_client, StreamRole},
+    host_runtime::{authenticate_native_client, StreamRole},
     host_terminal::{self, TerminalHandle},
     owner_auth::{ClientOwnerKey, OwnerBinding, OwnerKeyError},
     relay,
@@ -205,10 +205,16 @@ impl ApprovedContext {
         // runs in a GUI callback. It cannot generate a replacement on failure.
         let approved = self.approved.clone();
         let reference = self.reference;
-        let (key, permit) = open_native_owner_key(permit, cancel, move || {
-            ClientOwnerKey::open_native(reference, &approved).map_err(Failure::OwnerKey)
+        let native_cancel = cancel.clone();
+        let (attempt, permit) = open_native_owner_key(permit, cancel, move || {
+            ClientOwnerKey::prepare_native_attempt(reference, &approved, native_cancel)
+                .map_err(Failure::OwnerKey)
         })
         .await?;
+        attempt
+            .publication_guard()
+            .check()
+            .map_err(Failure::OwnerKey)?;
         let stream = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
@@ -218,7 +224,7 @@ impl ApprovedContext {
                     .map_err(|_| Failure::Control(Error::Offline))?,
         };
         let (stream, permit) =
-            authenticate_client(stream, permit, key, self.approved, role, cancel.clone()).await?;
+            authenticate_native_client(stream, permit, attempt, role, cancel.clone()).await?;
         Ok((stream, permit, self.binding))
     }
 }

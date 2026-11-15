@@ -71,6 +71,28 @@ pub async fn authenticate_client(
     .await
 }
 
+/// The selected-host client loaded this single-use native snapshot before
+/// opening the relay. No native vault access occurs inside the wire deadline.
+#[cfg(feature = "host-routing")]
+pub(crate) async fn authenticate_native_client(
+    stream: ClientConnection,
+    permit: ConnectionPermit,
+    attempt: crate::owner_auth::NativeOwnerAttempt,
+    role: StreamRole,
+    cancel: CancellationToken,
+) -> Result<(ClientConnection, ConnectionPermit), Error> {
+    let guard = attempt.publication_guard();
+    authenticate_client_using_guard(
+        stream,
+        permit,
+        role,
+        cancel,
+        move |stream, challenge| stream.prove_native_attempt(attempt, challenge),
+        move || guard.check(),
+    )
+    .await
+}
+
 /// Only an explicitly selected headless credential store; never a vault-error
 /// fallback. The host setup composition must also verify headless origin.
 #[cfg(feature = "relay")]
@@ -91,6 +113,21 @@ pub async fn authenticate_headless_client(
 }
 
 async fn authenticate_client_using(
+    stream: ClientConnection,
+    permit: ConnectionPermit,
+    role: StreamRole,
+    cancel: CancellationToken,
+    prove: impl FnOnce(
+            &ClientConnection,
+            &ChannelOwnerChallenge,
+        ) -> Result<ChannelOwnerProof, OwnerKeyError>
+        + Send
+        + 'static,
+) -> Result<(ClientConnection, ConnectionPermit), Error> {
+    authenticate_client_using_guard(stream, permit, role, cancel, prove, || Ok(())).await
+}
+
+async fn authenticate_client_using_guard(
     mut stream: ClientConnection,
     permit: ConnectionPermit,
     role: StreamRole,
@@ -101,6 +138,7 @@ async fn authenticate_client_using(
         ) -> Result<ChannelOwnerProof, OwnerKeyError>
         + Send
         + 'static,
+    may_publish: impl Fn() -> Result<(), OwnerKeyError>,
 ) -> Result<(ClientConnection, ConnectionPermit), Error> {
     let permit = Arc::new(permit);
     let work = async {
@@ -119,6 +157,12 @@ async fn authenticate_client_using(
         })
         .await
         .map_err(|_| Error::Closed)??;
+        // A completed blocking proof may have waited in the executor queue.
+        // Check its original authority immediately before proof publication.
+        may_publish().map_err(|_| ContractError::Denied)?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         write_frame(
             &mut stream,
             permit.budgets(),

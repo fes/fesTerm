@@ -770,7 +770,9 @@ async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_tem
         .unwrap();
         let session = Arc::new(HostSession::from_worker(worker, Arc::new(Wake)));
         tokio::time::timeout(Duration::from_secs(8), async {
-            while !session.has_pending_snapshot() {
+            while !native_snapshot_ready(&session).expect(
+                "native attachment failed before snapshot; inspect content-free server boundary",
+            ) {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
@@ -866,6 +868,56 @@ async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_tem
         "client disappearance is not persistent End"
     );
     fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+fn native_snapshot_ready(session: &crate::host_client::HostSession) -> Result<bool, &'static str> {
+    use festerm_session::Session;
+    if session.has_pending_snapshot() {
+        Ok(true)
+    } else if session.lifecycle().is_terminal() {
+        Err("native attachment terminated before snapshot")
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_snapshot_wait_reports_terminal_busy_without_snapshot_timeout() {
+    use crate::host_client::{Failure, HostSession, Scope, Worker};
+    struct Wake;
+    impl festerm_session::SessionEventNotifier for Wake {
+        fn notify(&self) {}
+    }
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: Binding::new(
+            Default::default(),
+            "github:fixture".into(),
+            "fixture".into(),
+        )
+        .unwrap(),
+    };
+    let worker = Worker::spawn(scope, Arc::new(|| {}), |_, _, _, _| async {
+        Err(Failure::Control(Error::Refused(
+            festerm_host_protocol::Refusal::Busy,
+        )))
+    })
+    .unwrap();
+    let session = HostSession::from_worker(worker, Arc::new(Wake));
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match native_snapshot_ready(&session) {
+                Ok(false) => tokio::task::yield_now().await,
+                result => break result,
+            }
+        }
+    })
+    .await
+    .expect("completed failure must not wait for the eight-second snapshot deadline");
+    assert_eq!(result, Err("native attachment terminated before snapshot"));
 }
 
 #[cfg(unix)]
@@ -2769,4 +2821,111 @@ async fn authenticated_runtime_bounds_proof_frames_and_client_admission() {
     drop((held, client));
     ssh.abort();
     let _ = ssh.await;
+}
+
+#[tokio::test]
+async fn native_proof_publication_guard_rejects_completed_but_invalidated_proof() {
+    let fixture = Fixture::new();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let proved = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let proof_ready = proved.clone();
+    let result = authenticate_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            let proof = stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)?;
+            proof_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(proof)
+        },
+        move || {
+            assert!(proved.load(std::sync::atomic::Ordering::SeqCst));
+            Err(OwnerKeyError::ProofDenied)
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(Error::Contract(ContractError::Denied))
+    ));
+    assert!(tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    let returned: Vec<_> = (0..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&fixture.runtime.budgets).unwrap())
+        .collect();
+    drop(returned);
+    ssh.abort();
+}
+
+#[cfg(feature = "host-routing")]
+#[tokio::test]
+async fn cancelled_native_proof_keeps_admission_until_blocked_work_drains() {
+    let fixture = Fixture::new();
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let held: Vec<_> = (1..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&budgets).unwrap())
+        .collect();
+    let cancel = CancellationToken::new();
+    let attempt = ClientOwnerKey::prepare_native_attempt_fixture(
+        fixture.vault.as_ref(),
+        fixture.key.reference(),
+        &fixture.approved,
+        cancel.clone(),
+    )
+    .unwrap();
+    let guard = attempt.publication_guard();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let (ready, started) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::sync_channel(1);
+    let client = tokio::spawn(authenticate_client_using_guard(
+        client,
+        permit,
+        StreamRole::Control,
+        cancel.clone(),
+        move |stream, challenge| {
+            ready.send(()).unwrap();
+            blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+            stream.prove_native_attempt(attempt, challenge)
+        },
+        move || guard.check(),
+    ));
+    tokio::time::timeout(Duration::from_secs(2), started)
+        .await
+        .unwrap()
+        .unwrap();
+    cancel.cancel();
+    assert!(matches!(client.await.unwrap(), Err(Error::Cancelled)));
+    assert!(ConnectionPermit::reserve(&budgets).is_err());
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if ConnectionPermit::reserve(&budgets).is_ok() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    drop(held);
+    ssh.abort();
 }
