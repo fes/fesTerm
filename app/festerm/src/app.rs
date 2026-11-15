@@ -4960,6 +4960,8 @@ impl FesTermApp {
                 ui.separator();
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("Diagnostics").strong());
+                #[cfg(feature = "local-host-settings")]
+                desktop_remote_access::show_diagnostics(ui, self.local_remote_access.view().diagnostic);
                 if let Some(last_exit) = crate::diagnostics::last_exit_summary() {
                     ui.label(format!("Last exit: {last_exit}"));
                 } else {

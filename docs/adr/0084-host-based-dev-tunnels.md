@@ -2345,3 +2345,23 @@ uncertain originals remain retained. A later reviewed Enable is required.
 Focused protocol, crash/recovery and exact-snapshot tests cover these fences.
 The installed signed host runtime needs the same implementation; GUI changes
 and portable tests alone do not qualify HOSTSETUP-01 or cross-platform sessions.
+
+### Validation impact: private owner access and setup diagnostics
+
+The provider rejects individual-user access entries. New HOST reservations use
+its private creator-only default and pin that choice in the protected create
+intent. Receipt qualification explicitly requests access controls and rejects
+nonempty or unknown ACL projections on the tunnel or its port. It does not add
+anonymous or organization access. Existing bound legacy receipts retain their
+original policy; unsubmitted, unbound legacy intents require explicit Reconcile,
+authenticated exact absence, durable archival and ticket fencing before a later
+Enable can create a new intent.
+
+GUI `HOST-04`/`HOST-05` and `DIAG-*` retain typed setup-stage, HTTP-status,
+category and recovery metadata through the existing operation and ownership
+fences. Presentation uses static text, excludes raw responses and credentials,
+and does not imply readiness. Focused cloud, protocol and controller regressions
+cover these boundaries. The [lab campaign](../dev-tunnel-workflow-lab.md) now
+includes desktop and iOS/Android clients against all three desktop servers with
+creation disabled/enabled. Fresh matching signed helpers, native service/UI
+verification and physical-mobile evidence remain separate acceptance gates.

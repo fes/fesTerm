@@ -3399,6 +3399,16 @@
         "ADR-0009"
       ],
       "automated_tests": [
+        "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
+        "desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement",
+        "desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh",
+        "desktop_remote_access_diagnostics_render_static_details_without_readiness_claim",
+        "desktop_remote_access_diagnostics_refuse_invalidated_scope_reports",
+        "metadata_retains_no_provider_content",
+        "metadata_preserves_all_original_semantics_and_uncertainty",
+        "attached_diagnostic_preserves_kind_display_and_nested_source_markers",
+        "diagnostic_debug_is_content_free_and_outermost_diagnostic_wins",
+        "bare_and_wrapped_client_failures_have_typed_stage_and_status",
         "headless_harness_drives_terminal_view_input_resize_and_diagnostics"
       ],
       "manual_scenarios": [
@@ -3406,6 +3416,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "About and Remote access display only typed last-setup stage, available HTTP status, fixed category and recovery guidance. Provider text, credentials, URLs and arbitrary native errors never enter the metadata. Original create uncertainty/cancellation/transient semantics remain intact. Owned installation/origin/epoch, current worker and cancel/draft/success fences reject stale diagnostics; no readiness claim. Native provider/store/cancel captures remain required.",
         "event emphasis and complete redacted Copy Details"
       ]
     },
@@ -3988,6 +3999,11 @@
         "ADR-0030"
       ],
       "automated_tests": [
+        "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
+        "desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement",
+        "desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh",
+        "desktop_remote_access_diagnostics_render_static_details_without_readiness_claim",
+        "desktop_remote_access_diagnostics_refuse_invalidated_scope_reports",
         "image_memory_budget_default_is_512_mib_and_is_omitted_from_saved_settings",
         "image_memory_budget_values_round_trip_without_an_unbounded_escape",
         "image_budget_settings_dropdown_dispatches_the_typed_bounded_preference",
@@ -4049,6 +4065,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Dev Tunnels Remote access exposes the same content-free last-setup diagnostic as About. It is historical failure context, not endpoint readiness. Account/installation/epoch changes, cancellation, draft edits, new work and successful refresh clear or refuse stale results; native HOSTSETUP-01 captures remain required.",
         "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242"
       ]
     },
@@ -5426,6 +5443,7 @@
       "status": "partial",
       "prerequisites": [
         "ADR-0058 app lock is wired through ADR-0061; portable request/cancellation and pointer recovery are covered under MOB-09, but enrolled Face ID, explicit system passcode, resume-after-grace, compositor/snapshot timing and rapid physical-device switches remain unqualified",
+        "Android scripts/build-android.py --host-clients selects the existing shared mobile HOST client graph; scripts/tests/test_android_build.py covers explicit feature propagation, offline incompatibility and distinct APK output/receipt semantics. The 24-case desktop/mobile campaign includes iOS and Android clients against all three desktop servers with creation off/on; actual mobile discovery, native vault, terminal, permission and reconnect evidence remains MOB-06/TUNNEL-11, separate from packaging and Simulator/emulator qualification.",
         "Android ADR-0073 qualification is separate from iOS: see docs/manual-validation.md Android shared mobile port. Both development APK ABIs cross-build; isolated Android 35 ARM64 runtime evidence covers rendering/safe areas, portrait/landscape/tablet-sized viewports, native typing, profile/key persistence, owned OpenSSH shell I/O, byte-exact SFTP download, document background/resume and device-PIN cold unlock/authenticated disable. GitHub device-code initiation completed over Android TLS without account authorization. On an Android 16 ARM64 emulator, the target-36 development build passed native smoke and portrait/landscape checks, and a test-signed AAB-derived APK launched its offline terminal; the focused search field is hidden by the landscape keyboard on both target-35 and target-36 builds (#673). scripts/tests/test_android_build.py, test_android_play.py, test_android_bundle_signing.py and test_android_play_upload.py check dependency, bundle, isolated signing, notice and Play upload policy (ADR-0083); scripts/smoke-android.py checks native Keystore/tamper, clipboard, secure-window flags, document URI refusal, Unicode/composition/stale acknowledgment and field input, and JVM verifier packaging. Authenticated Dev Tunnel discovery/relay/recovery, physical phone/tablet, complex IMEs, extended lock/lifecycle races, speech and full visual/accessibility acceptance remain native gates; these checks do not establish store publication.",
         "PLAY-01 remains pending: complete the first Play Console upload and required store setup, then install an Internal testing build on a physical arm64 device, open live SSH, and verify an upgrade preserves profiles. A completed API edit or prepared bundle does not establish tester availability.",
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
@@ -5967,6 +5985,13 @@
       ],
       "decisions": ["ADR-0084"],
       "automated_tests": [
+        "host_cloud_owner_default_access_is_pinned_and_never_reinterprets_legacy",
+        "host_cloud_owner_default_refuses_every_explicit_or_unknown_acl_grant",
+        "host_cloud_legacy_user_receipts_remain_exact_and_cannot_create_again",
+        "host_cloud_legacy_acl_reservations_fail_closed_without_rewriting_originals",
+        "host_cloud_existing_user_acl_receipt_is_observed_without_replacement",
+        "host_cloud_diagnostics_preserve_status_stage_and_create_disposition_without_content",
+        "host_cloud_diagnostics_preserve_recovery_error_keys_and_semantic_markers",
         "host_process_recovery_each_attempt_reenters_real_admission_and_revocation_wins",
         "host_process_recovery_busy_attempt_never_adopts_another_runs_record_or_lease",
         "host_process_recovery_records_operational_failure_as_failure_not_product_success",
@@ -6200,6 +6225,7 @@
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
+        "New intents pin owner_default and omit ACL entries; full-ACL receipt checks refuse nonempty tunnel/port grants and unknown ACL fields. Missing policy preserves legacy GithubUsers and bound legacy receipts. Explicit unbound/unsubmitted retirement requires authenticated absence and durable exact-byte archival with old-ticket fencing. Matching signed helpers and native three-platform acceptance remain required.",
         "Official schema-2 host-bundle acquisition remains a GUI-free library seam: current trusted build/native target, fixed official assets, bounded HTTPS redirects/body/deadline and updater-root VerifiedArtifact owned bytes only. Desktop primary Setup now explicitly composes it with existing native publisher/staging/controller admission; Advanced manual files are not a failure fallback. Six-target positives use synthetic signatures rejected by the production root; missing/404 blocks without latest/older/schema-1 retry. Genuine publication, first-verifier delivery, native publisher/installed/vault/cloud and GUI usability acceptance remain open; the seam itself has no host effects and stopped-update/no-receipt/journal/old-helper authority stays unchanged",
         "Never-published native registration receipts permit only installation-owned absence in current StopRequested/CleanupPending under the exclusive Services lease and exact full-snapshot/epoch/state-directory fences; no manager calls, fabricated receipt or foreign definition probe/removal. Missing receipt remains no-observation for status; corrupt/foreign/non-file evidence or uncertain ownership refuses. Real controller/Services removal logic covers provisioning, cancellation and acknowledged-uncertainty adoption with explicitly fake cloud/account/native context and a panic-on-manager runner; active runtime lease and missing-lock/history guards remain mandatory. All replacement journals take precedence over missing active receipts, including Committed/Aborted: stop reconciles pending targets; cleanup cannot infer never-published absence from None. Interrupted updates, settled-update receipt loss and corrupt/foreign crash journals are covered. Production ordinary-account authorization and private-storage policy are unchanged; fixture evidence is not native Windows qualification. Native/cloud/vault acceptance and generation-conditional deletion remain open",
         "Windows stopped-update design-before-code: v3 compact installation/operation UUID task names preserve protected origin/account/epoch; fresh canonical XML/ACL and submission/observed identity live in the replacement journal before Create. Existing embedded updater and compiled native publisher policy remain mandatory for update/run/commit, not exact-owned local cleanup. CleanupPending epochs, XML/ACL/submission ownership, quiescence and independent absence gate removal even with unavailable/untrusted payloads; submitted-unobserved absence and foreign/uncertain tasks refuse, lost Remove retries exact operation/resources. One revoked-runtime-release/both-task deadline replaces no destructive stop. Implementation/model and real native old/new-bundle/ordinary-user/daemon acceptance are separate gates",

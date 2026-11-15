@@ -487,3 +487,60 @@ fn desktop_remote_access_enable_requires_setup_phase_before_acquisition_or_publi
     assert_eq!(store.snapshot().unwrap(), snapshot);
     assert!(!state.join("signed-release-cache").exists());
 }
+
+#[test]
+fn desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification() {
+    use festerm_host_setup::diagnostics::{attach, Category, Recovery, Stage};
+    let expected = HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::Response,
+        recovery: Recovery::Reconcile,
+    };
+    let error = attach(
+        io::Error::other("host.cloud_response_refused private-token-path"),
+        expected,
+    );
+    let runtime = runtime().unwrap();
+    let mut diagnostic = None;
+    let result: Result<(), Failure> = run_async(
+        &runtime,
+        &CancellationToken::new(),
+        &mut diagnostic,
+        async { Err(error) },
+    );
+    assert_eq!(result, Err(Failure::CloudUncertain));
+    assert_eq!(diagnostic, Some(expected));
+    assert!(!format!("{diagnostic:?}").contains("private-token-path"));
+}
+
+#[test]
+fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement() {
+    use festerm_host_setup::diagnostics::{Category, Recovery, Stage};
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    store.request_enable(&Draft::default().settings()).unwrap();
+    let owned = store.snapshot().unwrap();
+    let work = request(&path, Operation::Enable, Scope::Absent);
+    let diagnostic = Some(HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::ProviderRejected,
+        recovery: Recovery::Reconcile,
+    });
+    let scope = Scope::Present(owned.clone().into());
+    assert!(scoped_diagnostic(diagnostic, &work, &scope).is_none());
+    *work.owned.lock().unwrap() = Some(owned.clone());
+    assert_eq!(scoped_diagnostic(diagnostic, &work, &scope), diagnostic);
+    let mut changed = owned.clone();
+    changed.epoch += 1;
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    let mut changed = owned.clone();
+    changed.installation = uuid::Uuid::new_v4().to_string();
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    let mut changed = owned;
+    changed.origin = Origin::Headless;
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Absent).is_none());
+}

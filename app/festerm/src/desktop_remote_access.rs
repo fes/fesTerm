@@ -1,4 +1,6 @@
 //! Foreground desktop consent, never a recipe loader or a daemon authority.
+#[path = "desktop_remote_access/diagnostics.rs"]
+mod diagnostics;
 #[path = "desktop_remote_access/native.rs"]
 mod native;
 #[cfg(test)]
@@ -6,12 +8,14 @@ mod native;
 mod tests;
 #[path = "desktop_remote_access/view.rs"]
 mod view;
+pub(crate) use diagnostics::show as show_diagnostics;
 pub(crate) use view::show;
 pub(crate) use view::show_session_sharing;
 
 use eframe::egui;
 use festerm_host_setup::{
     cloud::CleanupContext,
+    diagnostics::HostSetupDiagnostic,
     lifecycle::{Phase, Settings, Snapshot, Startup},
 };
 use std::{
@@ -272,6 +276,8 @@ pub struct View {
     pub busy: bool,
     pub cancelling: bool,
     pub failure: Option<Failure>,
+    /// Last operation metadata only; never inferred from a generic local error.
+    pub diagnostic: Option<HostSetupDiagnostic>,
     pub process: Option<String>,
     pub owner_binding: Option<String>,
     pub owner_approved: bool,
@@ -408,6 +414,7 @@ struct Report {
     cleanup: Option<CleanupContext>,
     cleanup_verified_for_manual_review: bool,
     failure: Option<Failure>,
+    diagnostic: Option<HostSetupDiagnostic>,
     sharing: Option<ShareStatus>,
 }
 
@@ -602,6 +609,7 @@ impl Controller {
                 unreachable!("handled before worker admission")
             }
             Action::RequestAccess(requested) => {
+                self.view.diagnostic = None;
                 self.view.access_requested = Some(requested);
                 self.view.share_review = None;
                 self.view.review = None;
@@ -635,6 +643,7 @@ impl Controller {
                     self.view.failure = Some(Failure::InvalidDraft);
                     return;
                 }
+                self.view.diagnostic = None;
                 self.view.draft = draft;
                 self.draft_edited = true;
                 self.view.review = None;
@@ -805,6 +814,7 @@ impl Controller {
     }
 
     fn start(&mut self, operation: Operation, fence: bool, context: &egui::Context) {
+        self.view.diagnostic = None;
         self.view.review = None;
         if !matches!(operation, Operation::Share(_)) {
             self.view.share_review = None;
@@ -876,6 +886,7 @@ impl Controller {
     }
 
     fn cancel(&mut self, context: &egui::Context) {
+        self.view.diagnostic = None;
         if self.view.cancelling {
             return;
         }
@@ -1004,12 +1015,29 @@ impl Controller {
                             self.view.cleanup = report.cleanup;
                             self.view.cleanup_verified_for_manual_review =
                                 report.cleanup_verified_for_manual_review;
+                            self.view.diagnostic = if !self.view.cancelling
+                                && report.failure.is_some()
+                                && !matches!(
+                                    report.failure,
+                                    Some(
+                                        Failure::Cancelled
+                                            | Failure::ScopeChanged
+                                            | Failure::SessionChanged
+                                    )
+                                ) {
+                                report.diagnostic
+                            } else {
+                                None
+                            };
                             self.view.failure = report.failure;
                             if let Some(sharing) = report.sharing {
                                 self.view.sharing = Some(sharing);
                             }
                         }
-                        Err(error) => self.view.failure = Some(error),
+                        Err(error) => {
+                            self.view.diagnostic = None;
+                            self.view.failure = Some(error);
+                        }
                     }
                 }
                 *slot = None;

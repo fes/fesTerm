@@ -44,6 +44,7 @@ pub(crate) fn show(
     if let Some(failure) = view.failure {
         ui.colored_label(theme::STATUS_ERROR, failure.notice());
     }
+    diagnostics::show(ui, view.diagnostic);
     if let Some(code) = &view.device_code {
         ui.monospace(code.0.as_str());
         match view.device_copied {

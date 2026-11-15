@@ -349,6 +349,8 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
             return Ok(Report {
                 scope: Scope::Absent,
                 owner_approved: true,
+                diagnostic: Some(setup_diagnostic()),
+                failure: Some(Failure::CloudUncertain),
                 owner_binding: Some("late binding must not be published".into()),
                 ..Report::default()
             });
@@ -357,6 +359,8 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
         assert!(request.cancel_fence);
         Ok(Report {
             scope: Scope::Absent,
+            failure: Some(Failure::Reconciliation),
+            diagnostic: Some(setup_diagnostic()),
             ..Report::default()
         })
     }));
@@ -378,6 +382,7 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
     drain(&mut controller, &context);
     assert!(!controller.view.owner_approved);
     assert!(controller.view.owner_binding.is_none());
+    assert!(controller.view.diagnostic.is_none());
     assert_eq!(controller.view.scope, Scope::Absent);
 }
 
@@ -1356,5 +1361,124 @@ fn desktop_remote_access_recovery_buttons_remain_readable_at_native_small_window
                 "{label} collapsed at width {width}: {rect:?}"
             );
         }
+    }
+}
+
+fn setup_diagnostic() -> HostSetupDiagnostic {
+    use festerm_host_setup::diagnostics::{Category, Recovery, Stage};
+    HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::Response,
+        recovery: Recovery::Reconcile,
+    }
+}
+
+#[test]
+fn desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh() {
+    let expected = setup_diagnostic();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            Ok(Report {
+                scope: Scope::Absent,
+                failure: (request.operation == Operation::Enable)
+                    .then_some(Failure::CloudUncertain),
+                // A success must clear even a malformed backend's old diagnostic.
+                diagnostic: Some(expected),
+                ..Report::default()
+            })
+        },
+    )));
+    let context = egui::Context::default();
+    controller.view.scope = Scope::Absent;
+    controller.start(Operation::Enable, false, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.diagnostic, Some(expected));
+    controller.action(Action::Review(Operation::Reconcile), &context);
+    assert_eq!(controller.view.diagnostic, Some(expected));
+    let mut draft = controller.view.draft.clone();
+    draft.friendly_name = "Changed consent".into();
+    controller.action(Action::Edit(draft), &context);
+    assert!(controller.view.diagnostic.is_none());
+    controller.view.diagnostic = Some(expected);
+    controller.action(Action::Refresh, &context);
+    assert!(controller.view.diagnostic.is_none());
+    drain(&mut controller, &context);
+    assert!(controller.view.diagnostic.is_none());
+    assert!(controller.view.failure.is_none());
+}
+
+#[test]
+fn desktop_remote_access_diagnostics_render_static_details_without_readiness_claim() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let expected = setup_diagnostic();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(340.0, 600.0))
+        .build_ui_state(
+            |ui, state: &mut Option<HostSetupDiagnostic>| diagnostics::show(ui, *state),
+            Some(expected),
+        );
+    harness.run();
+    harness.get_by_label("Last setup operation");
+    harness.get_by_label("HTTP status: 400");
+    harness.get_by_label(&format!("Stage: {}", expected.stage.label()));
+    harness.get_by_label(&format!("Category: {}", expected.category.label()));
+    harness.get_by_label(expected.recovery.guidance());
+    harness.get_by_label("Operation result only. Current endpoint readiness is not verified.");
+    *harness.state_mut() = Some(HostSetupDiagnostic {
+        http_status: None,
+        ..expected
+    });
+    harness.run();
+    harness.get_by_label("Last setup operation");
+    assert!(harness.query_by_label("HTTP status: 400").is_none());
+    *harness.state_mut() = None;
+    harness.run();
+    assert!(harness.query_by_label("Last setup operation").is_none());
+    assert!(harness.query_by_label("HTTP status: 400").is_none());
+}
+
+#[test]
+fn desktop_remote_access_untyped_cloud_failures_never_invent_transport_metadata() {
+    for report_failure in [false, true] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            if report_failure {
+                Ok(Report {
+                    scope: Scope::Absent,
+                    failure: Some(Failure::CloudUncertain),
+                    ..Report::default()
+                })
+            } else {
+                Err(Failure::CloudUncertain)
+            }
+        })));
+        let context = egui::Context::default();
+        controller.start(Operation::Refresh, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(Failure::CloudUncertain));
+        assert!(controller.view.diagnostic.is_none());
+    }
+}
+
+#[test]
+fn desktop_remote_access_diagnostics_refuse_invalidated_scope_reports() {
+    for failure in [
+        Failure::Cancelled,
+        Failure::ScopeChanged,
+        Failure::SessionChanged,
+    ] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            Ok(Report {
+                scope: Scope::Absent,
+                failure: Some(failure),
+                diagnostic: Some(setup_diagnostic()),
+                ..Report::default()
+            })
+        })));
+        let context = egui::Context::default();
+        controller.start(Operation::Refresh, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(failure));
+        assert!(controller.view.diagnostic.is_none());
     }
 }

@@ -2,6 +2,7 @@
 //! Native, host-independent identity and service discovery. No subprocesses,
 //! browser implementation, native FFI, daemon IPC, or global account slot.
 
+pub mod diagnostics;
 pub mod host;
 pub mod host_control;
 pub mod identity;
@@ -32,10 +33,14 @@ pub enum Error {
     Store,
     Busy,
     RateLimited,
+    HostRequest(diagnostics::HostFailure),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::HostRequest(failure) = self {
+            return failure.original_error().fmt(out);
+        }
         out.write_str(match self {
             Self::Registration => "GitHub sign-in is not configured in this build.",
             Self::Cancelled => "Cancelled.",
@@ -51,10 +56,27 @@ impl fmt::Display for Error {
             Self::Store => "Secure storage unavailable. Sign in again.",
             Self::Busy => "Another sign-in is finishing. Try again.",
             Self::RateLimited => "Rate limit reached. Try later.",
+            Self::HostRequest(_) => unreachable!("handled above"),
         })
     }
 }
-impl std::error::Error for Error {}
+impl Error {
+    /// The pre-diagnostic semantic error, for existing recovery decisions.
+    pub const fn original_error(self) -> Self {
+        match self {
+            Self::HostRequest(failure) => failure.original_error(),
+            original => original,
+        }
+    }
+}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HostRequest(failure) => Some(failure),
+            _ => None,
+        }
+    }
+}
 
 pub(crate) fn valid_token(token: &str) -> bool {
     !token.is_empty()

@@ -100,7 +100,9 @@ def native_dependencies():
     return paths
 
 
-def target_environment(sdk_path, abi, offline=False, recording_validation=False):
+def target_environment(sdk_path, abi, offline=False, recording_validation=False, host_clients=False):
+    if offline and host_clients:
+        raise ValueError("Host clients cannot be combined with the offline fixture")
     sdk = Path(sdk_path).expanduser().resolve()
     tools = sdk / "build-tools" / BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{API}" / "android.jar"
@@ -127,7 +129,9 @@ def target_environment(sdk_path, abi, offline=False, recording_validation=False)
     env[f"AR_{key}"] = str(llvm / "llvm-ar")
     env["RUSTFLAGS"] = env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-z,max-page-size=16384"
     env.setdefault("CARGO_PROFILE_DEV_DEBUG", "0")
-    features = ["--no-default-features"] if offline else []
+    features = ["--no-default-features"] if offline or host_clients else []
+    if host_clients:
+        features += ["--features", "host-clients"]
     if recording_validation:
         features += ["--features", "native-recording-validation"]
         env["CARGO_PROFILE_DEV_DEBUG_ASSERTIONS"] = "true"
@@ -206,13 +210,14 @@ def build(args):
     if args.recording_validation and args.release:
         raise ValueError("Recording validation hooks are not allowed in release APKs")
     tools, android_jar, target, env, features = target_environment(
-        args.sdk, args.abi, args.offline, args.recording_validation,
+        args.sdk, args.abi, args.offline, args.recording_validation, args.host_clients,
     )
     if args.check_dependencies:
         return
     dependencies = native_dependencies()
     mode = "release" if args.release else "debug"
-    output = ROOT / "target" / "android" / args.abi / ("offline" if args.offline else "live")
+    output_mode = "host-clients" if args.host_clients else "offline" if args.offline else "live"
+    output = ROOT / "target" / "android" / args.abi / output_mode
     output.mkdir(parents=True, exist_ok=True)
     library = build_library(target, env, features, args.release, args.recording_validation)
     keystore = ROOT / "target" / "android" / "development.keystore"
@@ -248,6 +253,10 @@ def build(args):
         "dirty": bool(run("git", "status", "--porcelain", capture=True)),
         "abi": args.abi, "min_sdk": MIN_API, "target_sdk": API,
         "live_ssh": not args.offline, "signing": "development-only",
+        "prototype_mode": "host-clients" if args.host_clients else "offline-fixture" if args.offline else "live-ssh",
+        "cargo_features": (["host-clients"] if args.host_clients else [] if args.offline else ["live-ssh"])
+                          + (["native-recording-validation"] if args.recording_validation else []),
+        "cargo_default_features": not (args.offline or args.host_clients),
         "recording_validation": args.recording_validation,
         "native_validation_exports_verified": args.recording_validation,
         "profile": mode, "ndk": NDK, "build_tools": BUILD_TOOLS,
@@ -264,19 +273,22 @@ def build(args):
         run(*adb, "shell", "am", "start", "-W", "-n", "io.github.fes.festerm/.FestermActivity")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
     parser.add_argument("--abi", choices=TARGETS, default="arm64-v8a")
     parser.add_argument("--release", action="store_true")
-    parser.add_argument("--offline", action="store_true", help="Build the offline fixture instead of live SSH")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--offline", action="store_true", help="Build the offline fixture instead of live SSH")
+    mode.add_argument("--host-clients", action="store_true",
+                      help="Build host-oriented Dev Tunnels and live SSH client workflows")
     parser.add_argument("--recording-validation", action="store_true",
                         help="Include native recording test hooks in a development APK")
     parser.add_argument("--check-dependencies", action="store_true")
     parser.add_argument("--install", action="store_true")
     parser.add_argument("--serial")
     try:
-        build(parser.parse_args())
+        build(parser.parse_args(argv))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Android build failed: {error}\n")
 

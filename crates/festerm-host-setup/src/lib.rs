@@ -19,6 +19,8 @@ pub mod cloud;
     feature = "native-services"
 ))]
 pub mod controller;
+#[cfg(feature = "cloud")]
+pub mod diagnostics;
 #[cfg(feature = "owner-enrollment")]
 pub mod enrollment;
 #[cfg(feature = "lifecycle")]

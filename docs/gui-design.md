@@ -1032,6 +1032,13 @@ that scroll. Actions reuse the existing semantic button roles and have at least
 28 px height; narrow layouts do not shorten authorship, diagnostic sensitivity,
 update eligibility, or transmitted-data disclosures.
 
+When local host setup fails, About Diagnostics and Settings → Remote access show
+the same **Last setup operation**: a typed stage, optional HTTP status, safe error
+category, and recovery action. No raw provider response, account identifier,
+resource URL, credential, or path is copied into this summary. It is an operation
+result, not endpoint readiness. New work, changed consent, cancellation, or a
+successful result clears it; a late worker cannot restore a cancelled result.
+
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
 `latest/download/festerm-update.json` endpoint after an explicit check, download,

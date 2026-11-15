@@ -11,8 +11,8 @@ use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
 use festerm_tunnel_client::{
     host::{
-        CreateError, CreateProtocol, Management, Observation, PreparedCreate, Receipt, Resource,
-        HOST_LABEL, HOST_PORT,
+        CreateAccess, CreateError, CreateProtocol, Management, Observation, PreparedCreate,
+        Receipt, Resource, HOST_LABEL, HOST_PORT,
     },
     identity::{self, DevicePrompt, Identity},
     Error as AccountError, Https,
@@ -57,9 +57,7 @@ pub(crate) fn transient_relay(stage: &'static str) -> io::Error {
 
 #[cfg(all(feature = "host-runtime", feature = "native-services"))]
 pub(crate) fn is_transient_relay(error: &io::Error) -> bool {
-    error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<TransientRelay>())
+    crate::diagnostics::contains_source_type::<TransientRelay>(error)
 }
 
 #[derive(Debug)]
@@ -75,26 +73,29 @@ impl std::error::Error for CloudCancelled {}
 
 #[cfg(all(feature = "host-runtime", feature = "native-services"))]
 pub(crate) fn is_cancelled(error: &io::Error) -> bool {
-    error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<CloudCancelled>())
+    crate::diagnostics::contains_source_type::<CloudCancelled>(error)
 }
 
 fn account_error(error: AccountError) -> io::Error {
+    let diagnostic = crate::diagnostics::from_bare_account_error(error);
+    let original = error.original_error();
     #[cfg(feature = "host-runtime")]
-    if error == AccountError::RateLimited {
-        return transient_relay("host.cloud_rate_limited");
+    if original == AccountError::RateLimited {
+        return crate::diagnostics::attach(transient_relay("host.cloud_rate_limited"), diagnostic);
     }
-    refused(match error {
-        AccountError::Cancelled => "host.cloud_cancelled",
-        AccountError::Expired | AccountError::Store => "host.sign_in_required",
-        AccountError::Denied => "host.cloud_denied",
-        AccountError::AccountChanged => "host.cloud_account_changed",
-        AccountError::IdentityChanged => "host.cloud_identity_changed",
-        AccountError::Network => "host.cloud_offline_or_unknown",
-        AccountError::RateLimited => "host.cloud_rate_limited",
-        _ => "host.cloud_response_refused",
-    })
+    crate::diagnostics::attach(
+        refused(match original {
+            AccountError::Cancelled => "host.cloud_cancelled",
+            AccountError::Expired | AccountError::Store => "host.sign_in_required",
+            AccountError::Denied => "host.cloud_denied",
+            AccountError::AccountChanged => "host.cloud_account_changed",
+            AccountError::IdentityChanged => "host.cloud_identity_changed",
+            AccountError::Network => "host.cloud_offline_or_unknown",
+            AccountError::RateLimited => "host.cloud_rate_limited",
+            _ => "host.cloud_response_refused",
+        }),
+        diagnostic,
+    )
 }
 
 fn os_user() -> io::Result<String> {
@@ -722,13 +723,28 @@ impl<'a> CloudHostAdapter<'a> {
         })?;
         // Never change an old (possibly uncertain) request body by applying
         // today's protocol default. Recovery/retirement needs separate proof.
-        if record
-            .resource
-            .as_ref()
-            .is_some_and(|resource| resource.create_protocol == CreateProtocol::LegacyTcp)
-        {
-            return Err(refused(
-                "host.cloud_legacy_protocol_requires_reconciliation",
+        if legacy_create_intent(&record) {
+            use crate::diagnostics::{Category, HostSetupDiagnostic, Recovery, Stage};
+            let protocol = record
+                .resource
+                .as_ref()
+                .is_some_and(|resource| resource.create_protocol == CreateProtocol::LegacyTcp);
+            return Err(crate::diagnostics::attach(
+                refused(if protocol {
+                    "host.cloud_legacy_protocol_requires_reconciliation"
+                } else {
+                    "host.cloud_legacy_acl_requires_reconciliation"
+                }),
+                HostSetupDiagnostic {
+                    stage: Stage::Creation,
+                    http_status: None,
+                    category: if protocol {
+                        Category::UnsupportedProtocol
+                    } else {
+                        Category::UnsupportedUserAcl
+                    },
+                    recovery: Recovery::Reconcile,
+                },
             ));
         }
         // A cancelled pending request may be observed for late cleanup, but
@@ -755,6 +771,7 @@ impl<'a> CloudHostAdapter<'a> {
                 ownership_label,
                 port: HOST_PORT,
                 create_protocol: CreateProtocol::Auto,
+                create_access: CreateAccess::OwnerDefault,
             };
             resource.validate().map_err(account_error)?;
             record.resource = Some(resource);
@@ -840,7 +857,7 @@ impl<'a> CloudHostAdapter<'a> {
                         match observed.map_err(account_error)? {
                             Observation::Present(receipt) => receipt,
                             Observation::Absent => {
-                                return Err(refused("host.cloud_created_resource_not_observed"))
+                                return Err(refused("host.cloud_created_resource_not_observed"));
                             }
                         }
                     }
@@ -857,7 +874,7 @@ impl<'a> CloudHostAdapter<'a> {
                         match observed.map_err(account_error)? {
                             Observation::Present(receipt) => receipt,
                             Observation::Absent => {
-                                return Err(refused("host.cloud_conditional_conflict_unresolved"))
+                                return Err(refused("host.cloud_conditional_conflict_unresolved"));
                             }
                         }
                     }
@@ -885,14 +902,15 @@ impl<'a> CloudHostAdapter<'a> {
             let _operation = self.operation()?;
             let record = self.load()?;
             if !record.submitted
-                && !legacy_protocol(&record)
+                && !legacy_create_intent(&record)
                 && !self.store.with_locked(|directory, _| {
                     Ok(retired_original(directory, &record)?.is_some())
                 })?
             {
                 return self.resolve_no_submission(&record);
             }
-            if !legacy_protocol(&record) && retained_unbound(&record, &self.store.snapshot()?) {
+            if !legacy_create_intent(&record) && retained_unbound(&record, &self.store.snapshot()?)
+            {
                 return Ok(Phase::Disabled);
             }
         }
@@ -913,10 +931,10 @@ impl<'a> CloudHostAdapter<'a> {
         if self
             .store
             .with_locked(|directory, _| Ok(retired_original(directory, &record)?.is_some()))?
-            || legacy_protocol(&record)
+            || legacy_create_intent(&record)
         {
             return self
-                .retire_legacy_protocol(&mut record, cancel, network, secrets)
+                .retire_legacy_create_intent(&mut record, cancel, network, secrets)
                 .await;
         }
         if !record.submitted {
@@ -961,7 +979,7 @@ impl<'a> CloudHostAdapter<'a> {
     /// Explicit Reconcile only: an exact authenticated absence may retire an
     /// unbound, unsubmitted legacy intent. An archive fences the old ticket even
     /// if a crash leaves the cleared journal before lifecycle release.
-    async fn retire_legacy_protocol(
+    async fn retire_legacy_create_intent(
         &self,
         record: &mut Record,
         cancel: &CancellationToken,
@@ -997,7 +1015,7 @@ impl<'a> CloudHostAdapter<'a> {
             }
             return Ok(Phase::Disabled);
         }
-        if !legacy_protocol(record) {
+        if !legacy_create_intent(record) {
             return Err(refused("host.cloud_retirement_scope_changed"));
         }
         let identity = self.load_identity(record, network, secrets, cancel).await?;
@@ -1456,11 +1474,11 @@ fn validate(
     Ok(())
 }
 
-fn legacy_protocol(record: &Record) -> bool {
-    record
-        .resource
-        .as_ref()
-        .is_some_and(|r| r.create_protocol == CreateProtocol::LegacyTcp)
+fn legacy_create_intent(record: &Record) -> bool {
+    record.resource.as_ref().is_some_and(|r| {
+        r.create_protocol == CreateProtocol::LegacyTcp
+            || (r.create_access == CreateAccess::LegacyGithubUsers && record.receipt.is_none())
+    })
 }
 fn retirement_path(record: &Record) -> PathBuf {
     PathBuf::from(format!(
@@ -1476,7 +1494,7 @@ fn retired_original(directory: &File, current: &Record) -> io::Result<Option<Rec
     };
     let original: Record = serde_json::from_slice(&bytes)
         .map_err(|_| refused("host.cloud_retirement_archive_changed"))?;
-    if !legacy_protocol(&original)
+    if !legacy_create_intent(&original)
         || original.submitted
         || original.receipt.is_some()
         || !original.authenticated
@@ -1852,6 +1870,39 @@ mod tests {
         let settings = adapter.store.snapshot().unwrap().settings;
         let ticket = adapter.store.request_enable(&settings).unwrap();
         adapter.foreground(&ticket, 42).unwrap()
+    }
+
+    #[test]
+    fn host_cloud_diagnostics_preserve_recovery_error_keys_and_semantic_markers() {
+        use crate::diagnostics::{from_io_error, Recovery, Stage};
+        use festerm_tunnel_client::diagnostics::{Category, HostFailure, Operation};
+        let error = account_error(AccountError::HostRequest(HostFailure::from_http(
+            Operation::Creation, 400,
+            b"Adding individual users to an access control entry is currently disabled. PRIVATE_TOKEN",
+        )));
+        assert_eq!(error.to_string(), "host.cloud_response_refused");
+        let diagnostic = from_io_error(&error).unwrap();
+        assert_eq!(diagnostic.stage, Stage::Creation);
+        assert_eq!(diagnostic.http_status, Some(400));
+        assert_eq!(diagnostic.category, Category::UnsupportedUserAcl);
+        assert_eq!(diagnostic.recovery, Recovery::UpgradeHost);
+        assert!(!format!("{error:?} {diagnostic:?}").contains("PRIVATE_TOKEN"));
+        let cancelled = account_error(AccountError::Cancelled);
+        assert!(crate::diagnostics::contains_source_type::<CloudCancelled>(
+            &cancelled
+        ));
+        #[cfg(feature = "host-runtime")]
+        {
+            let limited = account_error(AccountError::HostRequest(HostFailure::from_original(
+                Operation::HostToken,
+                AccountError::RateLimited,
+                Some(429),
+            )));
+            assert!(crate::diagnostics::contains_source_type::<TransientRelay>(
+                &limited
+            ));
+            assert_eq!(limited.to_string(), "host.cloud_rate_limited");
+        }
     }
 
     #[test]
@@ -3594,8 +3645,83 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn host_cloud_legacy_acl_reservations_fail_closed_without_rewriting_originals() {
+        for submitted in [false, true] {
+            for access in [None, Some("github_users"), Some("unknown")] {
+                let (_root, store, secrets) = fixture();
+                let adapter = CloudHostAdapter::fixture(&store);
+                let foreground = foreground(&adapter);
+                let network = FixtureNetwork::new(&store);
+                let cancel = CancellationToken::new();
+                adapter
+                    .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+                    .await
+                    .unwrap();
+                network.state.borrow_mut().prepare_error = Some(AccountError::Response);
+                assert!(adapter
+                    .provision_with(&foreground, &cancel, &network, &secrets)
+                    .await
+                    .is_err());
+                let original = adapter.load().unwrap();
+                assert_eq!(
+                    original.resource.as_ref().unwrap().create_access,
+                    CreateAccess::OwnerDefault
+                );
+                assert!(!original.submitted);
+                let mut encoded = serde_json::to_value(&original).unwrap();
+                encoded["submitted"] = submitted.into();
+                match access {
+                    Some(access) => encoded["resource"]["create_access"] = access.into(),
+                    None => {
+                        encoded["resource"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("create_access");
+                    }
+                }
+                let bytes = serde_json::to_vec(&encoded).unwrap();
+                store
+                    .with_locked(|directory, _| {
+                        storage::replace_private(directory, Path::new(RECORD), &bytes)
+                    })
+                    .unwrap();
+                let before = store.snapshot().unwrap();
+                let empty_secrets = MemorySecretStore::new();
+                let error = adapter
+                    .provision_with(&foreground, &cancel, &network, &empty_secrets)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    if access == Some("unknown") {
+                        "host.cloud_journal_invalid"
+                    } else {
+                        "host.cloud_legacy_acl_requires_reconciliation"
+                    }
+                );
+                assert_eq!(store.snapshot().unwrap(), before);
+                store
+                    .with_locked(|directory, _| {
+                        assert_eq!(
+                            storage::read_private(directory, Path::new(RECORD), 16 * 1024)?
+                                .as_slice(),
+                            bytes.as_slice()
+                        );
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(network.state.borrow().creates, 0);
+                assert_eq!(network.state.borrow().observes, 1);
+                assert_eq!(network.state.borrow().sign_ins, 1);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn host_cloud_legacy_retirement_crash_order_fences_old_ticket_and_requires_new_enable() {
-        for crash in 0..4 {
+        for (crash, legacy_acl) in
+            (0..4).flat_map(|crash| [false, true].map(move |acl| (crash, acl)))
+        {
             let (_root, store, secrets) = fixture();
             let adapter = CloudHostAdapter::fixture(&store);
             let old = foreground(&adapter);
@@ -3611,7 +3737,11 @@ mod tests {
                 .await
                 .is_err());
             let mut legacy = adapter.load().unwrap();
-            legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            if legacy_acl {
+                legacy.resource.as_mut().unwrap().create_access = CreateAccess::LegacyGithubUsers;
+            } else {
+                legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            }
             adapter.save(&legacy).unwrap();
             if crash == 0 {
                 // Actual pre-pin on-disk schema: the archive preserves even
@@ -3620,7 +3750,11 @@ mod tests {
                 old_bytes["resource"]
                     .as_object_mut()
                     .unwrap()
-                    .remove("create_protocol");
+                    .remove(if legacy_acl {
+                        "create_access"
+                    } else {
+                        "create_protocol"
+                    });
                 store
                     .with_locked(|directory, _| {
                         storage::replace_private(
@@ -3708,6 +3842,7 @@ mod tests {
             let new = adapter.load().unwrap();
             let new = new.resource.as_ref().unwrap();
             assert_eq!(new.create_protocol, CreateProtocol::Auto);
+            assert_eq!(new.create_access, CreateAccess::OwnerDefault);
             assert_ne!(new.tunnel_id, legacy.resource.as_ref().unwrap().tunnel_id);
             assert_eq!(network.state.borrow().creates, 1);
         }
@@ -3715,7 +3850,14 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn host_cloud_legacy_retirement_refusals_preserve_original_bytes() {
-        for scenario in 0..8 {
+        for (scenario, legacy_acl) in
+            (0..8).flat_map(|scenario| [false, true].map(move |acl| (scenario, acl)))
+        {
+            // Existing bound user-ACL resources remain readable; they are not
+            // migration candidates. Their continuity is checked separately.
+            if legacy_acl && scenario >= 6 {
+                continue;
+            }
             let (_root, store, secrets) = fixture();
             let adapter = CloudHostAdapter::fixture(&store);
             let old = foreground(&adapter);
@@ -3731,7 +3873,11 @@ mod tests {
                 .await
                 .is_err());
             let mut legacy = adapter.load().unwrap();
-            legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            if legacy_acl {
+                legacy.resource.as_mut().unwrap().create_access = CreateAccess::LegacyGithubUsers;
+            } else {
+                legacy.resource.as_mut().unwrap().create_protocol = CreateProtocol::LegacyTcp;
+            }
             if scenario == 0 || scenario >= 6 {
                 legacy.submitted = true;
             }
@@ -3803,6 +3949,41 @@ mod tests {
                 .await
                 .is_err());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_existing_user_acl_receipt_is_observed_without_replacement() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let foreground = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        let binding_before = store.snapshot().unwrap().binding;
+        // Model an existing release's protected explicit-user receipt. Missing
+        // create_access remains that policy, including during health/re-enable.
+        let mut original = adapter.load().unwrap();
+        original.resource.as_mut().unwrap().create_access = CreateAccess::LegacyGithubUsers;
+        original.receipt.as_mut().unwrap().resource.create_access = CreateAccess::LegacyGithubUsers;
+        adapter.save(&original).unwrap();
+        network.state.borrow_mut().created = original.receipt.clone();
+        assert_eq!(
+            adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::Provisioned
+        );
+        assert_eq!(adapter.load().unwrap().resource, original.resource);
+        assert_eq!(store.snapshot().unwrap().binding, binding_before);
+        assert_eq!(network.state.borrow().creates, 1);
     }
 
     #[tokio::test(start_paused = true)]

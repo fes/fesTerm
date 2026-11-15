@@ -5151,3 +5151,22 @@ unrelated error, and recovery actions use separate rows. Focused model/layout
 regressions cover pending/unobserved phases and 500/900-point widths. Re-capture
 both native sides with the final signed candidate before accepting the workflow;
 these source corrections do not establish remote shell, catalog or NxN passes.
+
+The native campaign matrix also includes iOS and Android clients against each
+Windows, macOS and Linux server, with generic shell creation off and on: 12
+mobile cases alongside 12 desktop cases. For MOB-06 / TUNNEL-11, execute the
+actual `host-clients` mobile build, record native credential storage, advertised
+and private profile behavior, real terminal I/O, creation permission, durable
+background/foreground reconnect and screenshots on both sides. Record hardware
+versus Simulator/emulator explicitly; portable tests and packaging receipts do
+not complete these cases or physical-device acceptance. See
+[the campaign matrix](dev-tunnel-workflow-lab.md#desktop-and-mobile-matrix).
+
+HOSTSETUP-01 / DIAG-01 also requires a native capture of the typed last-setup
+diagnostic in About and Remote access: stage, actual HTTP status when available,
+fixed error category and recovery guidance. Check a provider refusal, native
+store failure and cancellation/account/epoch replacement; old diagnostics must
+not appear under a new operation or imply endpoint readiness. No raw provider
+body, credentials or arbitrary native error strings may appear. Portable
+regressions cover delivery fences and rendering; native pane and new signed
+owner-default provisioning acceptance remain pending.

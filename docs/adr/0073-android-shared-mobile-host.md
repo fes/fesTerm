@@ -102,3 +102,10 @@ distinct from compilation, host tests and emulator evidence.
   rotation, split keyboard across a real fold/hinge, background/relaunch, device authentication, on-device recognition,
   selected-document import, owned SSH/SFTP and Dev Tunnel flows.
 - **Coverage superseded:** None; iOS evidence is not Android evidence.
+
+The development APK packager's explicit `--host-clients` mode selects the
+existing shared HOST client graph, isolates its output from legacy/offline APKs
+and records feature selection in the build receipt. Packaging regressions cover
+selection, incompatible modes and receipt/output isolation. Actual authenticated
+Dev Tunnel use against Windows, macOS and Linux remains MOB-06 native evidence;
+build success does not establish those flows or physical-device qualification.

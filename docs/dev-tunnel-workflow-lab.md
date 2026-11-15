@@ -7,7 +7,52 @@ ordinary tests. It does not create GitHub accounts, automate password entry,
 accept credentials in job payloads, enroll an owner, weaken host verification,
 or claim native GUI or iOS acceptance.
 
+## Desktop and mobile matrix
+
+The native campaign covers 24 cases: each direction below with generic shell
+creation disabled and enabled. Directions name the server first.
+
+| Server | Desktop clients | Mobile clients | Cases |
+| --- | --- | --- | --- |
+| Windows | macOS, Linux | iOS, Android | 8 |
+| macOS | Windows, Linux | iOS, Android | 8 |
+| Linux | Windows, macOS | iOS, Android | 8 |
+
+Each case requires controlled-account discovery and exact owner approval,
+advertised **Lab shared** and excluded **Lab private**, actual terminal I/O,
+the expected generic-creation permission, exact detach and durable reconnect,
+and screenshots on both server and client. Preserve issued identities after
+uncertain results; expanding the matrix never authorizes replacement creates.
+
+Mobile cases run the actual shared mobile client using `--host-clients` with
+`scripts/build-ios-spike.py` or `scripts/build-android.py`. Record the exact app
+source/build and whether execution used hardware, Simulator or emulator. Include
+software-keyboard input and background/foreground reconnect. Simulator/emulator
+results do not qualify physical-device lock, biometric or lifecycle gates.
+The desktop service-client runner below cannot qualify mobile cases. Packaging,
+headless fixtures and an available device do not count as a completed case.
+
 ## Protected create protocol and legacy reservations
+
+New intents also pin `create_access = "owner_default"`. Microsoft documents
+[creator-only private access by default](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#tunnel-access).
+The native campaign received HTTP 400: individual-user ACL entries are currently
+disabled by the service. New creates therefore omit access-control entries;
+they never fall back to anonymous or organization access. Every resource query
+explicitly requests the full ACL. New-mode receipts reject nonempty tunnel or
+port ACLs and unknown ACL fields. The authenticated account, exact conditional
+reservation and recorded resource incarnation remain required; an empty ACL is
+not independent owner proof. Inner HOST key approval and creation grants remain
+separate.
+
+A missing access-policy field preserves the old `github_users` intent. Existing
+bound receipts retain that exact policy for observation and host-token checks.
+An unbound legacy reservation cannot be reinterpreted as an owner-default
+request. The explicit authenticated-absence/archive Reconcile path below covers
+both legacy TCP and legacy user-ACL intents; submitted/uncertain originals,
+receipts and bindings cannot be retired through that path. Unknown policy
+values refuse. A fresh reviewed Enable after successful retirement pins the new
+policy and requires matching signed helpers.
 
 New HOST cloud intents pin `create_protocol = "auto"` in the protected resource.
 Microsoft's [port protocol contract](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands#advanced-manage-dev-tunnel-ports)
