@@ -2009,6 +2009,10 @@ mod tests {
         assert!(last_run(&store).unwrap().is_none());
     }
 
+    // These fixtures enter the real supported Unix service context. Windows must
+    // reject elevated or service-account contexts before reaching the service lease;
+    // the platform-independent admission/lease tests remain enabled there.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test(start_paused = true)]
     async fn host_runtime_initial_admission_reopens_actual_stage_after_service_lease_drains() {
         let (root, store) = fixture();
@@ -2056,6 +2060,7 @@ mod tests {
         assert!(last_run(&store).unwrap().is_none());
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test(start_paused = true)]
     async fn host_runtime_initial_admission_permanent_busy_keeps_original_error_and_bound() {
         let (root, store) = fixture();
@@ -2203,6 +2208,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test(start_paused = true)]
     async fn host_runtime_initial_admission_real_child_entry_persists_cancel_or_busy_outcome() {
         for cancel_wait in [true, false] {

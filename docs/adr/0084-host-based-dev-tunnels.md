@@ -2481,3 +2481,7 @@ gate, exact permanent-Busy deadline, cancellation, full-snapshot changes and
 fresh policy reduction. Other errors are proven single-attempt. Matching signed
 runtime/native-manager Start and actual relay readiness remain manual/native
 gates; the controlled Linux failure is preserved until that candidate is tested.
+The three fixtures that enter the real native service context run on Linux and
+macOS. Windows retains the shared admission/lease tests; its production context
+must still reject elevated or service accounts before that lease gate. The Unix
+fixtures do not claim ordinary-user Windows native startup qualification.
