@@ -1,6 +1,28 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[test]
+fn desktop_remote_access_hostname_seed_fits_friendly_name_contract() {
+    for hostname in [
+        "Build-Mac.local".to_owned(),
+        "界".repeat(40),
+        "lab\nserver".into(),
+    ] {
+        let friendly_name = host_name_label(std::ffi::OsStr::new(&hostname));
+        Draft {
+            friendly_name,
+            ..Draft::default()
+        }
+        .settings()
+        .validate()
+        .unwrap();
+    }
+    assert_eq!(
+        host_name_label(std::ffi::OsStr::new("Build-Mac.local")),
+        "Build-Mac.local"
+    );
+}
+
 struct Fake<F>(F);
 
 impl<F> Backend for Fake<F>

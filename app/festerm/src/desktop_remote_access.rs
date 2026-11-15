@@ -46,7 +46,7 @@ pub struct Draft {
 impl Default for Draft {
     fn default() -> Self {
         Self {
-            friendly_name: "This computer".into(),
+            friendly_name: host_name_label(&gethostname::gethostname()),
             allow_creation: false,
             startup_at_sign_in: false,
             account: String::new(),
@@ -59,6 +59,16 @@ impl Default for Draft {
             approve_creation: false,
         }
     }
+}
+
+fn host_name_label(host_name: &std::ffi::OsStr) -> String {
+    let mut name = host_name.to_string_lossy().trim().to_owned();
+    name.retain(|character| !character.is_control());
+    // The cloud-facing friendly-name field permits at most 80 UTF-8 bytes.
+    while name.len() > 80 {
+        name.pop();
+    }
+    name
 }
 
 impl Draft {

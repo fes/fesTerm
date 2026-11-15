@@ -2393,6 +2393,7 @@ dependencies = [
  "festerm-windows-power",
  "festerm-windows-security",
  "fs2",
+ "gethostname",
  "getrandom 0.3.4",
  "if-addrs",
  "image",

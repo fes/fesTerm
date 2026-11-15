@@ -9,7 +9,7 @@ description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
 default = ["experimental-dev-tunnels", "local-host-settings"]
-experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser", "dep:gethostname"]
 # Local Settings alone composes host authority; portable recipes/fingerprints do not.
 local-host-settings = ["experimental-dev-tunnels", "festerm-host-setup/acquisition", "festerm-host-setup/cloud", "festerm-host-setup/native-services", "festerm-host-setup/host-runtime"]
 
@@ -20,6 +20,7 @@ cap-std = "4.0.3"
 directories = "6"
 fs2 = "0.4"
 getrandom = "0.3"
+gethostname = { version = "1.1.0", optional = true }
 eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }

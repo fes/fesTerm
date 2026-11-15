@@ -455,7 +455,9 @@ and `uninstall` subcommands. Internal daemon/bridge/worker binaries may remain
 separate where required for ownership and platform behavior.
 
 Setup guides account sign-in (device URL/code usable on another device), friendly
-name, creation permission and startup choice. It installs a host with zero shells.
+name, creation permission and startup choice. Desktop Enable seeds the editable
+friendly name from the current machine's OS hostname, bounded to the metadata
+field's 80-byte limit. It installs a host with zero shells.
 Completion directs the client to Find hosts; JSON import remains legacy/advanced,
 not necessary for normal setup. If creation is denied, explicit local creation
 and sharing commands must be available.
@@ -2389,3 +2391,6 @@ A blocked-worker regression covers completion beyond the old deadlines, absolute
 expiry and permit retention. Native Allow/deny/unlock interaction and narrow-modal
 error readability remain manual checks in the existing validation procedure.
 This is frontend scheduling/presentation only; helper policy is unchanged.
+The shared HOST client also allows a 300-second native owner-key prompt before
+its separate 15-second relay connection budget. Cancellation retains admission
+until the blocking native key read returns; stale results cannot authorize use.

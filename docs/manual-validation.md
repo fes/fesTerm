@@ -4527,6 +4527,11 @@ not claim CPU preemption. Edited/stale account/settings/epoch/policy confirmatio
 requires explicit new review. Bundle status must not displace a foreground
 sign-in code; no automatic sign-in or browser is introduced.
 
+On a fresh desktop Enable draft, verify the editable host name defaults to the
+machine's OS hostname rather than a fixed label (within the 80-byte metadata
+limit). Check Windows, macOS and Linux; reopening configured hosts must retain
+their saved name, and explicit draft edits must survive status refreshes.
+
 Automated coverage includes the original 17 desktop model/native-adapter/render
 guards plus nine automatic-Setup cases, all six explicit protected desktop CAS/
 owner guards, controlled six-target signed acquisition and affected controller/
@@ -4739,7 +4744,11 @@ development wrapper, not installed or production services:
    vault prompts beyond 45 seconds: Prepare/Load have a 300-second foreground
    bound; Inventory has 330 seconds including its separate 30-second service
    resolution timeout. Verify expiry rejects late completion while admission
-   stays charged until the native call returns. Check expanded timeout Details
+   stays charged until the native call returns. The subsequent HOST transport
+   owner-key read also allows 300 seconds for native approval, independently of
+   the 15-second relay connection bound and existing proof/control deadlines.
+   Check normal approval, cancellation and late-key refusal at this phase too.
+   Check expanded timeout Details
    wraps inside the modal at narrow widths.
    Detach requires its correlated receipt; loss never replays input.
 6. Separately approve the exact displayed launch arguments, working directory
