@@ -1525,7 +1525,34 @@ async fn terminal_output_until(
 
 #[tokio::test]
 async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.policy.capabilities.profiles = true;
+    *fixture.source.0.lock().await = OwnerVerifier::from_protected_permissions(
+        fixture.policy.clone(),
+        &[fixture.key.public_key()],
+    )
+    .unwrap();
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let shared = festerm_host_protocol::LogicalSessionId::new();
+    sessions
+        .set_profile(
+            shared.clone(),
+            &OperationId::new().to_string(),
+            "Lab shared",
+            Default::default(),
+            true,
+        )
+        .unwrap();
+    sessions
+        .set_profile(
+            festerm_host_protocol::LogicalSessionId::new(),
+            &OperationId::new().to_string(),
+            "Lab private",
+            Default::default(),
+            false,
+        )
+        .unwrap();
     let (client, stream, ssh) = fixture.pair().await;
     let runtime = fixture.runtime.clone();
     let server =
@@ -1548,6 +1575,10 @@ async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_strea
     assert!(inventory.capabilities.inventory);
     assert!(!inventory.capabilities.create && !inventory.capabilities.ensure);
     assert!(inventory.sessions.is_empty() && inventory.unknown.is_empty());
+    assert!(inventory.capabilities.profiles);
+    assert_eq!(inventory.profiles.len(), 1);
+    assert_eq!(inventory.profiles[0].logical, shared);
+    assert_eq!(inventory.profiles[0].name, "Lab shared");
     drop(client);
     assert!(server.await.unwrap().is_err());
     ssh.abort();

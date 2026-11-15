@@ -2435,3 +2435,20 @@ channels/identities, expired or cancelled queued work and denied proof publicati
 Existing fresh-policy revocation and admission tests remain required. Actual
 native prompt completion, same-user account invalidation and cross-platform
 terminal adoption remain manual/native acceptance gates.
+
+### Validation impact: saved profile catalog policy leases
+
+`HOST-01` catalog projection holds its initial exclusive owner-policy guard only
+through collecting enabled saved profiles. It releases that guard before acquiring
+fresh publication authorization, while retaining the same session journal
+transaction across both checks. The publication guard remains held through return;
+changed or denied current policy still refuses the entire catalog. This prevents
+the host from contending with its own initial policy lease without adding retries,
+timeouts, cached authorization or access to private profiles.
+
+A real filesystem-exclusive-guard regression covers both successful fresh
+publication and policy denial at that boundary, including journal lock retention
+and unchanged bytes. The authenticated SSH inventory regression now traverses
+Capabilities, List and ListProfiles with an enabled shared and disabled private
+profile. Actual native Busy-stage attribution and a fresh matching signed server
+remain required before claiming the VM inventory workflow passes.

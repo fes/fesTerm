@@ -4736,6 +4736,9 @@ development wrapper, not installed or production services:
    Confirm the exact account and pinned HOST endpoint; reject legacy ports,
    ambiguity, stale identity and changed host pins. Denial, revocation, timeout,
    Busy and unknown targets must not become empty inventory or creation authority.
+   With no competing operation, confirm enabled saved profiles appear and private
+   profiles remain excluded; the host must not contend with its own policy guard.
+   A policy reduction before catalog publication must refuse the catalog.
 5. Attach an allowed existing generation and verify the installed frontend receives
    recovery before activation/input. Respect exact-generation and logical resume
    restrictions; it must not substitute existing attachment for AlwaysCreate.

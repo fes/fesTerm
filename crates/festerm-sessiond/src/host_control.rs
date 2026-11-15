@@ -1743,18 +1743,21 @@ impl SessionControl {
     ) -> Result<Vec<ProfileSummary>, ControlError> {
         let tx = self.transaction()?;
         let mut scoped = scoped_issuance(tx.state.issuance_epoch, &mut admit);
-        let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
-        let profiles = tx
-            .state
-            .profiles
-            .iter()
-            .filter(|(_, profile)| profile.enabled)
-            .map(|(logical, profile)| ProfileSummary {
-                logical: logical.clone(),
-                revision: profile.revision,
-                name: profile.name.clone(),
-            })
-            .collect();
+        let profiles = {
+            // Native policy guards own an exclusive lease. Protect projection,
+            // then release this guard before fresh publication authorization.
+            let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
+            tx.state
+                .profiles
+                .iter()
+                .filter(|(_, profile)| profile.enabled)
+                .map(|(logical, profile)| ProfileSummary {
+                    logical: logical.clone(),
+                    revision: profile.revision,
+                    name: profile.name.clone(),
+                })
+                .collect()
+        };
         let _publication = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
         Ok(profiles)
     }
@@ -3200,3 +3203,7 @@ fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
     }
     detached::normalize_spawn_profile(&profile).map_err(|_| ControlError::Invalid)
 }
+
+#[cfg(test)]
+#[path = "host_profile_admission_tests.rs"]
+mod profile_admission_tests;
