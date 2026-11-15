@@ -122,6 +122,9 @@ impl TunnelError {
 impl From<ClientError> for TunnelError {
     fn from(error: ClientError) -> Self {
         match error {
+            // HOST setup metadata must not change mobile client recovery or
+            // expose provider diagnostics through the ordinary client UI.
+            ClientError::HostRequest(failure) => Self::from(failure.original_error()),
             ClientError::Registration | ClientError::IdentityChanged => Self::NotConfigured,
             ClientError::Cancelled => Self::Cancelled,
             ClientError::Expired => Self::Expired,
@@ -154,5 +157,46 @@ impl From<AttachError> for TunnelError {
 impl From<festerm_mobile_profiles::ProfileError> for TunnelError {
     fn from(error: festerm_mobile_profiles::ProfileError) -> Self {
         Self::Profile(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use festerm_tunnel_client::diagnostics::{HostFailure, Operation};
+
+    #[test]
+    fn wrapped_client_errors_preserve_mobile_recovery_semantics() {
+        for original in [
+            ClientError::Registration,
+            ClientError::IdentityChanged,
+            ClientError::Cancelled,
+            ClientError::Expired,
+            ClientError::Denied,
+            ClientError::Network,
+            ClientError::Response,
+            ClientError::AccountChanged,
+            ClientError::TunnelNotFound,
+            ClientError::Tunnel,
+            ClientError::Ambiguous,
+            ClientError::Store,
+            ClientError::Busy,
+            ClientError::RateLimited,
+        ] {
+            let bare = TunnelError::from(original);
+            let wrapped = TunnelError::from(ClientError::HostRequest(HostFailure::from_original(
+                Operation::Creation,
+                original,
+                Some(400),
+            )));
+            assert_eq!(wrapped, bare);
+            assert_eq!(wrapped.needs_sign_in(), bare.needs_sign_in());
+        }
+        let rejected = TunnelError::from(ClientError::HostRequest(HostFailure::from_http(
+            Operation::Creation, 400,
+            b"Adding individual users to an access control entry is currently disabled. PRIVATE_PROVIDER_CONTENT",
+        )));
+        assert_eq!(rejected, TunnelError::Protocol);
+        assert!(!format!("{rejected:?} {rejected}").contains("PRIVATE_PROVIDER_CONTENT"));
     }
 }
