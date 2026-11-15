@@ -43,7 +43,19 @@ const APPROVED_EOC_CHAIN: [[u8; 32]; 3] = [
     APPROVED_CHAIN[1],
     APPROVED_CHAIN[2],
 ];
-const APPROVED_CHAINS: [[[u8; 32]; 3]; 2] = [APPROVED_CHAIN, APPROVED_EOC_CHAIN];
+// Independently retrieved Microsoft ID Verified CS EOC CA 04. The existing
+// publisher profile, pinned PCA/root and native proofs remain mandatory.
+const APPROVED_EOC04_CHAIN: [[u8; 32]; 3] = [
+    [
+        0xbc, 0x30, 0x95, 0x55, 0xfa, 0x42, 0xc5, 0x63, 0xb8, 0xee, 0xbf, 0xb7, 0x11, 0x76, 0x95,
+        0xc6, 0xba, 0xe8, 0x9e, 0x4b, 0xa1, 0x9c, 0x03, 0xcb, 0x72, 0x19, 0x79, 0xa5, 0x63, 0xa6,
+        0x09, 0x29,
+    ],
+    APPROVED_CHAIN[1],
+    APPROVED_CHAIN[2],
+];
+const APPROVED_CHAINS: [[[u8; 32]; 3]; 3] =
+    [APPROVED_CHAIN, APPROVED_EOC_CHAIN, APPROVED_EOC04_CHAIN];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Revocation {
@@ -176,16 +188,25 @@ mod tests {
     #[test]
     fn windows_publisher_policy_rejects_mixed_reordered_and_incomplete_chains() {
         let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
-        for (index, approved) in APPROVED_CHAINS.iter().enumerate() {
-            let other_issuer = APPROVED_CHAINS[1 - index][0];
-            // Every certificate is approved somewhere, but these are not an
-            // approved chain. Membership in a bag of pins is insufficient.
-            let mixed = [approved[0], other_issuer, approved[2]];
-            assert!(admit(&verified_evidence(&ekus, &mixed)).is_err());
-            let reordered = [approved[0], approved[2], approved[1]];
-            assert!(admit(&verified_evidence(&ekus, &reordered)).is_err());
-            let extended = [approved[0], other_issuer, approved[1], approved[2]];
-            assert!(admit(&verified_evidence(&ekus, &extended)).is_err());
+        for approved in &APPROVED_CHAINS {
+            for other in &APPROVED_CHAINS {
+                if other == approved {
+                    continue;
+                }
+                // Each certificate is approved somewhere; membership in a bag
+                // of pins does not authorize a mixed or extended chain.
+                for position in 1..3 {
+                    let mut mixed = *approved;
+                    mixed[position] = other[0];
+                    assert!(admit(&verified_evidence(&ekus, &mixed)).is_err());
+                }
+                let extended = [approved[0], other[0], approved[1], approved[2]];
+                assert!(admit(&verified_evidence(&ekus, &extended)).is_err());
+            }
+            for order in [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+                let reordered = order.map(|position| approved[position]);
+                assert!(admit(&verified_evidence(&ekus, &reordered)).is_err());
+            }
             for length in 0..3 {
                 assert!(admit(&verified_evidence(&ekus, &approved[..length])).is_err());
             }
