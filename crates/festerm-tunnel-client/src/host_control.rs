@@ -220,7 +220,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         }
         let epoch = self
             .capabilities
-            .filter(|caps| caps.ensure || caps.create)
+            .filter(|caps| caps.ensure || caps.ensure_profile || caps.create)
             .and_then(|caps| caps.issuance_epoch)
             .ok_or(Error::Refused(festerm_host_protocol::Refusal::Unsupported))?;
         Ok(IssuedControlOperation {
@@ -381,6 +381,104 @@ mod tests {
             creation_allowed: true,
             issuance_epoch: Some(Epoch::new(epoch).unwrap()),
             ..Capabilities::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_only_issuance_preserves_epoch_binding_and_refuses_generic_creation() {
+        let destination = binding();
+        let cancel = CancellationToken::new();
+        let (stream, mut peer) = duplex(4096);
+        let logical = LogicalSessionId::new();
+        let body = Request::EnsureProfile {
+            logical,
+            revision: Epoch::new(1).unwrap(),
+            attachment: AttachmentId::new(),
+        };
+        let expected_body = body.clone();
+        let expected_host = destination.host.clone();
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        profiles: true,
+                        ensure_profile: true,
+                        attach: true,
+                        issuance_epoch: Some(Epoch::new(7).unwrap()),
+                        ..Capabilities::default()
+                    },
+                },
+            )
+            .await;
+            let budgets = Budgets::default();
+            let request: Envelope<Request> = read_frame(&mut peer, &budgets)
+                .await
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(request.host, expected_host);
+            assert_eq!(request.body, expected_body);
+            assert_eq!(request.issuance_epoch, Some(Epoch::new(7).unwrap()));
+            let mut response = Envelope::new(
+                request.host,
+                request.operation,
+                Response::Refused {
+                    reason: Refusal::RecipeConflict,
+                },
+            );
+            response.issuance_epoch = request.issuance_epoch;
+            write_frame(&mut peer, &budgets, &response).await.unwrap();
+        });
+        let mut client =
+            ControlClient::on_authenticated_stream(stream, destination.clone(), permit());
+        let caps = client.handshake(&cancel).await.unwrap();
+        assert!(!caps.ensure && !caps.create && !caps.creation_allowed);
+        let issued = client.issue_operation().unwrap();
+        assert_eq!(issued.binding, destination);
+        assert_eq!(issued.operation.epoch, Epoch::new(7).unwrap());
+        let denied = client
+            .request_issued(&issued, creation(), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            denied.body,
+            Response::Refused {
+                reason: Refusal::Unsupported
+            }
+        );
+        let response = client.request_issued(&issued, body, &cancel).await.unwrap();
+        assert_eq!(
+            response.body,
+            Response::Refused {
+                reason: Refusal::RecipeConflict
+            }
+        );
+        task.await.unwrap();
+    }
+
+    #[test]
+    fn profile_issuance_requires_capability_and_protected_epoch() {
+        for capabilities in [
+            Capabilities::default(),
+            Capabilities {
+                issuance_epoch: Some(Epoch::new(7).unwrap()),
+                ..Capabilities::default()
+            },
+            Capabilities {
+                profiles: true,
+                ensure_profile: true,
+                attach: true,
+                ..Capabilities::default()
+            },
+        ] {
+            let (stream, _peer) = duplex(64);
+            let mut client = ControlClient::on_authenticated_stream(stream, binding(), permit());
+            client.capabilities = Some(capabilities);
+            assert!(matches!(
+                client.issue_operation(),
+                Err(Error::Refused(Refusal::Unsupported))
+            ));
         }
     }
 

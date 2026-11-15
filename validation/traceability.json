@@ -5593,6 +5593,8 @@
         "mobile_host_profile_can_explicitly_change_saved_host_without_network_or_losing_draft",
         "mobile_host_profile_host_selection_cancel_preserves_original_target_and_draft",
         "mobile_host_shared_profiles_are_visible_without_generic_creation_or_render_effects",
+        "profile_only_issuance_preserves_epoch_binding_and_refuses_generic_creation",
+        "profile_issuance_requires_capability_and_protected_epoch",
         "renaming_local_profile_preserves_implicit_remote_name_and_logical_identity",
         "host_quick_create_requires_a_bounded_nonblank_name",
         "host_creation_uses_remote_session_name_not_local_profile_name",

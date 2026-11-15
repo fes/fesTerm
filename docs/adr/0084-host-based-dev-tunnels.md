@@ -314,8 +314,11 @@ The host advertises enabled catalog entries even when no daemon generation is
 running. A profile-scoped grant permits only the registered recipe to be
 created on an explicit remote Connect; it does not depend on the independent
 host-wide permission for arbitrary ad-hoc shell creation. The client sends the
-stable profile identity, never an executable or recipe. The host resolves and
-revalidates the protected recipe, then uses the existing atomic sessiond
+stable profile identity, never an executable or recipe. Client operation issuance
+accepts the independent profile capability and protected issuance epoch even
+when generic Ensure/Create are not advertised; it does not grant those generic
+operations. The host resolves and revalidates the protected recipe, then uses
+the existing atomic sessiond
 Ensure journal. Saving, enabling the host, service restart and inventory never
 start a shell.
 
