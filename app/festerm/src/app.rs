@@ -10,6 +10,8 @@ pub(crate) mod gallery;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "host_browser.rs"]
 mod host_browser;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use host_browser::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 mod panes;
 #[cfg(test)]
 pub(crate) mod panes_tests;
@@ -8062,9 +8064,16 @@ impl FesTermApp {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.begin_tunnel_browser(None, ui.ctx());
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ReauthenticateHostAccount(request) => {
+                    self.dispatch_host_reauthentication(request, ui.ctx())
+                }
                 AppCommand::ReauthenticateDevTunnelAccount { account } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
-                    self.reauthenticate_dev_tunnel_account(&account, ui.ctx());
+                    self.dispatch_account_reauthentication(
+                        AppCommand::ReauthenticateDevTunnelAccount { account },
+                        ui.ctx(),
+                    );
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = account;
                 }

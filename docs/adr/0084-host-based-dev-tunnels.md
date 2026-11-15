@@ -286,6 +286,16 @@ a concise explanation rather than a misleading working create control.
 Refresh is explicit and bounded; no periodic launcher polling. Network workers
 never run on the GUI frame thread. Cancellation/account switches fence results.
 
+Desktop authentication recovery is an explicit inline **Sign in again** action
+for typed expired/account-changed discovery or host-resolution failures. It uses
+the existing central account reauthentication command after validating an
+ephemeral original-account/credential and request/generation/active-tab witness.
+Changed, removed or replaced accounts and stale screens cannot retarget it;
+other failures do not offer the action. No recovery witness is persisted or
+logged, and successful sign-in does not automatically discover or connect.
+CPU tests exercise these dispatch fences; native OAuth/vault completion remains
+separate validation.
+
 Saved session profiles remain one-click connect. Host shortcuts open its picker.
 Shared account identity can be reused, but endpoint-specific scoped credentials
 and immutable live launch bindings retain their existing isolation. Do not add a

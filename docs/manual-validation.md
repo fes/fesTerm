@@ -794,6 +794,16 @@ touch credentials. Explicit browser request tests cover cancellation, account
 switches, supersession and obsolete browser instances. These are logic/state
 tests, not native UI or real-service evidence.
 
+Typed expired/account-changed HOST discovery or resolution failures offer an inline
+**Sign in again** action through the existing account reauthentication command.
+CPU regressions cover the original account and credential witness, current
+request/generation/tab, replacement/removal/switch refusal, cancellation and
+nonauthentication errors without starting sign-in or discovery on page open.
+Manual/native validation remains required: expire an owned test account, use the
+inline action, complete normal GitHub consent, then explicitly Find hosts again;
+verify one retained account and unchanged profiles. A switched account, replaced
+credential, changed editor or closed tab must not retarget a pending action.
+
 Recovery regressions load mixed valid/invalid/duplicate/overflow recipes,
 check skipped-entry reporting/quarantine and retain valid entries after an
 unrelated save. Adapter and desktop-command tests preserve typed failures and

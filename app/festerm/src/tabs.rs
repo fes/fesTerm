@@ -2629,6 +2629,8 @@ pub struct SshProfileDraftSeed {
 #[derive(Debug)]
 pub enum AppCommand {
     #[cfg(feature = "experimental-dev-tunnels")]
+    ReauthenticateHostAccount(crate::app::Reauthentication),
+    #[cfg(feature = "experimental-dev-tunnels")]
     FindDevTunnelHosts {
         tab_id: TabId,
         request: egui::Id,
@@ -4972,7 +4974,8 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::HostRecipeFromProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
-            AppCommand::FindDevTunnelHosts { .. }
+            AppCommand::ReauthenticateHostAccount(_)
+            | AppCommand::FindDevTunnelHosts { .. }
             | AppCommand::ReviewDevTunnelHost { .. }
             | AppCommand::ConnectHostRecipe { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]

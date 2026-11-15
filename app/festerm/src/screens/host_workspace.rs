@@ -1,6 +1,7 @@
 //! Offline host choices and explicit, request-bound discovery presentation.
 
 use super::*;
+use crate::app::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 use festerm_config::host_recipes::{AccountReference, HostHint, HostReference, PublicRecipe};
 use festerm_tunnel_client::service::TunnelSummary;
 use festerm_ui_egui::controls::{action_button, ActionButtonRole};
@@ -50,6 +51,7 @@ struct AccountResults {
     /// Hosts from the last successful read; kept when a later refresh fails.
     hosts: Option<Vec<HostChoice>>,
     error: Option<String>,
+    reauthentication: Option<Reauthentication>,
     queued: bool,
 }
 
@@ -84,6 +86,8 @@ struct State {
     request: Option<egui::Id>,
     feedback: Option<String>,
     for_profile: bool,
+    reauthentication_generation: Option<egui::Id>,
+    selected_reference: Option<HostReference>,
 }
 
 fn state_id(tab: TabId) -> egui::Id {
@@ -122,8 +126,10 @@ pub(crate) fn cancel(context: &egui::Context, tab: TabId) {
             return;
         };
         state.request = None;
+        state.reauthentication_generation = None;
         for account in &mut state.accounts {
             account.request = None;
+            account.reauthentication = None;
         }
         data.insert_temp(state_id(tab), state);
     });
@@ -170,6 +176,42 @@ pub(crate) fn report_discovery(
     account: &str,
     result: Result<Vec<TunnelSummary>, String>,
 ) {
+    complete_discovery(context, tab, request, account, result, None);
+}
+
+pub(crate) fn report_typed_discovery(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+    account: &festerm_config::DevTunnelAccount,
+    result: Result<Vec<TunnelSummary>, RequestFailure>,
+) {
+    let recovery = result
+        .as_ref()
+        .err()
+        .filter(|error| error.needs_sign_in)
+        .map(|_| Reauthentication {
+            origin: ReauthenticationOrigin::Discovery { tab, request },
+            account: account.clone(),
+        });
+    complete_discovery(
+        context,
+        tab,
+        request,
+        account.identifier(),
+        result.map_err(|error| error.message),
+        recovery,
+    );
+}
+
+fn complete_discovery(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+    account: &str,
+    result: Result<Vec<TunnelSummary>, String>,
+    recovery: Option<Reauthentication>,
+) {
     context.data_mut(|data| {
         let Some(mut state) = data.get_temp::<State>(state_id(tab)) else {
             return;
@@ -182,6 +224,8 @@ pub(crate) fn report_discovery(
             return;
         };
         row.request = None;
+        row.reauthentication =
+            recovery.filter(|_| state.reauthentication_generation == Some(request));
         match result {
             Ok(hosts) => {
                 row.hosts = Some(
@@ -196,6 +240,7 @@ pub(crate) fn report_discovery(
                         .collect(),
                 );
                 row.error = None;
+                row.reauthentication = None;
                 let hosts = row.hosts.clone().unwrap_or_default();
                 remember_discovery(data, account, &hosts);
             }
@@ -220,6 +265,7 @@ pub(crate) fn report_outcome(
             return;
         }
         state.request = None;
+        state.reauthentication_generation = None;
         state.feedback = Some(message.to_owned());
         data.insert_temp(state_id(tab), state);
     });
@@ -260,6 +306,7 @@ pub(crate) fn install_gallery_state(context: &egui::Context, tab: TabId, unavail
                         locator: "fixture.use".into(),
                         reference: None,
                     }]),
+                    reauthentication: None,
                     error: unavailable.then(|| "Host unavailable. Try again.".to_owned()),
                     queued: false,
                 }],
@@ -288,6 +335,7 @@ pub(crate) fn install_profile_picker_gallery(context: &egui::Context, tab: TabId
                     })
                     .collect(),
             ),
+            reauthentication: None,
             error: error.map(str::to_owned),
             queued: false,
         }
@@ -445,8 +493,13 @@ pub(crate) fn show_profile_host_picker(
     let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
     if !state.for_profile {
         state.request = None;
+        state.reauthentication_generation = None;
     }
     state.for_profile = true;
+    if state.selected_reference.as_ref() != selected {
+        state.reauthentication_generation = None;
+        state.selected_reference = selected.cloned();
+    }
     sync_accounts(&mut state, configuration);
     for row in &mut state.accounts {
         if row.hosts.is_none() {
@@ -510,6 +563,7 @@ pub(crate) fn show_profile_host_picker(
                                     None => {
                                         let request = egui::Id::new(uuid::Uuid::new_v4());
                                         state.request = Some(request);
+                                        state.reauthentication_generation = None;
                                         state.feedback = None;
                                         ProfileHostPick::Command(Box::new(
                                             AppCommand::ReviewDevTunnelHost {
@@ -557,6 +611,7 @@ pub(crate) fn show_profile_host_picker(
             if action_button(ui, ActionButtonRole::Secondary, "Refresh sessions").clicked() {
                 let request = egui::Id::new(uuid::Uuid::new_v4());
                 state.request = Some(request);
+                state.reauthentication_generation = None;
                 state.feedback = None;
                 pick = Some(ProfileHostPick::Command(Box::new(
                     AppCommand::ReviewDevTunnelHost {
@@ -585,6 +640,8 @@ pub(crate) fn show_profile_host_picker(
                 .clicked()
             {
                 row.queued = true;
+                state.reauthentication_generation = None;
+                row.reauthentication = None;
             }
             if row.request.is_some() || row.queued {
                 ui.horizontal(|ui| {
@@ -604,6 +661,11 @@ pub(crate) fn show_profile_host_picker(
                     format!("@{}: couldn't find hosts. {error}", account.login())
                 };
                 ui.colored_label(theme::STATUS_ERROR, message);
+                if let Some(command) =
+                    reauthentication_button(ui, row, account, state.reauthentication_generation)
+                {
+                    pick = Some(ProfileHostPick::Command(Box::new(command)));
+                }
             }
         }
         if let Some(message) = &state.feedback {
@@ -619,6 +681,8 @@ pub(crate) fn show_profile_host_picker(
             let request = egui::Id::new(uuid::Uuid::new_v4());
             row.queued = false;
             row.request = Some(request);
+            state.reauthentication_generation = Some(request);
+            row.reauthentication = None;
             row.error = None;
             pick = Some(ProfileHostPick::Command(Box::new(
                 AppCommand::FindDevTunnelHosts {
@@ -647,6 +711,7 @@ fn show_mode(
     let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
     if state.for_profile != for_profile {
         state.request = None;
+        state.reauthentication_generation = None;
     }
     state.for_profile = for_profile;
     state
@@ -665,6 +730,7 @@ fn show_mode(
                     if action_button(ui, ActionButtonRole::Accent, "Connect").clicked() {
                         let request = egui::Id::new(uuid::Uuid::new_v4());
                         state.request = Some(request);
+                        state.reauthentication_generation = None;
                         state.feedback = None;
                         command = Some(AppCommand::ConnectHostRecipe {
                             tab_id: tab,
@@ -710,6 +776,8 @@ fn show_mode(
             {
                 let request = egui::Id::new(uuid::Uuid::new_v4());
                 row.request = Some(request);
+                state.reauthentication_generation = Some(request);
+                row.reauthentication = None;
                 row.error = None;
                 command = Some(AppCommand::FindDevTunnelHosts {
                     tab_id: tab,
@@ -725,6 +793,11 @@ fn show_mode(
             }
             if let Some(error) = &row.error {
                 ui.colored_label(theme::STATUS_ERROR, error);
+                if let Some(next) =
+                    reauthentication_button(ui, row, account, state.reauthentication_generation)
+                {
+                    command = Some(next);
+                }
             }
             if let Some(hosts) = &row.hosts {
                 if hosts.is_empty() {
@@ -734,6 +807,7 @@ fn show_mode(
                     if action_button(ui, ActionButtonRole::Secondary, &host.name).clicked() {
                         let request = egui::Id::new(uuid::Uuid::new_v4());
                         state.request = Some(request);
+                        state.reauthentication_generation = None;
                         state.feedback = None;
                         command = Some(AppCommand::ReviewDevTunnelHost {
                             tab_id: tab,
@@ -763,6 +837,7 @@ fn show_mode(
                 {
                     let request = egui::Id::new(uuid::Uuid::new_v4());
                     state.request = Some(request);
+                    state.reauthentication_generation = None;
                     state.feedback = None;
                     command = Some(AppCommand::ReviewDevTunnelHost {
                         tab_id: tab,
@@ -775,6 +850,66 @@ fn show_mode(
     }
     ui.data_mut(|data| data.insert_temp(id, state));
     command
+}
+
+fn reauthentication_button(
+    ui: &mut Ui,
+    row: &AccountResults,
+    account: &festerm_config::DevTunnelAccount,
+    generation: Option<egui::Id>,
+) -> Option<AppCommand> {
+    let request = row.reauthentication.as_ref()?;
+    let ReauthenticationOrigin::Discovery {
+        request: expected, ..
+    } = request.origin
+    else {
+        return None;
+    };
+    if row.request.is_some()
+        || row.queued
+        || generation != Some(expected)
+        || &request.account != account
+    {
+        return None;
+    }
+    ui.push_id(("host_reauthentication", account.identifier()), |ui| {
+        action_button(ui, ActionButtonRole::Secondary, "Sign in again")
+            .clicked()
+            .then(|| AppCommand::ReauthenticateHostAccount(request.clone()))
+    })
+    .inner
+}
+
+pub(crate) fn reauthentication_is_current(
+    context: &egui::Context,
+    tab: TabId,
+    generation: egui::Id,
+    request: &Reauthentication,
+) -> bool {
+    context.data(|data| {
+        data.get_temp::<State>(state_id(tab)).is_some_and(|state| {
+            state.reauthentication_generation == Some(generation)
+                && state.accounts.iter().any(|row| {
+                    row.request.is_none()
+                        && !row.queued
+                        && row.reauthentication.as_ref() == Some(request)
+                })
+        })
+    })
+}
+
+pub(crate) fn clear_reauthentication(context: &egui::Context, tab: TabId) {
+    context.data_mut(|data| {
+        if let Some(mut state) = data.get_temp::<State>(state_id(tab)) {
+            state.reauthentication_generation = None;
+            for row in &mut state.accounts {
+                if row.reauthentication.take().is_some() {
+                    row.error = Some("Complete sign-in, then choose Find hosts again.".into());
+                }
+            }
+            data.insert_temp(state_id(tab), state);
+        }
+    });
 }
 
 #[cfg(test)]

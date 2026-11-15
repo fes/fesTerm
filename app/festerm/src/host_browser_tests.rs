@@ -502,3 +502,268 @@ fn discovered_host_reuses_only_unambiguous_same_account_exact_locator_identity()
     );
     assert!(known_host_reference(&context, &configuration, 42, "build.use").is_none());
 }
+
+#[test]
+fn host_auth_recovery_requires_typed_auth_failure_not_matching_error_text() {
+    use festerm_tunnel_client::Error;
+    for error in [Error::Expired, Error::AccountChanged] {
+        assert!(RequestFailure::from(error).needs_sign_in);
+    }
+    for error in [
+        Error::Denied,
+        Error::Network,
+        Error::Store,
+        Error::Response,
+        Error::Cancelled,
+        Error::Registration,
+        Error::IdentityChanged,
+    ] {
+        assert!(!RequestFailure::from(error).needs_sign_in);
+    }
+    assert!(
+        !RequestFailure::from("GitHub sign-in expired. Sign in again in Settings.").needs_sign_in
+    );
+    assert!(!format!("{:?}", RequestFailure::from("PRIVATE_TEXT")).contains("PRIVATE_TEXT"));
+}
+
+fn browser_reauthentication_fixture() -> (FesTermApp, egui::Context, Reauthentication) {
+    let (mut app, context) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    browser.receiver = Some(receiver);
+    assert!(sender.try_send(Err(RequestFailure::expired())).is_ok());
+    app.poll_host_browser(&context);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.needs_sign_in && !browser.busy());
+    let request = Reauthentication {
+        origin: ReauthenticationOrigin::Browser {
+            tab: browser.tab,
+            request: browser.request,
+            generation: browser.generation,
+        },
+        account: browser.account.clone(),
+    };
+    (app, context, request)
+}
+
+#[test]
+fn host_auth_recovery_uses_existing_central_command_for_original_browser_account() {
+    let (mut app, context, request) = browser_reauthentication_fixture();
+    let debug = format!("{request:?}");
+    assert!(!debug.contains(request.account.identifier()));
+    assert!(!debug.contains(&request.account.credential_reference().to_persisted_string()));
+    let command = app
+        .host_reauthentication_command(request, &context)
+        .unwrap();
+    assert!(
+        matches!(command, AppCommand::ReauthenticateDevTunnelAccount { account } if account == "github-user")
+    );
+    assert!(app.host_browser.is_none());
+    assert!(
+        app.tunnel_browser.is_none() && app.native_tunnel.is_none(),
+        "validation must not start authentication itself"
+    );
+}
+
+#[test]
+fn host_auth_recovery_rejects_stale_browser_generation_accounts_and_tabs_at_dispatch() {
+    for changed in 0..7 {
+        let (mut app, context, request) = browser_reauthentication_fixture();
+        match changed {
+            0 => {
+                let replacement = request
+                    .account
+                    .clone()
+                    .with_credential(SecretReference::generate());
+                let (configuration, _) =
+                    app.state.configuration().with_account(replacement).unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            1 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            2 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                let replacement = DevTunnelAccount::new(
+                    request.account.identifier(),
+                    AccountProvider::Github,
+                    77,
+                    "another-user",
+                    SecretReference::generate(),
+                )
+                .unwrap();
+                app.state
+                    .replace_configuration(configuration.with_account(replacement).unwrap().0);
+            }
+            3 => app.host_browser.as_mut().unwrap().generation += 1,
+            4 => crate::screens::install_host_recipe_request_for_test(
+                &context,
+                app.state.active(),
+                egui::Id::new("new-editor"),
+            ),
+            5 => {
+                let tab = app.state.active();
+                app.state.dispatch(AppCommand::CloseTab(tab), &context);
+            }
+            _ => app.host_browser.as_mut().unwrap().needs_sign_in = false,
+        }
+        assert!(
+            app.host_reauthentication_command(request, &context)
+                .is_none(),
+            "changed scope {changed}"
+        );
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
+}
+
+type DiscoveryHarness = egui_kittest::Harness<'static, Option<AppCommand>>;
+fn discovery_failure_fixture(failure: RequestFailure) -> (FesTermApp, DiscoveryHarness) {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let (mut app, _) = fixture();
+    app.host_browser = None;
+    app.state.active_tab_mut().content = TabContent::Launcher;
+    let tab = app.state.active();
+    let configuration = app.state.configuration().clone();
+    let account = configuration.account("github-user").unwrap().clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(460.0, 720.0))
+        .build_ui_state(
+            move |ui, command: &mut Option<AppCommand>| {
+                if let Some(next) = crate::screens::host_workspace::show(ui, tab, &configuration) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+    harness.run();
+    assert!(
+        harness.state().is_none(),
+        "opening the page must remain offline"
+    );
+    harness.get_by_label("Find hosts · @user").click();
+    harness.run_steps(1);
+    let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take() else {
+        panic!("explicit Find hosts")
+    };
+    crate::screens::host_workspace::report_typed_discovery(
+        &harness.ctx,
+        tab,
+        request,
+        &account,
+        Err(failure),
+    );
+    harness.run();
+    (app, harness)
+}
+
+fn discovery_reauthentication_fixture() -> (FesTermApp, DiscoveryHarness, Reauthentication) {
+    use egui_kittest::kittest::Queryable;
+    let (app, mut harness) = discovery_failure_fixture(RequestFailure::expired());
+    harness.get_by_label("Sign in again").click();
+    harness.run_steps(1);
+    let Some(AppCommand::ReauthenticateHostAccount(request)) = harness.state_mut().take() else {
+        panic!("scoped explicit recovery")
+    };
+    (app, harness, request)
+}
+
+#[test]
+fn host_auth_recovery_discovery_button_dispatches_original_account_once_without_network() {
+    let (mut app, harness, request) = discovery_reauthentication_fixture();
+    let stale = request.clone();
+    let command = app
+        .host_reauthentication_command(request, &harness.ctx)
+        .unwrap();
+    assert!(
+        matches!(command, AppCommand::ReauthenticateDevTunnelAccount { account } if account == "github-user")
+    );
+    assert!(app
+        .host_reauthentication_command(stale, &harness.ctx)
+        .is_none());
+    assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+}
+
+#[test]
+fn host_auth_recovery_discovery_rejects_replaced_removed_switched_cancelled_and_stale_scope() {
+    use egui_kittest::kittest::Queryable;
+    for changed in 0..7 {
+        let (mut app, mut harness, request) = discovery_reauthentication_fixture();
+        match changed {
+            0 => {
+                let replacement = request
+                    .account
+                    .clone()
+                    .with_credential(SecretReference::generate());
+                let (configuration, _) =
+                    app.state.configuration().with_account(replacement).unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            1 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            2 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                let replacement = DevTunnelAccount::new(
+                    request.account.identifier(),
+                    AccountProvider::Github,
+                    77,
+                    "another-user",
+                    SecretReference::generate(),
+                )
+                .unwrap();
+                app.state
+                    .replace_configuration(configuration.with_account(replacement).unwrap().0);
+            }
+            3 => {
+                harness.get_by_label("Find hosts · @user").click();
+                harness.run_steps(1);
+            }
+            4 => crate::screens::host_workspace::cancel(&harness.ctx, app.state.active()),
+            5 => {
+                let tab = app.state.active();
+                app.state.dispatch(AppCommand::CloseTab(tab), &harness.ctx);
+            }
+            _ => app.state.dispatch(AppCommand::OpenProfiles, &harness.ctx),
+        }
+        assert!(
+            app.host_reauthentication_command(request, &harness.ctx)
+                .is_none(),
+            "changed scope {changed}"
+        );
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
+}
+
+#[test]
+fn host_auth_recovery_discovery_nonauth_errors_have_no_sign_in_action() {
+    use egui_kittest::kittest::Queryable;
+    use festerm_tunnel_client::Error;
+    for error in [
+        Error::Denied,
+        Error::Network,
+        Error::Store,
+        Error::Response,
+        Error::Cancelled,
+    ] {
+        let (_, harness) = discovery_failure_fixture(RequestFailure::from(error));
+        assert!(harness.query_by_label("Sign in again").is_none());
+    }
+}

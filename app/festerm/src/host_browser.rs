@@ -29,12 +29,83 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Local worker metadata; authentication recovery is never inferred from text.
+pub(crate) struct RequestFailure {
+    pub(crate) message: String,
+    pub(crate) needs_sign_in: bool,
+}
+impl std::fmt::Debug for RequestFailure {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("HostRequestFailure")
+            .field("needs_sign_in", &self.needs_sign_in)
+            .finish()
+    }
+}
+impl RequestFailure {
+    fn expired() -> Self {
+        Self {
+            message: "GitHub sign-in expired. Sign in again to continue.".into(),
+            needs_sign_in: true,
+        }
+    }
+}
+impl From<String> for RequestFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            needs_sign_in: false,
+        }
+    }
+}
+impl From<&str> for RequestFailure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+impl From<festerm_tunnel_client::Error> for RequestFailure {
+    fn from(error: festerm_tunnel_client::Error) -> Self {
+        Self {
+            message: error.to_string(),
+            needs_sign_in: matches!(
+                error.original_error(),
+                festerm_tunnel_client::Error::Expired
+                    | festerm_tunnel_client::Error::AccountChanged
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReauthenticationOrigin {
+    Discovery {
+        tab: TabId,
+        request: egui::Id,
+    },
+    Browser {
+        tab: TabId,
+        request: egui::Id,
+        generation: u64,
+    },
+}
+/// Ephemeral dispatch witness. It is never serialized or copied into logs.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Reauthentication {
+    pub(crate) origin: ReauthenticationOrigin,
+    pub(crate) account: DevTunnelAccount,
+}
+impl std::fmt::Debug for Reauthentication {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("HostReauthentication(<private>)")
+    }
+}
+
 enum ResultEvent {
     Prepared(Receipt),
     Resolved(Box<(Receipt, ResolvedTunnel)>),
 }
 
 enum Action {
+    Reauthenticate,
     Load,
     Prepare,
     Inventory,
@@ -111,7 +182,7 @@ pub(super) struct Discovery {
     request: egui::Id,
     account: DevTunnelAccount,
     cancel: CancellationToken,
-    receiver: mpsc::Receiver<Result<Vec<service::TunnelSummary>, String>>,
+    receiver: mpsc::Receiver<Result<Vec<service::TunnelSummary>, RequestFailure>>,
 }
 
 impl Drop for Discovery {
@@ -139,12 +210,13 @@ pub(super) struct Browser {
     #[cfg(test)]
     gallery_original: Option<(String, bool)>,
     resolved: Option<ResolvedTunnel>,
-    receiver: Option<mpsc::Receiver<Result<ResultEvent, String>>>,
+    receiver: Option<mpsc::Receiver<Result<ResultEvent, RequestFailure>>>,
     pending_deadline: Option<(Instant, CancellationToken)>,
     worker: Option<Worker>,
     inventory: Option<Inventory>,
     generation: u64,
     feedback: Option<String>,
+    needs_sign_in: bool,
     workspace: bool,
     discovered: bool,
     auto_connect: bool,
@@ -230,6 +302,7 @@ impl FesTermApp {
             inventory: None,
             generation: 1,
             feedback: None,
+            needs_sign_in: false,
             workspace: false,
             discovered: false,
             auto_connect: false,
@@ -599,6 +672,7 @@ impl FesTermApp {
             inventory: None,
             generation: 0,
             feedback: None,
+            needs_sign_in: false,
             workspace: false,
             discovered: false,
             auto_connect: resume_saved,
@@ -613,6 +687,97 @@ impl FesTermApp {
         });
         if resume_saved {
             self.apply_host_review_action(Action::Load, context);
+        }
+    }
+
+    pub(super) fn host_reauthentication_command(
+        &mut self,
+        request: Reauthentication,
+        context: &egui::Context,
+    ) -> Option<AppCommand> {
+        let tab = match request.origin {
+            ReauthenticationOrigin::Discovery { tab, .. }
+            | ReauthenticationOrigin::Browser { tab, .. } => tab,
+        };
+        if self.state.active_tab().id != tab
+            || !matches!(
+                self.state.active_tab().content,
+                TabContent::Launcher | TabContent::Profiles
+            )
+            || self
+                .state
+                .configuration()
+                .account(request.account.identifier())
+                != Some(&request.account)
+        {
+            return None;
+        }
+        match request.origin {
+            ReauthenticationOrigin::Discovery {
+                tab,
+                request: generation,
+            } => {
+                if !crate::screens::host_workspace::reauthentication_is_current(
+                    context, tab, generation, &request,
+                ) {
+                    return None;
+                }
+                crate::screens::host_workspace::clear_reauthentication(context, tab);
+            }
+            ReauthenticationOrigin::Browser {
+                tab,
+                request: generation,
+                generation: operation,
+            } => {
+                if !self.host_browser.as_ref().is_some_and(|browser| {
+                    browser.tab == tab
+                        && browser.request == generation
+                        && browser.generation == operation
+                        && browser.account == request.account
+                        && browser.current(&self.state, context)
+                        && browser.needs_sign_in
+                        && !browser.busy()
+                }) {
+                    return None;
+                }
+                crate::screens::host_workspace::report_outcome(
+                    context,
+                    tab,
+                    generation,
+                    "Complete sign-in, then explicitly refresh the selected host.",
+                );
+                crate::screens::report_host_recipe_outcome(
+                    context,
+                    tab,
+                    generation,
+                    Err("Complete sign-in, then explicitly refresh the selected host."),
+                );
+                self.host_browser = None;
+            }
+        }
+        Some(AppCommand::ReauthenticateDevTunnelAccount {
+            account: request.account.identifier().to_owned(),
+        })
+    }
+
+    pub(super) fn dispatch_host_reauthentication(
+        &mut self,
+        request: Reauthentication,
+        context: &egui::Context,
+    ) {
+        if let Some(command) = self.host_reauthentication_command(request, context) {
+            self.dispatch_account_reauthentication(command, context);
+        }
+    }
+
+    /// The existing central reauthentication command owns the actual sign-in.
+    pub(super) fn dispatch_account_reauthentication(
+        &mut self,
+        command: AppCommand,
+        context: &egui::Context,
+    ) {
+        if let AppCommand::ReauthenticateDevTunnelAccount { account } = command {
+            self.reauthenticate_dev_tunnel_account(&account, context);
         }
     }
 
@@ -723,9 +888,9 @@ impl FesTermApp {
                 let secret = store.get(work_account.credential_reference())
                     .map_err(|_| "Unlock secure storage and try again.")?;
                 let identity = secret.with_bytes(|bytes| Identity::decode_private(bytes,
-                    work_account.account_id(), client)).map_err(|error| error.to_string())?;
+                    work_account.account_id(), client)).map_err(RequestFailure::from)?;
                 if identity.needs_sign_in() {
-                    return Err("GitHub sign-in expired. Sign in again in Settings.".into());
+                    return Err(RequestFailure::expired());
                 }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "Host discovery could not start.")?;
@@ -735,7 +900,7 @@ impl FesTermApp {
                         result = tokio::time::timeout(Duration::from_secs(30),
                             service::list_hosts(&identity, &work_cancel)) => {
                             let mut hosts = result.map_err(|_| "Host discovery timed out. Try again.")?
-                                .map_err(|error| error.to_string())?;
+                                .map_err(RequestFailure::from)?;
                             hosts.truncate(32);
                             Ok(hosts)
                         }
@@ -794,15 +959,15 @@ impl FesTermApp {
                     continue;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    Err("Host discovery stopped. Try again.".into())
+                    Err(RequestFailure::from("Host discovery stopped. Try again."))
                 }
             };
             let discovery = self.host_discovery.remove(index);
-            crate::screens::host_workspace::report_discovery(
+            crate::screens::host_workspace::report_typed_discovery(
                 context,
                 discovery.tab,
                 discovery.request,
-                discovery.account.identifier(),
+                &discovery.account,
                 result,
             );
         }
@@ -953,6 +1118,7 @@ impl FesTermApp {
             inventory: None,
             generation: 0,
             feedback: None,
+            needs_sign_in: false,
             workspace: true,
             discovered,
             auto_connect,
@@ -1031,7 +1197,10 @@ impl FesTermApp {
                         Err(error) => browser.feedback = Some(error),
                     }
                 }
-                Err(error) => browser.feedback = Some(error),
+                Err(error) => {
+                    browser.needs_sign_in = error.needs_sign_in;
+                    browser.feedback = Some(error.message);
+                }
             }
         }
         let completion = browser
@@ -1224,6 +1393,7 @@ impl FesTermApp {
                 ui.label(format!("Account: github:{} · {}", browser.account.account_id(), browser.account.login()));
                 ui.label("The recipe is an unverified hint. No discovery, sign-in or connection starts until you explicitly act here.");
                 if let Some(message) = &browser.feedback { ui.label(message); }
+                if browser.needs_sign_in && !browser.busy() && ui.button("Sign in again").clicked() { action = Some(Action::Reauthenticate); }
                 if browser.busy() { ui.spinner(); ui.label("Working on the selected host only…"); }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
                     let owner = browser.receipt.as_ref().map(|receipt| (receipt.binding(), receipt.public_key()));
@@ -1414,6 +1584,7 @@ impl FesTermApp {
                 if browser.busy() {
                     ui.horizontal(|ui| { ui.spinner(); ui.label("Connecting…"); });
                 }
+                if browser.needs_sign_in && !browser.busy() && ui.button("Sign in again").clicked() { action = Some(Action::Reauthenticate); }
                 if let Some(message) = &browser.feedback {
                     ui.label(
                         if message.len() > 140 { "The connection needs attention." } else { message });
@@ -1734,8 +1905,24 @@ impl FesTermApp {
         {
             return;
         }
+        if matches!(action, Action::Reauthenticate) {
+            let browser = self.host_browser.as_ref().expect("current browser");
+            if browser.needs_sign_in {
+                let request = Reauthentication {
+                    origin: ReauthenticationOrigin::Browser {
+                        tab: browser.tab,
+                        request: browser.request,
+                        generation: browser.generation,
+                    },
+                    account: browser.account.clone(),
+                };
+                self.dispatch_host_reauthentication(request, context);
+            }
+            return;
+        }
         let browser = self.host_browser.as_mut().expect("current browser");
         browser.feedback = None;
+        browser.needs_sign_in = false;
         if let Action::EnsureProfile {
             logical,
             revision,
@@ -2014,20 +2201,24 @@ async fn resolve_host(
     store: &dyn SecretStore,
     locator: &str,
     cancel: &CancellationToken,
-) -> Result<ResolvedTunnel, String> {
+) -> Result<ResolvedTunnel, RequestFailure> {
     let client = identity::registered_client_id()
         .ok_or("Account sign-in is not configured in this build.")?;
     let secret = store.get(account.credential_reference()).map_err(|_| "The selected account's native credential is unavailable. No sign-in or fallback was attempted.")?;
     let identity = secret
         .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client))
-        .map_err(|error| error.to_string())?;
+        .map_err(RequestFailure::from)?;
     if identity.needs_sign_in() {
-        return Err("The selected account requires foreground sign-in in Profiles. No background sign-in or refresh was started.".into());
+        return Err(RequestFailure::expired());
     }
     service::resolve_host(&identity, locator, cancel).await.map_err(|error| {
         if error == festerm_tunnel_client::Error::Tunnel {
-            "The selected endpoint does not advertise the HOST protocol. No legacy bridge fallback was attempted.".into()
-        } else { format!("{} No session absence was inferred.", error) }
+            RequestFailure::from("The selected endpoint does not advertise the HOST protocol. No legacy bridge fallback was attempted.")
+        } else {
+            let mut failure = RequestFailure::from(error);
+            failure.message.push_str(" No session absence was inferred.");
+            failure
+        }
     })
 }
 
