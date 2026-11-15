@@ -68,6 +68,13 @@ displays its public key for **separate host-local approval**; it does not enroll
 or trust service/imported metadata. A missing, locked or unsupported vault fails
 closed. No background sign-in/refresh is added.
 
+HOST fingerprint, connection details and profile/session editors use the shared
+mobile field document and native edit bridge, including multiline paste. The CPU
+regression checks focused field identity and targeted edits; native keyboard,
+clipboard and first-connect approval still require Simulator/device validation.
+Host rows and saved display hints prefer a bounded public description, then name,
+then locator; these labels do not establish host identity or approval.
+
 The actual installed mobile terminal adopts recovery before input/Running.
 Native lock/suspension cancels HOST work and transports directly, without
 waiting for a UI frame. This is not intentional detach or shell termination:

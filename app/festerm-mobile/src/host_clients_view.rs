@@ -5,6 +5,69 @@ use crate::widgets::{
     ButtonKind,
 };
 
+// HOST fields must publish the same native document as ordinary mobile forms.
+// Bare TextEdit selects the fallback system IME without the field edit bridge.
+fn host_field(
+    ui: &mut egui::Ui,
+    name: &str,
+    edit: egui::TextEdit<'_>,
+    multiline: bool,
+) -> egui::Response {
+    let id = ui.make_persistent_id(("host_client_field", name));
+    let response = crate::widgets::local_text_edit(ui, id, edit, false, multiline)
+        .response
+        .response;
+    crate::widgets::name_field(response, name)
+}
+
+pub(super) fn pairing_scope(hosts: &HostUi) -> egui::Id {
+    egui::Id::new((
+        "host_pairing",
+        &hosts.account,
+        &hosts.locator,
+        hosts
+            .selected
+            .as_ref()
+            .map(|recipe| (&recipe.id, &recipe.host.id)),
+    ))
+}
+
+pub(super) fn pairing_fields(
+    ui: &mut egui::Ui,
+    scope: egui::Id,
+    fingerprint: &mut String,
+    prerequisite: &mut String,
+) {
+    ui.push_id(scope, |ui| {
+        ui.label("Independent host fingerprint");
+        host_field(
+            ui,
+            "Independent host fingerprint",
+            egui::TextEdit::singleline(fingerprint),
+            false,
+        );
+        ui.label("Host connection details");
+        host_field(
+            ui,
+            "Host connection details",
+            egui::TextEdit::multiline(prerequisite)
+                .hint_text("Paste the host's connection details")
+                .char_limit(4096),
+            true,
+        );
+    });
+}
+
+pub(super) fn host_display_name(host: &TunnelSummary) -> &str {
+    host.description
+        .as_deref()
+        .into_iter()
+        .chain(host.name.as_deref())
+        .map(str::trim)
+        .find(|name| !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control))
+        .unwrap_or(&host.locator)
+}
+
 fn card<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     surface_card(ui, |ui| {
         egui::Frame::new()
@@ -299,7 +362,7 @@ impl MobileApp {
                                     for (index, host) in hosts.iter().enumerate() {
                                         let selected = self.hosts.locator == host.locator
                                             && !self.hosts.host_collapsed;
-                                        let name = host.name.as_deref().unwrap_or(&host.locator);
+                                        let name = host_display_name(host);
                                         card(ui, |ui| {
                                             if host_disclosure(
                                                 ui,
@@ -351,7 +414,12 @@ impl MobileApp {
                                             ui.label(error);
                                         }
                                         ui.label("Host locator");
-                                        ui.text_edit_singleline(&mut self.hosts.locator);
+                                        host_field(
+                                            ui,
+                                            "Host locator",
+                                            egui::TextEdit::singleline(&mut self.hosts.locator),
+                                            false,
+                                        );
                                         if secondary(ui, "Review another host", !self.hosts.busy())
                                         {
                                             action = Some(Action::NewReview);
@@ -367,9 +435,12 @@ impl MobileApp {
                                         }
                                         self.show_host_recovery(ui, &mut action);
                                         ui.collapsing("Import public profiles", |ui| {
-                                            ui.add(
+                                            host_field(
+                                                ui,
+                                                "Import public profiles",
                                                 egui::TextEdit::multiline(&mut self.hosts.import)
                                                     .char_limit(64 * 1024),
+                                                true,
                                             );
                                             ui.checkbox(
                                                 &mut self.hosts.import_reviewed,
@@ -438,13 +509,12 @@ impl MobileApp {
                 *action = Some(Action::Load);
             }
             ui.collapsing("Connect this device", |ui| {
-                ui.label("Independent host fingerprint");
-                ui.text_edit_singleline(&mut self.hosts.fingerprint);
-                ui.label("Host connection details");
-                ui.add(
-                    egui::TextEdit::multiline(&mut *self.hosts.prerequisite)
-                        .hint_text("Paste the host's connection details")
-                        .char_limit(4096),
+                let scope = pairing_scope(&self.hosts);
+                pairing_fields(
+                    ui,
+                    scope,
+                    &mut self.hosts.fingerprint,
+                    &mut self.hosts.prerequisite,
                 );
                 ui.checkbox(
                     &mut self.hosts.trust,
@@ -610,12 +680,17 @@ impl MobileApp {
                 .any(|original| original.recipe.id == recipe.id)
         });
         ui.label("Session name");
-        ui.add_enabled(
-            !frozen && !self.hosts.busy(),
-            egui::TextEdit::singleline(&mut self.hosts.quick_name)
-                .hint_text("Session name")
-                .char_limit(128),
-        );
+        let enabled = !frozen && !self.hosts.busy();
+        ui.add_enabled_ui(enabled, |ui| {
+            host_field(
+                ui,
+                "New session name",
+                egui::TextEdit::singleline(&mut self.hosts.quick_name)
+                    .hint_text("Session name")
+                    .char_limit(128),
+                false,
+            );
+        });
         footnote(ui, "Durable shell. Disconnecting leaves it running.");
         if frozen {
             footnote(ui, "Retry keeps the original request and session identity.");
@@ -662,7 +737,7 @@ impl MobileApp {
                         .hosts
                         .iter()
                         .find(|host| host.locator == self.hosts.locator)
-                        .and_then(|host| host.name.as_deref())
+                        .map(host_display_name)
                 })
                 .unwrap_or("Saved host");
             let AccountReference::Github { account_id } = recipe.host.account;
@@ -683,20 +758,27 @@ impl MobileApp {
             *action = Some(Action::ChooseProfileHost);
         }
         ui.label("Profile name");
-        ui.add(egui::TextEdit::singleline(&mut self.hosts.profile_name).hint_text("Profile name"));
+        host_field(
+            ui,
+            "Profile name",
+            egui::TextEdit::singleline(&mut self.hosts.profile_name).hint_text("Profile name"),
+            false,
+        );
         ui.checkbox(
             &mut self.hosts.create_if_missing,
             "Create session if missing",
         );
         if self.hosts.create_if_missing {
             ui.label("Session name");
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.hosts.session_name)
-                        .hint_text("Session name")
-                        .char_limit(128),
-                )
-                .changed()
+            if host_field(
+                ui,
+                "Profile session name",
+                egui::TextEdit::singleline(&mut self.hosts.session_name)
+                    .hint_text("Session name")
+                    .char_limit(128),
+                false,
+            )
+            .changed()
             {
                 self.hosts.reconcile_profile_session_name();
             }

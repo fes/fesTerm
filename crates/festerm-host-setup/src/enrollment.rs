@@ -686,6 +686,28 @@ impl OwnerEnrollment<'_> {
         })
     }
 
+    // The caller's native operation lease serializes the service receipt. Read
+    // its owner witness and replace that receipt under this ONE lifecycle lease;
+    // acquiring current_policy and then reopening the store would self-deadlock.
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn with_current_snapshot<T>(
+        &self,
+        expected: &Snapshot,
+        owner: &EnrollmentSnapshot,
+        action: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
+    ) -> io::Result<T> {
+        self.installation.with_locked(|directory, current| {
+            if current != expected || self.read(directory, current)?.1 != *owner {
+                return Err(refused("owner.service_configuration_scope_changed"));
+            }
+            action(directory, current)
+        })
+    }
+
     /// Explicit local forward recovery only. The prepared state must exactly
     /// match the native revision/digest/predecessor and current installation,
     /// stable identity and account. A merely newer disk record is not consent.

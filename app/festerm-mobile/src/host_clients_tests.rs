@@ -2773,3 +2773,170 @@ fn mobile_host_known_identity_reuse_refuses_ambiguous_or_foreign_account_locator
     assert!(app.known_host_recipe("same.test").is_none());
     assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
 }
+
+#[test]
+fn mobile_host_pairing_fields_publish_native_documents_and_accept_targeted_input() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    use festerm_ios_window::FieldInput;
+    use std::cell::RefCell;
+
+    let pending = Rc::new(RefCell::new(Vec::new()));
+    let incoming = pending.clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            move |ui, state: &mut (String, String)| {
+                crate::apply_field_input(ui.ctx(), std::mem::take(&mut *incoming.borrow_mut()));
+                super::view::pairing_fields(
+                    ui,
+                    egui::Id::new("fixture-host-account"),
+                    &mut state.0,
+                    &mut state.1,
+                );
+            },
+            (String::new(), String::new()),
+        );
+    harness.run();
+    for (index, expected) in [(0, "SHA256:fixtureé"), (1, "public connection\ndetails")] {
+        harness
+            .get(
+                By::new()
+                    .label(if index == 0 {
+                        "Independent host fingerprint"
+                    } else {
+                        "Host connection details"
+                    })
+                    .role(if index == 0 {
+                        egui::accesskit::Role::TextInput
+                    } else {
+                        egui::accesskit::Role::MultilineTextInput
+                    }),
+            )
+            .click();
+        harness.run();
+        let field = crate::widgets::take_field_document(&harness.ctx).unwrap();
+        let id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        assert_eq!(field.field, id.value());
+        assert_eq!(field.multiline, index == 1);
+        assert!(!field.secure);
+        let mut inputs = vec![FieldInput::Select(0..0)];
+        for (line, text) in expected.split('\n').enumerate() {
+            if line != 0 {
+                inputs.push(FieldInput::Insert("\n".into()));
+            }
+            inputs.push(FieldInput::Insert(text.into()));
+        }
+        *pending.borrow_mut() = inputs;
+        harness.run();
+        // TextEdit may publish its previous multiline galley on the edit frame.
+        // Check the model immediately, then settle the next layout before
+        // inspecting the native document's text.
+        assert_eq!(
+            if index == 0 {
+                &harness.state().0
+            } else {
+                &harness.state().1
+            },
+            expected
+        );
+        harness.step();
+        let field = crate::widgets::take_field_document(&harness.ctx).unwrap();
+        assert_eq!(field.field, id.value());
+        assert_eq!(field.text, expected);
+        if index == 0 {
+            assert_eq!(harness.state().0, expected);
+            assert!(harness.state().1.is_empty());
+        } else {
+            assert_eq!(harness.state().0, "SHA256:fixtureé");
+            assert_eq!(harness.state().1, expected);
+        }
+    }
+}
+
+#[test]
+fn mobile_host_label_prefers_bounded_description_then_name_then_locator() {
+    let mut host = TunnelSummary {
+        locator: "fixture.test".into(),
+        name: Some("Named host".into()),
+        description: Some("Lab Linux host".into()),
+        active: true,
+    };
+    assert_eq!(super::view::host_display_name(&host), "Lab Linux host");
+    for description in ["  ".to_owned(), "bad\nlabel".into(), "é".repeat(65)] {
+        host.description = Some(description);
+        assert_eq!(super::view::host_display_name(&host), "Named host");
+    }
+    host.description = None;
+    host.name = Some(" ".into());
+    assert_eq!(super::view::host_display_name(&host), "fixture.test");
+}
+
+#[test]
+fn mobile_host_pairing_scope_changes_with_account_host_and_recipe() {
+    let mut hosts = HostUi {
+        account: "account-a".into(),
+        locator: "fixture.test".into(),
+        ..Default::default()
+    };
+    let first = super::view::pairing_scope(&hosts);
+    hosts.account = "account-b".into();
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    hosts.account = "account-a".into();
+    hosts.locator = "other.test".into();
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    hosts.locator = "fixture.test".into();
+    hosts.selected = Some(client_recipe());
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    let selected = super::view::pairing_scope(&hosts);
+    hosts.selected.as_mut().unwrap().host.id = HostId::new();
+    assert_ne!(selected, super::view::pairing_scope(&hosts));
+}
+
+#[test]
+fn mobile_host_native_pairing_edit_clears_consent_and_inventory() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    use std::cell::RefCell;
+
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.trust = true;
+    app.hosts.enrolled = true;
+    app.hosts.launch = true;
+    app.hosts.inventory = Some(client_inventory(false));
+    let pending = Rc::new(RefCell::new(Vec::new()));
+    let incoming = pending.clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            move |ui, app: &mut MobileApp| {
+                crate::apply_field_input(ui.ctx(), std::mem::take(&mut *incoming.borrow_mut()));
+                app.show_hosts(ui.ctx());
+            },
+            app,
+        );
+    harness.run();
+    harness.get(By::new().label("Connect this device")).click();
+    harness.run();
+    harness
+        .get(
+            By::new()
+                .label("Independent host fingerprint")
+                .role(egui::accesskit::Role::TextInput),
+        )
+        .click();
+    harness.run();
+    *pending.borrow_mut() = vec![festerm_ios_window::FieldInput::Insert(
+        "SHA256:fixture".into(),
+    )];
+    harness.run();
+    let hosts = &harness.state().hosts;
+    assert_eq!(hosts.fingerprint, "SHA256:fixture");
+    assert!(!hosts.trust && !hosts.enrolled && !hosts.launch);
+    assert!(hosts.inventory.is_none() && hosts.receipt.is_none());
+    assert!(hosts.pending.is_none() && hosts.worker.is_none());
+}

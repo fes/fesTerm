@@ -109,11 +109,37 @@ pub(crate) trait SetupBoundary {
         stage: &TrustedStage,
         epoch: u64,
     ) -> io::Result<Observation>;
+    fn complete_setup(
+        &self,
+        store: &Store,
+        state: &Path,
+        stage: &TrustedStage,
+        expected: &Snapshot,
+        owner: &EnrollmentSnapshot,
+        cancel: &CancellationToken,
+    ) -> io::Result<Observation> {
+        let _ = owner;
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
+        }
+        self.install(store, state, stage, expected.epoch)
+    }
 }
 
 struct NativeBoundary;
 
 impl SetupBoundary for NativeBoundary {
+    fn complete_setup(
+        &self,
+        store: &Store,
+        state: &Path,
+        stage: &TrustedStage,
+        expected: &Snapshot,
+        owner: &EnrollmentSnapshot,
+        cancel: &CancellationToken,
+    ) -> io::Result<Observation> {
+        Services::current_user(store, state)?.complete_setup(stage, expected, owner, cancel)
+    }
     async fn sign_in(
         &self,
         cloud: &CloudHostAdapter<'_>,
@@ -299,8 +325,10 @@ pub(crate) async fn setup_scoped_with(
     }
     let account = current
         .binding
+        .as_ref()
         .ok_or_else(|| refused("host.cloud_binding_changed"))?
-        .account;
+        .account
+        .clone();
     let owners = boundary.owners(store)?;
     let initial = match owners.snapshot() {
         Ok(existing) => existing,
@@ -309,7 +337,8 @@ pub(crate) async fn setup_scoped_with(
         }
         Err(error) => return Err(error),
     };
-    let native_registration = boundary.install(store, state, stage, expected_epoch)?;
+    let native_registration =
+        boundary.complete_setup(store, state, stage, &current, &initial, cancel)?;
     Ok(SetupResult {
         native_registration,
         owner_approval_prerequisite: initial,

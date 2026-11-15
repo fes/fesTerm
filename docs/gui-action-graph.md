@@ -1724,6 +1724,16 @@ and links the Simulator binary; the a13a 2/14 native RED is retained separately.
 These do not establish physical mobile/native-vault/GUI acceptance.
 Local Settings/Remote Access,
 sharing, durable client-action reconciliation and native acceptance remain open.
+
+For the mobile HOST-03 review surface, fingerprint, multiline connection details
+and profile/session inputs publish the shared native field document instead of
+using a bare system-IME editor. Pairing field identities include the selected
+account, locator, recipe and host; native edits still clear prior consent and
+inventory before any action can dispatch. Display-only host labels and saved
+hints prefer a bounded description, then name, then locator. CPU regressions
+cover targeted input, context identity and consent invalidation. Native hardware
+keyboard, software keyboard, multiline paste and first-contact review remain
+MOB-06 / TUNNEL-11 acceptance checks, with Simulator versus device recorded.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop
 installation checks the originating editor and account credential before work;
@@ -1849,6 +1859,17 @@ readiness states, not success, absence or installed/native qualification.
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings → Dev Tunnels → Remote access › typed review/confirm; editable friendly name initially seeded from the OS hostname; signed helper/account, Connect another device and separate Approve a client | Shared origin/account/OS-user authority; full-snapshot/settings/epoch CAS; bounded primary plus independent revoke worker; native vault only; creation and sign-in startup off by default; zero shells; native process/history never Ready | Reconfirm edited/stale consent; cancelled workers retain admission and original issued scope, late results cannot grant; explicit recovery, revoke/drain disable and typed manual cloud-cleanup guidance preserve drafts/daemons; no browser/DELETE or uncertain removal target | P,H,N; reachable Settings/headless-render/command and actual controller/Services/CLI-origin fixtures; matching signed bundles, real native/vault/cloud usability, readiness and exact existing-shell binding remain open |
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; service-status/disable/cleanup-local/uninstall/recover-cleanup; authenticated stopped update/update-status | Shared origin/account/exact-owned receipt policy; disabled configuration, zero-shell access-off setup; independent default-No creation/end/temporary, temporary never creates; exact signed bundle/helper and fresh vault policy; initial child startup retries only installation/service-lease WouldBlock within a fixed2s window with fresh full original snapshot/current consent and cancellation, never manager Start or cached permission; watchdog retries installation contention, never cached permission; update strictly newer current release + explicit signed from-version, existing identity/binding, stopped host/runtime, protected old/new native reservation; history/native Running/cloud presence is not Ready; Linux UserSignIn requires current-logon proof | Revoke before exact native stop/runtime-lease release; never-published absence requires full lease/phase/epoch/instance fences and no replacement history, including Committed/Aborted journals; status stays no-observation; corrupt/foreign/uncertain evidence is not absence; update Prepared/Applying retains unknown old/new state, same-intent retry only, no automatic enable/rollback/repair or daemon kill; partial-update cleanup reconciles both resources; unsuccessful cloud CleanupPending/deletion remains separate | P,H,N; core removal fixtures retain explicit fake cloud/account/native contexts, real Services/private lifecycle and a panic-on-manager runner; update cores use typed fake native/network/credentials and synthetic signatures; coupled daemon launches authenticated old cached entry in installation namespace, preserving PID/generation/endpoint, frontend/control and helper path/bytes with negative controls; current-source binary tagged old is not genuine older-release/publisher/native switching or Windows account acceptance; separate client trust/index/chooser, first bootstrap, platform and cloud-deletion gates remain |
 | `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped update; owned inventory/preview/reservation; separate owner approval; current-daemon bind/switch/resume/defer/exact release/rollback | Exact signed old/new artifacts; protected source/account/key/claim/namespace/generation, owner/principal/issuer and preview/destination epoch; no grant expansion or frontend acquisition; live stop requires separate default-No exact-generation consent, never setup/sharing/migration consent | Same-operation immutable binding/activation/release intent; revoke before exact release/claims rollback; retain cleanup/revocation evidence and legacy use; old helpers defer without restart/create; manual provider review does not complete removal | P: stopped-update, authenticity/publication, receipt-bound guidance, reservation/authentication/recovery fixtures; controlled current-source live binding/frontend/PTY is separate from genuine cross-version/installed Windows/macOS/Linux switching, cloud/vault/GUI acceptance |
+
+HOST-04/05 creation-policy changes use Disable → reviewed Enable → separate
+Start. Completion projects only the reviewed creation flag into an exact stopped
+registration, retaining full lifecycle/owner/old-receipt CAS, runtime exclusion,
+the native definition and registered executable path. A separately verified
+identical whole bundle may reside in another cache; no cache path is adopted.
+An interrupted mismatch stays fail-closed until explicit authenticated Enable
+completion. This never changes the strict newer-binary update rules or grants
+owner creation permission. The stopped-projection fixtures cover both directions
+and refusal/race paths; signed native platform and durable-shell acceptance
+remain open.
 
 HOST-05 additionally permits never-published receipt absence only under the
 exclusive Services lease and current phase/epoch/full-snapshot/directory fences;

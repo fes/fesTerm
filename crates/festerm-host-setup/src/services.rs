@@ -2,6 +2,8 @@
 //! CLI management never treats a native process observation as endpoint readiness.
 mod definitions;
 pub mod native;
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+mod reconfiguration;
 mod replacement;
 mod trusted;
 pub use replacement::{ReplacementReport, ReplacementState};
@@ -526,6 +528,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         if record.removed {
             return Err(refused("host.service_not_installed"));
+        }
+        if record.settings != snapshot.settings {
+            return Err(refused("host.service_explicit_replacement_required"));
         }
         let provenance = record
             .provenance

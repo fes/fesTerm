@@ -320,6 +320,18 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## ADR 0084 mobile HOST execution
 
+Within existing HOST-03 / MOB-06 / TUNNEL-11, discover an owned host and verify
+its friendly description (or name/locator fallback), then open **Connect this
+device**. Focus and edit the fingerprint using normal hardware and software
+keyboard routes; paste multiline host connection details and verify exact target
+field and line preservation. Switch account/host/recipe while an edit is pending:
+old native input must not populate the new review. Editing either verification
+field must clear consent and inventory, require independent verification again,
+and issue no HOST operation. Exercise the same native input route for local
+profile/session names. CPU field-document/consent regressions do not qualify
+native keyboard, clipboard, owner approval or terminal I/O; record actual iOS
+Simulator/device and Android emulator/device results separately.
+
 The opt-in shared `host-clients` application now executes selected HOST inventory,
 exact attachment and explicitly confirmed Create/Ensure through the bounded
 shared worker and actual `HostSession` frontend adopter. Android forwards the
@@ -5209,3 +5221,15 @@ not appear under a new operation or imply endpoint readiness. No raw provider
 body, credentials or arbitrary native error strings may appear. Portable
 regressions cover delivery fences and rendering; native pane and new signed
 owner-default provisioning acceptance remain pending.
+
+HOSTSETUP-01 / HOST-04 / HOST-05: with a shared persistent shell and private
+profile present, disable access normally, review Enable with only generic
+creation changed OFF→ON, then explicitly Start. Repeat ON→OFF. Keep the exact
+registered signed executable, native definition, host identity, owner enrollment,
+catalog logical IDs/revisions and shell PID/generation. A different Settings
+verification cache for the identical release must not retarget the registration.
+Interrupt before and after receipt completion, then retry explicit Enable on the
+same authenticated Provisioned scope; verify no duplicate cloud host or implicit
+Start. Changed owner policy, binding, startup, friendly name, binary or unknown
+native/runtime state must refuse. The portable stopped-projection fixtures do
+not complete this native acceptance gate or grant generic creation to clients.

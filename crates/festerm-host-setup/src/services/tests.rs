@@ -390,6 +390,320 @@ fn provision(store: &Store) -> Snapshot {
     store.snapshot().unwrap()
 }
 
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+fn reconfigure_lifecycle(store: &Store, allow_creation: bool) -> Snapshot {
+    store.revoke().unwrap();
+    let stopped = store.snapshot().unwrap();
+    store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    let before = store.snapshot().unwrap();
+    let mut settings = before.settings.clone();
+    settings.allow_creation = allow_creation;
+    let ticket = store.request_enable_if_current(&before, &settings).unwrap();
+    store
+        .record_provisioned(&ticket, before.binding.unwrap())
+        .unwrap();
+    store.snapshot().unwrap()
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_stopped_creation_projection_preserves_registration_and_durable_state() {
+    use crate::enrollment::OwnerStorage;
+    let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
+    let owners = store
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    owners
+        .initialize(Path::new("host-identity"), "github:1234".into())
+        .unwrap();
+    let mut services = services(root.path(), &store, Platform::Linux);
+    services.state = root.path().join("installation");
+    services.runner.receipt = services.state.join(RECORD);
+    let stage = trusted::fixture(root.path());
+    services
+        .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+        .unwrap();
+    let original = services.registration().unwrap().1.unwrap();
+    let definition = std::fs::read(&services.runner.definition).unwrap();
+    let durable = services
+        .state
+        .join("fixture-independent-daemon-and-catalog");
+    std::fs::write(&durable, b"same daemon, shells, catalog").unwrap();
+    // Simulate Settings independently publishing the identical verified release
+    // under its own cache. The registered executable must never move there.
+    let selected_root = storage::private_test_directory();
+    let selected = trusted::fixture(selected_root.path());
+    for enabled in [true, false] {
+        let expected = reconfigure_lifecycle(&store, enabled);
+        let owner = owners.snapshot().unwrap();
+        let old = services.registration().unwrap().1.unwrap();
+        assert_ne!(old.settings, expected.settings);
+        // The original generic install entry point intentionally stays strict;
+        // only the explicit reviewed setup completion can project this flag.
+        assert_eq!(
+            services
+                .install_with_recovery(&stage, expected.epoch)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.service_explicit_replacement_required"
+        );
+        // An interruption here leaves both executable entry points fail closed.
+        assert!(services.reopen_stage(expected.epoch).is_err());
+        assert!(services
+            .start_with(&stage, expected.epoch, || Ok(()))
+            .is_err());
+        let calls_before = services.runner.state.borrow().calls.len();
+        let complete = || {
+            services.complete_setup_with(
+                &selected,
+                &expected,
+                &owner,
+                &owners,
+                &tokio_util::sync::CancellationToken::new(),
+                |_| Ok(trusted::fixture(root.path())),
+            )
+        };
+        assert_eq!(complete().unwrap().process, ProcessState::Stopped);
+        let committed = services.registration().unwrap().1.unwrap();
+        let mut wanted = original.clone();
+        wanted.settings.allow_creation = enabled;
+        assert_eq!(committed, wanted);
+        assert_eq!(
+            std::fs::read(&services.runner.definition).unwrap(),
+            definition
+        );
+        assert_eq!(
+            std::fs::read(&durable).unwrap(),
+            b"same daemon, shells, catalog"
+        );
+        assert_eq!(owners.snapshot().unwrap(), owner);
+        // Crash after the atomic replace but before its reply: another explicit
+        // Enable completes with the same bytes and no manager mutation.
+        assert_eq!(complete().unwrap().process, ProcessState::Stopped);
+        assert_eq!(services.registration().unwrap().1.unwrap(), committed);
+        assert!(services.runner.state.borrow().calls[calls_before..].iter().all(|call|
+            matches!(call, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "show"))));
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_races() {
+    use crate::enrollment::OwnerStorage;
+    // Every case retains the exact old receipt, definition and lifecycle. A
+    // real held runtime lease exercises exclusion rather than PID inference.
+    for case in [
+        "running",
+        "unknown",
+        "runtime",
+        "failed",
+        "absent",
+        "orphan-runtime",
+        "startup",
+        "friendly",
+        "owner",
+        "scope",
+        "path",
+        "digest",
+        "version",
+        "bundle",
+    ] {
+        let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
+        let owners = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        let mut services = services(root.path(), &store, Platform::Linux);
+        services.state = root.path().join("installation");
+        services.runner.receipt = services.state.join(RECORD);
+        let stage = trusted::fixture(root.path());
+        services
+            .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+            .unwrap();
+        let mut expected = reconfigure_lifecycle(&store, true);
+        let mut owner = owners.snapshot().unwrap();
+        let old = std::fs::read(&services.runner.receipt).unwrap();
+        let mut selected = trusted::fixture(root.path());
+        let mut registered = trusted::fixture(root.path());
+        let mut runtime = None;
+        match case {
+            "running" => services.runner.state.borrow_mut().running = true,
+            "unknown" => services.runner.state.borrow_mut().observation_error = true,
+            "failed" => services.runner.state.borrow_mut().failed = true,
+            "absent" => services.runner.state.borrow_mut().registered = false,
+            "orphan-runtime" => {
+                let directory = storage::private_directory(&services.state, false).unwrap();
+                storage::write_new_private(
+                    &directory,
+                    Path::new("host-runtime.json"),
+                    b"preserve orphan runtime evidence",
+                )
+                .unwrap();
+            }
+            "runtime" => {
+                let directory = storage::private_directory(&services.state, false).unwrap();
+                runtime = Some(
+                    Lease::exclusive(
+                        storage::open_private_file(
+                            &directory,
+                            Path::new("host-runtime.lock"),
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap(),
+                );
+            }
+            "startup" | "friendly" => {
+                store.revoke().unwrap();
+                let stopped = store.snapshot().unwrap();
+                store
+                    .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                    .unwrap();
+                let before = store.snapshot().unwrap();
+                let mut settings = before.settings.clone();
+                if case == "startup" {
+                    settings.startup = Startup::UserSignIn;
+                } else {
+                    settings.friendly_name.push_str(" changed");
+                }
+                let ticket = store.request_enable_if_current(&before, &settings).unwrap();
+                store
+                    .record_provisioned(&ticket, before.binding.unwrap())
+                    .unwrap();
+                expected = store.snapshot().unwrap();
+                owner = owners.snapshot().unwrap();
+            }
+            "owner" => owner.remote_access = !owner.remote_access,
+            "scope" => expected.settings.friendly_name.push_str(" stale"),
+            "path" => registered.path = root.path().join("unregistered"),
+            "digest" => registered.digest = "0".repeat(64),
+            "version" => selected = trusted::version_fixture(root.path(), "0.15.0"),
+            "bundle" => {
+                selected = trusted::version_fixture_with_sessiond(
+                    root.path(),
+                    crate::VERSION,
+                    b"different authenticated helper",
+                )
+            }
+            _ => unreachable!(),
+        }
+        let before = store.snapshot().unwrap();
+        assert!(
+            services
+                .complete_setup_with(
+                    &selected,
+                    &expected,
+                    &owner,
+                    &owners,
+                    &tokio_util::sync::CancellationToken::new(),
+                    |_| Ok(registered)
+                )
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(
+            std::fs::read(&services.runner.receipt).unwrap(),
+            old,
+            "{case}"
+        );
+        assert_eq!(store.snapshot().unwrap(), before, "{case}");
+        drop(runtime);
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_stopped_creation_projection_rechecks_after_qualification() {
+    use crate::enrollment::OwnerStorage;
+    use festerm_tunnel_bridge::owner_auth::OwnerSigningKey;
+    for case in [
+        "owner-revision",
+        "revoke-key",
+        "binding",
+        "epoch",
+        "record",
+        "cancel",
+    ] {
+        let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
+        let owners = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        let key = OwnerSigningKey::from_seed(&[41; 32]).public_key();
+        owners
+            .enroll(
+                initial.revision,
+                key,
+                &crate::enrollment::owner_key_fingerprint(&key).unwrap(),
+            )
+            .unwrap();
+        let mut services = services(root.path(), &store, Platform::Linux);
+        services.state = root.path().join("installation");
+        services.runner.receipt = services.state.join(RECORD);
+        let stage = trusted::fixture(root.path());
+        services
+            .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+            .unwrap();
+        let mut expected = reconfigure_lifecycle(&store, true);
+        let owner = owners.snapshot().unwrap();
+        let before = services.registration().unwrap().1.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        if case == "binding" {
+            expected
+                .binding
+                .as_mut()
+                .unwrap()
+                .account
+                .push_str(" stale");
+        }
+        let result =
+            services.complete_setup_with(&stage, &expected, &owner, &owners, &cancel, |_| {
+                match case {
+                    "owner-revision" => {
+                        owners
+                            .approve_permissions(owner.revision, false, owner.capabilities)
+                            .unwrap();
+                    }
+                    "revoke-key" => {
+                        owners.revoke(owner.revision, key).unwrap();
+                    }
+                    "cancel" => cancel.cancel(),
+                    "epoch" => {
+                        store.revoke().unwrap();
+                    }
+                    "record" => {
+                        let mut changed = before.clone();
+                        changed.settings.allow_creation = true;
+                        let directory = storage::private_directory(&services.state, false).unwrap();
+                        storage::replace_private(
+                            &directory,
+                            Path::new(RECORD),
+                            &serde_json::to_vec(&changed).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    _ => panic!("a foreign binding must be rejected before qualification"),
+                }
+                Ok(trusted::fixture(root.path()))
+            });
+        assert!(result.is_err(), "{case}");
+        let after = services.registration().unwrap().1.unwrap();
+        let mut wanted = before;
+        if case == "record" {
+            wanted.settings.allow_creation = true;
+        }
+        assert_eq!(after, wanted, "{case}");
+    }
+}
+
 #[test]
 fn host_process_recovery_native_policy_is_bounded_and_origin_exact() {
     for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {

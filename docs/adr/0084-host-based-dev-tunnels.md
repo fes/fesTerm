@@ -2485,3 +2485,45 @@ The three fixtures that enter the real native service context run on Linux and
 macOS. Windows retains the shared admission/lease tests; its production context
 must still reject elevated or service accounts before that lease gate. The Unix
 fixtures do not claim ordinary-user Windows native startup qualification.
+
+### Validation impact: stopped creation-policy changes
+
+Changing generic creation remains an explicit Disable, reviewed Enable, then
+separate Start workflow. Enable may complete the creation flag in an existing
+stopped native registration only after the lifecycle durably records the reviewed
+target and authenticated cloud binding. The service-operation and exclusive
+runtime leases cover native stopped observation and completion. Full lifecycle,
+anchored owner-policy and previous registration comparisons precede one atomic
+receipt replacement under a single lifecycle lease. Cancellation or a changed
+owner revision, key, binding, epoch or registration refuses completion.
+
+Only `allow_creation` may differ. Friendly name, startup, installation, identity,
+enrollment, native definition, executable path/digest and all other receipt fields
+stay unchanged. The selected signed current release and the independently
+reauthenticated registered release must identify the same complete bundle.
+Settings may verify it in another cache directory; that never changes the
+registered executable or provenance path. Different releases still require the
+strictly newer stopped binary-update operation, whose rules are unchanged.
+No manager registration/reload/Start, cloud mutation, owner approval, catalog or
+persistent daemon operation is part of this receipt projection.
+
+Lifecycle settings are the durable intent; no second configuration journal is
+needed for this single-file projection. Interruption before replacement leaves
+the old settings mismatch and Start/reopen refuse it. Explicit Enable can retry
+the same Provisioned scope only after authenticated presence and the same bound
+account are checked; it cannot allocate another resource. Interruption after
+atomic replacement leaves the complete new receipt. Repeating the explicit
+completion is idempotent. A pending/uncertain cloud operation retains its existing
+Reconcile requirement. Enabling global creation does not grant it to any client:
+separate owner permissions and fresh runtime policy still apply.
+
+The `native_service_stopped_creation_projection_*` fixtures cover both
+directions, exact receipt/definition preservation, alternate identical cache
+location, interrupted completion, runtime exclusion and final policy/scope races.
+The replacement-history fixture additionally preserves a completed strictly
+newer update journal and its native resource through projection and retry.
+These use real protected-file leases and synthetic signed bundles/native manager
+responses on Unix; they do not qualify installed native services, native-vault
+prompts or ordinary-user Windows execution. HOSTSETUP-01 / HOST-04 / HOST-05 still
+require matching signed helpers and native OFF→ON→OFF acceptance preserving real
+durable shells and catalog entries.

@@ -589,7 +589,7 @@ impl HostUi {
                     .hosts
                     .iter()
                     .find(|host| host.locator == self.locator)
-                    .and_then(|host| host.name.clone())
+                    .map(|host| view::host_display_name(host).to_owned())
                     .unwrap_or_else(|| self.locator.clone()),
             });
         }
@@ -2061,7 +2061,7 @@ impl MobileApp {
                         .hosts
                         .iter()
                         .find(|host| host.locator == self.hosts.locator)
-                        .and_then(|host| host.name.clone())
+                        .map(|host| view::host_display_name(host).to_owned())
                         .unwrap_or_else(|| self.hosts.locator.clone()),
                 }),
             )?;
