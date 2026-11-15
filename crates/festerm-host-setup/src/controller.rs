@@ -846,7 +846,13 @@ async fn run_reserved(
     if cancel.is_cancelled() {
         return Ok(());
     }
-    let stage = authorize_run(&store, state, expected, record, &store.snapshot()?)?;
+    let Some(stage) = initial_run_admission(&store, expected, &cancel, |current| {
+        authorize_run(&store, state, expected, record, current)
+    })
+    .await?
+    else {
+        return Ok(());
+    };
     record.failure = Some(RunFailure::LoginProofUnavailable);
     let hosting_cancel = cancel.child_token();
     let result = if let Err(error) = startup_admission(expected.settings.startup, &cancel).await {
@@ -904,6 +910,53 @@ async fn run_reserved(
         record.failure = Some(RunFailure::LoginProofUnavailable);
     }
     result
+}
+
+// Native managers can return Running while their parent still owns the short
+// service-operation lease. Retry only initial admission contention; never restart
+// a manager or reuse a failed attempt's stage/policy. This bounds retry waits,
+// not an already executing synchronous vault/publisher verification call.
+const INITIAL_ADMISSION_CONTENTION: Duration = Duration::from_secs(2);
+
+async fn initial_run_admission<T>(
+    store: &Store,
+    expected: &Snapshot,
+    cancel: &CancellationToken,
+    mut authorize: impl FnMut(&Snapshot) -> io::Result<T>,
+) -> io::Result<Option<T>> {
+    let deadline = tokio::time::Instant::now() + INITIAL_ADMISSION_CONTENTION;
+    loop {
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        let result = store.snapshot().and_then(|current| {
+            if current != *expected {
+                return Err(refused("host.runtime_consent_changed"));
+            }
+            authorize(&current)
+        });
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Ok(None),
+                    _ = tokio::time::sleep_until(
+                        (tokio::time::Instant::now() + Duration::from_millis(25)).min(deadline)
+                    ) => {}
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+            }
+            result => return result.map(Some),
+        }
+    }
 }
 
 async fn login_retry_snapshot(store: &Store) -> io::Result<Snapshot> {
@@ -1918,5 +1971,286 @@ mod tests {
             })
             .unwrap();
         assert!(last_run(&store).is_err());
+    }
+
+    fn startup_service_file(store: &Store, create: bool) -> std::fs::File {
+        store
+            .with_locked(|directory, _| {
+                storage::open_private_file(directory, Path::new("native-service.lock"), create)
+            })
+            .unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, _) = reserve(&store).unwrap();
+        let parent_service_lease = Lease::exclusive(startup_service_file(&store, true)).unwrap();
+        let cancel = CancellationToken::new();
+        // Model only the exact native service-operation gate, not owner trust.
+        let admitted = initial_run_admission(&store, &expected, &cancel, |_| {
+            Lease::exclusive(startup_service_file(&store, false))
+        });
+        tokio::pin!(admitted);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut admitted)
+                .await
+                .is_err()
+        );
+        assert!(
+            reserve(&store).is_err(),
+            "original run lease remains owned while waiting"
+        );
+        drop(parent_service_lease);
+        let result = admitted.await.unwrap();
+        assert!(result.is_some());
+        assert_eq!(store.snapshot().unwrap(), expected);
+        assert!(last_run(&store).unwrap().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_reopens_actual_stage_after_service_lease_drains() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+        let parent_service_lease = Lease::exclusive(startup_service_file(&store, true)).unwrap();
+        let cancel = CancellationToken::new();
+        let state = root.path().join("host");
+        let original_error = authorize_run(
+            &store,
+            &state,
+            &expected,
+            &mut record,
+            &store.snapshot().unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            original_error.kind(),
+            io::ErrorKind::WouldBlock,
+            "old one-shot startup loses the same parent/child collision"
+        );
+        let error = {
+            let admitted = initial_run_admission(&store, &expected, &cancel, |current| {
+                authorize_run(&store, &state, &expected, &mut record, current)
+            });
+            tokio::pin!(admitted);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut admitted)
+                    .await
+                    .is_err()
+            );
+            drop(parent_service_lease);
+            admitted
+                .await
+                .err()
+                .expect("unregistered fixture must still fail closed")
+        };
+        assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "host.service_not_installed");
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        assert!(last_run(&store).unwrap().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_permanent_busy_keeps_original_error_and_bound() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+        let _parent_service_lease = Lease::exclusive(startup_service_file(&store, true)).unwrap();
+        let cancel = CancellationToken::new();
+        let state = root.path().join("host");
+        let started = tokio::time::Instant::now();
+        let error = initial_run_admission(&store, &expected, &cancel, |current| {
+            authorize_run(&store, &state, &expected, &mut record, current)
+        })
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "host.installation_busy");
+        assert_eq!(started.elapsed(), INITIAL_ADMISSION_CONTENTION);
+        assert_eq!(store.snapshot().unwrap(), expected);
+        assert!(last_run(&store).unwrap().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_refuses_changed_full_snapshot_while_waiting() {
+        for change in ["revoke", "same-epoch-settings", "same-epoch-binding"] {
+            let (_root, store) = fixture();
+            provision(&store);
+            let (_run_lease, expected, _) = reserve(&store).unwrap();
+            let _parent_service_lease =
+                Lease::exclusive(startup_service_file(&store, true)).unwrap();
+            let cancel = CancellationToken::new();
+            let calls = std::cell::Cell::new(0);
+            let admitted = initial_run_admission(&store, &expected, &cancel, |_| {
+                calls.set(calls.get() + 1);
+                Lease::exclusive(startup_service_file(&store, false))
+            });
+            tokio::pin!(admitted);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut admitted)
+                    .await
+                    .is_err()
+            );
+            let original_calls = calls.get();
+            if change == "revoke" {
+                store.revoke().unwrap();
+            } else {
+                store
+                    .with_locked(|directory, current| {
+                        let mut changed = current.clone();
+                        if change == "same-epoch-settings" {
+                            changed.settings.friendly_name.push_str("-changed");
+                        } else {
+                            changed
+                                .binding
+                                .as_mut()
+                                .unwrap()
+                                .qualified_tunnel
+                                .push_str("-changed");
+                        }
+                        storage::replace_private(
+                            directory,
+                            Path::new("host-lifecycle.json"),
+                            &serde_json::to_vec(&changed).unwrap(),
+                        )
+                    })
+                    .unwrap();
+            }
+            let changed = store.snapshot().unwrap();
+            let error = admitted.await.err().unwrap();
+            assert_eq!(error.to_string(), "host.runtime_consent_changed");
+            assert_eq!(
+                calls.get(),
+                original_calls,
+                "changed scope never reaches native authorization"
+            );
+            assert_eq!(store.snapshot().unwrap(), changed);
+            assert!(last_run(&store).unwrap().is_none());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_cancel_and_policy_reduction_do_not_publish() {
+        for cancel_wait in [true, false] {
+            let (_root, store) = fixture();
+            provision(&store);
+            let (_run_lease, expected, _) = reserve(&store).unwrap();
+            let parent_service_lease =
+                Lease::exclusive(startup_service_file(&store, true)).unwrap();
+            let cancel = CancellationToken::new();
+            let allowed = std::cell::Cell::new(true);
+            let admitted = initial_run_admission(&store, &expected, &cancel, |_| {
+                let _guard = Lease::exclusive(startup_service_file(&store, false))?;
+                if !allowed.get() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "current-owner-denied",
+                    ));
+                }
+                Ok(())
+            });
+            tokio::pin!(admitted);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut admitted)
+                    .await
+                    .is_err()
+            );
+            if cancel_wait {
+                cancel.cancel();
+                assert!(admitted.await.unwrap().is_none());
+            } else {
+                allowed.set(false);
+                drop(parent_service_lease);
+                let error = admitted.await.unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                assert_eq!(error.to_string(), "current-owner-denied");
+            }
+            assert_eq!(store.snapshot().unwrap(), expected);
+            assert!(last_run(&store).unwrap().is_none());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_nonbusy_errors_never_retry() {
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidData,
+            io::ErrorKind::Other,
+        ] {
+            let (_root, store) = fixture();
+            provision(&store);
+            let expected = store.snapshot().unwrap();
+            let calls = std::cell::Cell::new(0);
+            let cancel = CancellationToken::new();
+            let started = tokio::time::Instant::now();
+            let error = initial_run_admission::<()>(&store, &expected, &cancel, |_| {
+                calls.set(calls.get() + 1);
+                Err(io::Error::new(kind, "original-native-error"))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), "original-native-error");
+            assert_eq!(started.elapsed(), Duration::ZERO);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_initial_admission_real_child_entry_persists_cancel_or_busy_outcome() {
+        for cancel_wait in [true, false] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+            let _parent_service_lease =
+                Lease::exclusive(startup_service_file(&store, true)).unwrap();
+            let original_run = record.run_id.clone();
+            let cancel = CancellationToken::new();
+            let state = root.path().join("host");
+            let result = {
+                let child = run_to_completion(
+                    store.clone(),
+                    &state,
+                    &expected,
+                    &mut record,
+                    cancel.clone(),
+                );
+                tokio::pin!(child);
+                assert!(tokio::time::timeout(Duration::from_millis(50), &mut child)
+                    .await
+                    .is_err());
+                assert_eq!(last_run(&store).unwrap().unwrap().state, RunState::Starting);
+                assert!(
+                    reserve(&store).is_err(),
+                    "waiting child keeps the original run lease"
+                );
+                if cancel_wait {
+                    cancel.cancel();
+                }
+                child.await
+            };
+            if cancel_wait {
+                result.unwrap();
+                assert_eq!(record.state, RunState::Stopped);
+                assert_eq!(record.failure, None);
+            } else {
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+                assert_eq!(record.state, RunState::Failed);
+                assert_eq!(record.failure, Some(RunFailure::InstallationBusy));
+            }
+            let saved = last_run(&store).unwrap().unwrap();
+            assert_eq!(saved.run_id, original_run);
+            assert_eq!(saved.epoch, expected.epoch);
+            assert_eq!(saved.state, record.state);
+            assert_eq!(saved.failure, record.failure);
+            assert_eq!(store.snapshot().unwrap(), expected);
+        }
     }
 }

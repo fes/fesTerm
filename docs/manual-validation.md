@@ -97,7 +97,14 @@ signed helpers, test Manual and UserSignIn, Desktop and Headless:
 1. A fresh registration uses version 4 / managed argv; retained versions 2/3
    and their missing definitions do not silently acquire restart authority.
    An older helper must reject the new policy, not reinterpret it.
-2. Observe one HOST and a separately owned persistent sessiond/shell. Induce
+2. During explicit native Start, exercise a child scheduled while its parent
+   still owns the service-operation lease. Only initial child admission may wait
+   up to two seconds for contention, with fresh original-snapshot/current-owner
+   checks each time; there must be one manager Start and no relay before success.
+   Permanent Busy, cancellation, changed settings/binding/epoch and owner reduction
+   must refuse or stop without using cached authority. This retry window does not
+   preempt a synchronous native publisher/vault call. Observe one HOST and a
+   separately owned persistent sessiond/shell. Induce
    failure of **only that HOST**, then observe native recovery bounds and
    fresh bundle/native-owner/account/receipt/scoped-token admission, unchanged
    host identity and daemon PID/generation, and no frontend/input replay.

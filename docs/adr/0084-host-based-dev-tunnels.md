@@ -2452,3 +2452,29 @@ and unchanged bytes. The authenticated SSH inventory regression now traverses
 Capabilities, List and ListProfiles with an enabled shared and disabled private
 profile. Actual native Busy-stage attribution and a fresh matching signed server
 remain required before claiming the VM inventory workflow passes.
+
+### Validation impact: initial native startup admission contention
+
+`HOST-04`/`HOST-05` retain parent native-manager Start serialization. A child can
+be scheduled before that parent releases its service-operation lease. Initial
+runtime admission therefore retries only `WouldBlock` within one fixed two-second
+monotonic window, using cancellation-aware waits of at most 25 milliseconds.
+Every attempt reloads the entire original protected snapshot and reruns signed
+stage/current-owner admission; changed epoch, settings or binding is refused.
+Failed attempts retain no stage or policy authority. Other native, publisher,
+permission and consent errors return immediately with their original meaning.
+
+This retries child admission, never native manager Start, cloud provisioning,
+owner approval or relay connection. The original runtime lease and parent
+serialization remain held by their existing owners. Cancellation during the wait
+keeps the existing stopped outcome without relay publication; persistent
+contention retains its original Busy failure. The two seconds bound retry waits,
+not preemption of an already executing synchronous vault/publisher check. Native
+qualification can update protected high-water/cache state, so this is not a
+read-only operation or a rollback/permission-repair mechanism.
+
+Real service-file-lock fixtures cover release/resume, the production reopening
+gate, exact permanent-Busy deadline, cancellation, full-snapshot changes and
+fresh policy reduction. Other errors are proven single-attempt. Matching signed
+runtime/native-manager Start and actual relay readiness remain manual/native
+gates; the controlled Linux failure is preserved until that candidate is tested.
