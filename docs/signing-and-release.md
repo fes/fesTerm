@@ -138,8 +138,11 @@ approval, runtime behavior and VM workflow acceptance remain separate checks.
 Preparing a release bumps `Cargo.toml`, `Cargo.lock`, the three
 `packaging/*.toml` manifests, and — because the Windows helper resource is
 named for its release — the `festerm-sessiond-<release>.exe` `src`/`target`
-pair inside `packaging/windows.toml`. `scripts/check_packaging.py` fails the
-build when any of them disagrees with the workspace version.
+pair inside `packaging/windows.toml`. Keep Android
+`app/festerm-android/AndroidManifest.xml` `versionName` aligned too; Play
+`versionCode` remains the separately selected unique upload value.
+`scripts/check_packaging.py` checks desktop version metadata, and the Play bundle
+builder rejects an Android version name that differs from the workspace.
 
 Desktop packages and mobile builds include `packaging/THIRD_PARTY_NOTICES.txt`.
 The report retains dependency and bundled-font license texts, plus the Android
