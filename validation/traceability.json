@@ -1191,7 +1191,8 @@
         "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
         "docs/adr/0071-explicit-managed-session-repair.md#decision",
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
-        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/native-terminal-capability-probe.md"
       ],
       "decisions": [
         "ADR-0053",
@@ -5250,7 +5251,8 @@
         "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision",
         "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision",
-        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/native-terminal-capability-probe.md"
       ],
       "decisions": [
         "ADR-0073",
@@ -5610,7 +5612,8 @@
         "docs/application-command-model.md#required-properties",
         "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
         "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery",
-        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/native-terminal-capability-probe.md"
       ],
       "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [

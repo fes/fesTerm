@@ -5346,3 +5346,13 @@ same authenticated Provisioned scope; verify no duplicate cloud host or implicit
 Start. Changed owner policy, binding, startup, friendly name, binary or unknown
 native/runtime state must refuse. The portable stopped-projection fixtures do
 not complete this native acceptance gate or grant generic creation to clients.
+
+For DT-05 / MOB-06 and HOST-02/03 Copilot visual qualification, the optional
+[native capability collector](native-terminal-capability-probe.md) records the
+actual foreground POSIX terminal's fixed DA1/DA2/DSR and palette/default-color
+replies, grid and allowlisted environment. Run it separately in each controlled
+local and remote shell before a fresh Copilot initial screen. Its controlled-PTY
+tests validate collection, privacy and restoration only; they do not establish
+client/server capability parity or native visual acceptance. Windows console
+collection, matched-grid paired screenshots and all native comparisons remain
+required. The optional aggregate runners expose a dedicated explicit probe mode.

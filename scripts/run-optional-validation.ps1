@@ -53,6 +53,35 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
 
+# Dedicated collector dispatch precedes aggregate output and other suites.
+if ($env:FESTERM_RUN_TERMINAL_CAPABILITY_PROBE -eq '1') {
+    if ($MarkdownScrollingOnly -or $WindowsPublisherOnly -or $ProvisionPsRpRunner -or
+        -not $env:FESTERM_TERMINAL_CAPABILITY_CASE -or
+        -not $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH -or
+        ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)) {
+        exit 2 # Windows native console collection remains a separate gate.
+    }
+    $probeStart = [Diagnostics.ProcessStartInfo]::new()
+    $probeStart.FileName = (Get-Command python3 -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
+    $probeStart.UseShellExecute = $false
+    $probeStart.RedirectStandardInput = $false
+    $probeStart.RedirectStandardOutput = $false
+    $probeStart.RedirectStandardError = $false
+    foreach ($argument in @("$PSScriptRoot/check_dev_tunnel_workflow.py",
+        '--terminal-capability-probe', '--case', $env:FESTERM_TERMINAL_CAPABILITY_CASE,
+        '--result', $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH)) {
+        $probeStart.ArgumentList.Add($argument)
+    }
+    $probeProcess = [Diagnostics.Process]::Start($probeStart)
+    try {
+        $probeProcess.WaitForExit()
+        exit $probeProcess.ExitCode
+    } finally {
+        $probeProcess.Dispose()
+    }
+}
+
 function Write-OptionalResultLocation {
     param([string] $Path)
     Write-Host ("Optional validation result: {0}" -f [IO.Path]::GetFileName($Path))

@@ -390,7 +390,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="explicitly allow service calls and fixture shell input")
     parser.add_argument("--result", type=Path, help="content-free evidence destination")
+    parser.add_argument("--terminal-capability-probe", action="store_true",
+                        help="observe fixed native POSIX terminal replies; no service calls")
+    parser.add_argument("--case", help="public capability-probe case identifier")
     args = parser.parse_args(argv)
+    if args.terminal_capability_probe:
+        if args.run or args.result is None or args.case is None:
+            parser.error("terminal probe requires --case/--result and excludes --run")
+        if os.name != "posix":
+            # POSIX-only collector; Windows native console validation remains open.
+            return 2
+        # Inherit the actual foreground TTY; the Cargo/pipe runner is unsuitable.
+        from native_terminal_capability_probe import main as probe_main
+        return probe_main(["--case", args.case, "--output", str(args.result)])
     if args.result is not None and (args.result.exists() or args.result.is_symlink()):
         evidence(None, "blocked", "result-already-exists")
         return 2

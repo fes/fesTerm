@@ -835,6 +835,11 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The optional [native terminal capability collector](../native-terminal-capability-probe.md)
+supports HOST-02/03 matched-grid Copilot validation with actual POSIX terminal
+replies. Controlled-PTY collector tests do not qualify native capability parity,
+Windows console collection or paired visual acceptance.
+
 The November 2026 client redesign refines HOST-01--04 and TUNNEL-07: explicit
 per-account discovery, central account presentation, once-per-sign-in truthful
 clipboard/browser attempts, conditional desktop host controls, protected

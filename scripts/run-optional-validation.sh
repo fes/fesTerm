@@ -12,6 +12,18 @@ if [ "${FESTERM_RUN_OPTIONAL_VALIDATION:-}" != "1" ]; then
     exit 2
 fi
 
+# This collector owns an exclusive private result and the actual foreground
+# TTY. Run it alone, before aggregate output files or other optional suites.
+if [ "${FESTERM_RUN_TERMINAL_CAPABILITY_PROBE:-}" = "1" ]; then
+    if [ -z "${FESTERM_TERMINAL_CAPABILITY_CASE:-}" ] ||
+        [ -z "${FESTERM_TERMINAL_CAPABILITY_RESULT_PATH:-}" ]; then
+        exit 2
+    fi
+    exec python3 scripts/check_dev_tunnel_workflow.py --terminal-capability-probe \
+        --case "$FESTERM_TERMINAL_CAPABILITY_CASE" \
+        --result "$FESTERM_TERMINAL_CAPABILITY_RESULT_PATH"
+fi
+
 result_path=${FESTERM_OPTIONAL_VALIDATION_RESULT_PATH:-optional-validation-result.txt}
 p5_result_path=${FESTERM_P5_REFERENCE_RESULT_PATH:-p5-reference-result.txt}
 p6_result_path=${FESTERM_P6_RENDER_RESULT_PATH:-p6-render-result.txt}
