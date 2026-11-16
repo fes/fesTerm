@@ -394,6 +394,18 @@ impl LiveSsh {
             return;
         }
         if let Some(session) = &self.session {
+            if let Some((dimensions, _)) = self.pending_resize {
+                let accepted = session_size(dimensions)
+                    .ok()
+                    .is_some_and(|size| session.try_resize(size).is_ok());
+                if !accepted {
+                    // There is no pending input queue on mobile. Preserve the
+                    // atomic refusal policy rather than send against stale geometry.
+                    self.stop_failed("Input not sent: viewport resize rejected; disconnected.");
+                    return;
+                }
+                self.pending_resize = None;
+            }
             if session.try_send_input(bytes).is_err() {
                 // Never drop part of a command and then accept its continuation.
                 // The backend admission is atomic; make refusal explicit and
@@ -763,11 +775,20 @@ mod tests {
         directory
     }
 
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum ViewportCall {
+        Resize(TerminalSize),
+        ResizeRefused(TerminalSize),
+        Input(Vec<u8>),
+    }
+
     #[derive(Default)]
     pub(super) struct FakeSession {
         events: Mutex<VecDeque<SessionEvent>>,
         input: Mutex<Vec<Vec<u8>>>,
         resizes: Mutex<Vec<TerminalSize>>,
+        viewport_calls: Mutex<Vec<ViewportCall>>,
+        resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         rejected: bool,
         closed: bool,
         shutdowns: Mutex<usize>,
@@ -793,10 +814,26 @@ mod tests {
                     capacity: 1,
                 });
             }
+            self.viewport_calls
+                .lock()
+                .unwrap()
+                .push(ViewportCall::Input(bytes.to_vec()));
             self.input.lock().unwrap().push(bytes.to_vec());
             Ok(())
         }
         fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+            let result = self
+                .resize_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()));
+            self.viewport_calls.lock().unwrap().push(if result.is_ok() {
+                ViewportCall::Resize(size)
+            } else {
+                ViewportCall::ResizeRefused(size)
+            });
+            result?;
             self.resizes.lock().unwrap().push(size);
             Ok(())
         }
@@ -2290,6 +2327,112 @@ mod tests {
         live.poll(&mut terminal(), &egui::Context::default());
         assert_eq!(session.events.lock().unwrap().len(), 1);
         assert!(session.input.lock().unwrap().is_empty());
+    }
+
+    // Command bytes exercise ordering only; this test does not launch Copilot or a PTY.
+    #[test]
+    fn mobile_first_viewport_precedes_immediate_input() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        let size = TerminalSize::new(100, 32).unwrap();
+        live.resize(Dimensions::new(100, 32).unwrap());
+        live.send(b"copilot\n");
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_backpressure_precedes_immediate_input() {
+        let session = Arc::new(FakeSession::default());
+        session
+            .resize_results
+            .lock()
+            .unwrap()
+            .push_back(Err(SessionSendError::Full {
+                operation: SessionOperation::Resize,
+                capacity: 1,
+            }));
+        let mut live = connection(session.clone());
+        let size = TerminalSize::new(100, 32).unwrap();
+        live.resize(Dimensions::new(100, 32).unwrap());
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        live.send(b"copilot\n");
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::ResizeRefused(size),
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_sustained_backpressure_refuses_input_without_replay() {
+        let session = Arc::new(FakeSession::default());
+        session
+            .resize_results
+            .lock()
+            .unwrap()
+            .extend((0..2).map(|_| {
+                Err(SessionSendError::Full {
+                    operation: SessionOperation::Resize,
+                    capacity: 1,
+                })
+            }));
+        let mut live = connection(session.clone());
+        live.resize(Dimensions::new(100, 32).unwrap());
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        live.send(b"copilot\n");
+        assert!(!live.input_enabled());
+        assert_eq!(
+            live.status,
+            "Input not sent: viewport resize rejected; disconnected."
+        );
+        assert!(session.input.lock().unwrap().is_empty());
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+        live.send(b"copilot\n");
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::ResizeRefused(TerminalSize::new(100, 32).unwrap()),
+                ViewportCall::ResizeRefused(TerminalSize::new(100, 32).unwrap()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_superseded_size_sends_only_latest_before_input() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        live.resize(Dimensions::new(100, 32).unwrap());
+        live.resize(Dimensions::new(120, 40).unwrap());
+        live.send(b"copilot\n");
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::Resize(TerminalSize::new(120, 40).unwrap()),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+        assert!(live.pending_resize.is_none());
     }
 
     #[test]

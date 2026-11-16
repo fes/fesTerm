@@ -1190,7 +1190,8 @@
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
         "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
         "docs/adr/0071-explicit-managed-session-repair.md#decision",
-        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
       ],
       "decisions": [
         "ADR-0053",
@@ -1330,7 +1331,10 @@
         "remote_file_paths_refuse_foreign_namespaces_and_changed_capability_bindings",
         "mismatched_file_response_cannot_satisfy_another_request_or_become_terminal_output",
         "bridge_regular_file_reads_are_opt_in_bounded_and_admitted_once",
-        "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation"
+        "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation",
+        "desktop_first_viewport_precedes_immediate_input",
+        "desktop_first_viewport_backpressure_precedes_immediate_input",
+        "desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size"
       ],
       "manual_scenarios": [
         "DT-01",
@@ -1344,7 +1348,8 @@
         "Fresh required Windows x64 CI proof of the three legacy tunnel-setup fixtures after 9d521174; read-only capture improvements and macOS checks are not Windows qualification",
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
-        "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429"
+        "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429",
+        "DT-02 active native Copilot parity remains unqualified in all24 Desktop/iOS/Android campaign cases: pair fresh server-local fesTerm and actual Dev Tunnels Copilot runs at matched columns/rows, recording logical/physical pixel geometry, CLI version/hash, controlled cwd/task, theme/font/scale, selected TERM/TERM_PROGRAM/COLORTERM/locale and actual bounded DA/DSR/color/mode replies without duplicates; retain server/client screenshots. First-viewport/input, sustained resize Full and latest-size CPU regressions are separate controller evidence, not actual PTY ordering or native Copilot acceptance. Existing adapter payload/mode, protected creation policy, session identity and #681 prerequisites remain unchanged."
       ]
     },
     {
@@ -5240,7 +5245,8 @@
         "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision",
         "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision",
-        "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision"
+        "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
       ],
       "decisions": [
         "ADR-0073",
@@ -5430,7 +5436,11 @@
         "attach_requires_an_approved_unchanged_host",
         "takeover_follows_the_profile_and_displacement_is_never_silently_reattached",
         "a_pinned_session_name_that_the_host_does_not_serve_is_reported",
-        "mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon"
+        "mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon",
+        "mobile_first_viewport_precedes_immediate_input",
+        "mobile_first_viewport_backpressure_precedes_immediate_input",
+        "mobile_first_viewport_sustained_backpressure_refuses_input_without_replay",
+        "mobile_first_viewport_superseded_size_sends_only_latest_before_input"
       ],
       "manual_scenarios": [
         "MOB-01",
@@ -5438,7 +5448,8 @@
         "MOB-03",
         "MOB-04",
         "MOB-05",
-        "MOB-06"
+        "MOB-06",
+        "DT-02"
       ],
       "status": "partial",
       "prerequisites": [
@@ -5450,7 +5461,8 @@
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
         "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support",
-        "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06"
+        "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06",
+        "DT-02/MOB-06 active native fresh Copilot parity remains unqualified for every iOS/Android case in the existing24-case matrix. Compare against fresh server-local fesTerm at matched terminal grid size with recorded pixel geometry, CLI/task/cwd/theme/font/scale and actual selected environment/query replies plus paired server/client screenshots. Device type and keyboard/rotation geometry must be recorded. Shared mobile CPU tests prove controller ordering and explicit input-not-sent/disconnect without replay on persistent resize refusal; builds, replay and CPU captures do not qualify actual PTY or native Copilot visuals."
       ]
     },
     {
@@ -5581,7 +5593,8 @@
         "docs/gui-design.md#profile-editing",
         "docs/application-command-model.md#required-properties",
         "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
-        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery"
+        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case"
       ],
       "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
@@ -5936,7 +5949,16 @@
         "native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation",
         "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned"
       ],
-      "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
+      "manual_scenarios": [
+        "DT-05",
+        "DT-07",
+        "DT-08",
+        "CP-11",
+        "MOB-03",
+        "MOB-06",
+        "HOSTAUTH-01",
+        "DT-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native terminal heartbeat/intentional-detach maintenance and Detached receipt publication retry only typed Busy before effect eligibility within the existing15s admission budget, reacquiring exact generation and fresh protected policy. Successful mutation admission or invoked input/adoption/publication makes every later result final; no effect replay. Cancellation, revocation, storage/Unknown and other refusals are not retried. Unit guards and actual owned native SSH/PTY adoption/output/Detached/temporary-grace/policy tests remain required; pre-snapshot fixture Busy retries preserve target/ticket/request and never retry adoption, while fresh read-only List probes must resolve the complete exact target set without Unknown. No new capability or installed/native-vault/mobile/Windows qualification",
@@ -5954,7 +5976,6 @@
         "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard. The default headless binary consumes them only through explicit current-consent run; bridge/setup library features remain opt-in for other consumers. Independent combined-source review and native/first-connect qualification remain mandatory; no default desktop/mobile listener or implicit GUI permission",
         "Native vault/private-path/restart qualification and CLIENT first-connect full-binding independent-pin review/protected receipt/index/session chooser evidence remain deferred under HOSTAUTH-01; separate host-local public-key approval is implemented and does not complete that direction. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
         "Paired terminal framing, bounded actor/client queues and FIFO output turns are consumed by the explicit authenticated headless runtime, using actual signed SSH streams and shared native control/terminal state via Arc. Fixed protected enrollment and lifecycle/current-policy fixtures are integrated. Different-source-family exact-head review and native-vault/service/first-connect qualification remain required. Runnable source does not establish installed/native readiness",
-
         "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
         "Issue #681: reachable desktop Review and connect requires independent full-binding/pin review, a private native-key receipt and separate host-local approval before explicit HOST-only resolution/inventory/exact-target attachment. Launcher/render/save/import remain offline and grant no trust. The historical e49/#693 source union passed 132 library/14 ignores, all 14 separately selected native SSH/PTY cases, nine service and fourteen desktop cases on explicit private rustc 1.98.0. Later creation/lifecycle and protected mobile restart increments preserve original-issued requests through the current typed worker; source/toolchain boundaries are in milestone-progress.md. Mobile protected checkpoints precede effectful writes, use explicit current-context/consent reopen, preserve original UUID/epoch/body and retain uncertain originals; only exact terminal Ended settles records. Synthetic memory-vault subprocess/framed tests are not native-vault/physical restart acceptance. Android's earlier Unsupported reservation state is superseded by the separately tracked native-root/create-new boundary below; native runtime remains unqualified. Native-vault/development-wrapper GUI, physical mobile installation, desktop account-wide discovery/Settings and desktop durable reconciliation remain open; no implicit sign-in, retry, legacy fallback or replay",
         "Issue #681: explicit foreground launch/lifetime/behavior reconfirmation and protected owner/key/context fences have headless coverage; import/save/portable approval fields never grant execution consent. Qualify the same no-execution-before-approval/cancel flow on native desktop and physical mobile before acceptance",
@@ -5970,7 +5991,8 @@
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. Native fixtures use a real old-writer I/O barrier plus an unadopted takeover reservation for one precommit Busy refusal, preserving the full lease/journal and checking one exact writer-epoch advance only after adoption. A held generation lease proves precommit end Busy without PID/generation/issued effects; a separate durable-stop commit barrier precedes OutcomeUncertain publication. Committed-creation replay separately proves exact-lease Busy and unchanged full checkpoints before requiring the same operation/generation/original Created result within the existing deadline; other responses are printed failures. Unix owned fixture roots bind the maximum PID/HOST-generation socket identity and refuse existing-name adoption. The Linux920 CI replay reply remains unprinted/unknown, not identified by the controlled Busy proof. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
-        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred"
+        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred",
+        "DT-02 active fresh native Copilot visual comparison spans all24 Desktop/iOS/Android lab cases, separately from protocol/create/attach/survival evidence. Require matching local-reference/client grid, recorded pixel geometry, actual PTY terminal/locale environment and query replies without duplicates, pinned Copilot/task/theme/font/scale and paired screenshots. Static server TERM policy is valid for fesTerm clients; missing creation metadata alone is not a reproduced defect and this requirement introduces no protocol fields or new authority. Native comparisons remain unqualified."
       ]
     },
     {

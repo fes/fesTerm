@@ -32,6 +32,63 @@ results do not qualify physical-device lock, biometric or lifecycle gates.
 The desktop service-client runner below cannot qualify mobile cases. Packaging,
 headless fixtures and an available device do not count as a completed case.
 
+## Fresh Copilot visual parity in every case
+
+Fresh actual GitHub Copilot CLI visual parity is an active acceptance requirement
+under DT-02 and MOB-06 for all 24 cases above, including Desktop, iOS and
+Android clients in both creation-policy phases. A successful service-client
+phase, old terminal recovery screen, captured byte replay or CPU renderer test
+does not complete this requirement.
+
+For each case, pair a fresh Copilot process in the server's local fesTerm shell
+with a fresh Copilot process reached through the actual Dev Tunnels client.
+Use the approved shared profile when generic creation is off; do not enable
+creation or replace a durable generation merely to obtain a fresh application
+process. Record the exact server/client app and helper source/build identities,
+host/session generation and attachment, Copilot version and executable hash,
+controlled working directory/task, shell and selected locale values. Pin the
+same Copilot version, task, theme, font and font size/scale for the comparison;
+record any unavoidable platform rendering difference explicitly.
+
+Before launching either process, settle both terminal viewports at the same
+columns and rows (for example 100 by 32). Record each terminal content rectangle
+in logical and physical pixels, display scale and font metrics, excluding app
+chrome and the software keyboard. A matching outer window size is insufficient.
+Observe the actual PTY size before the launch input is accepted, then resize to
+a second matched grid and repeat the observation. Record the selected `TERM`,
+`TERM_PROGRAM`, `COLORTERM`, `LANG`, `LC_ALL` and `LC_CTYPE` values, distinguishing
+unset values. Use bounded actual query/reply observations for DA1/DA2, DSR and
+supported color/mode queries; verify one response per request and compare the
+local and remote results at the same cursor, viewport and palette state.
+Static server terminal identity is permitted for these fesTerm clients; do not
+infer missing capability transfer merely because the creation request has no
+terminal metadata fields. Do not substitute synthetic xterm probe replies.
+
+Capture the fresh local reference on the server and the corresponding actual
+client screen at matching task checkpoints, including Unicode, inline-code
+backgrounds, wrapping, cursor and alternate-screen behavior. Review each pair
+for the same terminal layout and visible colors, with platform rasterization
+and nondeterministic task content identified separately. Retain both screenshots
+and the bounded geometry/environment/query observations with the case identity.
+Use only the dedicated controlled task; do not export arbitrary terminal
+history, credentials or provider diagnostics. iOS/Android evidence must show the
+actual application and its keyboard/rotation geometry, and identify hardware,
+Simulator or emulator. A missing CLI, required runtime or usable authenticated
+session leaves that case blocked; installation or a version command alone does
+not establish a successful Copilot run.
+
+Keep the deterministic resize-before-input regressions separate from this native
+visual evidence. Desktop retains input in its existing bounded queue while a
+refused resize waits, retries the latest viewport and drains after acceptance.
+Mobile forces a pending viewport resize before input; if it is still refused,
+it reports **Input not sent: viewport resize rejected; disconnected.** The input
+is not replayed. Check these paths, including sustained resize backpressure and
+a superseded viewport, without claiming that a passing CPU test proves native
+PTY ordering or Copilot appearance. Reuse the existing capture/render and client
+controller harnesses; this requirement adds no VM adapter payload, mode or
+protocol capability. Fresh native Copilot comparisons remain unqualified until
+the paired records exist for every case.
+
 ## Protected create protocol and legacy reservations
 
 New intents also pin `create_access = "owner_default"`. Microsoft documents
