@@ -837,6 +837,29 @@ Inherited app-wide primary-action text contrast (3.92:1) and subtle control
 boundary contrast remain design-system debt; changing shared theme tokens and
 their unrelated baselines is outside this dark-theme-preserving workflow slice.
 
+## Normal account-based remoting correction (ADR 0086)
+
+The required normal path is GitHub sign-in, automatic host listing, then host
+expansion to authorized sessions/profiles and permitted creation actions. No
+manual fingerprint, OwnerBinding JSON, verification checkbox or per-device host
+approval belongs in that path. Explicit advanced owner administration remains a
+separate workflow. The manual path exercised in the earlier lab campaign is
+historical diagnostic evidence, not normal-workflow acceptance.
+
+Automatic directory and denied-by-default route/proof primitives have portable
+regressions. Ordinary capability minting, automatic host expansion and native
+acceptance remain incomplete. Qualify fresh Desktop/iOS/Android clients against
+all three server OSs with creation OFF and ON, private targets excluded from both
+inventory and direct operations, exact existing-session reuse, and paired native
+screenshots. Keep fresh matched-grid Copilot initial-screen checks under DT-02.
+Legacy installations retain OwnerOnly until an explicit reviewed migration while
+disabled; verify that the existing daemon/shell/catalog survive. Test fresh
+ProviderOwner installations with no administrative owner keys. Sign-out, bound
+credential replacement and privacy lock cancel affected connections without
+terminating durable shells; choosing another stored account for new discovery
+must not retarget independently bound live tabs. Neither UI tests nor a valid
+signature alone establishes ordinary authority or native acceptance.
+
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 
 Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public
@@ -850,10 +873,13 @@ tests, not native UI or real-service evidence.
 Typed expired/account-changed HOST discovery or resolution failures offer an inline
 **Sign in again** action through the existing account reauthentication command.
 CPU regressions cover the original account and credential witness, current
-request/generation/tab, replacement/removal/switch refusal, cancellation and
-nonauthentication errors without starting sign-in or discovery on page open.
+request/generation/tab, replacement/removal/switch refusal and cancellation.
+Opening the normal host browser with a saved account now starts one directory
+read automatically; successful sign-in resumes it only for the open foreground
+browser. Errors wait for explicit Refresh, while local profile editing/saving
+remains offline and painting never launches a browser or inventories every host.
 Manual/native validation remains required: expire an owned test account, use the
-inline action, complete normal GitHub consent, then explicitly Find hosts again;
+inline action, complete normal GitHub consent and observe automatic host listing;
 verify one retained account and unchanged profiles. A switched account, replaced
 credential, changed editor or closed tab must not retarget a pending action.
 

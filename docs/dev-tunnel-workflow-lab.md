@@ -1,11 +1,22 @@
 # Opt-in Dev Tunnels service-client lab campaign
 
-This campaign uses the controlled GitHub identity **fes-festerm1**, actual Dev
-Tunnels discovery/relay, the native credential store, protected HOST approval,
-and production HOST client/session adapters. It is deliberately excluded from
-ordinary tests. It does not create GitHub accounts, automate password entry,
-accept credentials in job payloads, enroll an owner, weaken host verification,
-or claim native GUI or iOS acceptance.
+The normal-workflow campaign uses controlled GitHub identities, actual Dev
+Tunnels discovery/relay, native credentials and the provider-authorized remoting
+contract in [ADR 0086](adr/0086-provider-authorized-ordinary-remoting.md). It is
+explicitly opt-in. A client signs in, sees its hosts automatically and expands a
+host to fetch authorized sessions/profiles. It never needs to type a fingerprint,
+OwnerBinding JSON or a per-device approval on the server for this normal path.
+Host setup still requires explicit protected access consent; legacy installations
+retain OwnerOnly until reviewed migration while disabled.
+
+**Current limitation:** ordinary runtime/bootstrap integration and all 24 normal
+native cases remain unqualified. The existing service-client runner described
+below exercises the advanced enrolled-owner path with **fes-festerm1**. Its
+protected fixture, manual-pairing results and success marker are diagnostic
+coverage only, not normal-workflow acceptance. That runner does not create GitHub
+accounts, automate password entry, accept credentials in job payloads or enroll
+owners. Replace its normal-case authentication with the shared ordinary client
+facade before using it as normal-flow evidence; do not reinterpret its old fixture.
 
 ## Desktop and mobile matrix
 
@@ -18,8 +29,9 @@ creation disabled and enabled. Directions name the server first.
 | macOS | Windows, Linux | iOS, Android | 8 |
 | Linux | Windows, macOS | iOS, Android | 8 |
 
-Each case requires controlled-account discovery and exact owner approval,
-advertised **Lab shared** and excluded **Lab private**, actual terminal I/O,
+Each normal case requires account sign-in, automatic discovery and authenticated
+host expansion without manual pairing; advertised **Lab shared** and excluded
+**Lab private** in inventory and direct requests; actual terminal I/O,
 the expected generic-creation permission, exact detach and durable reconnect,
 and screenshots on both server and client. Preserve issued identities after
 uncertain results; expanding the matrix never authorizes replacement creates.

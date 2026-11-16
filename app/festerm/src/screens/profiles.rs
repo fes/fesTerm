@@ -3011,6 +3011,7 @@ mod tests {
                 Settings {
                     friendly_name: "This computer".into(),
                     allow_creation: false,
+                    ordinary_access: festerm_host_setup::lifecycle::OrdinaryAccess::OwnerOnly,
                     startup: Startup::Manual,
                 },
             )

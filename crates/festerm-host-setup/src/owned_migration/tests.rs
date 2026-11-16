@@ -137,6 +137,7 @@ impl Fixture {
             &root.join("host"),
             Origin::Headless,
             Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "label-not-identity".into(),
                 allow_creation: false,
                 startup: Startup::Manual,

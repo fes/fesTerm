@@ -297,20 +297,24 @@ impl MobileApp {
                                         }
                                     }
                                     section_header(ui, "GitHub accounts", None, false);
-                                    if accounts.is_empty() {
-                                        footnote(ui, "Sign in to find your hosts.");
+                                    if accounts.is_empty()
+                                        && primary(ui, "Sign in to GitHub", !self.hosts.busy())
+                                    {
+                                        action = Some(Action::SignIn);
                                     }
                                     for (index, account) in accounts.iter().enumerate() {
-                                        let find = if self.hosts.inventory.is_some() {
+                                        let current = self.hosts.account == account.id;
+                                        let label = if current {
+                                            format!("Refresh hosts · @{}", account.login)
+                                        } else {
+                                            format!("@{}", account.login)
+                                        };
+                                        let choose = if self.hosts.inventory.is_some() {
                                             secondary
                                         } else {
                                             primary
                                         };
-                                        if find(
-                                            ui,
-                                            &format!("Find hosts · @{}", account.login),
-                                            !self.hosts.busy(),
-                                        ) {
+                                        if choose(ui, &label, !current || !self.hosts.busy()) {
                                             action = Some(Action::FindAccount(index));
                                         }
                                     }

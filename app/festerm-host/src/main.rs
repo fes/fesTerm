@@ -1,6 +1,6 @@
 use festerm_host_setup::{
     acquisition,
-    lifecycle::{Origin, Phase, Settings, Startup, Store},
+    lifecycle::{OrdinaryAccess, Origin, Phase, Settings, Startup, Store},
     owned_migration,
     services::{Services, TrustedStage},
     staging,
@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::Exit
 const HELP: &str = "\
 festerm-host — ADR 0084 headless lifecycle boundary
 
-configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in]
+configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in] [--ordinary-access owner-only|provider-owner]
     Save disabled host-local settings only; no sign-in, service or shell is started.
 status --state-dir PATH
     Read protected lifecycle JSON; pending cleanup shows unverified receipt context only, never removal authority or liveness.
@@ -107,7 +107,13 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     }
     let command = command.to_str().ok_or_else(invalid)?;
     let allowed: &[&str] = match command {
-        "configure" => &["--state-dir", "--name", "--creation", "--startup"],
+        "configure" => &[
+            "--state-dir",
+            "--name",
+            "--creation",
+            "--startup",
+            "--ordinary-access",
+        ],
         "migration-inventory" => &["--selection", "--account-id"],
         "migration-preview" => &["--state-dir", "--selection", "--account-id"],
         "migration-reserve" => &[
@@ -594,6 +600,11 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 startup: match choice("--startup")? {
                     Some("sign-in") => Startup::UserSignIn,
                     Some("manual") | None => Startup::Manual,
+                    _ => return Err(invalid()),
+                },
+                ordinary_access: match choice("--ordinary-access")? {
+                    Some("provider-owner") => OrdinaryAccess::ProviderOwner,
+                    Some("owner-only") | None => OrdinaryAccess::OwnerOnly,
                     _ => return Err(invalid()),
                 },
             };
@@ -1090,6 +1101,7 @@ mod tests {
             &state,
             Origin::Headless,
             Settings {
+                ordinary_access: OrdinaryAccess::OwnerOnly,
                 friendly_name: "Cleanup fixture".into(),
                 allow_creation: false,
                 startup: Startup::Manual,
@@ -1313,6 +1325,44 @@ mod tests {
         assert_eq!(report["settings"]["allow_creation"], false);
         assert_eq!(report["binding"], serde_json::Value::Null);
         assert_eq!(std::fs::read_dir(path).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let path = root.path().join("host");
+        let path = path.to_str().unwrap();
+        assert!(execute(arguments(&[
+            "configure",
+            "--state-dir",
+            path,
+            "--name",
+            "Fixture",
+            "--ordinary-access",
+            "anonymous",
+        ]))
+        .is_err());
+        assert!(!std::path::Path::new(path).exists());
+        execute(arguments(&[
+            "configure",
+            "--state-dir",
+            path,
+            "--name",
+            "Fixture",
+            "--ordinary-access",
+            "provider-owner",
+        ]))
+        .unwrap();
+        let store = Store::open(std::path::Path::new(path), Origin::Headless).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.phase, Phase::Disabled);
+        assert_eq!(
+            snapshot.settings.ordinary_access,
+            OrdinaryAccess::ProviderOwner
+        );
+        assert!(snapshot.binding.is_none());
+        assert!(!snapshot.settings.allow_creation);
+        assert!(Store::open(std::path::Path::new(path), Origin::Desktop).is_err());
     }
 
     #[test]

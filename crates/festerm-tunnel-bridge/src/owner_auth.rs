@@ -592,7 +592,7 @@ impl VerifiedOwner {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -602,7 +602,7 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
-fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
+pub(crate) fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
     if value.len() != N * 2
         || !value
             .bytes()

@@ -1858,6 +1858,7 @@ mod tests {
             &root.path().join("host"),
             Origin::Headless,
             crate::lifecycle::Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "Fixture HOST".into(),
                 allow_creation: false,
                 startup: crate::lifecycle::Startup::Manual,
@@ -2173,6 +2174,7 @@ mod tests {
             let consent = crate::controller::SetupConsent {
                 expected: store.snapshot().unwrap(),
                 settings: crate::lifecycle::Settings {
+                    ordinary_access: Default::default(),
                     friendly_name: "Reviewed desktop setup".into(),
                     allow_creation: false,
                     startup: crate::lifecycle::Startup::Manual,

@@ -168,6 +168,7 @@ impl Fixture {
                 &state,
                 Origin::Headless,
                 Settings {
+                    ordinary_access: Default::default(),
                     friendly_name: "Update fixture".into(),
                     allow_creation: false,
                     startup: Startup::Manual,

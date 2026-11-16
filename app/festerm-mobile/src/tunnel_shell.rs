@@ -519,6 +519,8 @@ impl MobileApp {
                 }
                 SignInState::Done(account) => {
                     self.tunnel.attach_error = None;
+                    #[cfg(feature = "host-clients")]
+                    self.host_discovery_signed_in(&account.id);
                     match flow.resume {
                         Resume::Connect { profile, tab } => {
                             self.start_tunnel_connect(ctx, &profile, tab, false);
@@ -664,6 +666,8 @@ impl MobileApp {
 impl MobileApp {
     /// Changing identity invalidates account-scoped discovery and the draft target.
     fn select_tunnel_account(&mut self, account: String) {
+        #[cfg(feature = "host-clients")]
+        self.host_discovery_account_changed(&account);
         if self.editor.tunnel_account.as_ref() != Some(&account) {
             self.clear_tunnel_draft();
             self.editor.tunnel_account = Some(account);

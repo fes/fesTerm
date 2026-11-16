@@ -291,9 +291,23 @@ struct ProfileHostReview {
     saved: bool,
 }
 
+#[cfg(test)]
+type DiscoveryFuture = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<Vec<TunnelSummary>, festerm_tunnel_client::Error>>
+            + Send,
+    >,
+>;
+#[cfg(test)]
+type DiscoveryService = Arc<dyn Fn(u64, CancellationToken) -> DiscoveryFuture + Send + Sync>;
+
 #[derive(Default)]
 pub(super) struct HostUi {
     pub(super) open: bool,
+    discover_on_open: bool,
+    discovery_attempt: Option<TunnelAccount>,
+    #[cfg(test)]
+    discovery_service: Option<DiscoveryService>,
     account: String,
     selected: Option<PublicRecipe>,
     saved: bool,
@@ -1093,6 +1107,7 @@ enum Action {
     Import,
     Close,
     FindAccount(usize),
+    SignIn,
     SelectHost(usize),
     Settings,
     QuickNew,
@@ -1162,6 +1177,7 @@ impl MobileApp {
             return true;
         }
         self.open_hosts();
+        self.hosts.discover_on_open = false; // Local metadata editing/selection stays offline.
         self.select_host_recipe(recipe);
         self.hosts.connection_notice = None;
         self.hosts.saved_connect = Some(SavedConnect::Receipt);
@@ -1339,9 +1355,11 @@ impl MobileApp {
     }
 
     pub(super) fn open_hosts(&mut self) {
-        self.hosts.clear_approval();
+        self.hosts.clear_review();
         self.hosts.epoch = self.sink.live.host.epoch();
         self.hosts.open = true;
+        self.hosts.discover_on_open = true;
+        self.hosts.discovery_attempt = None;
     }
 
     pub(super) fn select_host_profile(&mut self, id: &str, edit: bool) -> bool {
@@ -1359,6 +1377,7 @@ impl MobileApp {
             return false;
         };
         self.open_hosts();
+        self.hosts.discover_on_open = false; // Profile selection/editing itself stays offline.
         self.select_host_recipe(recipe);
         if edit {
             self.hosts.begin_profile_edit();
@@ -1457,6 +1476,82 @@ impl MobileApp {
         store.host_recipes().get(&recipe.id) == Some(recipe)
     }
 
+    pub(super) fn host_discovery_account_changed(&mut self, account: &str) {
+        if self.hosts.open
+            && self.hosts.discover_on_open
+            && !self.hosts.editing
+            && self.hosts.account != account
+        {
+            self.hosts.clear_review();
+            self.hosts.hosts.clear();
+            self.hosts.discovered = false;
+            self.hosts.error = None;
+            self.hosts.account = account.to_owned();
+        }
+    }
+
+    pub(super) fn host_discovery_signed_in(&mut self, account: &str) {
+        if self.hosts.open && self.hosts.discover_on_open && !self.hosts.editing {
+            self.hosts.clear_review();
+            self.hosts.hosts.clear();
+            self.hosts.discovered = false;
+            self.hosts.error = None;
+            self.hosts.account = account.to_owned();
+            self.hosts.discovery_attempt = None;
+        }
+    }
+
+    fn discover_open_hosts(&mut self, ctx: &egui::Context, accounts: &[TunnelAccount]) {
+        if !self.hosts.open
+            || !self.hosts.discover_on_open
+            || self.hosts.editing
+            || self.hosts.selected.is_some()
+        {
+            return;
+        }
+        let account = accounts
+            .iter()
+            .find(|a| a.id == self.hosts.account)
+            .or_else(|| {
+                accounts
+                    .iter()
+                    .find(|a| Some(&a.id) == self.editor.tunnel_account.as_ref())
+            })
+            .or_else(|| accounts.first())
+            .cloned();
+        if account.is_none() {
+            if !self.hosts.account.is_empty() || self.hosts.busy() {
+                self.hosts.clear_review();
+            }
+            self.hosts.account.clear();
+            self.hosts.hosts.clear();
+            self.hosts.discovered = false;
+            self.hosts.discovery_attempt = None;
+            return;
+        }
+        if self.hosts.discovery_attempt.as_ref() == account.as_ref() {
+            return;
+        }
+        if let Some(previous) = &self.hosts.discovery_attempt {
+            if Some(previous) != account.as_ref() {
+                self.hosts.clear_review();
+                self.hosts.hosts.clear();
+                self.hosts.discovered = false;
+                self.hosts.error = None;
+            }
+        }
+        let account = account.expect("checked saved account");
+        if self.hosts.busy() {
+            return;
+        }
+        self.hosts.account = account.id.clone();
+        // Record admission before spawning: refusal/error requires explicit Refresh.
+        self.hosts.discovery_attempt = Some(account);
+        if let Err(error) = self.host_action(ctx, Action::Find) {
+            self.hosts.error = Some(error);
+        }
+    }
+
     pub(super) fn poll_hosts(&mut self, ctx: &egui::Context) {
         self.hosts.retirements.retain(|retirement| {
             match retirement.job.poll() {
@@ -1521,6 +1616,7 @@ impl MobileApp {
             }
             return;
         }
+        self.discover_open_hosts(ctx, &current_accounts);
         let account = self.host_account();
         if account.is_none() {
             self.hosts.hosts.clear();
@@ -2004,6 +2100,10 @@ impl MobileApp {
                     .into(),
             );
         }
+        if matches!(action, Action::SignIn) {
+            self.start_sign_in(ctx, None, super::tunnel_link::Resume::Nothing);
+            return Ok(());
+        }
         if matches!(action, Action::ChooseProfileHost) {
             let recipe = self
                 .hosts
@@ -2128,8 +2228,10 @@ impl MobileApp {
                 self.hosts.clear_review();
                 self.hosts.hosts.clear();
                 self.hosts.discovered = false;
-                self.hosts.account = account.id;
+                self.hosts.account = account.id.clone();
             }
+            self.hosts.discovery_attempt = Some(account);
+            self.hosts.error = None;
             return self.host_action(ctx, Action::Find);
         }
         if let Action::SelectHost(index) = action {
@@ -2557,6 +2659,8 @@ impl MobileApp {
         let snapshot_recipe = selected.clone();
         let original_store = self.hosts.original_store.clone();
         let generation = self.hosts.generation;
+        #[cfg(test)]
+        let discovery_service = self.hosts.discovery_service.clone();
         let job = Job::spawn(ctx, move |legacy_cancel| {
             let _permit = permit;
             if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
@@ -2665,6 +2769,13 @@ impl MobileApp {
                             _ = cancel.cancelled() => Err("HOST directory action cancelled.".into()),
                             result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
                                 if matches!(action, Action::Find) {
+                                    #[cfg(test)]
+                                    {
+                                        // Tests must own this service; never fall through to provider HTTP.
+                                        let directory = discovery_service.as_ref().ok_or(festerm_tunnel_client::Error::Network)?;
+                                        return directory(snapshot.account_id, cancel.as_ref().clone()).await.map(|hosts| ResultEvent::Hosts(hosts.into_iter().take(32).collect()));
+                                    }
+                                    #[cfg(not(test))]
                                     service::list_hosts(&identity, &cancel).await.map(|hosts| ResultEvent::Hosts(hosts.into_iter().take(32).collect()))
                                 } else {
                                     service::resolve_host(&identity, &locator, &cancel).await.map(|resolved| ResultEvent::Resolved(Box::new(resolved)))

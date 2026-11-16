@@ -684,7 +684,7 @@ fn host_auth_recovery_rejects_stale_browser_generation_accounts_and_tabs_at_disp
 
 type DiscoveryHarness = egui_kittest::Harness<'static, Option<AppCommand>>;
 fn discovery_failure_fixture(failure: RequestFailure) -> (FesTermApp, DiscoveryHarness) {
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::Harness;
     let (mut app, _) = fixture();
     app.host_browser = None;
     app.state.active_tab_mut().content = TabContent::Launcher;
@@ -701,15 +701,11 @@ fn discovery_failure_fixture(failure: RequestFailure) -> (FesTermApp, DiscoveryH
             },
             None,
         );
-    harness.run();
-    assert!(
-        harness.state().is_none(),
-        "opening the page must remain offline"
-    );
-    harness.get_by_label("Find hosts · @user").click();
-    harness.run_steps(1);
+    harness.run_steps(2);
+    // The normal open emits one bounded discovery command; this fixture injects
+    // its worker result without native credentials or provider requests.
     let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take() else {
-        panic!("explicit Find hosts")
+        panic!("automatic Find hosts")
     };
     crate::screens::host_workspace::report_typed_discovery(
         &harness.ctx,
@@ -731,6 +727,64 @@ fn discovery_reauthentication_fixture() -> (FesTermApp, DiscoveryHarness, Reauth
         panic!("scoped explicit recovery")
     };
     (app, harness, request)
+}
+
+#[test]
+fn automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_account_or_screen_change(
+) {
+    use egui_kittest::kittest::Queryable;
+    for change_account in [false, true] {
+        let (mut app, mut harness) = discovery_failure_fixture("Offline".into());
+        harness.get_by_label("Refresh hosts · @user").click();
+        harness.run_steps(1);
+        let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take()
+        else {
+            panic!("explicit retry of the automatic read")
+        };
+        let tab = app.state.active();
+        let account = app
+            .state
+            .configuration()
+            .account("github-user")
+            .unwrap()
+            .clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender
+            .send(Ok(vec![service::TunnelSummary {
+                locator: "stale.use".into(),
+                name: Some("Stale worker host".into()),
+                description: None,
+                active: true,
+            }]))
+            .unwrap();
+        let cancel = CancellationToken::new();
+        app.host_discovery.push(Discovery {
+            tab,
+            request,
+            account: account.clone(),
+            cancel: cancel.clone(),
+            receiver,
+        });
+        if change_account {
+            let replacement = account.with_credential(SecretReference::generate());
+            let configuration = app
+                .state
+                .configuration()
+                .with_account(replacement)
+                .unwrap()
+                .0;
+            app.state.replace_configuration(configuration);
+        } else {
+            crate::screens::host_workspace::cancel(&harness.ctx, tab);
+        }
+        app.poll_host_discovery(&harness.ctx);
+        assert!(cancel.is_cancelled());
+        assert!(app.host_discovery.is_empty());
+        assert!(app.host_discovery_queue.is_empty());
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Stale worker host").is_none());
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
 }
 
 #[test]
@@ -790,7 +844,7 @@ fn host_auth_recovery_discovery_rejects_replaced_removed_switched_cancelled_and_
                     .replace_configuration(configuration.with_account(replacement).unwrap().0);
             }
             3 => {
-                harness.get_by_label("Find hosts · @user").click();
+                harness.get_by_label("Refresh hosts · @user").click();
                 harness.run_steps(1);
             }
             4 => crate::screens::host_workspace::cancel(&harness.ctx, app.state.active()),

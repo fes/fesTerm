@@ -80,9 +80,12 @@ stolen; the normal policy intentionally accepts that capability trust boundary.
 The host never receives the client's GitHub OAuth/refresh credential or tunnel
 token, and never uses an unsigned JWT payload or claimed account ID as proof.
 Client-side account confirmation still fences listing, resolution and UI result
-adoption against account switches and sign-out. Sign-out, account switch and
-content/privacy lock also cancel already active ordinary client channels through
-the existing cancellation owners; they do not kill the host daemon or shell.
+adoption against changes to the captured account and sign-out. Sign-out, replacement
+of a connection’s bound authentication context, and content/privacy lock cancel
+its proofs, ready results and active ordinary channels through the existing
+cancellation owners; they do not kill the host daemon or shell. Selecting another
+stored account for a new discovery cancels that chooser’s old pending work, but
+does not retarget or cancel independently bound live tabs for other stored accounts.
 
 Ordinary authority is distinct from administrative enrolled-owner authority.
 Represent it as a sealed `OrdinaryRemotingCapability`/authority enum variant;

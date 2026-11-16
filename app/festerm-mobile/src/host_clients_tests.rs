@@ -523,7 +523,7 @@ fn mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_result
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
     harness.run_steps(3);
-    harness.get(By::new().label("Find hosts · @sample"));
+    harness.get(By::new().label("Refresh hosts · @sample"));
     harness.get(By::new().label("Collapse Build host"));
     assert_eq!(harness.state().hosts.hosts.len(), 1);
     assert!(harness.state().hosts.error.is_some());
@@ -3129,4 +3129,295 @@ fn mobile_host_app_lock_monitor_preserves_background_sign_in_but_revokes_host_an
         pending.state(),
         festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
     );
+}
+
+fn discovery_fixture(directory: DiscoveryService) -> (MobileApp, String) {
+    let profiles = crate::profiles::testing::profiles();
+    let account =
+        festerm_mobile_tunnels::testing::seed_account(&profiles.store_handle(), 7, "mobile", false);
+    let mut app = app().with_profiles(profiles);
+    app.hosts.discovery_service = Some(directory);
+    (app, account)
+}
+
+fn discovery_row(name: &str) -> TunnelSummary {
+    TunnelSummary {
+        locator: format!("{name}.fixture"),
+        name: Some(name.into()),
+        description: None,
+        active: true,
+    }
+}
+
+fn wait_for_discovery(app: &mut MobileApp, ctx: &egui::Context) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        app.poll_hosts(ctx);
+        if app.hosts.pending.is_none() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owned discovery fixture timed out"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn mobile_host_normal_open_discovers_saved_account_once_without_inventory_or_paint_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, account) = discovery_fixture(Arc::new(move |id, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            assert_eq!(id, 7);
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok((0..40)
+                .map(|n| discovery_row(&format!("host{n}")))
+                .collect())
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    assert!(
+        app.hosts.pending.is_some(),
+        "opening the normal dialog must schedule discovery"
+    );
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(app.hosts.account, account);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.hosts.hosts.len(), 32);
+    assert!(app.hosts.discovered && app.hosts.error.is_none());
+    assert!(app.hosts.inventory.is_none() && app.hosts.worker.is_none());
+    assert!(app.hosts.receipt.is_none() && app.hosts.resolved.is_none());
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    app.host_action(&ctx, Action::Close).unwrap();
+    app.open_hosts();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn mobile_host_discovery_failure_waits_for_explicit_refresh_and_preserves_results() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, _) = discovery_fixture(Arc::new(move |_, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(festerm_tunnel_client::Error::RateLimited)
+            } else {
+                Ok(vec![discovery_row("refreshed")])
+            }
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.hosts.hosts = vec![discovery_row("retained")];
+    wait_for_discovery(&mut app, &ctx);
+    assert!(app.hosts.error.as_ref().unwrap().contains("Rate limit"));
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("retained"));
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    app.host_action(&ctx, Action::FindAccount(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("refreshed"));
+}
+
+#[test]
+fn mobile_host_account_editor_event_cancels_old_discovery_and_lists_new_account_once() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let log = calls.clone();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let (mut app, first) = discovery_fixture(Arc::new(move |id, cancel| {
+        let log = log.clone();
+        let gate = gate.clone();
+        Box::pin(async move {
+            log.lock().unwrap().push(id);
+            if id == 7 {
+                gate.notified().await;
+            }
+            if cancel.is_cancelled() {
+                return Err(festerm_tunnel_client::Error::Cancelled);
+            }
+            Ok(vec![discovery_row(if id == 7 {
+                "stale"
+            } else {
+                "current"
+            })])
+        })
+    }));
+    let second = festerm_mobile_tunnels::testing::seed_account(
+        &app.profiles.as_ref().unwrap().store_handle(),
+        8,
+        "other",
+        false,
+    );
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while calls.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let old_token = app.hosts.pending.as_ref().unwrap().token.clone();
+    app.hosts.hosts = vec![discovery_row("old-visible")];
+    app.editor.tunnel = Some(crate::model::DevTunnelChoices {
+        accounts: vec![(first, "mobile".into()), (second.clone(), "other".into())],
+        ..Default::default()
+    });
+    app.apply_tunnel_editor_action(&ctx, crate::forms::EditorAction::SelectTunnelAccount(1));
+    assert!(old_token.is_cancelled());
+    assert!(app.hosts.hosts.is_empty());
+    wait_for_discovery(&mut app, &ctx);
+    release.notify_one();
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(app.hosts.account, second);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("current"));
+    assert_eq!(*calls.lock().unwrap(), vec![7, 8]);
+    assert!(app.hosts.inventory.is_none() && app.hosts.receipt.is_none());
+}
+
+#[test]
+fn mobile_host_no_account_renders_primary_sign_in_without_starting_browser_or_discovery() {
+    use egui_kittest::kittest::{By, Queryable};
+    let mut app = app().with_profiles(crate::profiles::testing::profiles());
+    app.open_hosts();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            |ui, app: &mut MobileApp| {
+                app.poll_hosts(ui.ctx());
+                app.show_hosts(ui.ctx());
+            },
+            app,
+        );
+    harness.run_steps(3);
+    harness.get(By::new().label("Sign in to GitHub"));
+    assert!(harness.state().tunnel.sign_in.is_none());
+    assert!(harness.state().hosts.pending.is_none());
+}
+
+#[test]
+fn mobile_host_profile_edit_and_save_remain_offline_with_saved_account() {
+    let (mut app, _) = discovery_fixture(Arc::new(|_, _| {
+        Box::pin(async { panic!("metadata edit must not discover") })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.hosts.selected = Some(client_recipe());
+    app.hosts.begin_profile_edit();
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    app.host_action(&ctx, Action::SaveProfile).unwrap();
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(!app.hosts.discovered);
+}
+
+#[test]
+fn mobile_host_successful_sign_in_event_arms_open_dialog_discovery_only_in_foreground() {
+    use festerm_mobile_tunnels::{
+        testing::{FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
+        TunnelClient,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let profiles = crate::profiles::testing::profiles();
+    let client = TunnelClient::with_parts(
+        profiles.store_handle(),
+        Arc::new(FakeGithub::new(9, "signed-in")),
+        Arc::new(FixedDirectory::new()),
+        Arc::new(StreamConnector(
+            || -> festerm_tunnel_bridge::mobile::BoxStream { panic!("discovery must not attach") },
+        )),
+        CLIENT_ID.into(),
+    )
+    .unwrap();
+    let mut app = app()
+        .with_profiles(profiles)
+        .with_tunnel_client(Arc::new(client));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    app.hosts.discovery_service = Some(Arc::new(move |id, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            assert_eq!(id, 9);
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![discovery_row("signed-in")])
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.host_action(&ctx, Action::SignIn).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while app.tunnel.sign_in.is_some() {
+        app.poll_tunnels(&ctx);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.lifecycle.set(Lifecycle {
+        active: false,
+        ..app.lifecycle.get()
+    });
+    app.poll_hosts(&ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.lifecycle.set(Lifecycle {
+        active: true,
+        ..app.lifecycle.get()
+    });
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("signed-in"));
+    assert!(app.hosts.inventory.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_privacy_cancels_automatic_discovery_without_restarting_on_resume() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, _) = discovery_fixture(Arc::new(move |_, cancel| {
+        let count = count.clone();
+        Box::pin(async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            cancel.cancelled().await;
+            Err(festerm_tunnel_client::Error::Cancelled)
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let token = app.hosts.pending.as_ref().unwrap().token.clone();
+    app.sink.live.host.invalidate();
+    app.poll_hosts(&ctx);
+    assert!(token.is_cancelled());
+    assert!(app.hosts.pending.is_none());
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(app.hosts.hosts.is_empty() && !app.hosts.discovered);
+    assert!(app.hosts.inventory.is_none() && app.hosts.receipt.is_none());
 }

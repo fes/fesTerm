@@ -5610,7 +5610,11 @@
     },
     {
       "id": "host-protocol-owner-contracts",
-      "edges": ["HOST-01", "HOST-02", "HOST-03"],
+      "edges": [
+        "HOST-01",
+        "HOST-02",
+        "HOST-03"
+      ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
         "docs/host-protocol.md",
@@ -5620,12 +5624,17 @@
         "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
         "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery",
         "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
-        "docs/native-terminal-capability-probe.md"
+        "docs/native-terminal-capability-probe.md",
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision"
       ],
-      "decisions": ["ADR-0084", "ADR-0054"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0054",
+        "ADR-0086"
+      ],
       "automated_tests": [
-        "host_workspace_open_is_offline_and_stale_discovery_cannot_publish",
-        "host_workspace_discovery_is_explicit_with_accessible_targets_and_cancel_fencing",
+        "host_workspace_absent_request_rejects_stale_discovery",
+        "host_workspace_open_discovers_once_with_accessible_refresh_and_cancel_fencing",
         "metadata_edit_explicitly_retargets_only_future_metadata_and_preserves_import_collision",
         "discovered_host_reuses_only_unambiguous_same_account_exact_locator_identity",
         "mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths",
@@ -5977,7 +5986,23 @@
         "local_observation_wait_refuses_every_non_busy_error_without_retry",
         "local_observation_wait_exhaustion_remains_busy_not_absence",
         "native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation",
-        "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned"
+        "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned",
+        "ordinary_proof_binds_real_ssh_channel_route_role_nonce_and_policy",
+        "ordinary_private_key_refuses_cross_connection_changed_route_and_missing_exporter",
+        "ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority",
+        "mobile_host_normal_open_discovers_saved_account_once_without_inventory_or_paint_retry",
+        "mobile_host_discovery_failure_waits_for_explicit_refresh_and_preserves_results",
+        "mobile_host_account_editor_event_cancels_old_discovery_and_lists_new_account_once",
+        "mobile_host_no_account_renders_primary_sign_in_without_starting_browser_or_discovery",
+        "mobile_host_profile_edit_and_save_remain_offline_with_saved_account",
+        "mobile_host_successful_sign_in_event_arms_open_dialog_discovery_only_in_foreground",
+        "mobile_host_privacy_cancels_automatic_discovery_without_restarting_on_resume",
+        "normal_host_browser_saved_account_lists_once_not_once_per_paint",
+        "normal_host_browser_sign_in_return_waits_for_foreground_and_lists_once",
+        "normal_host_browser_account_switch_clears_ready_hosts_and_rejects_late_result",
+        "normal_host_browser_failure_waits_for_explicit_refresh_without_automatic_retry",
+        "automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_account_or_screen_change",
+        "encrypted_auth_selector_rejects_unknown_versions_empty_and_typos_without_legacy_fallback"
       ],
       "manual_scenarios": [
         "DT-05",
@@ -6022,12 +6047,18 @@
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. Native fixtures use a real old-writer I/O barrier plus an unadopted takeover reservation for one precommit Busy refusal, preserving the full lease/journal and checking one exact writer-epoch advance only after adoption. A held generation lease proves precommit end Busy without PID/generation/issued effects; a separate durable-stop commit barrier precedes OutcomeUncertain publication. Committed-creation replay separately proves exact-lease Busy and unchanged full checkpoints before requiring the same operation/generation/original Created result within the existing deadline; other responses are printed failures. Unix owned fixture roots bind the maximum PID/HOST-generation socket identity and refuse existing-name adoption. The Linux920 CI replay reply remains unprinted/unknown, not identified by the controlled Busy proof. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
         "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred",
-        "DT-02 active fresh native Copilot visual comparison spans all24 Desktop/iOS/Android lab cases, separately from protocol/create/attach/survival evidence. Require matching local-reference/client grid, recorded pixel geometry, actual PTY terminal/locale environment and query replies without duplicates, pinned Copilot/initial-state/theme/font/scale and paired screenshots. Static server TERM policy is valid for fesTerm clients; missing creation metadata alone is not a reproduced defect and this requirement introduces no protocol fields or new authority. Owner accepts the initial unauthenticated Copilot screen; no entitlement, Copilot sign-in or model request is required. Native comparisons remain unqualified."
+        "DT-02 active fresh native Copilot visual comparison spans all24 Desktop/iOS/Android lab cases, separately from protocol/create/attach/survival evidence. Require matching local-reference/client grid, recorded pixel geometry, actual PTY terminal/locale environment and query replies without duplicates, pinned Copilot/initial-state/theme/font/scale and paired screenshots. Static server TERM policy is valid for fesTerm clients; missing creation metadata alone is not a reproduced defect and this requirement introduces no protocol fields or new authority. Owner accepts the initial unauthenticated Copilot screen; no entitlement, Copilot sign-in or model request is required. Native comparisons remain unqualified.",
+        "Protected policy, route/proof primitives and automatic directory listing have portable regressions; ordinary runtime capability minting, shared-target dispatch and automatic host-expansion integration remain incomplete. Primitive signature verification does not grant authority.",
+        "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
+        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
     },
     {
       "id": "host-shared-lifecycle-headless-boundary",
-      "edges": ["HOST-04", "HOST-05"],
+      "edges": [
+        "HOST-04",
+        "HOST-05"
+      ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#3-host-settings-and-state",
         "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
@@ -6039,9 +6070,13 @@
         "docs/native-host-services.md#linux-current-login-fence",
         "docs/adr/0084-host-based-dev-tunnels.md#approved-native-host-process-recovery-730",
         "docs/native-host-services.md#native-host-process-recovery",
-        "docs/manual-validation.md#native-host-process-recovery-730"
+        "docs/manual-validation.md#native-host-process-recovery-730",
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision"
       ],
-      "decisions": ["ADR-0084"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0086"
+      ],
       "automated_tests": [
         "host_cloud_owner_default_access_is_pinned_and_never_reinterprets_legacy",
         "host_cloud_owner_default_refuses_every_explicit_or_unknown_acl_grant",
@@ -6295,9 +6330,16 @@
         "managed_bootstrap_nonbusy_refusal_is_never_retried",
         "managed_bootstrap_expired_deadline_still_allows_first_read_success",
         "managed_bootstrap_expired_deadline_preserves_nonbusy_refusal",
-        "managed_bootstrap_deadline_preserves_original_busy_error"
+        "managed_bootstrap_deadline_preserves_original_busy_error",
+        "ordinary_policy_missing_remains_owner_only_without_rewriting_legacy_settings",
+        "provider_owner_requires_disabled_reviewed_enable_and_cannot_retarget_consent",
+        "ordinary_policy_unknown_values_never_become_provider_access",
+        "legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible",
+        "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant"
       ],
-      "manual_scenarios": ["HOSTSETUP-01"],
+      "manual_scenarios": [
+        "HOSTSETUP-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "New intents pin owner_default and omit ACL entries; full-ACL receipt checks refuse nonempty tunnel/port grants and unknown ACL fields. Missing policy preserves legacy GithubUsers and bound legacy receipts. Explicit unbound/unsubmitted retirement requires authenticated absence and durable exact-byte archival with old-ticket fencing. Matching signed helpers and native three-platform acceptance remain required.",
@@ -6323,7 +6365,10 @@
         "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
         "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and authenticated exact cloud absence, including after explicit manual provider removal",
         "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance",
-        "Managed bootstrap source regression proves real lifecycle-lock preflight contention and separates service-only contention. Managed CLI Store::open and registration preflight share one fixed2s typedBusy/cancellation wait budget; every phase attempts its first read even after expiry, only actualBusy allows wait/retry, originalBusy and nonBusy outcomes are preserved, and full captured-snapshot changes are rejected, and preserve missing/foreign-registration refusal. Existing later2s initial service-lease admission remains separate. No native manager Start, runtime invocation, reservation, first persistence or final history write is retried. Corrected source evidence does not identify or resolve the preserved signed Linux0.17.3 second-Start native failure; no new native execution/Windows/platform/owner/vault qualification is claimed."
+        "Managed bootstrap source regression proves real lifecycle-lock preflight contention and separates service-only contention. Managed CLI Store::open and registration preflight share one fixed2s typedBusy/cancellation wait budget; every phase attempts its first read even after expiry, only actualBusy allows wait/retry, originalBusy and nonBusy outcomes are preserved, and full captured-snapshot changes are rejected, and preserve missing/foreign-registration refusal. Existing later2s initial service-lease admission remains separate. No native manager Start, runtime invocation, reservation, first persistence or final history write is retried. Corrected source evidence does not identify or resolve the preserved signed Linux0.17.3 second-Start native failure; no new native execution/Windows/platform/owner/vault qualification is claimed.",
+        "Protected policy, route/proof primitives and automatic directory listing have portable regressions; ordinary runtime capability minting, shared-target dispatch and automatic host-expansion integration remain incomplete. Primitive signature verification does not grant authority.",
+        "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
+        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
     },
     {

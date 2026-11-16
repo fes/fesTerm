@@ -12,6 +12,41 @@ use festerm_tunnel_client::host_control::{Binding, ControlClient};
 use russh::keys::{Algorithm, HashAlg, PrivateKey};
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority() {
+    let fixture = Fixture::new();
+    let (mut client, stream, ssh_task) = crate::relay_host::tests::ordinary_pair(
+        fixture.ssh_key.clone(),
+        fixture.approved.host.clone(),
+    )
+    .await;
+    assert_eq!(
+        stream.requested_authorization(),
+        crate::relay_host::RequestedAuthorization::OrdinaryV1
+    );
+    assert!(
+        stream.ordinary_route().is_none(),
+        "a local test pair is not provider admission"
+    );
+    let runtime = fixture.runtime.clone();
+    let worker =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let frame = tokio::time::timeout(
+        Duration::from_secs(2),
+        read_frame(&mut client, permit.budgets()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        frame.decode::<Authentication>().unwrap(),
+        Authentication::Denied {}
+    ));
+    assert!(worker.await.unwrap().is_err());
+    ssh_task.abort();
+}
+
 struct Fixture {
     runtime: Arc<HostRuntime<Policy>>,
     policy: OwnerPolicy,

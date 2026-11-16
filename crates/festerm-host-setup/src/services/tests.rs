@@ -319,6 +319,7 @@ impl CommandRunner for FakeRunner {
 
 fn settings() -> Settings {
     Settings {
+        ordinary_access: Default::default(),
         friendly_name: "Native fixture".into(),
         allow_creation: false,
         startup: Startup::Manual,

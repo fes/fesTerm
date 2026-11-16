@@ -870,6 +870,10 @@ impl FesTermApp {
     /// connects. Queued work waits for the next UI pass; it is never polled
     /// on a timer.
     fn start_queued_host_discoveries(&mut self, context: &egui::Context) {
+        // A queued automatic read must wait for the user to return to this window.
+        if !context.input(|input| input.focused) {
+            return;
+        }
         while self.host_discovery.len() < MAX_PARALLEL_DISCOVERIES {
             let Some(front) = self.host_discovery_queue.front() else {
                 return;
@@ -906,9 +910,11 @@ impl FesTermApp {
             let result = (|| {
                 let _lease = super::tunnel_workflow::account_lease(Some(&work_account))
                     .map_err(|error| error.to_string())?;
+                if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let client = identity::registered_client_id().ok_or("GitHub sign-in is unavailable.")?;
                 let secret = store.get(work_account.credential_reference())
                     .map_err(|_| "Unlock secure storage and try again.")?;
+                if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let identity = secret.with_bytes(|bytes| Identity::decode_private(bytes,
                     work_account.account_id(), client)).map_err(RequestFailure::from)?;
                 if identity.needs_sign_in() {

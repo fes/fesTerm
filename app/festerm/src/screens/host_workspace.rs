@@ -1,4 +1,4 @@
-//! Offline host choices and explicit, request-bound discovery presentation.
+//! Offline recipe choices and account-scoped, request-bound host discovery.
 
 use super::*;
 use crate::app::{Reauthentication, ReauthenticationOrigin, RequestFailure};
@@ -47,6 +47,8 @@ pub(crate) fn remember_host(context: &egui::Context, host: HostSessions) {
 #[derive(Clone, Default)]
 struct AccountResults {
     account: String,
+    verified_account: Option<festerm_config::DevTunnelAccount>,
+    automatic_discovery_started: bool,
     request: Option<egui::Id>,
     /// Hosts from the last successful read; kept when a later refresh fails.
     hosts: Option<Vec<HostChoice>>,
@@ -88,6 +90,7 @@ struct State {
     for_profile: bool,
     reauthentication_generation: Option<egui::Id>,
     selected_reference: Option<HostReference>,
+    automatic_open: bool,
 }
 
 fn state_id(tab: TabId) -> egui::Id {
@@ -127,9 +130,12 @@ pub(crate) fn cancel(context: &egui::Context, tab: TabId) {
         };
         state.request = None;
         state.reauthentication_generation = None;
+        state.automatic_open = false;
         for account in &mut state.accounts {
             account.request = None;
             account.reauthentication = None;
+            account.queued = false;
+            account.automatic_discovery_started = false;
         }
         data.insert_temp(state_id(tab), state);
     });
@@ -299,6 +305,8 @@ pub(crate) fn install_gallery_state(context: &egui::Context, tab: TabId, unavail
             State {
                 accounts: vec![AccountResults {
                     account: account.clone(),
+                    verified_account: None,
+                    automatic_discovery_started: true,
                     request: None,
                     hosts: Some(vec![HostChoice {
                         account,
@@ -310,6 +318,7 @@ pub(crate) fn install_gallery_state(context: &egui::Context, tab: TabId, unavail
                     error: unavailable.then(|| "Host unavailable. Try again.".to_owned()),
                     queued: false,
                 }],
+                automatic_open: true,
                 ..Default::default()
             },
         )
@@ -323,6 +332,8 @@ pub(crate) fn install_profile_picker_gallery(context: &egui::Context, tab: TabId
     let row = |account: &str, hosts: &[(&str, &str)], refreshing: bool, error: Option<&str>| {
         AccountResults {
             account: account.to_owned(),
+            verified_account: None,
+            automatic_discovery_started: true,
             request: refreshing.then(|| egui::Id::new(("gallery-refresh", account))),
             hosts: Some(
                 hosts
@@ -397,22 +408,73 @@ pub(crate) enum ProfileHostPick {
     Command(Box<AppCommand>),
 }
 
-fn sync_accounts(state: &mut State, configuration: &Configuration) {
+fn sync_accounts(state: &mut State, configuration: &Configuration, context: &egui::Context) {
     state
         .accounts
         .retain(|row| configuration.account(&row.account).is_some());
     for account in configuration.accounts() {
-        if !state
+        let row = if let Some(index) = state
             .accounts
             .iter()
-            .any(|row| row.account == account.identifier())
+            .position(|row| row.account == account.identifier())
         {
+            &mut state.accounts[index]
+        } else {
             state.accounts.push(AccountResults {
                 account: account.identifier().to_owned(),
                 ..Default::default()
             });
+            state.accounts.last_mut().expect("inserted account")
+        };
+        if row
+            .verified_account
+            .as_ref()
+            .is_some_and(|previous| previous != account)
+        {
+            // An identifier is not an identity: a replaced credential/account invalidates
+            // both ready results and the outstanding worker's request witness.
+            *row = AccountResults {
+                account: account.identifier().to_owned(),
+                ..Default::default()
+            };
+            state.request = None;
+            state.reauthentication_generation = None;
+            context.data_mut(|data| {
+                let id = egui::Id::new(DISCOVERY_CACHE);
+                let mut cache: Vec<(String, Vec<HostChoice>)> =
+                    data.get_temp(id).unwrap_or_default();
+                cache.retain(|(key, _)| key != account.identifier());
+                data.insert_temp(id, cache);
+            });
         }
+        row.verified_account = Some(account.clone());
     }
+}
+
+fn begin_discovery(row: &mut AccountResults, tab: TabId) -> AppCommand {
+    let request = egui::Id::new(uuid::Uuid::new_v4());
+    row.request = Some(request);
+    row.automatic_discovery_started = true;
+    row.reauthentication = None;
+    row.error = None;
+    AppCommand::FindDevTunnelHosts {
+        tab_id: tab,
+        request,
+        account: row.account.clone(),
+    }
+}
+
+fn automatic_discovery(state: &mut State, tab: TabId, foreground: bool) -> Option<AppCommand> {
+    if !foreground || state.for_profile {
+        return None;
+    }
+    let row = state
+        .accounts
+        .iter_mut()
+        .find(|row| !row.automatic_discovery_started && row.request.is_none() && !row.queued)?;
+    let command = begin_discovery(row, tab);
+    state.reauthentication_generation = row.request;
+    Some(command)
 }
 
 struct PickerEntry {
@@ -500,7 +562,7 @@ pub(crate) fn show_profile_host_picker(
         state.reauthentication_generation = None;
         state.selected_reference = selected.cloned();
     }
-    sync_accounts(&mut state, configuration);
+    sync_accounts(&mut state, configuration, ui.ctx());
     for row in &mut state.accounts {
         if row.hosts.is_none() {
             row.hosts = cached_discovery(ui.ctx(), &row.account);
@@ -712,11 +774,16 @@ fn show_mode(
     if state.for_profile != for_profile {
         state.request = None;
         state.reauthentication_generation = None;
+        state.automatic_open = false;
     }
     state.for_profile = for_profile;
-    state
-        .accounts
-        .retain(|row| configuration.account(&row.account).is_some());
+    sync_accounts(&mut state, configuration, ui.ctx());
+    if !for_profile && !state.automatic_open {
+        for row in &mut state.accounts {
+            row.automatic_discovery_started = false;
+        }
+        state.automatic_open = true;
+    }
     let mut command = None;
     if let Some(message) = &state.feedback {
         ui.label(message);
@@ -770,20 +837,12 @@ fn show_mode(
             if action_button(
                 ui,
                 ActionButtonRole::Secondary,
-                &format!("Find hosts · @{}", account.login()),
+                &format!("Refresh hosts · @{}", account.login()),
             )
             .clicked()
             {
-                let request = egui::Id::new(uuid::Uuid::new_v4());
-                row.request = Some(request);
-                state.reauthentication_generation = Some(request);
-                row.reauthentication = None;
-                row.error = None;
-                command = Some(AppCommand::FindDevTunnelHosts {
-                    tab_id: tab,
-                    request,
-                    account: row.account.clone(),
-                });
+                command = Some(begin_discovery(row, tab));
+                state.reauthentication_generation = row.request;
             }
             if row.request.is_some() {
                 ui.horizontal(|ui| {
@@ -848,6 +907,16 @@ fn show_mode(
             });
         }
     }
+    if command.is_none() {
+        command = automatic_discovery(
+            &mut state,
+            tab,
+            ui.is_enabled() && ui.input(|input| input.focused),
+        );
+        if command.is_some() {
+            ui.ctx().request_repaint();
+        }
+    }
     ui.data_mut(|data| data.insert_temp(id, state));
     command
 }
@@ -904,7 +973,7 @@ pub(crate) fn clear_reauthentication(context: &egui::Context, tab: TabId) {
             state.reauthentication_generation = None;
             for row in &mut state.accounts {
                 if row.reauthentication.take().is_some() {
-                    row.error = Some("Complete sign-in, then choose Find hosts again.".into());
+                    row.error = Some("Complete sign-in to refresh hosts automatically.".into());
                 }
             }
             data.insert_temp(state_id(tab), state);
@@ -918,7 +987,7 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     #[test]
-    fn host_workspace_discovery_is_explicit_with_accessible_targets_and_cancel_fencing() {
+    fn host_workspace_open_discovers_once_with_accessible_refresh_and_cancel_fencing() {
         let account = festerm_config::DevTunnelAccount::new(
             "github-fixture",
             festerm_config::AccountProvider::Github,
@@ -939,17 +1008,15 @@ mod tests {
                 },
                 None,
             );
-        harness.run();
-        assert!(harness.state().is_none());
-        let button = harness.get_by_label("Find hosts · @developer");
+        harness.run_steps(2);
+        let button = harness.get_by_label("Refresh hosts · @developer");
         assert!(button.rect().height() >= 24.0);
-        button.click();
-        harness.run_steps(1);
+        harness.run_steps(4);
         let Some(AppCommand::FindDevTunnelHosts {
             request, account, ..
         }) = harness.state()
         else {
-            panic!("explicit discovery command")
+            panic!("automatic discovery command")
         };
         let (request, account) = (*request, account.clone());
         assert!(discovery_is_current(&harness.ctx, tab, request, &account));
@@ -966,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn host_workspace_open_is_offline_and_stale_discovery_cannot_publish() {
+    fn host_workspace_absent_request_rejects_stale_discovery() {
         let context = egui::Context::default();
         let tab = TabId::next_for_test();
         assert!(!request_is_current(&context, tab, egui::Id::new("absent")));
@@ -1000,6 +1067,214 @@ mod tests {
             description: None,
             active: true,
         }
+    }
+
+    struct AutomaticDiscovery {
+        configuration: Configuration,
+        commands: Vec<AppCommand>,
+        foreground: bool,
+    }
+
+    fn automatic_harness(
+        configuration: Configuration,
+        tab: TabId,
+    ) -> Harness<'static, AutomaticDiscovery> {
+        Harness::builder()
+            .with_size(egui::vec2(460.0, 720.0))
+            .build_ui_state(
+                move |ui, state: &mut AutomaticDiscovery| {
+                    ui.ctx().input_mut(|input| input.focused = state.foreground);
+                    if let Some(command) = show(ui, tab, &state.configuration) {
+                        state.commands.push(command);
+                    }
+                },
+                AutomaticDiscovery {
+                    configuration,
+                    commands: Vec::new(),
+                    foreground: true,
+                },
+            )
+    }
+
+    fn automatic_requests(state: &AutomaticDiscovery) -> Vec<(egui::Id, String)> {
+        state
+            .commands
+            .iter()
+            .map(|command| match command {
+                AppCommand::FindDevTunnelHosts {
+                    request, account, ..
+                } => (*request, account.clone()),
+                _ => panic!("automatic discovery cannot open a browser or launch a session"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn normal_host_browser_saved_account_lists_once_not_once_per_paint() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = automatic_harness(configuration, tab);
+        harness.run_steps(8);
+        let requests = automatic_requests(harness.state());
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].1, "alice");
+        report_discovery(
+            &harness.ctx,
+            tab,
+            requests[0].0,
+            "alice",
+            Ok(vec![summary("alice.use", "Alice host")]),
+        );
+        harness.run_steps(8);
+        assert_eq!(automatic_requests(harness.state()).len(), 1);
+        harness.get_by_label("Alice host");
+    }
+
+    #[test]
+    fn normal_host_browser_sign_in_return_waits_for_foreground_and_lists_once() {
+        let tab = TabId::next_for_test();
+        let mut harness = automatic_harness(Configuration::empty(), tab);
+        harness.run_steps(4);
+        assert!(
+            harness.state().commands.is_empty(),
+            "no automatic browser without an account"
+        );
+        harness.state_mut().foreground = false;
+        harness.state_mut().configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        harness.run_steps(4);
+        assert!(harness.state().commands.is_empty());
+        harness.state_mut().foreground = true;
+        harness.run_steps(8);
+        assert_eq!(automatic_requests(harness.state()).len(), 1);
+    }
+
+    #[test]
+    fn normal_host_browser_reauthentication_refreshes_once_for_the_new_credential_snapshot() {
+        let account = account("alice", 1, "alice");
+        let configuration = Configuration::empty()
+            .with_account(account.clone())
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = automatic_harness(configuration, tab);
+        harness.run_steps(4);
+        let old_request = automatic_requests(harness.state())[0].0;
+        harness.state_mut().foreground = false;
+        harness.state_mut().configuration = Configuration::empty()
+            .with_account(
+                account
+                    .clone()
+                    .with_credential(festerm_secret_store::SecretReference::generate()),
+            )
+            .unwrap()
+            .0;
+        harness.run_steps(4);
+        report_typed_discovery(
+            &harness.ctx,
+            tab,
+            old_request,
+            &account,
+            Err(RequestFailure::from(festerm_tunnel_client::Error::Expired)),
+        );
+        assert!(!discovery_is_current(
+            &harness.ctx,
+            tab,
+            old_request,
+            "alice"
+        ));
+        assert_eq!(automatic_requests(harness.state()).len(), 1);
+        harness.state_mut().foreground = true;
+        harness.run_steps(8);
+        assert_eq!(automatic_requests(harness.state()).len(), 2);
+        assert!(harness.query_by_label("Sign in again").is_none());
+    }
+
+    #[test]
+    fn normal_host_browser_account_switch_clears_ready_hosts_and_rejects_late_result() {
+        let alice = account("selected", 1, "alice");
+        let configuration = Configuration::empty().with_account(alice).unwrap().0;
+        let tab = TabId::next_for_test();
+        let mut harness = automatic_harness(configuration, tab);
+        harness.run_steps(4);
+        let old_request = automatic_requests(harness.state())[0].0;
+        report_discovery(
+            &harness.ctx,
+            tab,
+            old_request,
+            "selected",
+            Ok(vec![summary("old.use", "Old host")]),
+        );
+        harness.run_steps(4);
+        harness.get_by_label("Old host");
+        harness.state_mut().configuration = Configuration::empty()
+            .with_account(account("selected", 2, "bob"))
+            .unwrap()
+            .0;
+        harness.run_steps(4);
+        assert_eq!(automatic_requests(harness.state()).len(), 2);
+        assert!(harness.query_by_label("Old host").is_none());
+        report_discovery(
+            &harness.ctx,
+            tab,
+            old_request,
+            "selected",
+            Ok(vec![summary("late.use", "Late old host")]),
+        );
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Late old host").is_none());
+        assert!(!discovery_is_current(
+            &harness.ctx,
+            tab,
+            old_request,
+            "selected"
+        ));
+    }
+
+    #[test]
+    fn normal_host_browser_failure_waits_for_explicit_refresh_without_automatic_retry() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = automatic_harness(configuration, tab);
+        harness.run_steps(4);
+        let first = automatic_requests(harness.state())[0].0;
+        report_discovery(&harness.ctx, tab, first, "alice", Err("Offline".into()));
+        harness.run_steps(8);
+        assert_eq!(automatic_requests(harness.state()).len(), 1);
+        harness.get_by_label("Refresh hosts · @alice").click();
+        harness.run_steps(8);
+        let requests = automatic_requests(harness.state());
+        assert_eq!(requests.len(), 2);
+        assert_ne!(first, requests[1].0);
+        cancel(&harness.ctx, tab);
+        report_discovery(
+            &harness.ctx,
+            tab,
+            requests[1].0,
+            "alice",
+            Ok(vec![summary("late.use", "Cancelled host")]),
+        );
+        assert!(!discovery_is_current(
+            &harness.ctx,
+            tab,
+            requests[1].0,
+            "alice"
+        ));
+        assert!(harness
+            .ctx
+            .data(|data| data.get_temp::<State>(state_id(tab)))
+            .unwrap()
+            .accounts[0]
+            .hosts
+            .is_none());
     }
 
     fn picker_harness(

@@ -11,6 +11,7 @@ fn host_process_recovery_managed_entries_fail_closed_without_registration_and_st
             &state,
             origin,
             Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "managed refusal fixture".into(),
                 allow_creation: false,
                 startup: Startup::Manual,
@@ -56,6 +57,7 @@ fn desktop_native_binary_entry_refuses_headless_origin_and_never_grants_from_met
             &state,
             origin,
             Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "Synthetic desktop runner".into(),
                 allow_creation: false,
                 startup: Startup::Manual,
@@ -270,6 +272,7 @@ fn headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance() {
         &state,
         Origin::Headless,
         Settings {
+            ordinary_access: Default::default(),
             friendly_name: "Cleanup fixture".into(),
             allow_creation: false,
             startup: Startup::Manual,

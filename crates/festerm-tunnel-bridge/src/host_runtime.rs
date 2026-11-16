@@ -383,6 +383,19 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
         deadline: tokio::time::Instant,
         cancel: CancellationToken,
     ) -> Result<OwnerAuthenticatedStream, Error> {
+        if stream.requested_authorization() == crate::relay_host::RequestedAuthorization::OrdinaryV1
+        {
+            // Stage-1 request/route plumbing must never bypass the owner verifier.
+            // Ordinary authority remains denied until its independent policy gate exists.
+            let _captured_route = stream.ordinary_route();
+            return Self::refuse_authentication(
+                stream,
+                &permit,
+                deadline,
+                ContractError::Denied.into(),
+            )
+            .await;
+        }
         let source = self.policy.clone();
         let charge = permit.clone();
         let policy_cancel = cancel.clone();

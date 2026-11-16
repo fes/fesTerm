@@ -434,6 +434,25 @@ pub async fn connect_endpoint(
     port: u16,
     token: &str,
 ) -> io::Result<ClientConnection> {
+    connect_endpoint_using(endpoint, port, token, "tunnel").await
+}
+
+/// Requests ordinary authentication; this request itself grants no authority.
+#[cfg(feature = "host-routing")]
+pub async fn connect_ordinary_endpoint(
+    endpoint: &TunnelEndpoint,
+    port: u16,
+    token: &str,
+) -> io::Result<ClientConnection> {
+    connect_endpoint_using(endpoint, port, token, crate::ordinary_auth::SSH_USERNAME).await
+}
+
+async fn connect_endpoint_using(
+    endpoint: &TunnelEndpoint,
+    port: u16,
+    token: &str,
+    username: &'static str,
+) -> io::Result<ClientConnection> {
     if port == 0
         || endpoint.host_public_keys.len() != 1
         || endpoint.host_public_keys[0].is_empty()
@@ -455,7 +474,7 @@ pub async fn connect_endpoint(
     .await
     .map_err(|_| invalid())?;
     if !session
-        .authenticate_none("tunnel")
+        .authenticate_none(username)
         .await
         .map_err(|_| invalid())?
         .success()

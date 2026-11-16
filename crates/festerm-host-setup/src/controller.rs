@@ -1373,6 +1373,7 @@ mod tests {
                 &root.path().join("host"),
                 Origin::Headless,
                 Settings {
+                    ordinary_access: Default::default(),
                     friendly_name: "Runtime fixture".into(),
                     startup,
                     allow_creation: false,

@@ -76,6 +76,7 @@ impl Draft {
         Settings {
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
+            ordinary_access: festerm_host_setup::lifecycle::OrdinaryAccess::OwnerOnly,
             startup: if self.startup_at_sign_in {
                 Startup::UserSignIn
             } else {
