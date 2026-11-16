@@ -299,14 +299,25 @@ impl SuspensionHandle {
         }
     }
 
+    #[cfg(test)]
     fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
+        let callback = self.content_lock_reason_callback();
+        move || callback(festerm_ios_lock::ContentLockReason::Locked)
+    }
+
+    fn content_lock_reason_callback(
+        &self,
+    ) -> impl Fn(festerm_ios_lock::ContentLockReason) + Send + Sync + 'static {
         let recording = self.recording.clone();
         let export = self.export.clone();
         let sign_in = self.sign_in.clone();
         #[cfg(feature = "host-clients")]
         let host = self.host.clone();
-        move || {
-            sign_in.cancel();
+        move |reason| {
+            match reason {
+                festerm_ios_lock::ContentLockReason::Inactive => sign_in.set_foreground(false),
+                festerm_ios_lock::ContentLockReason::Locked => sign_in.cancel(),
+            }
             #[cfg(feature = "host-clients")]
             host.invalidate();
             Self::stop_shared_recording(&recording);
@@ -645,11 +656,11 @@ impl NativeLifecycle {
 
     /// Returns whether the renderer should also be resumed.
     pub fn resumed(&mut self) -> bool {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.sign_in.set_foreground(true);
         if std::mem::take(&mut self.deferred) {
             return false;
         }
-        #[cfg(feature = "live-ssh")]
-        self.suspension.sign_in.set_foreground(true);
         self.update(Lifecycle::resume);
         true
     }

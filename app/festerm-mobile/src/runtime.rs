@@ -123,7 +123,7 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
 
 fn build_lock(
     repaint: Arc<OnceLock<eframe::egui::Context>>,
-    content_lock: impl Fn() + Send + Sync + 'static,
+    content_lock: impl Fn(festerm_ios_lock::ContentLockReason) + Send + Sync + 'static,
 ) -> festerm_ios_lock::AppLock {
     let store = crate::Profiles::default_directory()
         .map(|directory| festerm_ios_lock::SettingsStore::new(directory.join("app-lock.json")));
@@ -135,7 +135,7 @@ fn build_lock(
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let locker: Arc<dyn festerm_ios_lock::Locker> =
         festerm_ios_lock::FakeLocker::new(festerm_ios_lock::Availability::Unavailable);
-    festerm_ios_lock::AppLock::new_with_content_lock_callback(
+    festerm_ios_lock::AppLock::new_with_content_lock_reason_callback(
         store,
         locker,
         Arc::new(festerm_ios_lock::SystemClock),
@@ -175,9 +175,9 @@ pub fn run_native(
     // The lock exists before the window so a cold launch never draws content.
     let repaint: Arc<OnceLock<eframe::egui::Context>> = Arc::new(OnceLock::new());
     #[cfg(feature = "live-ssh")]
-    let lock = build_lock(repaint.clone(), suspension.content_lock_callback());
+    let lock = build_lock(repaint.clone(), suspension.content_lock_reason_callback());
     #[cfg(not(feature = "live-ssh"))]
-    let lock = build_lock(repaint.clone(), || {});
+    let lock = build_lock(repaint.clone(), |_| {});
     let lifecycle_lock = lock.clone();
     let keys = HardwareKeys::default();
     let app_keys = keys.clone();

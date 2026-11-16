@@ -1838,7 +1838,13 @@ run. Ordinary browser background must preserve the same flow. Repeated
 resume must not duplicate a poll. A request already in flight is never replayed;
 if background races it and it fails, retain the failure and recover explicitly.
 The deterministic tests do not qualify the new mobile artifacts or weaken any
-HOST approval/privacy gate.
+HOST approval/privacy gate. Exercise the actual AppLock monitor, including with
+App lock disabled: ordinary browser resign/background must pause sign-in instead
+of cancelling it, while HOST/export/recording privacy invalidation still runs.
+Device lock, engaged content protection and Lock now must cancel; permission-alert
+return must resume admission even when renderer suspension was deferred. The c933
+native browser-return Cancelled failure is preserved separately; new reason-aware
+artifacts require native retest.
 
 P0 unlock recovery and the outstanding physical `MOB-09` acceptance are tracked
 in [#620](https://github.com/fes/fesTerm/issues/620). Compilation and synthetic

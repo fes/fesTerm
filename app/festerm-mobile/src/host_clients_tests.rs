@@ -3075,3 +3075,54 @@ fn mobile_host_content_lock_never_waits_for_sign_in_credential_io() {
         "HOST cancellation waited for credential IO"
     );
 }
+
+#[test]
+fn mobile_host_app_lock_monitor_preserves_background_sign_in_but_revokes_host_and_device_lock() {
+    use festerm_ios_lock::{
+        AppLock, Availability, BackgroundGrace, BiometryKind, FakeLocker, LifecycleEvent,
+        LockSettings, ManualClock,
+    };
+    let suspension = SuspensionHandle::default();
+    let lock = AppLock::new_with_content_lock_reason_callback(
+        None,
+        FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+        Arc::new(ManualClock::new()),
+        || {},
+        suspension.content_lock_reason_callback(),
+    );
+    let pending =
+        festerm_mobile_tunnels::testing::pending_sign_in_fixture(suspension.sign_in.capture());
+    let host = suspension.host.token(0);
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert!(host.is_cancelled());
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Waiting
+    );
+    lock.handle_lifecycle(LifecycleEvent::DeviceLocked); // Even with App lock disabled.
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    let pending =
+        festerm_mobile_tunnels::testing::pending_sign_in_fixture(suspension.sign_in.capture());
+    lock.apply_settings(LockSettings {
+        enabled: true,
+        background_grace: BackgroundGrace::Never,
+        ..Default::default()
+    })
+    .unwrap();
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Waiting
+    );
+    lock.lock_now();
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+}

@@ -950,3 +950,81 @@ fn device_sign_in_native_suspend_pauses_without_frame_and_resume_finishes_once()
         Err(festerm_mobile_tunnels::TunnelError::Cancelled)
     ));
 }
+
+#[cfg(feature = "host-clients")]
+#[test]
+fn device_sign_in_app_lock_monitor_pauses_browser_background_without_cancelling() {
+    use festerm_ios_lock::{
+        AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, ManualClock,
+    };
+    let rig = rig(None, false, true);
+    let suspension = rig.app.sink.live.clone();
+    let lock = AppLock::new_with_content_lock_reason_callback(
+        None,
+        FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+        Arc::new(ManualClock::new()),
+        || {},
+        suspension.content_lock_reason_callback(),
+    );
+    assert!(!lock.settings().enabled);
+    let mut native = NativeLifecycle::new(rig.app.lifecycle.clone(), suspension.clone())
+        .with_app_lock(lock.clone());
+    native.resumed();
+    let client = rig.app.tunnel.client.clone().unwrap();
+    let cancel = festerm_mobile_tunnels::CancelToken::new();
+    let flow = client
+        .begin_sign_in_with_activity(None, &cancel, Some(suspension.sign_in.capture()))
+        .unwrap();
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    assert_eq!(flow.state(), festerm_mobile_tunnels::SignInState::Waiting);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    native.suspended(false);
+    std::thread::sleep(Duration::from_secs(6));
+    assert_eq!(flow.state(), festerm_mobile_tunnels::SignInState::Waiting);
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    native.resumed();
+    assert!(matches!(
+        flow.wait(Duration::from_secs(2)),
+        festerm_mobile_tunnels::SignInState::Done(_)
+    ));
+    lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+    assert_eq!(
+        flow.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+}
+
+#[test]
+fn device_sign_in_app_lock_permission_alert_resumes_before_deferred_renderer_return() {
+    use festerm_ios_lock::{
+        AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, ManualClock,
+    };
+    let rig = rig(None, false, true);
+    let suspension = rig.app.sink.live.clone();
+    let lock = AppLock::new_with_content_lock_reason_callback(
+        None,
+        FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+        Arc::new(ManualClock::new()),
+        || {},
+        suspension.content_lock_reason_callback(),
+    );
+    let mut native = NativeLifecycle::new(rig.app.lifecycle.clone(), suspension.clone())
+        .with_app_lock(lock.clone());
+    native.resumed();
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    assert!(!native.suspended(true));
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    assert!(!native.resumed()); // Renderer never suspended, but sign-in must resume.
+    let client = rig.app.tunnel.client.clone().unwrap();
+    let flow = client
+        .begin_sign_in_with_activity(
+            None,
+            &festerm_mobile_tunnels::CancelToken::new(),
+            Some(suspension.sign_in.capture()),
+        )
+        .unwrap();
+    assert!(matches!(
+        flow.wait(Duration::from_secs(7)),
+        festerm_mobile_tunnels::SignInState::Done(_)
+    ));
+}

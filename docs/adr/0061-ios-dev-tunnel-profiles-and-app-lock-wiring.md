@@ -131,3 +131,22 @@ admission, expiry, cancellation, stale-generation commit and in-flight no-replay
 regressions, plus the native-lifecycle handle regression without a UI frame.
 Android background-network policy reproduction motivates this change; source
 checks do not establish new APK/iOS native sign-in acceptance.
+
+### Native AppLock notification distinction
+
+The existing AppLock privacy callback runs on ordinary resign-active/background
+notifications even when App lock is disabled. Mobile sign-in therefore uses its
+additive reason-aware constructor: `Inactive` pauses token-poll admission;
+`Locked` cancels the captured flow. Physical `DeviceLocked` always reports
+`Locked`, including when app protection is disabled; unavailable policy content
+(including grace expiry) and Lock now also report `Locked`. The legacy zero-arg
+constructor keeps the same synchronous callback points and privacy generations.
+HOST approvals, recording and export still invalidate on every callback, for
+both reasons. Native resume restores sign-in foreground state even when a
+permission alert deferred renderer suspension. Actual AppLock-monitor fixtures
+cover this path; NativeLifecycle-only fixtures are insufficient.
+
+This is an additive distinction within the existing privacy owner, not a new
+lifecycle framework or a change to OS network policy. The Android c933 native
+retest exposed the disabled-AppLock callback cancellation; the corrected source
+still requires fresh mobile artifacts and native browser-return qualification.

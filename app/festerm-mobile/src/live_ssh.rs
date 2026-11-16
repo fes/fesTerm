@@ -962,12 +962,12 @@ mod tests {
         use std::sync::atomic::Ordering;
 
         let suspension = crate::SuspensionHandle::default();
-        let lock = AppLock::new_with_content_lock_callback(
+        let lock = AppLock::new_with_content_lock_reason_callback(
             None,
             FakeLocker::new(Availability::Unavailable),
             Arc::new(ManualClock::new()),
             || {},
-            suspension.content_lock_callback(),
+            suspension.content_lock_reason_callback(),
         );
         let generation = lock.recording_privacy_generation().unwrap();
         let cancellation = suspension
@@ -1628,12 +1628,12 @@ mod tests {
             let suspension = SuspensionHandle::default();
             suspension.install_test_recording(recording.clone());
             let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
-            let lock = AppLock::new_with_content_lock_callback(
+            let lock = AppLock::new_with_content_lock_reason_callback(
                 None,
                 locker,
                 Arc::new(ManualClock::new()),
                 || {},
-                suspension.content_lock_callback(),
+                suspension.content_lock_reason_callback(),
             );
             let generation = lock.recording_privacy_generation().unwrap();
             if cut == "app" {
