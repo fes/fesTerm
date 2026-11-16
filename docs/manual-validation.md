@@ -5100,6 +5100,13 @@ required; this diagnosis does not qualify hosting or GUI acceptance.
 and application-command fixtures cover inert drafts/default-private shells,
 explicit review, edited-consent invalidation, bounded cross-window Busy,
 cancel/late-result suppression and native-only/foreign/corrupt state refusal.
+A deterministic completion-publication regression holds the real repaint
+callback after a finished backend call: other windows remain refused while
+backend work is active, then an immediate follow-up operation is admitted after
+completion publication. The worker drops its operation context and global permit
+before publishing the result. This proves that ordering race, not the cause of
+the earlier native Start Busy message; native Refresh and process observation
+remain separate evidence, and no failed native action is automatically retried.
 Real protected lifecycle/policy/controller fixtures cover atomic
 snapshot/settings/epoch consent, scoped native owner approval and no-shell setup.
 The actual native-helper binary refuses a Desktop-origin installation through

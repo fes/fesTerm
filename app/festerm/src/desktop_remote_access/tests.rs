@@ -409,6 +409,66 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
 }
 
 #[test]
+fn desktop_remote_access_releases_admission_before_publishing_completion() {
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (finish_tx, finish_rx) = mpsc::sync_channel(1);
+    let finish_rx = Mutex::new(finish_rx);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_calls = calls.clone();
+    let backend = Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        if observed_calls.fetch_add(1, Ordering::AcqRel) == 0 {
+            entered_tx.send(()).unwrap();
+            finish_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+        Ok(Report {
+            scope: Scope::Absent,
+            ..Report::default()
+        })
+    }));
+    let mut controller = fixture(backend.clone());
+    let mut other = Controller::new(controller.root.clone(), backend, controller.slots.clone());
+    let context = egui::Context::default();
+    let (published_tx, published_rx) = mpsc::sync_channel(1);
+    let (retire_tx, retire_rx) = mpsc::sync_channel(1);
+    let retire_rx = Mutex::new(retire_rx);
+    let first_repaint = std::sync::atomic::AtomicBool::new(true);
+    // Pause in the real repaint callback after the result has been published,
+    // without adding a production hook or relying on scheduler timing.
+    context.set_request_repaint_callback(move |_| {
+        if first_repaint.swap(false, Ordering::AcqRel) {
+            published_tx.send(()).unwrap();
+            retire_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+    });
+    controller.action(Action::Refresh, &context);
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    other.action(Action::Refresh, &context);
+    assert_eq!(other.view.failure, Some(Failure::Busy));
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    finish_tx.send(()).unwrap();
+    published_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    controller.poll(&context);
+    assert!(!controller.view.busy);
+    controller.action(Action::Refresh, &context);
+    let admitted = controller.pending.is_some() && controller.view.failure.is_none();
+    retire_tx.send(()).unwrap();
+    drain(&mut controller, &context);
+    assert!(
+        admitted,
+        "published completion retained the previous global permit"
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 2);
+}
+
+#[test]
 fn desktop_remote_access_busy_never_edits_or_replaces_pending_consent() {
     let (release, blocked) = mpsc::sync_channel(1);
     let blocked = Mutex::new(blocked);

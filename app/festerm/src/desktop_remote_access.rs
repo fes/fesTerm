@@ -878,8 +878,12 @@ impl Controller {
         match std::thread::Builder::new()
             .name("desktop-remote-access".into())
             .spawn(move || {
-                let _permit = permit;
                 let report = backend.execute(request, &worker_cancel, progress_sender);
+                // All native work and its context must drain before the UI can
+                // consume completion and admit the next operation.
+                drop(worker_cancel);
+                drop(backend);
+                drop(permit);
                 let _ = sender.send(report);
                 repaint.request_repaint();
             }) {
@@ -931,8 +935,8 @@ impl Controller {
                 self.start(Operation::Share(ShareStep::Release), true, context);
             }
         }
-        // Admission remains held until the actual worker exits. A cancellation
-        // token or a UI deadline is not evidence that native work stopped.
+        // Admission remains held until the backend returns and its context
+        // drains. A cancellation token or UI deadline cannot release it.
     }
 
     pub fn poll(&mut self, context: &egui::Context) {
