@@ -91,6 +91,29 @@ missing-file restoration, 4→5 replacement, private Manual launchd paths,
 typed durable refusal/failure, lease ownership and fail-closed CLI entries.
 They do **not** qualify native restart or independent shell survival.
 
+A separate source regression reproduces lifecycle-lock contention before managed
+runtime entry: the CLI's `Store::open` and recovery-registration preflight can
+return typed Busy before a Starting record exists. Managed verbs now share one
+fixed two-second, cancellable wait budget after typed Busy in these bootstrap
+reads. Each phase always attempts its first read; successful or non-Busy results
+are preserved even after the deadline, and exhausted contention returns its
+original Busy error. Each retry reopens current state, and registration checks
+reject full snapshot changes once captured. A held service-operation lease alone does not block this
+preflight. The existing later initial-admission budget remains a separate two
+seconds for service-lease contention and current bundle/owner checks. Neither
+budget retries a native manager Start, completed runtime invocation or history
+write. Reservation, first runtime persistence and final bookkeeping remain
+outside bootstrap retry and can still fail on contention; no broad runtime
+retry is implied.
+
+The deterministic lifecycle-lease failure and corrected source checks do not
+identify the cause of the preserved Linux signed-0.17.3 second-Start failure
+(runtime history remained at stopped epoch 7 after creation-policy reenable).
+That native failure remains unresolved as an observed event, with no new native
+Start or signed-helper qualification attributed to this source candidate.
+Existing epoch, origin, registration, owner, vault and platform restrictions
+remain required, including ordinary-user native Windows admission.
+
 On each separately authorized ordinary-user platform with genuine current
 signed helpers, test Manual and UserSignIn, Desktop and Headless:
 

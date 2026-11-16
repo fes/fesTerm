@@ -50,6 +50,16 @@ failure translation; a spawned-task panic may become Failed/native0. See
 `native-host-services.md#native-host-process-recovery` and the origin-specific
 history commands, neither of which grants liveness or Ready.
 
+For the same HOST-02/03/04/05 paths, managed CLI store opening and registration
+preflight share a fixed two-second typed-Busy bootstrap wait budget with
+cancellation and full captured-snapshot checks. Each phase attempts its first
+read even after expiry; only actual Busy permits waiting, and its original
+error is retained when the wait budget ends. The later service-lease initial
+admission budget is separate. Native Start, runtime reservation, first
+persistence and final history writes are not retried by bootstrap. Real
+lifecycle-lease source regressions do not establish the cause or resolution of
+the preserved signed Linux second-Start failure; native qualification stays open.
+
 ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
 epochs and exact old/new reservations through replacement/recovery. The shared
 backend must retain publisher authentication, journal-before-Create and

@@ -534,17 +534,21 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             } else {
                 Origin::Headless
             };
-            let store = std::sync::Arc::new(Store::open(&state, origin)?);
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
             let cancel = tokio_util::sync::CancellationToken::new();
             if command.ends_with("-managed") {
                 runtime.block_on(with_shutdown(
-                    festerm_host_setup::controller::managed::run(store, &state, cancel.clone()),
+                    festerm_host_setup::controller::managed::run_from_path(
+                        &state,
+                        origin,
+                        cancel.clone(),
+                    ),
                     cancel,
                 ))?;
             } else {
+                let store = std::sync::Arc::new(Store::open(&state, origin)?);
                 runtime.block_on(with_shutdown(
                     festerm_host_setup::controller::run(store, &state, cancel.clone()),
                     cancel,
