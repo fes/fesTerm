@@ -1078,6 +1078,8 @@ struct Shared {
     recovered_terminal: Mutex<Option<Terminal>>,
     recovery_resize_blocked: AtomicBool,
     recovery_adoption_blocked: AtomicBool,
+    #[cfg(test)]
+    before_command_drain: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     events: SyncSender<SessionEvent>,
     notifier: Arc<dyn SessionEventNotifier>,
     cancelled: AtomicBool,
@@ -1604,6 +1606,8 @@ impl PersistentSession {
                 protocol_version,
                 snapshot_schema_version,
             )),
+            #[cfg(test)]
+            before_command_drain: Mutex::new(None),
             events: events_tx,
             notifier,
             cancelled: AtomicBool::new(false),
@@ -2626,7 +2630,13 @@ fn client_worker(
             outbound.push_recovery_adopted();
             adoption_sent = true;
         }
-        while !outbound.is_full() {
+        #[cfg(test)]
+        if let Some(pause) = shared.before_command_drain.lock().unwrap().take() {
+            pause();
+        }
+        // Frontend adoption may change after the sample above. Only this
+        // worker's queued adoption frame permits later commands onto the wire.
+        while adoption_sent && !outbound.is_full() {
             match commands.try_recv() {
                 Ok(SessionCommand::Input(bytes)) => outbound.push_input(&bytes),
                 Ok(SessionCommand::Resize(size)) => outbound.push_resize(size),
@@ -4642,6 +4652,51 @@ mod client_worker_tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(session.take_recovered_terminal().is_none());
+    }
+
+    #[test]
+    fn concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption() {
+        let stream = ScriptedStream::default();
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(stream.clone()),
+            noop_session_event_notifier(),
+            None,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        let (sampled_tx, sampled_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        *session.shared.before_command_drain.lock().unwrap() = Some(Box::new(move || {
+            sampled_tx.send(()).unwrap();
+            resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }));
+        let terminal = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        stream.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+        sampled_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The worker has already sampled blocked adoption for this iteration.
+        // The frontend now installs the snapshot and immediately queues effects.
+        assert!(session.take_recovered_terminal().is_some());
+        let size = TerminalSize::new(117, 39).unwrap();
+        session.try_resize(size).unwrap();
+        session.try_send_input(b"first input").unwrap();
+        assert!(stream.written().is_empty());
+        resume_tx.send(()).unwrap();
+
+        let mut expected = b"FSD1".to_vec();
+        expected.push(FRAME_RECOVERY_ADOPTED);
+        expected.extend_from_slice(&0u32.to_be_bytes());
+        expected.extend_from_slice(b"FSD1");
+        expected.push(FRAME_RESIZE);
+        let resize = encode_resize(size);
+        expected.extend_from_slice(&(resize.len() as u32).to_be_bytes());
+        expected.extend_from_slice(&resize);
+        expected.extend_from_slice(&input_frame(b"first input"));
+        assert!(
+            wait_for(|| stream.written().len() >= expected.len()),
+            "worker never completed the queued frames"
+        );
+        assert_eq!(stream.written(), expected);
     }
 
     fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {

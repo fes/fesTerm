@@ -1944,6 +1944,7 @@
         "selected_registry_load_honors_cancellation_before_reading_or_waiting",
         "native_discovery_churn_reconnect_pins_generation_and_explicit_registry",
         "local_and_remote_attachments_alternate_on_one_session_in_either_order",
+        "concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption",
         "deliberate_takeover_alternates_between_remote_and_local_repeatedly",
         "admission_headers_stay_compatible_with_protocol_three_clients_and_daemons",
         "registry_records_from_before_attach_kinds_still_load_and_report_local",

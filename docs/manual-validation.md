@@ -4388,6 +4388,12 @@ CAS across path replacement, closed pending clients and ordered adoption of more
 than 64 small output chunks. The native fixture waits for its real child's READY
 output before obtaining the asserted recovery snapshot; no assertion, timeout or
 native acceptance requirement is weakened.
+The instance-scoped client-worker regression
+`concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption`
+pauses after the worker samples blocked adoption, then acknowledges the frontend
+snapshot and queues a nondefault resize followed by input. It requires exact wire
+order: adoption, resize, input. This automates the command-ordering race; it does
+not replace native attachment or terminal visual acceptance.
 The integrated-main regressions
 `host_reservation_requires_its_exact_native_launch_journal` and
 `second_client_replaces_first_client_and_first_receives_stolen_notice` cover
