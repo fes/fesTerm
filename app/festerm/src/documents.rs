@@ -4446,7 +4446,10 @@ mod tests {
         assert_eq!(registry.get(id).unwrap().text().text(), "owned\n");
         assert!(!registry.background_tick(&context, Instant::now(), true));
         // A subsequent real change, rather than a timer repaint, wakes again.
-        fs::write(&path, "returned longer\n").unwrap();
+        // Publish complete bytes atomically. Writing the watched path itself
+        // exposes an empty, valid generation between creation and writing.
+        let returned = directory.file("returned.md", "returned longer\n");
+        fs::rename(returned, &path).unwrap();
         // The preceding tick registered the missing source. Let its real
         // worker publish the change before the app drains that completion.
         assert!(wait_completion(&mut registry, &woken));
