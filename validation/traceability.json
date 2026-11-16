@@ -1334,6 +1334,9 @@
         "bridge_regular_file_reads_are_opt_in_bounded_and_admitted_once",
         "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation",
         "desktop_first_viewport_precedes_immediate_input",
+        "desktop_host_first_viewport_survives_starting_without_replaying_early_input",
+        "desktop_host_cached_resize_budget_failure_never_publishes_running_or_input",
+        "selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop",
         "desktop_first_viewport_backpressure_precedes_immediate_input",
         "desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size"
       ],

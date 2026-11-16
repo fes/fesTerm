@@ -5255,4 +5255,239 @@ mod tests {
                 .status();
         }
     }
+    // Uses the existing bound stream fixture; no native/vault/provider authentication.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[tokio::test]
+    async fn desktop_host_first_viewport_survives_starting_without_replaying_early_input() {
+        host_starting_resize_fixture(false).await;
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[tokio::test]
+    async fn desktop_host_cached_resize_budget_failure_never_publishes_running_or_input() {
+        host_starting_resize_fixture(true).await;
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    async fn host_starting_resize_fixture(exhaust_resize_budget: bool) {
+        use festerm_host_protocol::{
+            Budgets, Capabilities, Envelope, GenerationId, HostId, LogicalSessionId, OperationId,
+            Request, Response, Target,
+        };
+        use festerm_tunnel_bridge::{
+            host_client::{self, Scope},
+            host_terminal, protocol,
+        };
+        use festerm_tunnel_client::host_control::{Binding, ConnectionPermit};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncWriteExt, DuplexStream};
+        struct Wake {
+            ready: tokio::sync::Notify,
+            count: AtomicUsize,
+        }
+        impl festerm_session::SessionEventNotifier for Wake {
+            fn notify(&self) {
+                self.count.fetch_add(1, Ordering::SeqCst);
+                self.ready.notify_one();
+            }
+        }
+        async fn frame(peer: &mut DuplexStream, kind: u8, bytes: &[u8]) {
+            peer.write_u8(kind).await.unwrap();
+            peer.write_u32(bytes.len() as u32).await.unwrap();
+            peer.write_all(bytes).await.unwrap();
+            peer.flush().await.unwrap();
+        }
+        async fn reply(peer: &mut DuplexStream, request: &Envelope<Request>, body: Response) {
+            let bytes = festerm_host_protocol::encode(&Envelope::new(
+                request.host.clone(),
+                request.operation.clone(),
+                body,
+            ))
+            .unwrap();
+            frame(peer, host_terminal::HOST_REPLY, &bytes).await;
+        }
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let binding = Binding::new(
+            HostId::new(),
+            "owned-account".into(),
+            "owned-endpoint".into(),
+        )
+        .unwrap();
+        let scope = Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: binding.clone(),
+        };
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(7).unwrap(),
+        };
+        let wake = Arc::new(Wake {
+            ready: tokio::sync::Notify::new(),
+            count: AtomicUsize::new(0),
+        });
+        let budgets = Budgets::default();
+        let session = host_client::testing::session_from_stream(
+            stream,
+            ConnectionPermit::reserve(&budgets).unwrap(),
+            scope,
+            target,
+            wake.clone(),
+        )
+        .unwrap();
+        let session =
+            Arc::try_unwrap(session).unwrap_or_else(|_| panic!("sole fixture session owner"));
+        let mut controller: SessionController<host_client::HostSession> =
+            SessionController::for_test(session);
+        let (activate, activation) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+            let hello = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let hello: Envelope<Request> = festerm_host_protocol::decode(hello.payload()).unwrap();
+            reply(
+                &mut peer,
+                &hello,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        attach: true,
+                        detach: true,
+                        ..Capabilities::default()
+                    },
+                },
+            )
+            .await;
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let request: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            let Request::Attach {
+                target, attachment, ..
+            } = &request.body
+            else {
+                panic!("attach");
+            };
+            let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            let snapshot = protocol::encode_snapshot(&terminal.recovery_clone()).unwrap();
+            frame(&mut peer, protocol::SNAPSHOT, &snapshot).await;
+            let adopted = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(adopted.kind(), protocol::ADOPTED);
+            activation.await.unwrap(); // Actual host activation deliberately held after adoption.
+            reply(
+                &mut peer,
+                &request,
+                Response::Attached {
+                    target: target.clone(),
+                    attachment: attachment.clone(),
+                    lease: None,
+                },
+            )
+            .await;
+            if exhaust_resize_budget {
+                assert!(host_terminal::read_frame(&mut peer, &permit, true)
+                    .await
+                    .is_err());
+                return;
+            }
+            let resize = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(resize.kind(), protocol::RESIZE);
+            assert_eq!(resize.payload(), &[0, 119, 0, 16, 0, 0, 0, 0]);
+            frame(&mut peer, protocol::RESIZED, resize.payload()).await;
+            let input = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(input.kind(), protocol::INPUT);
+            assert_eq!(input.payload(), b"fresh-only"); // No early input was retained or replayed.
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !controller.session().unwrap().has_pending_snapshot() {
+                wake.ready.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        assert!(controller
+            .session()
+            .unwrap()
+            .adopt_into(&mut terminal)
+            .unwrap());
+        assert_eq!(
+            controller.session().unwrap().lifecycle(),
+            SessionLifecycle::Starting
+        );
+        controller.record_terminal_resize(Dimensions::new(119, 16).unwrap());
+        assert!(controller.pending_resize.is_none()); // Accepted by the backend's bounded latest slot.
+        controller.record_encoded_input(b"must-not-replay");
+        assert!(controller.pending_writes.writes.is_empty());
+        assert_eq!(controller.session().unwrap().metrics().input_bytes, 0);
+        let _blocked_bytes = exhaust_resize_budget.then(|| {
+            budgets
+                .reserve(
+                    festerm_host_protocol::Resource::TerminalBytes,
+                    festerm_host_protocol::MAX_QUEUED_BYTES,
+                )
+                .unwrap()
+        });
+        let before = wake.count.load(Ordering::SeqCst);
+        activate.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let notified = wake.ready.notified();
+                if controller.session().unwrap().lifecycle() != SessionLifecycle::Starting
+                    && wake.count.load(Ordering::SeqCst) > before
+                {
+                    break;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(wake.count.load(Ordering::SeqCst) > before);
+        if exhaust_resize_budget {
+            assert!(matches!(
+                controller.session().unwrap().lifecycle(),
+                SessionLifecycle::Failed(_)
+            ));
+            assert!(matches!(
+                controller
+                    .session()
+                    .unwrap()
+                    .try_resize(TerminalSize::new(128, 18).unwrap()),
+                Err(SessionSendError::Closed {
+                    operation: festerm_session::SessionOperation::Resize
+                })
+            ));
+            assert!(matches!(
+                controller
+                    .session()
+                    .unwrap()
+                    .try_send_input(b"not-admitted"),
+                Err(SessionSendError::Closed {
+                    operation: festerm_session::SessionOperation::Input
+                })
+            ));
+            assert_eq!(controller.session().unwrap().metrics().resize_count, 0);
+            assert_eq!(controller.session().unwrap().metrics().input_bytes, 0);
+            server.await.unwrap();
+            controller.session().unwrap().cancel();
+            return;
+        }
+        assert_eq!(
+            controller.session().unwrap().lifecycle(),
+            SessionLifecycle::Running
+        );
+        controller.flush_pending_resize();
+        controller.flush_pending_writes();
+        controller.record_encoded_input(b"fresh-only");
+        server.await.unwrap();
+        controller.session().unwrap().cancel();
+    }
 }

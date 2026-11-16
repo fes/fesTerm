@@ -2532,3 +2532,14 @@ responses on Unix; they do not qualify installed native services, native-vault
 prompts or ordinary-user Windows execution. HOSTSETUP-01 / HOST-04 / HOST-05 still
 require matching signed helpers and native OFF→ON→OFF acceptance preserving real
 durable shells and catalog entries.
+
+### Validation impact: first viewport during HOST activation
+
+DT-02 / MOB-06 retain the existing attachment and resize contracts. A bounded
+latest-size slot accepts resize while Starting; activation queues it before
+notifier installation, presentation and Running. Input still refuses Starting.
+Cancellation/failure discards the slot; an exhausted activation queue fails the
+attachment without publishing Running. Bound framed-stream/controller fixtures
+cover these boundaries, including immediate fresh input after activation. Native
+initial PTY geometry and Copilot visual parity remain separate unperformed checks
+for this candidate; retained old daemon compatibility must also be exercised.

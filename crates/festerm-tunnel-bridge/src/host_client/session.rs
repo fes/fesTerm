@@ -16,6 +16,7 @@ use std::sync::Mutex;
 struct State {
     worker: Worker,
     adoption: Option<Adoption>,
+    pending_resize: Option<TerminalSize>,
     terminal: Option<TerminalHandle>,
     lifecycle: SessionLifecycle,
     lifecycle_pending: bool,
@@ -103,6 +104,7 @@ impl HostSession {
             state: Mutex::new(State {
                 worker,
                 adoption: None,
+                pending_resize: None,
                 terminal: None,
                 lifecycle: SessionLifecycle::Starting,
                 lifecycle_pending: true,
@@ -169,6 +171,7 @@ impl HostSession {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             state.worker.cancel();
             state.adoption = None;
+            state.pending_resize = None;
             state.terminal = None;
             Self::transition(
                 &mut state,
@@ -191,6 +194,9 @@ impl HostSession {
     }
 
     fn refresh(&self, state: &mut State) {
+        if state.worker.cancel.is_cancelled() {
+            state.pending_resize = None;
+        }
         let Some(completion) = state.worker.try_receive(&self.scope) else {
             return;
         };
@@ -201,6 +207,22 @@ impl HostSession {
                 state.adoption = Some(*adoption);
             }
             Outcome::Attached(terminal) if state.lifecycle == SessionLifecycle::Starting => {
+                if let Some(size) = state.pending_resize.take() {
+                    if let Err(error) = terminal.resize(size) {
+                        state.metrics.error_count += 1;
+                        Self::finish(
+                            state,
+                            SessionLifecycle::Failed(SessionError::new(
+                                SessionErrorKind::Resize,
+                                Failure::from(error).message(),
+                            )),
+                        );
+                        state.lifecycle_pending = true;
+                        self.notifier.notify();
+                        return;
+                    }
+                    state.metrics.resize_count += 1;
+                }
                 terminal.set_event_notifier(self.notifier.clone());
                 state.terminal = Some(terminal);
                 if let Some(intent) = &self.creation_intent {
@@ -209,10 +231,12 @@ impl HostSession {
                 Self::transition(state, SessionLifecycle::Running);
             }
             Outcome::Failed(failure) => {
+                state.pending_resize = None;
                 state.metrics.error_count += 1;
                 Self::transition(state, SessionLifecycle::Failed(Self::error(failure)));
             }
             _ => {
+                state.pending_resize = None;
                 state.worker.cancel();
                 Self::transition(
                     state,
@@ -231,6 +255,7 @@ impl HostSession {
         state.lifecycle = lifecycle;
         state.terminal = None;
         state.adoption = None;
+        state.pending_resize = None;
         state.worker.cancel();
     }
 
@@ -359,6 +384,14 @@ impl Session for HostSession {
             .lock()
             .map_err(|_| Self::closed(SessionOperation::Resize))?;
         self.refresh(&mut state);
+        if state.worker.cancel.is_cancelled() {
+            return Err(Self::closed(SessionOperation::Resize));
+        }
+        if state.lifecycle == SessionLifecycle::Starting {
+            // One latest viewport, not input: activation enqueues it before Running.
+            state.pending_resize = Some(size);
+            return Ok(());
+        }
         Self::running(&state, SessionOperation::Resize)?
             .resize(size)
             .map_err(|error| Self::send_error(error, SessionOperation::Resize))?;

@@ -107,6 +107,7 @@ async fn presentation_round_trip(intentional_detach: bool) {
         },
         notifier.clone(),
     );
+    let (activate, activation) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
         let hello = host_terminal::read_frame(&mut peer, &permit, true)
@@ -147,6 +148,7 @@ async fn presentation_round_trip(intentional_detach: bool) {
             .await
             .unwrap();
         assert_eq!(adopted.kind(), crate::protocol::ADOPTED);
+        activation.await.unwrap(); // Keep the actual post-adoption Starting window open.
         response(
             &mut peer,
             &request,
@@ -157,6 +159,15 @@ async fn presentation_round_trip(intentional_detach: bool) {
             },
         )
         .await;
+        let resized = host_terminal::read_frame(&mut peer, &permit, true)
+            .await
+            .unwrap();
+        assert_eq!(resized.kind(), crate::protocol::RESIZE);
+        assert_eq!(
+            crate::wire::decode_size(resized.payload()).unwrap(),
+            TerminalSize::with_pixels(128, 18, 0, 0).unwrap()
+        );
+        frame(&mut peer, crate::protocol::RESIZED, resized.payload()).await;
         let input = host_terminal::read_frame(&mut peer, &permit, true)
             .await
             .unwrap();
@@ -204,7 +215,16 @@ async fn presentation_round_trip(intentional_detach: bool) {
             .unwrap_or_else(|_| panic!("completion"));
         wake();
     });
-    assert!(session.try_send_input(b"before adoption").is_err());
+    session
+        .try_resize(TerminalSize::new(119, 16).unwrap())
+        .unwrap();
+    assert_eq!(session.metrics().resize_count, 0);
+    assert!(matches!(
+        session.try_send_input(b"before adoption"),
+        Err(SessionSendError::Closed {
+            operation: SessionOperation::Input
+        })
+    ));
     tokio::time::timeout(Duration::from_secs(2), notifier.0.notified())
         .await
         .unwrap();
@@ -215,6 +235,16 @@ async fn presentation_round_trip(intentional_detach: bool) {
         .text()
         .contains("approved recovery"));
     assert_eq!(session.lifecycle(), SessionLifecycle::Starting);
+    session
+        .try_resize(TerminalSize::new(128, 18).unwrap())
+        .unwrap();
+    assert!(matches!(
+        session.try_send_input(b"before activation"),
+        Err(SessionSendError::Closed {
+            operation: SessionOperation::Input
+        })
+    ));
+    activate.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), notifier.0.notified())
         .await
         .unwrap();
@@ -226,6 +256,11 @@ async fn presentation_round_trip(intentional_detach: bool) {
         event(&session, &notifier).await,
         SessionEvent::Lifecycle(SessionLifecycle::Running)
     );
+    assert_eq!(
+        event(&session, &notifier).await,
+        SessionEvent::ResizeApplied(TerminalSize::with_pixels(128, 18, 0, 0).unwrap())
+    );
+    assert_eq!(session.metrics().resize_count, 1);
     let SessionEvent::Output(bytes) = event(&session, &notifier).await else {
         panic!("ordered terminal output");
     };
@@ -281,4 +316,57 @@ fn selected_host_session_app_lock_cancels_without_fabricated_detach_or_input() {
     assert!(session.try_send_input(b"stale").is_err());
     assert!(session.try_shutdown().is_err());
     drop(sender);
+}
+
+#[test]
+fn selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop() {
+    for end in 0..4 {
+        let scope = scope();
+        let (sender, events) = flume::bounded(2);
+        let session = HostSession::from_worker(
+            Worker {
+                scope: scope.clone(),
+                cancel: CancellationToken::new(),
+                events,
+            },
+            Arc::new(Notify(tokio::sync::Notify::new())),
+        );
+        session
+            .try_resize(TerminalSize::new(119, 16).unwrap())
+            .unwrap();
+        assert!(session.state.lock().unwrap().pending_resize.is_some());
+        match end {
+            0 => {
+                sender
+                    .send(Completion {
+                        scope,
+                        outcome: Outcome::Failed(Failure::WorkerUnavailable),
+                    })
+                    .unwrap_or_else(|_| panic!("fixture completion"));
+                let _ = session.lifecycle();
+            }
+            1 => session.cancel(),
+            2 => {
+                session.state.lock().unwrap().worker.cancel();
+                let _ = session.lifecycle();
+            }
+            _ => HostSession::finish(
+                &mut session.state.lock().unwrap(),
+                SessionLifecycle::Stopped,
+            ),
+        }
+        assert!(session.state.lock().unwrap().pending_resize.is_none());
+        assert!(matches!(
+            session.try_resize(TerminalSize::new(128, 18).unwrap()),
+            Err(SessionSendError::Closed {
+                operation: SessionOperation::Resize
+            })
+        ));
+        assert!(matches!(
+            session.try_send_input(b"never-replay"),
+            Err(SessionSendError::Closed {
+                operation: SessionOperation::Input
+            })
+        ));
+    }
 }

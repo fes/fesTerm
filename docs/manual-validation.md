@@ -925,6 +925,17 @@ screens do not establish a fresh Copilot result. Mobile must flush its pending
 viewport before input or explicitly report input not sent and disconnect on
 persistent resize refusal, preserving the existing no-replay policy.
 
+DT-02 also checks the first attached viewport without requiring a second window
+resize: the actual PTY grid must match the client before the fresh program starts.
+Portable bound framed-stream regressions now hold HOST activation after snapshot
+adoption, retain only the latest Starting resize, and require it on the wire before
+Running permits fresh input. Early input remains refused without replay; cancelled,
+failed and stopped attachments discard the size, and exhausted activation budgets
+fail closed. These automated results do not qualify the native fix: the recorded
+Mac-to-retained-Linux attachment initially showed 119×16 over an 80×24 PTY, while
+a subsequent ordinary zoom produced a matching 128×18 grid. Repeat that initial
+attachment and paired visual check with the candidate on supported clients.
+
 DT-08 also requires signed native qualification of ADR 0085: start with legacy
 inherited product/runtime permissions and an attached session; verify no ACL or
 registry repair, no automatic termination, retained unrelated/script-hosted
