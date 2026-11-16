@@ -503,7 +503,7 @@ impl MobileApp {
             ui.label("Verify host");
             footnote(
                 ui,
-                "On the host, open Settings → Dev Tunnels → Remote access → Connect another device.",
+                "On the host, open Settings > Dev Tunnels > Remote access > Connect another device.",
             );
             if self.hosts.selected.is_some() && primary(ui, "Load protected approval", !busy) {
                 *action = Some(Action::Load);
