@@ -6,6 +6,15 @@
 - **Extends:** ADRs 0025, 0038, 0057, 0061, 0066, 0067, 0070 and 0071.
 - **Scope:** Owner-requested staged implementation and Copilot handoff; stage-1 contract primitives exist, not platform or whole-ADR acceptance.
 
+The normal account-based trust and discovery workflow is being superseded by
+[ADR 0086](0086-provider-authorized-ordinary-remoting.md): provider-authorized
+ordinary remoting, automatic host/shared inventory, and explicit protected-policy
+migration. Its design received independent architectural review; implementation
+and native qualification remain open.
+The manual fingerprint/OwnerBinding/owner-key path below remains advanced owner
+authorization, not the required normal workflow; existing installations gain no
+new authority merely by upgrading.
+
 ## Workflow repair validation impact
 
 The Desktop/iOS workflow repair covers GUI `HOST-01`–`HOST-04`: explicitly scoped

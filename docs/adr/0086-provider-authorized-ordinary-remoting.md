@@ -1,0 +1,285 @@
+# ADR 0086: Provider-Authorized Ordinary Remoting
+
+- **Status:** Proposed — architecture reviewed for implementation; source and native acceptance remain open
+- **Date:** 2026-11-16
+- **Supersedes:** ADR 0084's manually confirmed host fingerprint, OwnerBinding and separately enrolled owner-key prerequisite for the normal account-based remoting flow only
+- **Retains:** ADR 0084's protected host lifecycle, shared catalog, global creation policy, exact session/generation scopes, and advanced enrolled-owner path; ADR 0085's durable-session migration rules
+
+## Context
+
+The normal workflow is GitHub sign-in, automatic host listing, then expanding a
+host to obtain its authorized profiles and sessions. Copying fingerprints,
+OwnerBinding JSON and public keys between devices, checking a trust box and
+approving a key on the host does not satisfy that workflow. Those steps must
+not be silently automated by trusting an unauthenticated self-report.
+
+Existing provider-authenticated tunnel resolution returns the host's public SSH
+key. The client verifies that key on the actual encrypted SSH connection. The
+host accepts forwarded channels only through its service-authenticated relay
+connection. These are usable trust boundaries. The SDK does not supply an
+authenticated GitHub subject to the host: SSH `auth_none` is accepted after relay
+admission, and decoding a tunnel token does not validate its signature or claims.
+
+This decision authorizes ordinary remoting using the provider's tunnel-connect
+capability. It does not turn a relay connection into evidence of a particular
+GitHub user, nor grant administrative owner authority to every connecting device.
+
+## Decision
+
+### Protected policy and explicit migration
+
+Add one field to the existing protected lifecycle `Settings`:
+
+```text
+ordinary_access: OwnerOnly | ProviderOwner
+wire values: owner-only | provider-owner
+missing value: OwnerOnly
+```
+
+Keep this in the existing lifecycle journal and captured Enable settings, not a
+new policy framework or portable credential record. `OwnerOnly` may be omitted
+when serializing legacy-compatible records. `ProviderOwner` must be serialized.
+Unknown values fail closed. Existing strict settings readers reject the new
+field rather than interpreting a newer grant as an older policy.
+
+Upgrading a package, opening Settings, signing in, importing a profile or loading
+a configuration never changes an existing installation's mode. Old records
+without the field remain `OwnerOnly`. A newly reviewed normal Enable selects
+`ProviderOwner` explicitly and records it in the exact protected settings shown
+by the consent surface. Its text explains that provider-authorized connections
+can use the shared catalog, with creation governed by the separate global switch.
+
+An existing HOST first requires its normal confirmed Disable and a reviewed
+strictly newer signed update while stopped. The user then reviews the new mode
+and normal Enable. A stopped update preserves the prior mode; it cannot perform
+the authorization transition. No automatic startup migration, cloud recreation,
+owner-registry replacement, session termination or daemon restart is implied.
+The retained daemon `83307`, shell `83308`, catalog and generation must survive
+the native campaign's migration.
+
+Desktop and official headless setup use the same typed policy and shared
+controller consent checks with their existing origins. The GUI owns Desktop
+state; the headless CLI owns Headless state. Origin mismatches still refuse.
+Add the ordinary-access choice only to those existing consent surfaces. This
+normal workflow does not require new Desktop CLI verbs or a new `--origin`
+option. Do not rewrite an origin or introduce a private enrollment operator.
+
+### Authority is a provider-admitted capability
+
+The first supported mode is the provider's implicit creator-only policy:
+`CreateAccess::OwnerDefault`, with authoritative tunnel and port ACL projections
+containing no additional entries. Reuse existing exact-resource validation of
+cluster, tunnel, ownership labels, protocol and HOST port. Anonymous, inherited,
+inverse, organization, additional-user and legacy explicit-GitHub ACL policies
+are not silently accepted as equivalent. A legacy resource that cannot satisfy
+this policy requires its existing reviewed migration/reconciliation route.
+
+Provider admission authorizes possession of the tunnel's connect capability.
+It does not establish a peer GitHub subject. Connect tokens can be delegated or
+stolen; the normal policy intentionally accepts that capability trust boundary.
+The host never receives the client's GitHub OAuth/refresh credential or tunnel
+token, and never uses an unsigned JWT payload or claimed account ID as proof.
+Client-side account confirmation still fences listing, resolution and UI result
+adoption against account switches and sign-out. Sign-out, account switch and
+content/privacy lock also cancel already active ordinary client channels through
+the existing cancellation owners; they do not kill the host daemon or shell.
+
+Ordinary authority is distinct from administrative enrolled-owner authority.
+Represent it as a sealed `OrdinaryRemotingCapability`/authority enum variant;
+do not make an unknown device key pass `OwnerVerifier`, convert it to an admin
+credential, or append it to the existing owner registry automatically. Use the
+protected host principal internally for catalog/session scopes without labeling
+that principal as an observed peer GitHub user. The advanced manual owner path
+remains separate and cannot become a fallback when normal authorization fails.
+
+Ordinary clients may inventory, attach, detach and ensure explicitly shared
+profiles. With creation OFF, Ensure may reuse only the exact already-Running shared
+generation. An absent, stopped, exited or unknown generation cannot be replaced
+or launched through Ensure; it refuses. Any operation that would create a new
+shell requires current global creation consent. The initial scope grants no explicit End, temporary-session or owner-policy/service/
+configuration/update/secret authority. Private profiles remain excluded.
+These are protocol/RPC authorization limits, not an operating-system sandbox.
+An accepted interactive shell runs as the HOST OS user and can exercise that
+user's ordinary OS permissions. A compromised connect capability can therefore
+obtain that user's shared shell; consent must state this plainly. Excluding a
+profile from discovery does not conceal its files from a shell that already has
+OS access to them.
+
+Reject direct Attach/Ensure requests naming a private or unpublished profile or
+session UUID, even if a caller guesses it or retains an old inventory page.
+Recheck the exact current shared publication and generation under the existing
+reservation/publication fence before each effect and terminal publication.
+Unsharing or local policy revocation also invalidates an attached ordinary stream;
+an inventory-only filter is insufficient.
+
+### Seal the real route and revalidate before every mint
+
+Extend the production-only `HostStream` construction with an immutable admitted
+route: tunnel, cluster, endpoint/host identity, configured port and host key.
+Its private constructor remains behind the authenticated provider relay and
+encrypted inner SSH channel. Match it to the current protected installation and
+cloud resource before granting ordinary authority. An arbitrary local TCP stream,
+raw byte stream, test fixture, SSH username, role byte or client-supplied route
+cannot manufacture that authority.
+
+Require the actual inner SSH channel binding. The relay's anonymous outer SSH
+framing inside authenticated TLS/WSS is not an exporter for this proof. The
+inner binding must be unavailable for skipped/NONE key exchange or unencrypted
+transport. Keep unrelated SSH channels and ports rejected, with existing bounded
+client/channel admission and cancellation/drain ownership.
+
+For **each new ordinary connection and each new capability mint**, perform a
+fresh authenticated cloud observation of the exact protected resource and
+creator-only ACL, using the host's existing provider identity. A relay established
+earlier or a previous successful connection is not that observation. No success
+cache substitutes for it. Recheck the local snapshot, mode, policy epoch and route
+after the observation and immediately before publishing authority. Provider
+failure, identity/ACL drift, cancellation or a changed snapshot refuses; do not
+fall back to manual-owner mode or infer absence/creation authority.
+
+### Automatic host binding and device proof
+
+Load or create the client native device key before beginning the short proof
+deadline. Scope its native-vault purpose to the selected provider account and
+exact provider route, including a distinct ordinary-remoting role/version.
+Use existing charged native-work and cancellation-before-consumption boundaries;
+hold no generation mutex across vault I/O and provide no plaintext fallback.
+This key is a possession/deny handle, not a reusable authorization grant.
+
+After verified service resolution and actual SSH host-key validation, a bounded
+authenticated `HostInfo` supplies the application host ID, installation and
+protected principal. Bind these automatically to that verified route/key/channel.
+There is no pre-trust JSON, fingerprint prompt or user-entered principal. A
+HostInfo from another route, key or connection cannot retarget an issued action.
+
+Use a versioned ordinary handshake and the existing exporter/signature primitives
+with a new domain-separated transcript. The challenge covers protocol/version,
+exact route and host key, installation/principal, device public key, local policy
+epoch, server-selected expiry, random nonce and the actual inner SSH channel
+binding. The client signs the complete transcript on that pinned channel. The
+server verifies possession and consumes the nonce once; the signature alone
+without current provider admission is never sufficient.
+
+Retain the existing 15-second authentication admission deadline. Prepare the host
+provider observer and its native credentials before accepting ordinary clients, under the existing charged, bounded credential-work owner.
+Observer readiness does not pre-authorize a connection or cache cloud success.
+No native-vault prompt, credential-store lock or credential load occurs inside
+the 15-second wire admission or while holding a lifecycle/policy lease. If the
+observer is unavailable or needs sign-in, refuse safely and let the host setup
+owner obtain readiness outside that deadline. A fresh per-mint HTTPS observation
+has at most 10 seconds within the single admission budget; the proof challenge
+expires at the earlier of five seconds after issue or the remaining admission
+deadline. Native client key loading precedes this budget. Reserve existing client,
+frame and blocking-work charges before effects, and retain charges until actual
+work drains after cancellation. No deadline restarts, automatic replay or
+unbounded queued vault/HTTP work are introduced.
+
+Unknown handshake modes/versions refuse before dispatch. Old HOSTs report that an
+update is required; clients do not downgrade to unauthenticated transport or
+expose the advanced pairing form as normal recovery. Existing owner-authenticated
+clients remain an explicit compatible path when their policy permits them.
+
+### Minimal wire selection and legacy compatibility
+
+Keep the existing server-first enrolled-owner frames and the inner SSH username
+`tunnel` byte-compatible. Add one fixed normal username,
+`festerm-ordinary-v1`, selected by a separate client connection entry point.
+`Port::auth_none` may capture that request as a private mode on `HostStream`;
+the requested mode is not an authorization grant. The existing modern-russh
+client accepts an explicit username and the server handler receives it, so no
+SDK upgrade or client-first message on the legacy stream is required.
+
+For the ordinary mode only, after fresh provider/local policy admission the
+server sends a distinct `ordinary_challenge_v1` frame containing authenticated
+HostInfo and the challenge fields above. The client's reply carries its public
+key, requested Control/Terminal role and signature over the complete challenge
+plus that key and role. The server verifies once and returns an ordinary accept
+or typed refusal. The signed role selects the existing dispatcher; legacy
+owner authentication retains its existing post-authentication role byte.
+
+An old server may accept the new SSH username but send its legacy owner
+challenge. The normal client recognizes that exact legacy frame and reports
+`HostUpdateRequired`, without signing it or falling back to manual pairing.
+Malformed/unknown frames refuse. A requested ordinary mode on an `OwnerOnly`
+installation is a typed policy refusal, never implicit permission to upgrade.
+
+### Revocation, active connections and durable sessions
+
+Ordinary grants live only on their exact admitted connection and local policy
+epoch. They cannot be serialized into portable recipes or reused on another
+channel. Local Disable, removal of the mode, policy revision/revocation and
+shutdown invalidate active grants through existing per-operation and streaming
+revocation checks, preserving durable daemons and shells.
+
+Cloud ACL revocation is checked on every new connection/mint. This decision does
+**not** promise immediate cloud-only revocation of an already admitted live
+connection, nor token-expiry termination that the SDK does not document. Existing
+live connections may continue until disconnect or local host revocation. There
+is no new background cloud poller or forced reconnect timer. A requirement for a
+finite active cloud-revocation SLA needs a separately reviewed renewal/lease
+mechanism before such a guarantee is claimed.
+
+An explicit local device deny rejects that exact device key before mint and
+revokes its active grants. Do not reuse a denied key automatically. A still
+provider-authorized account/token holder can generate another key; a key deny is
+not a promise to revoke a physical device or an account. Stronger account/device
+revocation requires provider credential/access revocation or a different identity
+mechanism. Temporary-session leases and End remain outside ordinary capability;
+transport loss never terminates a persistent shared session or replays input.
+
+## Implementation ownership and sequence
+
+The following names are proposed regressions, not existing or passing evidence.
+
+| Stage | Existing owner/files | Required focused regressions |
+| --- | --- | --- |
+| Protected mode and migration | `festerm-host-setup` lifecycle/controller/services; existing headless `festerm-host` setup parser; Desktop remote-access draft/native boundary | `ordinary_policy_missing_remains_owner_only`; `provider_owner_requires_disabled_reviewed_enable`; `provider_policy_origin_mismatch_refuses` (existing GUI/Desktop and CLI/Headless boundaries); `old_reader_refuses_provider_owner_record`; stopped update preserves mode and durable catalog |
+| Provider observation and sealed route | `festerm-tunnel-client` host resource observation; `festerm-tunnel-bridge` relay/relay_host; host setup runtime composition | `ordinary_mint_observes_exact_owner_default_acl_each_time`; `ordinary_admission_rejects_local_none_and_cross_resource_channels`; `ordinary_cloud_drift_cancellation_and_budget_refuse` |
+| Proof and authorization | bridge owner-auth primitives/host_runtime; shared HOST control and terminal authorization boundary | `ordinary_proof_binds_nonce_key_route_epoch_and_channel`; `ordinary_denied_device_and_replay_never_mint`; `ordinary_capability_cannot_become_owner_admin`; `ordinary_creation_off_reuses_only_running_shared_generation`; `ordinary_private_uuid_attach_and_ensure_refuse`; unsharing/local revocation also ends streaming |
+| Native key and client composition | bridge host_client/native key facade; client account identity; Desktop host browser and shared mobile HOST client | `ordinary_key_load_precedes_proof_deadline`; `ordinary_authenticated_host_info_cannot_retarget`; cancelled/locked/account-switched results cannot persist or launch effects; `ordinary_account_switch_signout_and_lock_cancel_active_channels_without_daemon_kill` |
+| Normal UI integration | existing Desktop/mobile account and host-browser owners | `successful_sign_in_lists_hosts_once`; `expanded_host_fetches_authorized_inventory_once`; normal flow has no manual trust/Prepare effects; center Find & Connect over available width; stale discovery and inventory cannot replace another selected account/host |
+
+Do not put UI/platform dependencies into HTTP or protocol crates. Reuse existing
+per-client budgets, policy leases, exporter bindings, native credential facades
+and catalog/session dispatch. Introduce no independent broker, service, generic
+authentication framework or credential-forwarding path. Keep implementation
+stages reviewable and obtain independent security review before core changes.
+
+## Consequences and alternatives
+
+The user gets account sign-in followed by host and shared-session discovery
+without manual pairing. Trust moves from a second user-enrolled key gate to the
+provider's connect-capability policy for ordinary remoting. This is an explicit
+security decision, not a presentation-only repair. Administrative owner keys and
+their existing permissions stay intact.
+
+Strict peer GitHub identity is not available from the current SDK. A new identity
+broker or supported signed identity assertion would be a broader alternative.
+Forwarding GitHub credentials to the host increases credential exposure and is
+rejected. Cloud-metadata nonce mailboxes introduce management writes, resource
+drift and consistency races without providing the missing peer subject; they are
+not needed for the selected capability model.
+
+Primary contracts: [Microsoft Dev Tunnels security](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security),
+the [pinned SDK relay host](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b86a5b519c300f2f41c9072a66f663/ts/src/connections/tunnelRelayTunnelHost.ts),
+and its [diagnostic token parser](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b86a5b519c300f2f41c9072a66f663/ts/src/management/tunnelAccessTokenProperties.ts).
+
+## Validation impact
+
+This changes the ordinary trust precondition of GUI `HOST-01`, `HOST-02` and
+`HOST-04`; retain their existing stable graph/scenario IDs. The new mode, explicit
+Enable migration, automatic listing/expansion, creation OFF/ON, shared/private
+catalog boundaries and sign-out/privacy/revocation failures need corresponding
+graph/manual/trace updates in the implementation change. `HOST-03` recipe and
+`HOST-05`/`HOST-06` signed package/lifecycle checks remain applicable. No draft test
+name above is registered as completed evidence by this ADR.
+
+The existing 24-case Desktop/iOS/Android native campaign must exercise the normal
+account flow with the correct source-current signed HOST and clients, then the
+existing same-grid PTY/query and fresh Copilot **initial-screen** comparison.
+An unauthenticated Copilot welcome screen is sufficient; no plan/model request
+is required. Preserve the old daemon/shell/catalog and test retained-session
+attachment after the explicit policy migration. Prior manual JSON/fingerprint
+typing, build-only results and simulated proofs do not qualify this normal
+workflow. Physical-device, publisher/platform and whole-matrix acceptance remain
+open until their actual evidence exists.
