@@ -553,7 +553,7 @@ fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
                 .get(By::new().label(if editing {
                     "Dev Tunnel profile"
                 } else {
-                    "Find & connect"
+                    "Find & Connect"
                 }))
                 .rect();
             assert!(done.width() <= 80.0 && done.height() >= 44.0, "{done:?}");
@@ -567,6 +567,10 @@ fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
             );
             assert!(done.left() >= ((width - 560.0) / 2.0).max(8.0), "{done:?}");
             assert!(title.right() - done.left() <= 560.0, "{done:?} {title:?}");
+            assert!(
+                (title.center().x - width / 2.0).abs() <= 1.0,
+                "header must center across the full content width: {width} {title:?}"
+            );
             assert!(harness.state().hosts.pending.is_none());
         }
     }

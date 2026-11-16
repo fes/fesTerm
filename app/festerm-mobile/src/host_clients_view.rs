@@ -86,10 +86,12 @@ fn navigation(ui: &mut egui::Ui, title: &str) -> bool {
             true,
             egui::vec2(64.0, 44.0),
         );
+        let title_width = (ui.available_width() - 64.0 - ui.spacing().item_spacing.x).max(0.0);
         ui.add_sized(
-            egui::vec2(ui.available_width(), 44.0),
+            egui::vec2(title_width, 44.0),
             egui::Label::new(egui::RichText::new(title).heading()).truncate(),
         );
+        ui.add_space(64.0);
         done.clicked()
     })
     .inner
@@ -248,7 +250,7 @@ impl MobileApp {
                                     if self.hosts.editing {
                                         "Dev Tunnel profile"
                                     } else {
-                                        "Find & connect"
+                                        "Find & Connect"
                                     },
                                 ) {
                                     action = Some(Action::Close);

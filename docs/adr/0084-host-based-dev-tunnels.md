@@ -2543,3 +2543,11 @@ attachment without publishing Running. Bound framed-stream/controller fixtures
 cover these boundaries, including immediate fresh input after activation. Native
 initial PTY geometry and Copilot visual parity remain separate unperformed checks
 for this candidate; retained old daemon compatibility must also be exercised.
+
+### Validation impact: mobile discovery header alignment
+
+HOST-01/02/03 and MOB-06 retain their existing action and authorization paths.
+The `Find & Connect` header and profile-edit header balance space around the
+title so its center matches the full content width. The existing phone/tablet
+layout regression checks that center, non-overlap and the 44-point Done target;
+native text scaling and touch usability remain separate manual checks.

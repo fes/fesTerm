@@ -820,11 +820,14 @@ Synthetic evidence includes seven Desktop wide/narrow/off/requested surface
 captures and twelve phone/tablet host discovery/session/create/profile captures.
 The host-enabled mobile library passes 259 tests and compiles for the iOS
 Simulator target; neither result is a real-service or native-runtime acceptance.
-The independent two-model Desktop review prompted same-draft profile selection,
-clearer pending-host intent, minimum local control heights and quieter recovery.
-Corrected captures passed the bounded Desktop/mobile UI re-review: the mobile
-header, centered tablet column, painted disclosures and visible creation action
-resolve the initial layout findings. Source and regression checks also require
+Synthetic captures and earlier UI reviews provide partial layout evidence, not
+current native visual acceptance. Require the normal title `Find & Connect` to
+center across the whole content width, with balanced space opposite Done, on
+phone and tablet. The geometry regression covers both normal and profile-edit
+titles, non-overlap and the 44-point Done target. Native header alignment, text
+scaling, truncation, touch targets, the centered tablet column, disclosures and
+creation-action visibility still require visual and usability checks.
+Source and regression checks also require
 explicit review of imported custom launch/lifetime settings before creation and
 preserve logical-resume policy when renaming a profile with inventory loaded.
 Account-status presentation is source-reviewed, not visually qualified.
