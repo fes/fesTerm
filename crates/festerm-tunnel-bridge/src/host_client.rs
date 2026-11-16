@@ -40,6 +40,19 @@ pub use session::HostSession;
 pub mod testing {
     use super::*;
 
+    /// In-memory admitted worker for cancellation-only composition tests.
+    pub fn pending_worker(scope: Scope, cancel: CancellationToken) -> Result<Worker, Failure> {
+        Worker::spawn_with_cancellation(
+            scope,
+            Arc::new(|| {}),
+            cancel,
+            |_, cancel, _, _| async move {
+                cancel.cancelled().await;
+                Err(Error::Cancelled.into())
+            },
+        )
+    }
+
     /// Explicit authenticated control-stream injection for headless tests.
     pub async fn end_from_stream<S>(
         stream: S,

@@ -839,6 +839,97 @@ fn mobile_host_suspend_fences_pending_work_and_never_arms_automatic_creation() {
 }
 
 #[test]
+#[cfg(unix)]
+fn mobile_host_idle_privacy_changes_preserve_diagnostics_without_cancellation_error() {
+    for previous in [None, Some("Original diagnostic remains.")] {
+        for cause in 0..3 {
+            let (_root, mut app, _account, _store) = recovery_fixture();
+            app.hosts.error = previous.map(str::to_owned);
+            assert!(!app.hosts.busy() && app.hosts.receipt.is_some());
+            match cause {
+                0 => app.sink.live.suspend(),
+                1 => app.sink.live.content_lock_callback()(),
+                _ => app.sign_out_account("removed-account"),
+            }
+            app.poll_hosts(&egui::Context::default());
+            assert_eq!(app.hosts.error.as_deref(), previous);
+            assert!(app.hosts.receipt.is_none() && app.hosts.inventory.is_none());
+            assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
+            assert_eq!(app.hosts.epoch, app.sink.live.host.epoch());
+            app.open_hosts();
+            assert_eq!(app.hosts.error.as_deref(), previous);
+            assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_privacy_change_cancels_pending_and_control_work_with_diagnostic() {
+    for control in [false, true] {
+        let (_root, mut app, account, _store) = recovery_fixture();
+        let token = CancellationToken::new();
+        if control {
+            let context = app.hosts.context().unwrap();
+            let worker = host_client::testing::pending_worker(
+                Scope {
+                    request: OperationId::new(),
+                    generation: 1,
+                    binding: context.binding().clone(),
+                },
+                token.clone(),
+            )
+            .unwrap();
+            app.hosts.worker = Some(Arc::new(worker));
+            app.hosts.worker_account = Some(account);
+        } else {
+            app.hosts.pending = Some(Pending {
+                account,
+                recipe: app.hosts.selected.clone(),
+                epoch: app.hosts.epoch,
+                token: Arc::new(token.clone()),
+                job: Job::spawn(&egui::Context::default(), |cancel| {
+                    while !cancel.is_cancelled() {
+                        std::thread::park_timeout(Duration::from_millis(1));
+                    }
+                    Err("Cancelled fixture".into())
+                }),
+            });
+        }
+        assert!(app.hosts.busy() && !token.is_cancelled());
+        app.sink.live.host.invalidate();
+        app.poll_hosts(&egui::Context::default());
+        assert!(token.is_cancelled());
+        assert!(!app.hosts.busy() && app.hosts.receipt.is_none());
+        assert!(app
+            .hosts
+            .error
+            .as_deref()
+            .unwrap()
+            .starts_with("HOST work cancelled"));
+        assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
+    }
+}
+
+#[test]
+fn mobile_host_test_worker_drop_cancels_its_in_memory_task() {
+    let context = creation_context();
+    let token = CancellationToken::new();
+    let worker = host_client::testing::pending_worker(
+        Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: context.binding().clone(),
+        },
+        token.clone(),
+    )
+    .unwrap();
+    assert!(!token.is_cancelled());
+    drop(worker);
+    assert!(token.is_cancelled());
+}
+
+#[test]
 fn mobile_host_private_generation_exhaustion_refuses_new_work() {
     let privacy = Privacy::default();
     privacy.epoch.store(u64::MAX, Ordering::Release);

@@ -1513,9 +1513,12 @@ impl MobileApp {
             self.hosts.session_accounts.clear();
         }
         if !self.host_foreground() || !self.host_recipe_current() {
+            let cancelled_work = self.hosts.busy();
             self.hosts.clear_approval();
             self.hosts.epoch = self.sink.live.host.epoch();
-            self.hosts.error = Some("HOST work cancelled by lock, suspension, account or recipe change. Original actions remain; no input is replayed.".into());
+            if cancelled_work {
+                self.hosts.error = Some("HOST work cancelled by lock, suspension, account or recipe change. Original actions remain; no input is replayed.".into());
+            }
             return;
         }
         let account = self.host_account();

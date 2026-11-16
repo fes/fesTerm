@@ -343,6 +343,14 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## ADR 0084 mobile HOST execution
 
+After ordinary browser sign-in or an idle lock/suspend/account change, open
+Find & connect before issuing any HOST action: no cancelled-work error should
+appear. Existing diagnostics remain visible, while protected approval and
+inventory are cleared. Repeat with an active discovery job and an active
+control worker: both must still cancel and report cancellation without replay.
+Deterministic tests cover these distinctions; native lifecycle acceptance
+remains separate.
+
 Within existing HOST-03 / MOB-06 / TUNNEL-11, discover an owned host and verify
 its friendly description (or name/locator fallback), then open **Connect this
 device**. Focus and edit the fingerprint using normal hardware and software
