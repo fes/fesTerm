@@ -3069,6 +3069,7 @@ version = "0.17.4"
 dependencies = [
  "festerm-host-protocol",
  "http",
+ "log",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

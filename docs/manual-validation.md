@@ -1803,6 +1803,20 @@ code; retain only private captures and length/format/equality results, never
 codes, raw clipboard text or hashes of these short codes. Do not submit stale
 or mismatched text. A copied notice alone does not qualify this native check.
 
+For `TUNNEL-07`/`TUNNEL-11`, `HOST-01` and `MOB-06`, retain the first native
+GitHub failure separately from any explicit recovery. On a newly built client,
+collect only the fixed request stage, typed cause and optional HTTP status from
+the existing warning logger: distinguish device-token polling from github-account
+verification. Send timeout/connect/request/other, HTTP-status refusal and bounded
+body failures are distinct; no error strings, URLs, response bodies, tokens or
+credentials enter this record. Existing tracing delivery remains primary where
+configured; the ordinary logger is a fallback when no tracing dispatcher was
+installed. Browser approval is not proof of token receipt, account verification
+or native credential commit. Both earlier Android Network outcomes remain
+unattributed; these source tests do not identify their cause or replace a new
+APK and native stage capture. Timeouts, polling, cancellation and retry behavior
+are unchanged.
+
 P0 unlock recovery and the outstanding physical `MOB-09` acceptance are tracked
 in [#620](https://github.com/fes/fesTerm/issues/620). Compilation and synthetic
 widget evidence do not close that native gate.
