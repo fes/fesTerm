@@ -285,8 +285,20 @@ class PtyTests(unittest.TestCase):
                 if mode.startswith("pending"):
                     if mode == "pending_partial":
                         os.write(master, b"\n")
-                    self.assertTrue(select.select([slave], [], [], 0)[0])
-                    self.assertEqual(os.read(slave, 128), b"PRIVATE_PENDING\n")
+                    # Linux may deliver the preserved raw-mode bytes and the
+                    # newly canonical newline in separate reads.
+                    expected = b"PRIVATE_PENDING\n"
+                    pending = bytearray()
+                    deadline = time.monotonic() + 2
+                    while len(pending) < len(expected):
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not select.select([slave], [], [], remaining)[0]:
+                            break
+                        chunk = os.read(slave, 128)
+                        if not chunk:
+                            break
+                        pending.extend(chunk)
+                    self.assertEqual(bytes(pending), expected)
                 baseline.with_name("release-fixture").touch()
                 os.close(master)
                 os.close(slave)
