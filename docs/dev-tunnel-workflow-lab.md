@@ -42,13 +42,18 @@ does not complete this requirement.
 
 For each case, pair a fresh Copilot process in the server's local fesTerm shell
 with a fresh Copilot process reached through the actual Dev Tunnels client.
+The owner's acceptance scope is the initial Copilot screen, including its
+unauthenticated welcome/sign-in screen. Neither controlled GitHub account has
+Copilot enabled. No Copilot sign-in, plan activation, model selection or model
+request is required for this comparison; Dev Tunnels authentication remains
+required independently. Compare the same initial state on both sides.
 Use the approved shared profile when generic creation is off; do not enable
 creation or replace a durable generation merely to obtain a fresh application
 process. Record the exact server/client app and helper source/build identities,
 host/session generation and attachment, Copilot version and executable hash,
-controlled working directory/task, shell and selected locale values. Pin the
-same Copilot version, task, theme, font and font size/scale for the comparison;
-record any unavoidable platform rendering difference explicitly.
+controlled working directory, shell and selected locale values. Pin the
+same Copilot version, initial state, theme, font and font size/scale for the
+comparison; record any unavoidable platform rendering difference explicitly.
 
 Before launching either process, settle both terminal viewports at the same
 columns and rows (for example 100 by 32). Record each terminal content rectangle
@@ -65,17 +70,18 @@ infer missing capability transfer merely because the creation request has no
 terminal metadata fields. Do not substitute synthetic xterm probe replies.
 
 Capture the fresh local reference on the server and the corresponding actual
-client screen at matching task checkpoints, including Unicode, inline-code
-backgrounds, wrapping, cursor and alternate-screen behavior. Review each pair
+client screen at matching initial-screen checkpoints. Compare the visible
+glyphs, backgrounds, wrapping, cursor and screen-mode behavior. Review each pair
 for the same terminal layout and visible colors, with platform rasterization
-and nondeterministic task content identified separately. Retain both screenshots
+and any varying initial-screen text identified separately. Retain both screenshots
 and the bounded geometry/environment/query observations with the case identity.
-Use only the dedicated controlled task; do not export arbitrary terminal
-history, credentials or provider diagnostics. iOS/Android evidence must show the
-actual application and its keyboard/rotation geometry, and identify hardware,
-Simulator or emulator. A missing CLI, required runtime or usable authenticated
-session leaves that case blocked; installation or a version command alone does
-not establish a successful Copilot run.
+Use only the dedicated controlled working directory; do not export arbitrary
+terminal history, credentials, device codes or provider diagnostics. iOS/Android
+evidence must show the actual application and its keyboard/rotation geometry, and identify hardware,
+Simulator or emulator. A missing CLI, required runtime or usable Dev Tunnels
+session leaves that case blocked. A missing Copilot entitlement does not block
+the initial-screen comparison. Installation or a version command alone does
+not establish an actual initial-screen visual comparison.
 
 Keep the deterministic resize-before-input regressions separate from this native
 visual evidence. Desktop retains input in its existing bounded queue while a
