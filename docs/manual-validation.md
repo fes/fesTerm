@@ -2178,6 +2178,13 @@ cleared ones.
 
 ### Keyboard baseline and candidate evidence
 
+The existing routed-character allocation regression runs on a single main
+thread, with a known-allocation positive control, exact zero-allocation checks
+for 4,096 ASCII and emoji events, and Cargo/nextest discovery/filter validation.
+Its process-wide counter no longer shares the measurement with libtest
+scheduling. This is an automated CPU allocation check; the earlier CI count remains
+unattributed, and native keyboard/latency acceptance below remains separate.
+
 The following-input ordering fix adds ready-callback + Enter/text, unresolved
 request + same-batch input, bounded overflow, transport failure, recovery,
 generation and confirmation regressions. Verify that a deliberately delayed

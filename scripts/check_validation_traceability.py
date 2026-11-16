@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -53,14 +54,36 @@ def markdown_anchors(path: Path) -> set[str]:
     return anchors
 
 
+def custom_rust_test_functions(path: Path, source: str) -> set[str]:
+    """Index the one-name convention of explicitly declared custom test targets."""
+    if path.parent.name != "tests":
+        return set()
+    manifest = path.parent.parent / "Cargo.toml"
+    if not manifest.is_file():
+        return set()
+    declared = tomllib.loads(manifest.read_text(encoding="utf-8")).get("test", [])
+    if not any(
+        target.get("harness") is False
+        and manifest.parent / target.get("path", f"tests/{target.get('name')}.rs") == path
+        for target in declared
+    ):
+        return set()
+    name = re.search(r'^const TEST_NAME: &str = "([A-Za-z_][A-Za-z0-9_]*)";', source, re.M)
+    functions = {match.group(1) for line in source.splitlines()
+                 if (match := TEST_FUNCTION_RE.match(line))}
+    return {name.group(1)} if name and {"main", name.group(1)} <= functions else set()
+
+
 def rust_test_functions(root: Path) -> set[str]:
     tests: set[str] = set()
     for base in (root / "app", root / "crates", root / "tests"):
         if not base.exists():
             continue
         for path in base.rglob("*.rs"):
+            source = path.read_text(encoding="utf-8")
+            tests.update(custom_rust_test_functions(path, source))
             pending_test = False
-            for line in path.read_text(encoding="utf-8").splitlines():
+            for line in source.splitlines():
                 if TEST_ATTRIBUTE_RE.search(line):
                     pending_test = True
                     continue
@@ -328,7 +351,7 @@ def main() -> int:
     registry = args.registry or root / "validation" / "traceability.json"
     try:
         report = validate_registry(root, registry, args.base)
-    except (OSError, json.JSONDecodeError, TraceabilityError) as error:
+    except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, TraceabilityError) as error:
         print(f"validation traceability: FAILED\n{error}", file=sys.stderr)
         return 1
     print("validation traceability: PASS")
