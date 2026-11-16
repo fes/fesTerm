@@ -5263,6 +5263,7 @@
         "ADR-0063"
       ],
       "automated_tests": [
+        "sign_in_finishes_native_copy_before_browser_handoff",
         "overflow_rejects_the_whole_batch_and_reports_failure",
         "selection_starts_its_own_ordered_batch",
         "choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding",

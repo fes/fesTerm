@@ -354,6 +354,30 @@ mod tests {
     }
 
     #[test]
+    fn sign_in_finishes_native_copy_before_browser_handoff() {
+        use std::cell::RefCell;
+        let calls = RefCell::new(Vec::new());
+        let clipboard = RefCell::new(String::from("stale fixture"));
+        let mut effects = SignInEffects::default();
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        effects.initial_with(
+            || {
+                *clipboard.borrow_mut() = "fresh fixture".into();
+                calls.borrow_mut().push("copy completed");
+                true
+            },
+            || {
+                assert_eq!(*clipboard.borrow(), "fresh fixture");
+                calls.borrow_mut().push("browser handoff");
+                receiver
+            },
+        );
+        assert_eq!(*calls.borrow(), ["copy completed", "browser handoff"]);
+        assert_eq!(effects.copied, Some(true));
+        assert_eq!(effects.opened, None, "browser dispatch is not completion");
+    }
+
+    #[test]
     fn canceled_sign_in_cannot_deliver_browser_result_to_its_replacement() {
         let mut original = SignInEffects::default();
         let (old_sender, old_receiver) = mpsc::sync_channel(1);
