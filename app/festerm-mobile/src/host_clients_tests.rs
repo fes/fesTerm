@@ -3031,3 +3031,47 @@ fn mobile_host_native_pairing_edit_clears_consent_and_inventory() {
     assert!(hosts.inventory.is_none() && hosts.receipt.is_none());
     assert!(hosts.pending.is_none() && hosts.worker.is_none());
 }
+
+#[test]
+fn mobile_host_content_lock_never_waits_for_sign_in_credential_io() {
+    let suspension = SuspensionHandle::default();
+    let host = suspension.host.token(0);
+    let activity = suspension.sign_in.capture();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        festerm_mobile_tunnels::testing::sign_in_commit_fixture(activity, || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let callback = suspension.content_lock_callback();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let privacy = std::thread::spawn(move || {
+        callback();
+        done_tx.send(()).unwrap();
+    });
+    let returned_before_release = done_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .is_ok();
+    let host_cancelled_before_release = host.is_cancelled();
+    // Always drain the fake worker, including the original blocking regression.
+    release_tx.send(()).unwrap();
+    let outcome = worker.join().unwrap();
+    privacy.join().unwrap();
+    assert!(
+        matches!(outcome, Err(festerm_tunnel_client::Error::Cancelled)),
+        "stale credential completion was published after lock"
+    );
+    assert!(
+        returned_before_release,
+        "native privacy callback waited for credential IO"
+    );
+    assert!(
+        host_cancelled_before_release,
+        "HOST cancellation waited for credential IO"
+    );
+}

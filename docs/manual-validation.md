@@ -1817,6 +1817,29 @@ unattributed; these source tests do not identify their cause or replace a new
 APK and native stage capture. Timeouts, polling, cancellation and retry behavior
 are unchanged.
 
+For the foreground-aware mobile sign-in candidate, the controlled Android b9
+flow remained pending without a new connection error in foreground; moving the
+same flow to background reproduced device-token/send-connect while the owned
+UID's effective policy changed to APP_BACKGROUND blocking. This establishes that
+specific reproduction, not the cause of every earlier Network failure. A fresh
+client must keep the same challenge while Safari/Chrome is foreground, issue no
+new token polls until native resume, and then complete account verification and
+credential commit. Verify Cancel, app lock and matching-account sign-out while
+paused prevent later credential persistence; expired challenges stay expired.
+Block a fake credential write and verify the native privacy callback still returns
+and invalidates HOST work. Cancellation cannot retract native credential IO that
+already started; no transactional vault guarantee is added. A queued profile-store
+wait must recheck cancellation before starting any new write; a write already in
+flight must discard its successful completion after cancellation, so no stale
+Done result resumes a connection. Complete a flow without consuming its result,
+then lock: the getter must return Cancelled. Lock after a device-code worker
+becomes ready but before UI adoption: neither clipboard nor browser effects may
+run. Ordinary browser background must preserve the same flow. Repeated
+resume must not duplicate a poll. A request already in flight is never replayed;
+if background races it and it fails, retain the failure and recover explicitly.
+The deterministic tests do not qualify the new mobile artifacts or weaken any
+HOST approval/privacy gate.
+
 P0 unlock recovery and the outstanding physical `MOB-09` acceptance are tracked
 in [#620](https://github.com/fes/fesTerm/issues/620). Compilation and synthetic
 widget evidence do not close that native gate.

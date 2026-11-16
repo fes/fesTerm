@@ -201,6 +201,7 @@ impl Lifecycle {
 #[cfg(feature = "live-ssh")]
 #[derive(Clone, Default)]
 pub struct SuspensionHandle {
+    sign_in: festerm_mobile_tunnels::SignInActivity,
     #[cfg(feature = "host-clients")]
     host: std::sync::Arc<host_clients::Privacy>,
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
@@ -301,9 +302,11 @@ impl SuspensionHandle {
     fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
         let recording = self.recording.clone();
         let export = self.export.clone();
+        let sign_in = self.sign_in.clone();
         #[cfg(feature = "host-clients")]
         let host = self.host.clone();
         move || {
+            sign_in.cancel();
             #[cfg(feature = "host-clients")]
             host.invalidate();
             Self::stop_shared_recording(&recording);
@@ -584,6 +587,7 @@ impl SuspensionHandle {
     }
 
     pub fn suspend(&self) {
+        self.sign_in.set_foreground(false);
         #[cfg(feature = "host-clients")]
         self.host.invalidate();
         self.stop_recording();
@@ -644,6 +648,8 @@ impl NativeLifecycle {
         if std::mem::take(&mut self.deferred) {
             return false;
         }
+        #[cfg(feature = "live-ssh")]
+        self.suspension.sign_in.set_foreground(true);
         self.update(Lifecycle::resume);
         true
     }

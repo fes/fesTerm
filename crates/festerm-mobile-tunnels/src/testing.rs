@@ -225,3 +225,30 @@ impl<F: Fn() -> BoxStream + Send + Sync> BridgeConnector for StreamConnector<F> 
         Box::pin(async move { Ok((self.0)()) })
     }
 }
+
+/// Holds the exact pre-persistence seam with a fake callback, without vault IO.
+/// Available only to offline test builds.
+pub fn sign_in_commit_fixture<R>(
+    activity: crate::SignInForeground,
+    commit: impl FnOnce() -> R,
+) -> Result<R, ClientError> {
+    crate::sign_in_activity::ForegroundIdentity {
+        transport: (),
+        activity: Some(activity),
+    }
+    .commit(&CancellationToken::new(), commit)
+}
+
+/// A ready device-code worker result, without network or credential IO.
+pub fn pending_sign_in_fixture(activity: crate::SignInForeground) -> crate::SignIn {
+    crate::SignIn {
+        prompt: crate::SignInPrompt {
+            user_code: "ABCD-1234".into(),
+            verification_url: festerm_tunnel_client::identity::VERIFICATION_URI.into(),
+            expires_in: std::time::Duration::from_secs(900),
+        },
+        state: std::sync::Arc::new(std::sync::Mutex::new(crate::SignInState::Waiting)),
+        cancel: CancellationToken::new(),
+        privacy_cancel: Some(activity.cancellation_token()),
+    }
+}

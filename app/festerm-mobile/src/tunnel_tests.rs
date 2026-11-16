@@ -918,3 +918,35 @@ fn signing_out_the_selected_account_clears_its_draft_and_it_cannot_be_saved() {
         Some("Sign in with GitHub first")
     );
 }
+
+#[test]
+fn device_sign_in_native_suspend_pauses_without_frame_and_resume_finishes_once() {
+    let rig = rig(None, false, true);
+    let mut native = NativeLifecycle::new(rig.app.lifecycle.clone(), rig.app.sink.live.clone());
+    native.resumed(); // Resume precedes activity capture/client lookup.
+    let activity = rig.app.sink.live.sign_in.capture();
+    let client = rig.app.tunnel.client.clone().unwrap();
+    let cancel = festerm_mobile_tunnels::CancelToken::new();
+    let flow = client
+        .begin_sign_in_with_activity(None, &cancel, Some(activity))
+        .unwrap();
+    assert!(native.suspended(false)); // No egui frame follows this callback.
+    std::thread::sleep(Duration::from_secs(6));
+    assert_eq!(flow.state(), festerm_mobile_tunnels::SignInState::Waiting);
+    native.resumed();
+    native.resumed();
+    assert!(matches!(
+        flow.wait(Duration::from_secs(2)),
+        festerm_mobile_tunnels::SignInState::Done(_)
+    ));
+    let stale = rig.app.sink.live.sign_in.capture();
+    rig.app.sink.live.content_lock_callback()();
+    assert_eq!(
+        flow.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+    assert!(matches!(
+        client.begin_sign_in_with_activity(None, &cancel, Some(stale)),
+        Err(festerm_mobile_tunnels::TunnelError::Cancelled)
+    ));
+}
