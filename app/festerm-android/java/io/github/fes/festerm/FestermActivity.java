@@ -86,6 +86,7 @@ public final class FestermActivity extends NativeActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        updateImeTarget(0);
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(true);
@@ -343,6 +344,18 @@ public final class FestermActivity extends NativeActivity {
         // Modified chords and system/dead keys retain NativeActivity's handling.
         if (input != null && input.dispatchPlainKey(event)) return true;
         return super.dispatchKeyEvent(event);
+    }
+
+    private void updateImeTarget(int mode) {
+        // Custom/hidden keyboard modes must not become the system IME target.
+        // A one-shot hide after restartInput does not prevent a later IME show.
+        int flag = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        boolean exclude = mode == 0 || mode == 2 || mode == 4;
+        boolean excluded = (getWindow().getAttributes().flags & flag) != 0;
+        if (exclude != excluded) {
+            if (exclude) getWindow().addFlags(flag);
+            else getWindow().clearFlags(flag);
+        }
     }
 
     public void keyboardMode(int mode) {
@@ -1119,6 +1132,7 @@ public final class FestermActivity extends NativeActivity {
         }
 
         void mode(int mode) {
+            updateImeTarget(mode);
             if (keyboardMode == mode) return;
             clearKeyState();
             connection = null;

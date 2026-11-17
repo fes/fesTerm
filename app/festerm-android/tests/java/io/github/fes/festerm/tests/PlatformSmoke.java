@@ -46,6 +46,27 @@ public final class PlatformSmoke extends Instrumentation {
         if (failure.get() != null) throw new AssertionError(failure.get());
     }
 
+    private static void keyboardImeOwnership(FestermActivity activity) {
+        int ime = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        int secure = WindowManager.LayoutParams.FLAG_SECURE;
+        activity.keyboardMode(0);
+        require((activity.getWindow().getAttributes().flags & ime) != 0,
+            "initial/equal Hidden mode excludes system IME target");
+        activity.privacy(true, false, true);
+        for (int mode : new int[]{2, 1, 4, 3, 0, 3, 2, 4, 1, 0}) {
+            activity.keyboardMode(mode);
+            int flags = activity.getWindow().getAttributes().flags;
+            boolean customOrHidden = mode == 0 || mode == 2 || mode == 4;
+            require(((flags & ime) != 0) == customOrHidden,
+                "window IME target matches keyboard mode " + mode);
+            require((flags & secure) != 0, "keyboard mode retains secure window policy");
+            activity.keyboardMode(mode);
+            require(activity.getWindow().getAttributes().flags == flags,
+                "equal keyboard mode preserves window flags");
+        }
+        activity.privacy(false, false, false);
+    }
+
     /** Real Java/IME/JNI path; sequence counts detect duplicate or missing emissions. */
     private static void orderedPlainKeys(FestermActivity activity, View input) throws Exception {
         Field sequence = input.getClass().getDeclaredField("sequence");
@@ -674,6 +695,7 @@ public final class PlatformSmoke extends Instrumentation {
             Field inputField = FestermActivity.class.getDeclaredField("input");
             inputField.setAccessible(true);
             View input = (View) inputField.get(activity);
+            onMain(() -> keyboardImeOwnership(activity));
             postedAccentOwnershipTransition(activity, input);
             onMain(() -> {
                 try { orderedPlainKeys(activity, input); }

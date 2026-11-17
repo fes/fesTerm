@@ -35,8 +35,13 @@ their existing backend selection and IME behavior. The shared keyboard modes
 map onto one text-aware input view. The system keyboard serves the native
 keyboard and form fields. For the app-owned keyboards (`Terminal` and
 `FieldCustom`) the same client stays focused, so hardware and field-targeted
-input still work, but the system keyboard is hidden rather than layered over
-the app's own keys.
+input still work. Hidden and app-owned modes (`0`, `2`, `4`) set the app
+window's `FLAG_ALT_FOCUSABLE_IM`; system/native modes (`1`, `3`) clear it
+before restarting/showing the IME. Initial Hidden mode applies the same policy.
+This excludes the app window as an IME target while its own keyboard is selected,
+rather than relying on a one-shot hide after `restartInput`. It preserves window
+focus, `FLAG_SECURE` and lifecycle/input-owner guards; it changes no OS preference
+or permission. See the [AOSP window-flag contract](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/view/WindowManager.java#L2804-L2821).
 
 The shared terminal keyboards split around a vertical fold or hinge. The
 activity reads `FoldingFeature` bounds through the optional platform
@@ -110,12 +115,16 @@ selection, incompatible modes and receipt/output isolation. Actual authenticated
 Dev Tunnel use against Windows, macOS and Linux remains MOB-06 native evidence;
 build success does not establish those flows or physical-device qualification.
 
-With an active owned input connection, ordinary printable hardware and edit
-keys enter the existing guarded Java/JNI input queue used by IME commits, preventing a later hardware batch from being
-appended ahead of an earlier IME batch. Matching consumed releases do not emit
-text; mode, field, focus and privacy changes retire input ownership. Modified
-chords, system keys and dead-key composition retain native dispatch. The
-PlatformSmoke ordering/ownership/delegation regression compiles; its native
-execution and physical keyboard/IME qualification remain required under MOB-02.
-The existing NativeActivity fallback while an input connection is unavailable
-is preserved; ordering across a restart gap needs separate native qualification.
+Java-dispatched ordinary printable/edit keys and IME commits share the existing
+guarded JNI queue while an owned input connection is active. NativeActivity may
+handle real keys before view/Activity dispatch; synthetic Java tests therefore
+cannot establish ordering of an actual hardware/ADB stream. See the [AOSP input
+pipeline](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/view/ViewRootImpl.java#L1648-L1660).
+Matching consumed releases emit no text; mode, field, focus and privacy changes
+retire input ownership. Modified chords, system keys and dead-key composition
+retain native dispatch. `PlatformSmoke` covers Java/JNI ownership transitions
+and window IME eligibility for all five modes, including `FLAG_SECURE`
+preservation. Actual single-call hardware/ADB order, restart gaps, composition
+and exactly-one-keyboard behavior through custom/system/form switching remain
+native acceptance under MOB-02/MOB-06. The window policy alone does not prove
+all ingress ordering or physical-device qualification.

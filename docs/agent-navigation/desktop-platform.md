@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7f60ee09a5aaf3d48041e4f2ad99fed23c24a0d55dbbf91463ea90747473704e"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "2130ab0060e49778b54a462079fe52cf7d98e41ea9df9a499007efcf4f1dd9b3"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,11 +12,12 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Which install marker, updater key, and package metadata are required for a release build?
 
-- [`main`](../../app/festerm/build.rs) — embeds the Windows icon and build-time packaging hook for release binaries
-- [`from_build`](../../app/festerm/src/updates.rs) — reads the installation marker and updater public-key gate at build time
-- [`packaging/linux.toml`](../../packaging/linux.toml) — Linux appimage/deb formats and desktop metadata for packaged releases
-- [`packaging/macos.toml`](../../packaging/macos.toml) — macOS DMG packaging and Info.plist wiring for native builds
-- [`packaging/windows.toml`](../../packaging/windows.toml) — NSIS install metadata and runtime file staging for Windows packages
+- [`main`](../../app/festerm/build.rs) — embeds Windows icon and release-only packaging hook
+- [`UpdateController`](../../app/festerm/src/updates.rs) — reads build marker and public key to gate update checks
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — maps package markers to self-update eligibility
+- [`packaging/linux.toml`](../../packaging/linux.toml) — AppImage/deb metadata and desktop entry layout
+- [`packaging/macos.toml`](../../packaging/macos.toml) — DMG and Info.plist packaging for native app bundles
+- [`packaging/windows.toml`](../../packaging/windows.toml) — NSIS staging and install metadata
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — release builds reject missing updater verification keys
@@ -31,8 +32,8 @@ Caveats:
 
 Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — real-window smoke driver checking focus, resize, and PTY output
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — accepts exactly one smoke mode and a required result-path environment variable
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — real-window smoke driver checks focus, resize, and PTY output
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — accepts exactly one smoke mode and a required result path
 
 Evidence:
 - [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — only one smoke mode and an explicit result path are accepted
@@ -52,7 +53,7 @@ Use for: What should I read when a Finder open event or macOS menu action breaks
 
 Evidence:
 - [`open_document_bridge_buffers_paths_and_errors_until_drained`](../../crates/festerm-macos-window/src/lib.rs) — bounded queues preserve FIFO order and drain without unbounded retention
-- [`native_menu_sync_skips_repeated_updates_but_retries_pending_work`](../../crates/festerm-macos-window/src/lib.rs) — the menu bridge retries startup state without repeated stale updates
+- [`native_menu_sync_skips_repeated_updates_but_retries_pending_work`](../../crates/festerm-macos-window/src/lib.rs) — menu bridge retries startup state without repeated stale updates
 
 Caveats:
 - Open-document bridges must drain early events before UI attaches or Finder races can be lost.
@@ -69,7 +70,7 @@ Use for: What should I read when resume-from-sleep, lock-screen, or privacy call
 
 Evidence:
 - [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — resume broadcasts wake while unrelated power events are ignored
-- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — a real GNOME screen-shield transition is the privacy cutoff
+- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — real GNOME screen-shield transition is the privacy cutoff
 - [`unavailable_locked_or_foreign_shell_fails_closed`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — unsupported or foreign shells are treated as privacy loss
 
 Caveats:

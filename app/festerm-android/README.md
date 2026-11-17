@@ -121,17 +121,20 @@ input queue, not the host view.
   remain manual. The development keystore must never be committed or used as
   a release key; the signer refuses it.
 
-Android ordinary printable/edit/navigation key events and IME commits use the same
-bounded JNI input queue while the current input owner is focused and active.
-Modified chords, system keys and dead-accent sequences retain the NativeActivity
-path. `PlatformSmoke` checks mixed-source order, exactly-once emission, masked
-secure context, and retired/covered connection rejection. Host compilation is
-not native input qualification: emulator/device checks must still verify actual
-ADB text order, composition, modifiers and focus changes (ADR 0073/MOB-06).
+Hidden/custom keyboard modes (`0`, `2`, `4`) exclude the app window as a system
+IME target with `FLAG_ALT_FOCUSABLE_IM`; native/system modes (`1`, `3`) clear it
+before showing the system keyboard. Initial Hidden mode follows the same rule.
+Window focus, secure-window flags and existing input-owner guards are preserved;
+no OS keyboard preference or permission changes. A one-shot hide alone cannot
+prevent a later Gboard show over the custom keys.
 
-The ordering correction applies while an active owned InputConnection exists.
-When no connection exists during restart/focus handoff, the existing NativeActivity
-fallback remains; stale-connection rejection does not establish ordering across
-that gap. Native qualification must include a real connection restart followed by
-text input, plus same-turn dead-accent/character delivery and a subsequent plain
-key after Android drains the posted events.
+Java-dispatched ordinary keys and IME commits share the guarded JNI queue;
+NativeActivity can handle actual keys before Activity dispatch. `PlatformSmoke`
+checks Java/JNI ownership, exactly-once emission, masking, stale/covered rejection
+and actual window-flag transitions. These checks do not establish actual ADB order.
+Native acceptance must verify single-call `clear`, `python3` and repeated/long
+public text, exactly one visible keyboard through custom/system/form switching
+and hardware input/restart, Unicode composition, modifiers and focus changes.
+Connection-null/restart ordering and uninterrupted actual-field composition remain
+native checks (ADR 0073, MOB-02/MOB-06); no all-ingress success is inferred from
+host compilation or window flags alone.

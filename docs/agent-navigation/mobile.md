@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "fd15ced831ff29503251cda7cffcbfcefbdfbb8fbed6ab1335f9abcc89489d78"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8a9b70de1664db4e9aabc9aed745b320a3edfe28f9e427ecb9da189564315b26"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The mobile domain owns the shared Rust runtime, Android JNI bridge, and offline-first host, tunnel, and session flows for iOS and Android.
+The mobile domain owns the shared Rust runtime, Android JNI bridge, and offline-first host, tunnel, and document flows for iOS and Android.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
@@ -12,11 +12,10 @@ Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.m
 
 Use for: When a task starts from app launch or needs lifecycle, shell, lock, or suspension policy.
 
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, documents, lock, and live session plumbing.
-- [`run_native`](../../app/festerm-mobile/src/runtime.rs) — Boots the native event loop and platform-specific mobile runtime.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and live session plumbing.
 
 Evidence:
-- [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Proves content stays hidden until auth succeeds and relock hides it again.
+- [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Shows content stays hidden until auth succeeds and relock hides it again.
 
 Caveats:
 - Offline stays default; live SSH is prototype-only.
@@ -28,11 +27,10 @@ Caveats:
 Use for: When a task needs account-scoped discovery, inventory, profile review, or explicit owner approval.
 
 - [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Tracks inventory, approvals, originals, and attach actions.
-- [`host_action`](../../app/festerm-mobile/src/host_clients.rs) — Dispatches ordinary and advanced review actions with lock and foreground checks.
 
 Evidence:
-- [`mobile_host_gallery_recovery_displays_cannot_dispatch`](../../app/festerm-mobile/src/host_clients_tests.rs) — Shows synthetic HOST galleries cannot dispatch real host actions.
-- [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Proves adoption before Running and lock fencing for installed HOST sessions.
+- [`mobile_host_gallery_recovery_displays_cannot_dispatch`](../../app/festerm-mobile/src/host_clients_tests.rs) — Synthetic HOST galleries cannot dispatch real host actions.
+- [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Proves adoption before running and lock fencing for installed HOST sessions.
 
 Caveats:
 - Ordinary discovery binds the provider route automatically; owner pairing is advanced-only.
@@ -86,7 +84,6 @@ Caveats:
 Use for: When a task touches Dev Tunnel sign-in, listing, approval, resume, or session takeover.
 
 - [`TunnelClient`](../../crates/festerm-mobile-tunnels/src/lib.rs) — Runs GitHub device flow, tunnel discovery, approval, and attach lifecycle.
-- [`Attachment`](../../crates/festerm-mobile-tunnels/src/lib.rs) — Represents an approved tunnel attachment and its end reason.
 
 Evidence:
 - [`healthy_resume_retains_active_and_parked_tunnels_and_coalesces_notifications`](../../app/festerm-mobile/src/tunnel_tests.rs) — Validates tunnel resume and notification coalescing across lock and wake.
