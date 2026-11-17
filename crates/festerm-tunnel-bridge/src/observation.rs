@@ -1348,8 +1348,14 @@ mod tests {
             let path = crate::test_support::private_directory("festerm-observation-registry");
             let pid = std::process::id();
             let generation = 123456u128;
-            let endpoint = path.join(format!("{pid}-{generation}.sock"));
-            std::fs::write(&endpoint, b"not a terminal attachment").unwrap();
+            #[cfg(unix)]
+            let endpoint = {
+                let endpoint = path.join(format!("{pid}-{generation}.sock"));
+                std::fs::write(&endpoint, b"not a terminal attachment").unwrap();
+                endpoint.to_str().unwrap().to_owned()
+            };
+            #[cfg(windows)]
+            let endpoint = format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}");
             let lease = std::fs::OpenOptions::new()
                 .create_new(true)
                 .read(true)
@@ -1360,7 +1366,7 @@ mod tests {
             std::fs::write(
                 path.join("registry.json"),
                 serde_json::to_vec(&serde_json::json!({"sessions":{"observe-test":{
-                    "name":"observe-test","pid":pid,"socket":endpoint.to_str().unwrap(),
+                    "name":"observe-test","pid":pid,"socket":endpoint,
                     "created_at_unix_ms":generation,"attached":true,"attached_by":"remote",
                     "correlation_id":format!("fesTerm:{pid}:{generation}")
                 }}}))
@@ -1371,7 +1377,7 @@ mod tests {
                 name: "observe-test".into(),
                 pid,
                 created_at_unix_ms: generation,
-                endpoint: endpoint.to_str().unwrap().into(),
+                endpoint,
             };
             Self {
                 path: path.clone(),
@@ -1400,6 +1406,11 @@ mod tests {
     #[tokio::test]
     async fn observation_native_generation_and_stream_contract_refuse_replay_and_expiry() {
         let fixture = RegistryFixture::new();
+        assert!(fixture
+            .generation
+            .check(&CancellationToken::new())
+            .unwrap()
+            .is_some());
         let (path, state, root) = state();
         std::fs::write(path.join("large"), b"native bytes").unwrap();
         let bytes = serde_json::to_vec(&rpc::Open {
