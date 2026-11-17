@@ -3839,6 +3839,9 @@ fn mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once() 
             name: "Shared shell".into(),
         });
     let (mut app, calls) = ordinary_mobile_ui_fixture(context, inventory, _root.path());
+    // Provider-created hosts carry the friendly label in description, not name.
+    app.hosts.hosts[0].name = None;
+    app.hosts.hosts[0].description = Some("Lab Linux host".into());
     let ctx = egui::Context::default();
     app.host_action(&ctx, Action::SelectHost(0)).unwrap();
     wait_for_discovery(&mut app, &ctx);
@@ -3847,6 +3850,13 @@ fn mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once() 
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(app.hosts.context().unwrap().binding(), &binding);
+    let selected = app.hosts.selected.as_ref().unwrap();
+    assert_eq!(selected.name, "Lab Linux host");
+    assert_eq!(selected.host_hint.as_ref().unwrap().name, "Lab Linux host");
+    assert_eq!(
+        selected.host_hint.as_ref().unwrap().locator,
+        app.hosts.locator
+    );
     assert_eq!(
         &app.hosts.selected.as_ref().unwrap().host.id,
         binding.host()

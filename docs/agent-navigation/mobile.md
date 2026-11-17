@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "353b66911e8e0ece69f8880456e7ae609fcab411e732048a3f6e4439b3fe16b0"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "58ee734f4b64e6ecbe102153ca677c07f5aa69cb2a220bb0fad7a03361ee99bd"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,8 +12,8 @@ Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.m
 
 Use for: When a task starts from app launch or needs lifecycle, shell, lock, or suspension policy.
 
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and live session plumbing.
 - [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Tracks active, resume, suspend, and memory warning state.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and live session plumbing.
 
 Evidence:
 - [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Shows content stays hidden until auth succeeds and relock hides it again.
@@ -28,10 +28,8 @@ Caveats:
 Use for: When a task needs account-scoped discovery, inventory, profile review, or explicit owner approval.
 
 - [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Tracks inventory, approvals, originals, and attach actions.
-- [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates approval receipts before a saved profile can connect.
 
 Evidence:
-- [`mobile_host_gallery_recovery_displays_cannot_dispatch`](../../app/festerm-mobile/src/host_clients_tests.rs) — Synthetic HOST galleries cannot dispatch real host actions.
 - [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Proves adoption before running and lock fencing for installed HOST sessions.
 
 Caveats:
@@ -44,7 +42,6 @@ Caveats:
 Use for: When a task needs markdown preview, protected save-open-import, or native review boundaries.
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview state, and dirty-save policy.
-- [`dictation_target`](../../app/festerm-mobile/src/documents.rs) — Rejects stale native edits and keeps dictation in the correct view.
 
 Evidence:
 - [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs) — Locks native document edits away from the terminal session.
@@ -59,7 +56,6 @@ Caveats:
 Use for: When a task touches transient SSH trust, authentication, suspend, or reconnect behavior.
 
 - [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Holds transient SSH state, prompts, and recovery logic.
-- [`connect`](../../app/festerm-mobile/src/live_ssh.rs) — Starts a fresh SSH session with explicit host or password decisions.
 
 Evidence:
 - [`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Proves explicit trust and password retry for loopback SSH.
@@ -74,7 +70,6 @@ Caveats:
 Use for: When Android-only services, insets, gestures, or secrets touch the native boundary.
 
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
-- [`take_input`](../../crates/festerm-android-platform/src/native.rs) — Drains queued native input and notifies Java when consumed.
 
 Evidence:
 - [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording service boundaries.
@@ -89,7 +84,6 @@ Caveats:
 Use for: When a task touches Dev Tunnel sign-in, listing, approval, resume, or session takeover.
 
 - [`TunnelClient`](../../crates/festerm-mobile-tunnels/src/lib.rs) — Runs GitHub device flow, tunnel discovery, approval, and attach lifecycle.
-- [`begin_sign_in`](../../crates/festerm-mobile-tunnels/src/lib.rs) — Starts the GitHub device flow and binds the account to a tunnel session.
 
 Evidence:
 - [`healthy_resume_retains_active_and_parked_tunnels_and_coalesces_notifications`](../../app/festerm-mobile/src/tunnel_tests.rs) — Validates tunnel resume and notification coalescing across lock and wake.

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "host-workspace-narrow",
+      "section": "experimental-surfaces",
+      "title": "Find & Connect \u00b7 narrow host session list",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-workspace-narrow.png",
+      "width": 612,
+      "height": 789,
+      "tier": "headless",
+      "sha256": "9cdd1684b7ccff1b9b69db38bb3ca89bbaa751a580897fbddbe4c7b955c45679"
+    },
+    {
+      "id": "host-workspace-new-shell",
+      "section": "experimental-surfaces",
+      "title": "Find & Connect \u00b7 host default shell and optional local shortcut",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-workspace-new-shell.png",
+      "width": 960,
+      "height": 397,
+      "tier": "headless",
+      "sha256": "6997c067a57ef5c14add8fe4a52e932ad824499f89a157af9e68538ea57b0efc"
+    },
+    {
+      "id": "host-workspace-new-shell-narrow",
+      "section": "experimental-surfaces",
+      "title": "Find & Connect \u00b7 narrow new shell form",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-workspace-new-shell-narrow.png",
+      "width": 612,
+      "height": 596,
+      "tier": "headless",
+      "sha256": "9f26467325dacdc25fad8c3497f4f374e57dca1c087e6dbf41e2f82746ec3584"
+    },
+    {
+      "id": "host-workspace-sessions",
+      "section": "experimental-surfaces",
+      "title": "Find & Connect \u00b7 host session table",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-workspace-sessions.png",
+      "width": 960,
+      "height": 380,
+      "tier": "headless",
+      "sha256": "eb7742297717246dc51e9871cd31207f943e61705f0baa86bd637ff88fcb04f1"
+    }
+  ],
+  "capture": {
+    "started_utc": "2026-11-17T21:20:53.810635+00:00",
+    "source_revision": "6f0a3f656e40f831cd7c4d288ba2e36ca7b643c1",
+    "source_dirty": true,
+    "source_tree_sha256": "8ed7c7217aad5513464b7b948bbb4ff0eefc2c4dfd3925d780d564c5399564e0",
+    "system": "Darwin",
+    "release": "27.2.0",
+    "machine": "arm64",
+    "scope": "Production egui widgets, headless wgpu; not native compositor or usability acceptance",
+    "isolation": "Fresh repository-owned HOME/XDG directories; synthetic fixtures, no personal profile/credentials/clipboard",
+    "producer": {
+      "binary_sha256": "c0b7f94fea492d2e7d77dd989d4fee101110be6841860eff338097dfe99fab13",
+      "build_source_revision": "921f7d85f3007d137f2410d58bb1684770d89003",
+      "build_source_dirty": true,
+      "widget_source_revision": "6f0a3f656e40f831cd7c4d288ba2e36ca7b643c1",
+      "widget_files_sha256": {
+        "app/festerm/src/host_browser.rs": "c22e1fad50b334a3533b31b575ef1657bb41f211aab196646594957d205cc6a2",
+        "app/festerm/src/host_browser_tests.rs": "4e7bb12489d0f795b968f4377446ee202ad6da2b025d6b44bb374b20908bca7c",
+        "app/festerm/src/screens/host_workspace.rs": "58a04e7dca1b4716f8b0627594d3ad5b019fb2a36bc613552671f817e9317019",
+        "app/festerm/src/ui_gallery/experimental.rs": "fb0c51c20d52b453168759b9bb7745e0af7c10622812a92ab4b747b280418a1c",
+        "app/festerm/src/ui_gallery/experimental-routes.json": "734274862d26b3fe23e5776aa543f34f0872b127fa41846f711a87e2e2af288f"
+      },
+      "qualification": "Recorded dirty-build widget files equal the committed capture source; other changed Desktop dependency path is a cfg(test)-only bridge test module. No binary rebuild is claimed."
+    },
+    "completed_utc": "2026-11-17T21:20:56.414895+00:00"
+  }
+}
