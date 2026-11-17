@@ -1137,6 +1137,7 @@
         "windows_stdio_eof_revokes_while_stdout_is_blocked",
         "full_windows_pipe_retries_only_after_rechecking_revocation",
         "windows_stdout_inherited_pipe_nowait_probe",
+        "windows_stdout_positive_partial_write_feasibility",
         "windows_stdout_probe_reports_initial_mode_before_later_failure",
         "windows_stdout_probe_startup_drain_handles_empty_and_actual_bytes",
         "windows_stdout_probe_stalled_processes_are_supervised",

@@ -77,6 +77,7 @@ printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-tunnel-task-xml status=skipped reason=windows-required\n' >>"$result_path"
+printf 'suite=windows-stdout-positive-partial-feasibility status=skipped reason=use-windows-powershell-runner\n' >>"$result_path"
 if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
     [ "${FESTERM_ANDROID_NATIVE_INDEX_VALIDATION:-}" = "1" ]; then
     if python3 scripts/build-android.py --offline --recording-validation --install \

@@ -213,6 +213,24 @@ if ($env:FESTERM_RUN_DEV_TUNNEL_LAB -eq '1') {
     Write-OptionalResult "`nsuite=dev-tunnel-workflow status=skipped reason=explicit-controlled-account-opt-in-required"
 }
 
+if ($env:OS -ne 'Windows_NT') {
+    Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=skipped reason=windows-required"
+} elseif ($env:FESTERM_RUN_WINDOWS_STDOUT_FEASIBILITY -eq '1') {
+    Get-Command cargo -CommandType Application -ErrorAction Stop | Out-Null
+    Invoke-NativeCommand {
+        cargo test --locked -p festerm-windows-security --test windows_stdout_probe `
+            windows_stdout_positive_partial_write_feasibility -- --exact --ignored --nocapture --test-threads=1
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=pass production_stdout=unqualified"
+    } else {
+        Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=fail production_stdout=unqualified"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=skipped reason=explicit-opt-in"
+}
+
 if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {
     try {
         Invoke-WindowsPublisherValidation

@@ -4342,17 +4342,26 @@ do not establish independent provenance or native usability.
 Linux CI explicitly runs the unfiltered-only native fault-injection test;
 ordinary filtered-container runs check inconclusive handling, not the holes.
 
-The Windows inherited-stdout probe is a bounded feasibility experiment, not
-AUTO-03 or AUTO-04 acceptance. On native Windows run
+The Windows inherited-stdout runtime contract test and separate positive-partial
+feasibility experiment are not AUTO-03 or AUTO-04 acceptance. On native Windows run
 `cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
 Its control-parser tests also run on other platforms with
 `cargo test --locked -p festerm-windows-security --test windows_stdout_probe_control`.
 The helper is job-contained and the controller drains observed test-harness
 output before attempting the initial pipe mode change; a refusal remains a
-failure even if a later diagnostic retry succeeds. It requires an actual
-positive partial write, an observed one-byte backpressure condition, and
-physical byte accounting; neither a zero write nor drained occupancy proves a
-partial write. A prior native run failed on initial error 231 and observed no
+failure even if a later diagnostic retry succeeds. The mandatory test requires
+an observed one-byte backpressure condition, exact physical accounting of every
+returned write count, bounded cleanup, restored modes and clean control EOF.
+It accepts documented zero, full or short counts without claiming a positive
+partial was observed. The separate strict experiment still requires an actual
+positive partial; neither a zero write nor drained occupancy proves one. Run it
+explicitly with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe windows_stdout_positive_partial_write_feasibility -- --exact --ignored --nocapture --test-threads=1`.
+It is also registered in the optional PowerShell aggregate under
+`FESTERM_RUN_OPTIONAL_VALIDATION=1` and `FESTERM_RUN_WINDOWS_STDOUT_FEASIBILITY=1`;
+the POSIX aggregate records the Windows prerequisite. Production stdout remains
+disabled/unqualified regardless of either result. A prior native run failed on
+initial error 231 and observed no
 positive partial. The revised
 [native run](https://github.com/fes/fesTerm/actions/runs/42516446589) succeeded
 in the initial mode change after draining 16 startup bytes, but also failed to
