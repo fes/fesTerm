@@ -2643,12 +2643,6 @@ pub enum AppCommand {
         host: crate::screens::host_workspace::HostChoice,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
-    ConnectHostRecipe {
-        tab_id: TabId,
-        request: egui::Id,
-        recipe: Box<festerm_config::host_recipes::PublicRecipe>,
-    },
-    #[cfg(feature = "experimental-dev-tunnels")]
     SelectHostForProfile {
         tab_id: TabId,
         request: egui::Id,
@@ -4994,8 +4988,7 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReauthenticateHostAccount(_)
             | AppCommand::FindDevTunnelHosts { .. }
-            | AppCommand::ReviewDevTunnelHost { .. }
-            | AppCommand::ConnectHostRecipe { .. } => {}
+            | AppCommand::ReviewDevTunnelHost { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReviewHostFromProfiles { .. } => {}
             #[cfg(feature = "local-host-settings")]

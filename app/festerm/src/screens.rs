@@ -4079,7 +4079,7 @@ pub fn show_launcher(
                         }
                         ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new("Connect to a host")
+                            egui::RichText::new("Find & Connect")
                                 .size(24.0)
                                 .color(theme::TEXT_PRIMARY),
                         );
@@ -4088,6 +4088,9 @@ pub fn show_launcher(
                             {
                                 command = host_workspace::show(ui, tab_id, configuration);
                             }
+                            ui.add_space(16.0);
+                            ui.separator();
+                            ui.small("Advanced");
                             ui.collapsing("Legacy single-session tunnel", |ui| {
                                 if let Some(legacy) = show_dev_tunnel_form(
                                     ui,
@@ -7504,7 +7507,7 @@ mod tests {
 
     #[cfg(feature = "experimental-dev-tunnels")]
     #[test]
-    fn the_dev_tunnel_card_opens_the_inline_form_not_the_profile_editor() {
+    fn the_dev_tunnel_card_opens_find_connect_directory_without_execution_or_legacy_form() {
         let mut harness = dev_tunnel_form_harness(Vec::new());
         harness.run();
         harness
@@ -7512,12 +7515,77 @@ mod tests {
             .click();
         harness.run();
         assert!(harness.state().command.is_none());
-        assert!(harness.query_by_label("Connect to a host").is_some());
+        assert!(harness.query_by_label("Find & Connect").is_some());
+        assert!(harness.query_by_label("GitHub account").is_some());
+        assert!(harness.query_by_label("Choose a host").is_some());
+        assert!(harness
+            .query_by_label("Sign in to GitHub to find your hosts.")
+            .is_some());
         assert!(harness.query_by_label("Tunnel name or id").is_none());
 
         harness.key_press(egui::Key::Escape);
         harness.run();
-        assert!(harness.query_by_label("Connect to a host").is_none());
+        assert!(harness.query_by_label("Find & Connect").is_none());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn signed_in_dev_tunnel_first_tile_starts_only_directory_discovery_in_split_workspace() {
+        let mut harness = dev_tunnel_form_harness(Vec::new());
+        let account = festerm_config::DevTunnelAccount::new(
+            "github-first-entry",
+            festerm_config::AccountProvider::Github,
+            424242,
+            "developer",
+            festerm_secret_store::SecretReference::generate(),
+        )
+        .unwrap();
+        harness.state_mut().configuration = harness
+            .state()
+            .configuration
+            .with_account(account)
+            .unwrap()
+            .0;
+        harness.run();
+        harness
+            .get_by_label_contains("Dev Tunnel · Experimental")
+            .click();
+        harness.run_steps(3);
+        let Some(AppCommand::FindDevTunnelHosts {
+            tab_id,
+            request,
+            account,
+        }) = &harness.state().command
+        else {
+            panic!("first entry requests only the account directory")
+        };
+        assert_eq!(*tab_id, harness.state().tab_id);
+        assert_eq!(account, "github-first-entry");
+        harness.get_by_label("Finding hosts…");
+        assert!(host_workspace::discovery_is_current(
+            &harness.ctx,
+            *tab_id,
+            *request,
+            account
+        ));
+        let (tab_id, request, account) = (*tab_id, *request, account.clone());
+        let sidebar = harness.get_by_label("GitHub account").rect();
+        let detail = harness.get_by_label("Choose a host").rect();
+        assert!(
+            sidebar.right() < detail.left(),
+            "first entry already has the split workspace"
+        );
+        assert!(harness.query_by_label("Tunnel name or id").is_none());
+        assert!(harness.query_by_label("Create & Connect").is_none());
+        assert!(harness.query_by_label("Prepare client key").is_none());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert!(!host_workspace::discovery_is_current(
+            &harness.ctx,
+            tab_id,
+            request,
+            &account
+        ));
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]

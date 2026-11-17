@@ -90,7 +90,6 @@ struct State {
     for_profile: bool,
     reauthentication_generation: Option<egui::Id>,
     selected_reference: Option<HostReference>,
-    automatic_open: bool,
 }
 
 fn state_id(tab: TabId) -> egui::Id {
@@ -130,7 +129,6 @@ pub(crate) fn cancel(context: &egui::Context, tab: TabId) {
         };
         state.request = None;
         state.reauthentication_generation = None;
-        state.automatic_open = false;
         for account in &mut state.accounts {
             account.request = None;
             account.reauthentication = None;
@@ -335,7 +333,6 @@ pub(crate) fn install_gallery_state(context: &egui::Context, tab: TabId, unavail
                     error: unavailable.then(|| "Host unavailable. Try again.".to_owned()),
                     queued: false,
                 }],
-                automatic_open: true,
                 ..Default::default()
             },
         )
@@ -413,8 +410,64 @@ fn saved_host(recipe: &PublicRecipe, configuration: &Configuration) -> Option<Ho
     })
 }
 
+/// Launcher entry has no selected host, receipt or execution authority. Reuse the
+/// selected-host sidebar while keeping discovery feedback in the detail column.
 pub(crate) fn show(ui: &mut Ui, tab: TabId, configuration: &Configuration) -> Option<AppCommand> {
-    show_mode(ui, tab, configuration, false)
+    ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
+    let account_key = configuration
+        .accounts()
+        .first()
+        .map(|account| account.identifier())
+        .unwrap_or_default();
+    let compact = ui.available_width() < 680.0;
+    let mut command = None;
+    ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+    ui.scope_builder(egui::UiBuilder::new().layout(if compact {
+        egui::Layout::top_down(egui::Align::Min)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Min)
+    }), |ui| {
+        ui.vertical(|ui| {
+            ui.set_width(if compact { ui.available_width() } else { 180.0 });
+            if let Some(BrowserNavigation::Command(next)) = show_sidebar(ui, tab, configuration, account_key, "", "", false) {
+                command = Some(*next);
+            }
+        });
+        if compact { ui.separator(); } else { ui.add_space(16.0); }
+        ui.vertical(|ui| {
+            ui.set_max_width(ui.available_width());
+            ui.heading("Choose a host");
+            let id = state_id(tab);
+            let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
+            let selected = ui.data(|data| data.get_temp::<String>(egui::Id::new(("host_sidebar_account", tab)))).unwrap_or_default();
+            if let Some(account) = configuration.account(&selected) {
+                let row = state.accounts.iter_mut().find(|row| row.account == selected).expect("sidebar synchronizes accounts");
+                if let Some(error) = &row.error {
+                    ui.add(egui::Label::new(error).wrap());
+                    if let Some(next) = reauthentication_button(ui, row, account, state.reauthentication_generation) { command = Some(next); }
+                } else if row.request.is_some() || row.queued {
+                    ui.horizontal(|ui| { ui.spinner(); ui.add(egui::Label::new("Finding hosts…").wrap()); });
+                } else if row.hosts.as_ref().is_some_and(Vec::is_empty) {
+                    ui.add(egui::Label::new("No hosts found for this account.").wrap());
+                    ui.add(egui::Label::new("Enable Remote access in Dev Tunnels Settings on the host, then refresh hosts.").wrap());
+                } else {
+                    ui.add(egui::Label::new("Select a host to see its sessions.").wrap());
+                }
+                if command.is_none() && ui.is_enabled() && ui.input(|input| input.focused)
+                    && !row.automatic_discovery_started && row.request.is_none() && !row.queued {
+                    command = Some(begin_discovery(row, tab));
+                    state.reauthentication_generation = row.request;
+                    ui.ctx().request_repaint();
+                }
+            } else {
+                ui.add(egui::Label::new("Sign in to GitHub to find your hosts.").wrap());
+                if action_button(ui, ActionButtonRole::Secondary, "Open Settings").clicked() { command = Some(AppCommand::OpenSettings); }
+            }
+            if let Some(feedback) = &state.feedback { ui.add(egui::Label::new(feedback).wrap()); }
+            ui.data_mut(|data| data.insert_temp(id, state));
+        });
+    });
+    command
 }
 
 /// What the profile editor's host picker asks of its draft.
@@ -479,19 +532,6 @@ fn begin_discovery(row: &mut AccountResults, tab: TabId) -> AppCommand {
         request,
         account: row.account.clone(),
     }
-}
-
-fn automatic_discovery(state: &mut State, tab: TabId, foreground: bool) -> Option<AppCommand> {
-    if !foreground || state.for_profile {
-        return None;
-    }
-    let row = state
-        .accounts
-        .iter_mut()
-        .find(|row| !row.automatic_discovery_started && row.request.is_none() && !row.queued)?;
-    let command = begin_discovery(row, tab);
-    state.reauthentication_generation = row.request;
-    Some(command)
 }
 
 struct PickerEntry {
@@ -797,8 +837,34 @@ pub(crate) fn show_browser_sidebar(
     locator: &str,
     host_name: &str,
 ) -> Option<BrowserNavigation> {
+    show_sidebar(
+        ui,
+        tab,
+        configuration,
+        account_key,
+        locator,
+        host_name,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_sidebar(
+    ui: &mut Ui,
+    tab: TabId,
+    configuration: &Configuration,
+    account_key: &str,
+    locator: &str,
+    host_name: &str,
+    show_status: bool,
+) -> Option<BrowserNavigation> {
     let id = state_id(tab);
     let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
+    if !show_status && state.for_profile {
+        state.for_profile = false;
+        state.request = None;
+        state.reauthentication_generation = None;
+    }
     sync_accounts(&mut state, configuration, ui.ctx());
     let mut selected = ui
         .data(|data| data.get_temp::<String>(egui::Id::new(("host_sidebar_account", tab))))
@@ -813,7 +879,7 @@ pub(crate) fn show_browser_sidebar(
             configuration
                 .account(&selected)
                 .map(|account| format!("@{}", account.login()))
-                .unwrap_or_default(),
+                .unwrap_or_else(|| "Not signed in".to_owned()),
         )
         .width(ui.available_width())
         .show_ui(ui, |ui| {
@@ -825,7 +891,21 @@ pub(crate) fn show_browser_sidebar(
                 );
             }
         });
+    if configuration.accounts().is_empty() {
+        ui.add_space(16.0);
+        ui.strong("Hosts");
+        ui.small("Sign in to find hosts.");
+    }
     let account_change = if selected != previous_selected {
+        if !show_status {
+            // A directory selection carries no host authority. Retire outstanding
+            // previous-account reads rather than adopting their late completions.
+            for row in &mut state.accounts {
+                row.request = None;
+                row.reauthentication = None;
+                row.queued = false;
+            }
+        }
         let request = egui::Id::new(uuid::Uuid::new_v4());
         state.request = Some(request);
         state.reauthentication_generation = None;
@@ -849,10 +929,10 @@ pub(crate) fn show_browser_sidebar(
                     command = Some(begin_discovery(row, tab));
                     state.reauthentication_generation = row.request;
                 }
-                if row.request.is_some() {
+                if show_status && row.request.is_some() {
                     ui.spinner();
                 }
-                if let Some(error) = &row.error {
+                if let Some(error) = row.error.as_ref().filter(|_| show_status) {
                     ui.add(egui::Label::new(error).wrap());
                     if let Some(next) =
                         reauthentication_button(ui, row, account, state.reauthentication_generation)
@@ -898,165 +978,6 @@ pub(crate) fn show_browser_sidebar(
         data.insert_temp(id, state);
     });
     account_change.or_else(|| command.map(|command| BrowserNavigation::Command(Box::new(command))))
-}
-
-fn show_mode(
-    ui: &mut Ui,
-    tab: TabId,
-    configuration: &Configuration,
-    for_profile: bool,
-) -> Option<AppCommand> {
-    ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
-    let id = state_id(tab);
-    let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
-    if state.for_profile != for_profile {
-        state.request = None;
-        state.reauthentication_generation = None;
-        state.automatic_open = false;
-    }
-    state.for_profile = for_profile;
-    sync_accounts(&mut state, configuration, ui.ctx());
-    if !for_profile && !state.automatic_open {
-        for row in &mut state.accounts {
-            row.automatic_discovery_started = false;
-        }
-        state.automatic_open = true;
-    }
-    let mut command = None;
-    if let Some(message) = &state.feedback {
-        ui.label(message);
-    }
-    if !for_profile && !configuration.host_recipes().is_empty() {
-        ssh_section_heading(ui, "Saved sessions");
-        for recipe in configuration.host_recipes().recipes() {
-            ui.push_id(recipe.id.as_str(), |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(&recipe.name);
-                    if action_button(ui, ActionButtonRole::Accent, "Connect").clicked() {
-                        let request = egui::Id::new(uuid::Uuid::new_v4());
-                        state.request = Some(request);
-                        state.reauthentication_generation = None;
-                        state.feedback = None;
-                        command = Some(AppCommand::ConnectHostRecipe {
-                            tab_id: tab,
-                            request,
-                            recipe: Box::new(recipe.clone()),
-                        });
-                    }
-                });
-            });
-        }
-        ui.add_space(12.0);
-    }
-    ssh_section_heading(ui, "Dev Tunnels");
-    if configuration.accounts().is_empty() {
-        ui.label("Add a GitHub account in Settings.");
-        if action_button(ui, ActionButtonRole::Secondary, "Open Settings").clicked() {
-            command = Some(AppCommand::OpenSettings);
-        }
-    }
-    for account in configuration.accounts() {
-        if !state
-            .accounts
-            .iter()
-            .any(|row| row.account == account.identifier())
-        {
-            state.accounts.push(AccountResults {
-                account: account.identifier().to_owned(),
-                ..Default::default()
-            });
-        }
-        let row = state
-            .accounts
-            .iter_mut()
-            .find(|row| row.account == account.identifier())
-            .expect("inserted account");
-        ui.push_id(account.identifier(), |ui| {
-            if action_button(
-                ui,
-                ActionButtonRole::Secondary,
-                &format!("Refresh hosts · @{}", account.login()),
-            )
-            .clicked()
-            {
-                command = Some(begin_discovery(row, tab));
-                state.reauthentication_generation = row.request;
-            }
-            if row.request.is_some() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Finding hosts…");
-                });
-            }
-            if let Some(error) = &row.error {
-                ui.colored_label(theme::STATUS_ERROR, error);
-                if let Some(next) =
-                    reauthentication_button(ui, row, account, state.reauthentication_generation)
-                {
-                    command = Some(next);
-                }
-            }
-            if let Some(hosts) = &row.hosts {
-                if hosts.is_empty() {
-                    ui.label("No hosts found.");
-                }
-                for host in hosts {
-                    if action_button(ui, ActionButtonRole::Secondary, &host.name).clicked() {
-                        let request = egui::Id::new(uuid::Uuid::new_v4());
-                        state.request = Some(request);
-                        state.reauthentication_generation = None;
-                        state.feedback = None;
-                        command = Some(AppCommand::ReviewDevTunnelHost {
-                            tab_id: tab,
-                            request,
-                            host: host.clone(),
-                        });
-                    }
-                }
-            }
-        });
-    }
-    let mut saved = Vec::new();
-    for recipe in configuration.host_recipes().recipes() {
-        if let Some(host) = saved_host(recipe, configuration) {
-            let key = (host.account.clone(), host.reference.clone());
-            if saved.contains(&key) {
-                continue;
-            }
-            saved.push(key);
-            ui.push_id(("saved", &host.account, &host.locator), |ui| {
-                if action_button(
-                    ui,
-                    ActionButtonRole::Secondary,
-                    &format!("{} · saved", host.name),
-                )
-                .clicked()
-                {
-                    let request = egui::Id::new(uuid::Uuid::new_v4());
-                    state.request = Some(request);
-                    state.reauthentication_generation = None;
-                    state.feedback = None;
-                    command = Some(AppCommand::ReviewDevTunnelHost {
-                        tab_id: tab,
-                        request,
-                        host: host.clone(),
-                    });
-                }
-            });
-        }
-    }
-    if command.is_none() {
-        command = automatic_discovery(
-            &mut state,
-            tab,
-            ui.is_enabled() && ui.input(|input| input.focused),
-        );
-        if command.is_some() {
-            ui.ctx().request_repaint();
-        }
-    }
-    ui.data_mut(|data| data.insert_temp(id, state));
-    command
 }
 
 fn reauthentication_button(
@@ -1124,6 +1045,226 @@ mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
 
+    fn directory_harness(
+        configuration: Configuration,
+        tab: TabId,
+    ) -> Harness<'static, AutomaticDiscovery> {
+        directory_harness_at_size(configuration, tab, egui::vec2(1040.0, 740.0))
+    }
+
+    fn directory_harness_at_size(
+        configuration: Configuration,
+        tab: TabId,
+        size: egui::Vec2,
+    ) -> Harness<'static, AutomaticDiscovery> {
+        Harness::builder().with_size(size).build_ui_state(
+            move |ui, state: &mut AutomaticDiscovery| {
+                ui.ctx().input_mut(|input| input.focused = state.foreground);
+                if let Some(command) = show(ui, tab, &state.configuration) {
+                    state.commands.push(command);
+                }
+            },
+            AutomaticDiscovery {
+                configuration,
+                commands: Vec::new(),
+                foreground: true,
+            },
+        )
+    }
+
+    #[test]
+    fn first_directory_narrow_guidance_and_status_wrap_inside_viewport() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = directory_harness_at_size(configuration, tab, egui::vec2(360.0, 740.0));
+        harness.run_steps(3);
+        let first = automatic_requests(harness.state())[0].0;
+        report_discovery(
+            &harness.ctx,
+            tab,
+            first,
+            "alice",
+            Ok(vec![summary("alice.use", "Alice host")]),
+        );
+        harness.run_steps(3);
+        let sidebar = harness.get_by_label("GitHub account").rect();
+        let detail = harness.get_by_label("Choose a host").rect();
+        assert!(
+            detail.top() > sidebar.bottom(),
+            "narrow directory stacks its columns"
+        );
+        let guidance = harness
+            .get_by_label("Select a host to see its sessions.")
+            .rect();
+        assert!(guidance.left() >= 0.0 && guidance.right() <= 360.0);
+        harness.get_by_label("Refresh hosts").click();
+        harness.run_steps(3);
+        let refresh = automatic_requests(harness.state()).last().unwrap().0;
+        report_discovery(&harness.ctx, tab, refresh, "alice", Ok(Vec::new()));
+        harness.run_steps(3);
+        let empty = harness
+            .get_by_label(
+                "Enable Remote access in Dev Tunnels Settings on the host, then refresh hosts.",
+            )
+            .rect();
+        assert!(
+            empty.left() >= 0.0 && empty.right() <= 360.0 && empty.height() > 24.0,
+            "long empty-state guidance wraps rather than clipping"
+        );
+        harness.get_by_label("Refresh hosts").click();
+        harness.run_steps(3);
+        let refresh = automatic_requests(harness.state()).last().unwrap().0;
+        let error = "This host directory is temporarily unavailable. Unlock the account store and explicitly refresh hosts again.";
+        report_discovery(&harness.ctx, tab, refresh, "alice", Err(error.into()));
+        harness.run_steps(3);
+        let error = harness.get_by_label(error).rect();
+        assert!(error.left() >= 0.0 && error.right() <= 360.0 && error.height() > 24.0);
+    }
+
+    #[test]
+    fn first_directory_entry_discovers_only_selected_account_and_selects_without_execution() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0
+            .with_account(account("bob", 2, "bob"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = directory_harness(configuration, tab);
+        harness.run_steps(5);
+        let requests = automatic_requests(harness.state());
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].1, "alice");
+        harness.get_by_label("Choose a host");
+        harness.get_by_label("GitHub account");
+        report_discovery(
+            &harness.ctx,
+            tab,
+            requests[0].0,
+            "alice",
+            Ok(vec![summary("alice.use", "Alice host")]),
+        );
+        harness.run_steps(3);
+        harness.get_by_label("Alice host").click();
+        harness.run_steps(3);
+        let Some(AppCommand::ReviewDevTunnelHost {
+            tab_id,
+            request,
+            host,
+        }) = harness.state().commands.last()
+        else {
+            panic!("host selection only requests existing foreground review")
+        };
+        assert_eq!(*tab_id, tab);
+        assert!(request_is_current(&harness.ctx, tab, *request));
+        assert_eq!(host.account, "alice");
+        assert_eq!(host.locator, "alice.use");
+        assert!(harness.state().configuration.host_recipes().is_empty());
+        assert!(harness.query_by_label("Create & Connect").is_none());
+        assert!(harness.query_by_label("Prepare client key").is_none());
+    }
+
+    #[test]
+    fn first_directory_account_switch_retires_late_discovery_and_keeps_new_scope() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0
+            .with_account(account("bob", 2, "bob"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = directory_harness(configuration, tab);
+        harness.run_steps(3);
+        let old = automatic_requests(harness.state())[0].clone();
+        harness.get_by_role(accesskit::Role::ComboBox).click();
+        harness.run_steps(3);
+        harness.get_by_label("@bob").click();
+        harness.run_steps(3);
+        let requests = automatic_requests(harness.state());
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].1, "bob");
+        assert!(!discovery_is_current(&harness.ctx, tab, old.0, &old.1));
+        report_discovery(
+            &harness.ctx,
+            tab,
+            old.0,
+            &old.1,
+            Ok(vec![summary("alice.use", "Late Alice host")]),
+        );
+        report_discovery(&harness.ctx, tab, requests[1].0, "bob", Ok(Vec::new()));
+        harness.run_steps(4);
+        harness.get_by_label("No hosts found for this account.");
+        assert!(harness.query_by_label("Late Alice host").is_none());
+        harness.get_by_label("Refresh hosts").click();
+        harness.run_steps(3);
+        let next = automatic_requests(harness.state()).last().unwrap().clone();
+        assert_eq!(next.1, "bob");
+        assert_ne!(next.0, requests[1].0);
+        report_discovery(
+            &harness.ctx,
+            tab,
+            next.0,
+            "bob",
+            Ok(vec![summary("bob.use", "Bob host")]),
+        );
+        harness.run_steps(3);
+        harness.get_by_label("Bob host");
+        harness.get_by_label("Choose a host");
+    }
+
+    #[test]
+    fn first_directory_expired_account_reauthenticates_only_the_original_current_witness() {
+        let alice = account("alice", 1, "alice");
+        let configuration = Configuration::empty()
+            .with_account(alice.clone())
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = directory_harness(configuration, tab);
+        harness.run_steps(3);
+        let request = automatic_requests(harness.state())[0].0;
+        report_typed_discovery(
+            &harness.ctx,
+            tab,
+            request,
+            &alice,
+            Err(RequestFailure::from(festerm_tunnel_client::Error::Expired)),
+        );
+        harness.run_steps(3);
+        harness.get_by_label("Sign in again").click();
+        harness.run_steps(2);
+        let Some(AppCommand::ReauthenticateHostAccount(reauthentication)) =
+            harness.state().commands.last()
+        else {
+            panic!("existing scoped sign-in recovery")
+        };
+        assert_eq!(reauthentication.account, alice);
+        let reauthentication = reauthentication.clone();
+        assert!(reauthentication_is_current(
+            &harness.ctx,
+            tab,
+            request,
+            &reauthentication
+        ));
+        harness.state_mut().configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Sign in again").is_none());
+        assert!(!reauthentication_is_current(
+            &harness.ctx,
+            tab,
+            request,
+            &reauthentication
+        ));
+    }
+
     #[test]
     fn host_workspace_open_discovers_once_with_accessible_refresh_and_cancel_fencing() {
         let account = festerm_config::DevTunnelAccount::new(
@@ -1147,7 +1288,7 @@ mod tests {
                 None,
             );
         harness.run_steps(2);
-        let button = harness.get_by_label("Refresh hosts · @developer");
+        let button = harness.get_by_label("Refresh hosts");
         assert!(button.rect().height() >= 24.0);
         harness.run_steps(4);
         let Some(AppCommand::FindDevTunnelHosts {
@@ -1387,7 +1528,7 @@ mod tests {
         report_discovery(&harness.ctx, tab, first, "alice", Err("Offline".into()));
         harness.run_steps(8);
         assert_eq!(automatic_requests(harness.state()).len(), 1);
-        harness.get_by_label("Refresh hosts · @alice").click();
+        harness.get_by_label("Refresh hosts").click();
         harness.run_steps(8);
         let requests = automatic_requests(harness.state());
         assert_eq!(requests.len(), 2);

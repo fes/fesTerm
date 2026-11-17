@@ -90,8 +90,8 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             id: "dev-tunnel-hosts",
             section: "dev-tunnels",
-            title: "Explicit account-scoped host discovery",
-            caption: "Synthetic last-listed host metadata. Opening does not query the service or assert online availability.",
+            title: "Find & Connect account-scoped directory",
+            caption: "First-entry split workspace with synthetic account and last-listed hosts; no real service or online-availability claim.",
             capture: || capture_host_workspace(false, false),
         },
         #[cfg(feature = "experimental-dev-tunnels")]
@@ -713,7 +713,7 @@ fn capture_host_workspace(narrow: bool, unavailable: bool) -> image::RgbaImage {
                 screens::host_workspace::install_gallery_state(ui.ctx(), tab, unavailable);
                 *initialized = true;
             }
-            ui.heading("Connect to a host");
+            ui.heading("Find & Connect");
             let _ = screens::host_workspace::show(ui, tab, &configuration);
         },
         false,

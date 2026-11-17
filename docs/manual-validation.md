@@ -914,6 +914,18 @@ approval belongs in that path. Explicit advanced owner administration remains a
 separate workflow. The manual path exercised in the earlier lab campaign is
 historical diagnostic evidence, not normal-workflow acceptance.
 
+For Desktop `HOST-01`, enter **New Session → Dev Tunnel** with no account, one
+account and two stored accounts. The first view must be **Find & Connect** with
+the account/host sidebar and right-side sign-in, loading, empty or error state;
+it must not first show the old stacked host list. Confirm one automatic directory
+request for the selected account, explicit Refresh after failure, scoped Sign in
+again after expiry, and no host inventory/key/terminal action before host selection.
+Switch accounts while discovery is pending and reject its late old-account result.
+Select a host to enter the existing session workspace; check narrow reflow, Back
+and separately collapsed Advanced legacy form. Focused CPU regressions cover the
+route and request witnesses; native visual/keyboard/real-provider checks remain
+required and are not established by those regressions.
+
 Automatic directory and denied-by-default route/proof primitives have portable
 regressions. Ordinary server/client and host-expansion integration have focused
 tests, controlled native-helper coverage, workspace compilation and strict lint

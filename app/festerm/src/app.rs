@@ -7992,14 +7992,6 @@ impl FesTermApp {
                 } => {
                     self.review_discovered_host(tab_id, request, host, ui.ctx());
                 }
-                #[cfg(feature = "experimental-dev-tunnels")]
-                AppCommand::ConnectHostRecipe {
-                    tab_id,
-                    request,
-                    recipe,
-                } => {
-                    self.review_workspace_recipe(tab_id, request, *recipe, ui.ctx());
-                }
                 AppCommand::HostRecipe(command) => self.apply_host_recipe_command(command),
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::HostRecipeFromProfiles {

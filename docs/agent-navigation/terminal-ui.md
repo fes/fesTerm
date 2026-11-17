@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ce285f49e44108e14308f51119eafdefa1394bec8e6e03e6387f6649c149d42c"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b6a3e74e6c0a58a50c7e688a33a8e83c0381200bd0c907995acf6839bd5d85e1"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Terminal UI owns input routing, render caching, and native/software painting boundaries without session I/O.
+Terminal UI owns input routing, render caching, and the native/software painting boundary while keeping session I/O in the application layer.
 
 Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-design.md](../../docs/gui-design.md)
 
@@ -13,11 +13,11 @@ Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-de
 Use for: An input event, resize, or selection decision needs to flow through the terminal core without session I/O.
 
 - [`EncodedInputSink`](../../crates/festerm-ui-egui/src/input.rs) — Application-owned sink for encoded bytes, focus, and resize notifications
-- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Routes UI input to the terminal core and drains bytes to the app sink
-- [`route_mouse_input`](../../crates/festerm-ui-egui/src/input.rs) — Keeps local selection policy separate from terminal-owned mouse claims
+- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains terminal input into the app sink after the core handles the event
+- [`route_mouse_input`](../../crates/festerm-ui-egui/src/input.rs) — Separates terminal-owned mouse claims from local selection and focus policy
 
 Evidence:
-- [`warmed_character_routing_does_not_allocate_in_core_or_view`](../../crates/festerm-ui-egui/tests/routed_input_allocations.rs) — Proves routed bytes stay exact and hot paths stay allocation-free
+- [`warmed_character_routing_does_not_allocate_in_core_or_view`](../../crates/festerm-ui-egui/tests/routed_input_allocations.rs) — Proves routed bytes stay exact and hot-path input remains allocation-free
 
 Caveats:
 - UI never does session I/O; bytes only go to the app-owned sink
@@ -28,11 +28,11 @@ Caveats:
 
 Use for: Terminal output changes or viewport geometry shifts and the renderer needs a bounded row cache.
 
-- [`TerminalView`](../../crates/festerm-ui-egui/src/view.rs) — egui frame owner that resets and repaints cache on resize and redraw
-- [`TerminalRenderCache`](../../crates/festerm-ui-egui/src/cache.rs) — Row-level presentation cache with dirty-row and full-refresh update logic
+- [`TerminalView`](../../crates/festerm-ui-egui/src/view.rs) — egui frame owner that invalidates and repaints cache on resize and redraw
+- [`TerminalRenderCache`](../../crates/festerm-ui-egui/src/cache.rs) — Row-level presentation cache with dirty-row and full-refresh rebuild logic
 
 Evidence:
-- [`full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state`](../../crates/festerm-ui-egui/src/view.rs) — Covers redraw invalidation and unchanged-row preservation
+- [`full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state`](../../crates/festerm-ui-egui/src/view.rs) — Covers full-redraw invalidation and unchanged-row preservation
 
 Caveats:
 - Full refreshes are required on dimension changes and viewport reflow
@@ -44,7 +44,7 @@ Caveats:
 Use for: The app decides whether a Windows x64 WARP frame should paint with Direct2D instead of the ordinary egui path.
 
 - [`install_from_environment`](../../app/festerm/src/direct2d.rs) — Chooses native Direct2D or host-copy mode from adapter and framebuffer
-- [`Renderer`](../../crates/festerm-windows-direct2d/src/renderer.rs) — Validates, uploads, and draws a bounded native frame
+- [`Renderer`](../../crates/festerm-windows-direct2d/src/renderer.rs) — Validates, uploads, and draws the bounded native frame
 
 Evidence:
 - [`integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`](../../app/festerm/src/direct2d.rs) — Proves native path and fallback semantics in one frame

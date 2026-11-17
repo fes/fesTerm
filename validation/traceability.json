@@ -1518,7 +1518,8 @@
         "native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures",
         "profiles_share_one_account_and_keep_separate_connect_credentials",
         "a_running_dev_tunnel_row_connects_once_by_locator",
-        "the_dev_tunnel_card_opens_the_inline_form_not_the_profile_editor",
+        "the_dev_tunnel_card_opens_find_connect_directory_without_execution_or_legacy_form",
+        "signed_in_dev_tunnel_first_tile_starts_only_directory_discovery_in_split_workspace",
         "dev_tunnel_form_connect_is_ephemeral_with_takeover_on_by_default",
         "dev_tunnel_form_can_decline_takeover_and_save_a_named_profile",
         "dev_tunnel_form_offers_running_tunnels_and_submits_with_enter",
@@ -5855,6 +5856,11 @@
         "ADR-0087"
       ],
       "automated_tests": [
+        "the_dev_tunnel_card_opens_find_connect_directory_without_execution_or_legacy_form",
+        "first_directory_entry_discovers_only_selected_account_and_selects_without_execution",
+        "first_directory_narrow_guidance_and_status_wrap_inside_viewport",
+        "first_directory_account_switch_retires_late_discovery_and_keeps_new_scope",
+        "first_directory_expired_account_reauthenticates_only_the_original_current_witness",
         "session_shortcut_binds_exact_host_logical_generation_without_launch_or_creation",
         "optional_created_shortcut_is_original_bound_single_use_and_uses_confirmed_target",
         "host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert",

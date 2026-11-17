@@ -1938,6 +1938,10 @@ approval remain in Advanced, rather than the normal account connection path.
 
 Desktop uses a host list beside the selected host's session list. Mobile uses
 a host list and a focused host-detail view, with a clear return to the list.
+Desktop's New Session → Dev Tunnel entry already shows this split workspace:
+account and hosts on the left, sign-in/loading/empty/error guidance on the right
+until a host is selected. Back returns to New Session; the legacy single-session
+form remains a separate collapsed Advanced disclosure.
 Account selection and **Refresh hosts** belong to the directory. The selected
 host owns **Refresh sessions** and the capability-gated **New host shell** action.
 Use consistent section padding and gaps between controls; narrow Desktop layouts
