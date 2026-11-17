@@ -469,6 +469,15 @@ impl HostUi {
         self.pending.is_some() || self.worker.is_some()
     }
 
+    fn shared_profile_title(&self, logical: &LogicalSessionId) -> Option<String> {
+        self.inventory
+            .as_ref()?
+            .profiles
+            .iter()
+            .find(|profile| &profile.logical == logical)
+            .map(|profile| profile.name.clone())
+    }
+
     fn shared_profile_operation(&self, index: usize) -> Result<host_client::Operation, String> {
         let inventory = self
             .inventory
@@ -2105,7 +2114,7 @@ impl MobileApp {
                         Ok(attachment) => {
                             self.hosts.connection_notice =
                                 Some((disposition, std::time::Instant::now()));
-                            self.install_host(ctx, attachment);
+                            self.install_host(ctx, attachment, None);
                         }
                         Err(error) => self.hosts.error = Some(error),
                     }
@@ -2115,6 +2124,9 @@ impl MobileApp {
                     disposition,
                     attachment,
                 } => {
+                    // Display metadata only; authorization still comes from the
+                    // exact ensured target, scope and protected context below.
+                    let title = self.hosts.shared_profile_title(&session.target.logical);
                     let approved = self.hosts.context().and_then(|context| {
                         ApprovedAttachment::from_profile_ensured(
                             context,
@@ -2129,7 +2141,7 @@ impl MobileApp {
                         Ok(attachment) => {
                             self.hosts.connection_notice =
                                 Some((disposition, std::time::Instant::now()));
-                            self.install_host(ctx, attachment);
+                            self.install_host(ctx, attachment, title);
                         }
                         Err(error) => self.hosts.error = Some(error),
                     }
@@ -2196,11 +2208,16 @@ impl MobileApp {
         Ok(())
     }
 
-    fn install_host(&mut self, ctx: &egui::Context, attachment: ApprovedAttachment) {
+    fn install_host(
+        &mut self,
+        ctx: &egui::Context,
+        attachment: ApprovedAttachment,
+        title: Option<String>,
+    ) {
         if !self.host_foreground() {
             return;
         }
-        let title = attachment.description();
+        let title = title.unwrap_or_else(|| attachment.description());
         let token = self.sink.live.host.token(self.hosts.epoch);
         let session = match attachment.start_with_cancellation(
             &self.hosts.budgets,
@@ -2919,7 +2936,7 @@ impl MobileApp {
                 };
                 let attachment = ApprovedAttachment::new(context, scope, target)
                     .map_err(|error| error.message().to_owned())?;
-                self.install_host(ctx, attachment);
+                self.install_host(ctx, attachment, None);
                 return Ok(());
             }
             _ => {}

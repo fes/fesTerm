@@ -259,7 +259,7 @@ pub struct PendingTerminal<S> {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn establish<S: AsyncRead + AsyncWrite + Unpin>(
-    mut stream: S,
+    stream: S,
     permit: ConnectionPermit,
     binding: Binding,
     operation: OperationId,
@@ -268,6 +268,24 @@ pub async fn establish<S: AsyncRead + AsyncWrite + Unpin>(
     takeover: bool,
     cancel: &CancellationToken,
 ) -> Result<PendingTerminal<S>, Error> {
+    establish_diagnostic(
+        stream, permit, binding, operation, target, attachment, takeover, cancel,
+    )
+    .await
+    .map_err(|(_, error)| error)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn establish_diagnostic<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    permit: ConnectionPermit,
+    binding: Binding,
+    operation: OperationId,
+    target: HostTarget,
+    attachment: AttachmentId,
+    takeover: bool,
+    cancel: &CancellationToken,
+) -> Result<PendingTerminal<S>, (crate::host_client::AttachStage, Error)> {
     let request = Envelope::new(
         binding.host().clone(),
         operation,
@@ -277,6 +295,7 @@ pub async fn establish<S: AsyncRead + AsyncWrite + Unpin>(
             takeover,
         },
     );
+    let mut stage = crate::host_client::AttachStage::Capabilities;
     let work = async {
         let hello = Envelope::new(
             binding.host().clone(),
@@ -296,6 +315,7 @@ pub async fn establish<S: AsyncRead + AsyncWrite + Unpin>(
             _ => return Err(Error::Refused(festerm_host_protocol::Refusal::Unsupported)),
         };
         drop(frame);
+        stage = crate::host_client::AttachStage::Snapshot;
         write_contract(&mut stream, &permit, HOST_REQUEST, &request).await?;
         let frame = read_frame(&mut stream, &permit, false).await?;
         if frame.kind == HOST_REPLY {
@@ -319,11 +339,12 @@ pub async fn establish<S: AsyncRead + AsyncWrite + Unpin>(
             capabilities,
         })
     };
-    tokio::select! {
+    let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(Error::Cancelled),
-        result = tokio::time::timeout(DEADLINE, work) => result.map_err(|_| Error::Deadline)?,
-    }
+        result = tokio::time::timeout(DEADLINE, work) => result.unwrap_or(Err(Error::Deadline)),
+    };
+    result.map_err(|error| (stage, error))
 }
 
 #[derive(Clone, Debug)]

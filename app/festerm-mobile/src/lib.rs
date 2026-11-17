@@ -3558,8 +3558,20 @@ impl MobileApp {
             .map_or("Connection ended", |live| live.status);
         #[cfg(feature = "host-clients")]
         if self.active_is_host() {
+            let failure = self
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .and_then(live_ssh::LiveSsh::host_error)
+                .map(str::to_owned);
+            let unknown = "Session state is unknown, not absent. Keep the original issued action.";
             return model::ReconnectBanner {
-                detail: Some("Session state is unknown, not absent. Keep the original issued action.".into()),
+                detail: Some(failure.map_or_else(
+                    || unknown.to_owned(),
+                    |failure| format!("{failure}\n\n{unknown}"),
+                )),
                 status: status.into(),
                 reattach: None,
                 custom: Some(model::BannerText {

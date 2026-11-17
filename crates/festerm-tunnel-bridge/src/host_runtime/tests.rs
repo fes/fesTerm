@@ -468,7 +468,7 @@ fn native_stream_failure_code(error: Error) -> &'static str {
         Error::Closed => "closed",
         Error::Deadline => "deadline",
         Error::Cancelled => "cancelled",
-        Error::Offline => "offline",
+        Error::Offline | Error::Io(_) => "offline",
         Error::HostUpdateRequired => "host-update-required",
         Error::HostPolicyRefreshRequired => "host-policy-refresh-required",
     }

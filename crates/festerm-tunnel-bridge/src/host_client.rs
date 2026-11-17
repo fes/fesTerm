@@ -29,8 +29,10 @@ pub use client_context::{ClientContext, ClientContextRef};
 mod creation;
 #[cfg(test)]
 mod creation_tests;
+mod diagnostics;
 mod ending;
 pub mod ordinary;
+pub use diagnostics::AttachStage;
 pub mod originals;
 mod session;
 pub(crate) use creation::create_authenticated;
@@ -122,6 +124,7 @@ pub enum Failure {
     BindingMismatch,
     OwnerKey(OwnerKeyError),
     Control(Error),
+    Attachment { stage: AttachStage, error: Error },
     WorkerUnavailable,
     OriginalStorage,
 }
@@ -141,6 +144,7 @@ impl From<ContractError> for Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::Attachment { error, .. } => Self::Control(error).message(),
             Self::OrdinaryKey(e) => e.message(),
             Self::ProviderIdentityExpired => "GitHub sign-in expired or its account changed. Sign in again before finding hosts.",
             Self::ProviderUnavailable => "The provider could not verify the selected account and host. Retry the explicit host read.",
@@ -171,7 +175,7 @@ impl Failure {
             Self::Control(Error::HostUpdateRequired) => "Update fesTerm on this host, then try again.",
             Self::Control(Error::HostPolicyRefreshRequired) => "On the HOST, explicitly Disable then Enable remote access to refresh protected policy and account readiness. Existing shells are retained. This operation was not retried.",
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
-            Self::Control(Error::Offline | Error::Closed) =>
+            Self::Control(Error::Offline | Error::Io(_) | Error::Closed) =>
                 "The host connection is unavailable. Its sessions are not known to be absent.",
             Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. Its outcome is not known; retain the original action rather than creating a replacement.",
             Self::WorkerUnavailable => "The bounded host worker could not start. Retry the explicit action.",
@@ -257,11 +261,15 @@ impl ApprovedContext {
             _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
             value = tokio::time::timeout(Duration::from_secs(15),
                 relay::connect_endpoint(&self.endpoint, self.port, &self.token)) =>
-                value.map_err(|_| Failure::Control(Error::Deadline))?
-                    .map_err(|_| Failure::Control(Error::Offline))?,
+                value.map_err(|_| Failure::Control(Error::Deadline).at_attach_stage_for(role, AttachStage::Relay))?
+                    .map_err(|error| Failure::Control(error.into()).at_attach_stage_for(role, AttachStage::Relay))?,
         };
         let (stream, permit) =
-            authenticate_native_client(stream, permit, attempt, role, cancel.clone()).await?;
+            authenticate_native_client(stream, permit, attempt, role, cancel.clone())
+                .await
+                .map_err(|error| {
+                    Failure::Control(error).at_attach_stage_for(role, AttachStage::Authentication)
+                })?;
         Ok((stream, permit, self.binding))
     }
 }
@@ -856,7 +864,7 @@ pub(crate) async fn attach_reserved_authenticated<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let mut pending = host_terminal::establish(
+    let mut pending = host_terminal::establish_diagnostic(
         stream,
         permit,
         scope.binding.clone(),
@@ -866,7 +874,8 @@ where
         false,
         cancel,
     )
-    .await?;
+    .await
+    .map_err(|(stage, error)| Failure::Attachment { stage, error })?;
     let terminal = pending.take_snapshot().ok_or(ContractError::Denied)?;
     let (acknowledge, adopted) = tokio::sync::oneshot::channel();
     let completion = Completion {
@@ -888,11 +897,17 @@ where
         biased;
         _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
         result = tokio::time::timeout(Duration::from_secs(15), adopted) =>
-            result.map_err(|_| Failure::Control(Error::Deadline))?
-                .map_err(|_| Failure::Control(Error::Cancelled))?,
+            result.map_err(|_| Failure::Attachment { stage: AttachStage::FrontendAdoption, error: Error::Deadline })?
+                .map_err(|_| Failure::Attachment { stage: AttachStage::FrontendAdoption, error: Error::Cancelled })?,
     }
     // Only host-committed activation may publish Attached.
-    Ok(Outcome::Attached(pending.adopt(cancel).await?.spawn()?))
+    Ok(Outcome::Attached(
+        pending
+            .adopt(cancel)
+            .await
+            .map_err(|error| Failure::Control(error).at_attach_stage(AttachStage::HostActivation))?
+            .spawn()?,
+    ))
 }
 
 pub(crate) async fn inventory_authenticated<S: AsyncRead + AsyncWrite + Unpin>(

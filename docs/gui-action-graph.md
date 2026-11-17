@@ -1735,6 +1735,15 @@ These do not establish physical mobile/native-vault/GUI acceptance.
 Local Settings/Remote Access,
 sharing, durable client-action reconciliation and native acceptance remain open.
 
+The mobile HOST-03 viewer retains the existing finite attachment failure in its
+reconnect detail: relay/authentication, terminal capabilities/snapshot, frontend
+adoption, host activation or live stream, with a finite offline/closed category
+and allowlisted I/O-kind label. It keeps the unknown-not-absent/original-action
+warning and only explicit Review host; diagnostic display never retries or
+creates. Shared-profile tabs use the matching advertised profile name as display
+metadata, with the prior generic description as fallback. Portable framed EOF
+and viewer regressions are not native connection acceptance.
+
 For the mobile HOST-03 review surface, fingerprint, multiline connection details
 and profile/session inputs publish the shared native field document instead of
 using a bare system-IME editor. Pairing field identities include the selected

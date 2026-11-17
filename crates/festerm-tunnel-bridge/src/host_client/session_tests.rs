@@ -374,3 +374,113 @@ fn selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop()
         ));
     }
 }
+
+#[tokio::test]
+async fn selected_host_real_eof_retains_attachment_phase_and_kind_through_session_error() {
+    for stage in [
+        AttachStage::Capabilities,
+        AttachStage::Snapshot,
+        AttachStage::HostActivation,
+        AttachStage::LiveStream,
+    ] {
+        let (stream, mut peer) = tokio::io::duplex(128 * 1024);
+        let scope = scope();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(7).unwrap(),
+        };
+        let notifier = Arc::new(Notify(tokio::sync::Notify::new()));
+        let wake = notifier.clone();
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let worker = Worker::spawn(
+            scope,
+            Arc::new(move || wake.notify()),
+            move |scope, cancel, events, wake| async move {
+                attach_authenticated(stream, permit, &scope, target, &cancel, &events, &wake).await
+            },
+        )
+        .unwrap();
+        let session = HostSession::from_worker(worker, notifier.clone());
+        let server = tokio::spawn(async move {
+            let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+            let hello = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let hello: Envelope<Request> = festerm_host_protocol::decode(hello.payload()).unwrap();
+            if stage == AttachStage::Capabilities {
+                return;
+            }
+            response(
+                &mut peer,
+                &hello,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        attach: true,
+                        ..Capabilities::default()
+                    },
+                },
+            )
+            .await;
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let request: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            if stage == AttachStage::Snapshot {
+                return;
+            }
+            let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            frame(
+                &mut peer,
+                crate::protocol::SNAPSHOT,
+                &crate::protocol::encode_snapshot(&terminal).unwrap(),
+            )
+            .await;
+            assert_eq!(
+                host_terminal::read_frame(&mut peer, &permit, true)
+                    .await
+                    .unwrap()
+                    .kind(),
+                crate::protocol::ADOPTED
+            );
+            if stage == AttachStage::HostActivation {
+                return;
+            }
+            let Request::Attach {
+                target, attachment, ..
+            } = request.body.clone()
+            else {
+                panic!("attach")
+            };
+            response(
+                &mut peer,
+                &request,
+                Response::Attached {
+                    target,
+                    attachment,
+                    lease: None,
+                },
+            )
+            .await;
+        });
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        let failure = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                session.adopt_into(&mut terminal).unwrap();
+                match session.try_recv_event() {
+                    Ok(SessionEvent::Lifecycle(
+                        SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error),
+                    )) => break error,
+                    _ => tokio::time::sleep(Duration::from_millis(5)).await,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let expected = Failure::Control(Error::Io(std::io::ErrorKind::UnexpectedEof))
+            .at_attach_stage(stage)
+            .terminal_message();
+        assert_eq!(failure.message(), expected);
+        server.await.unwrap();
+    }
+}

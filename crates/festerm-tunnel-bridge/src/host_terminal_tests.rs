@@ -1001,3 +1001,57 @@ mod native_routes {
         assert!(control_server.await.unwrap().is_err());
     }
 }
+
+#[tokio::test]
+async fn closed_initial_resize_retains_real_actor_eof_without_reclassifying_send_refusal() {
+    let (stream, mut peer) = duplex(128 * 1024);
+    let server = tokio::spawn(async move {
+        let permit = permit();
+        let request = handshake(&mut peer, &permit).await;
+        assert_eq!(
+            read_frame(&mut peer, &permit, true).await.unwrap().kind(),
+            ADOPTED
+        );
+        write_contract(&mut peer, &permit, HOST_REPLY, &attached(&request))
+            .await
+            .unwrap();
+    });
+    let cancel = CancellationToken::new();
+    let mut pending = establish(
+        stream,
+        permit(),
+        binding(),
+        OperationId::new(),
+        target(),
+        AttachmentId::new(),
+        false,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert!(pending.take_snapshot().is_some());
+    let mut terminal = pending.adopt(&cancel).await.unwrap().spawn().unwrap();
+    server.await.unwrap();
+    let cause = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Err(error) = terminal.try_next_event() {
+                break error;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(cause, Error::Io(std::io::ErrorKind::UnexpectedEof));
+    let send = terminal
+        .resize(festerm_session::TerminalSize::new(80, 24).unwrap())
+        .unwrap_err();
+    assert_eq!(send, Error::Closed, "queue admission semantics stay closed");
+    assert_eq!(terminal.failure_cause(send), cause);
+    let busy = Error::Contract(ContractError::Busy);
+    assert_eq!(
+        terminal.failure_cause(busy),
+        busy,
+        "unrelated refusal is never replaced"
+    );
+}

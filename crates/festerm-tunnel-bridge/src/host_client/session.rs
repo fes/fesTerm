@@ -226,7 +226,9 @@ impl HostSession {
                             state,
                             SessionLifecycle::Failed(SessionError::new(
                                 SessionErrorKind::Resize,
-                                Failure::from(error).message(),
+                                Failure::from(terminal.failure_cause(error))
+                                    .at_attach_stage(AttachStage::LiveStream)
+                                    .terminal_message(),
                             )),
                         );
                         state.lifecycle_pending = true;
@@ -272,7 +274,7 @@ impl HostSession {
     }
 
     fn error(failure: Failure) -> SessionError {
-        SessionError::new(SessionErrorKind::Output, failure.message())
+        SessionError::new(SessionErrorKind::Output, failure.terminal_message())
     }
 
     fn closed(operation: SessionOperation) -> SessionSendError {
@@ -460,7 +462,9 @@ impl Session for HostSession {
                 state.metrics.error_count += 1;
                 Self::finish(
                     &mut state,
-                    SessionLifecycle::Disconnected(Self::error(failure)),
+                    SessionLifecycle::Disconnected(Self::error(
+                        failure.at_attach_stage(AttachStage::LiveStream),
+                    )),
                 );
                 Ok(SessionEvent::Lifecycle(state.lifecycle.clone()))
             }

@@ -3848,3 +3848,130 @@ fn mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes(
         second_session.cancel();
     }
 }
+
+#[tokio::test]
+async fn mobile_host_viewer_shows_real_finite_attach_failure_without_leaving_terminal() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    let context = egui::Context::default();
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: Binding::new(HostId::new(), "github:7".into(), "fixture-endpoint".into()).unwrap(),
+    };
+    let target = host_client::Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(3).unwrap(),
+    };
+    let (stream, mut peer) = tokio::io::duplex(128 * 1024);
+    let session = host_client::testing::session_from_stream(
+        stream,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        scope,
+        target,
+        Arc::new(live_ssh::Repaint(context.clone())),
+    )
+    .unwrap();
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = account.clone();
+    app.hosts.approval_account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|a| a.id == account)
+        .cloned();
+    app.install_host_session(&context, "Shared profile".into(), session.clone());
+    let server = tokio::spawn(async move {
+        // Read the real capabilities request, then close before its reply.
+        assert_eq!(
+            peer.read_u8().await.unwrap(),
+            festerm_tunnel_bridge::host_terminal::HOST_REQUEST
+        );
+        let length = peer.read_u32().await.unwrap() as usize;
+        let mut bytes = vec![0; length];
+        peer.read_exact(&mut bytes).await.unwrap();
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            app.sink
+                .live
+                .connection
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .poll(&mut app.terminal, &context);
+            if app
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .host_error()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    server.await.unwrap();
+    app.notice = Some("UNRELATED NOTICE MUST NOT ENTER VIEWER".into());
+    let banner = app.reconnect_banner();
+    let detail = banner.detail.as_ref().unwrap();
+    assert!(detail.contains("terminal capabilities") && detail.contains("unexpected-eof"));
+    assert!(detail.contains("unknown, not absent") && detail.contains("original issued action"));
+    assert!(!detail.contains("UNRELATED"));
+    let displayed_detail = detail.clone();
+    assert!(banner.reattach.is_none());
+    assert_eq!(banner.custom.as_ref().unwrap().action, "Review host");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui(move |ui| {
+            crate::terminal_chrome::reconnect_banner(ui, &banner, false);
+        });
+    harness.run();
+    harness.get(By::new().label("Review host"));
+    harness.get(By::new().label(displayed_detail.as_str()));
+    assert!(harness
+        .query(By::new().label("Reconnect · new shell"))
+        .is_none());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_shared_profile_title_uses_only_matching_advertised_metadata() {
+    let logical = LogicalSessionId::new();
+    let mut hosts = HostUi::default();
+    assert!(hosts.shared_profile_title(&logical).is_none());
+    let mut inventory = client_inventory(false);
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: logical.clone(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Shared profile label".into(),
+        });
+    hosts.inventory = Some(inventory);
+    assert_eq!(
+        hosts.shared_profile_title(&logical).as_deref(),
+        Some("Shared profile label")
+    );
+    assert!(hosts
+        .shared_profile_title(&LogicalSessionId::new())
+        .is_none());
+    assert!(
+        !hosts
+            .inventory
+            .as_ref()
+            .unwrap()
+            .capabilities
+            .creation_allowed
+    );
+}

@@ -102,7 +102,8 @@ impl OrdinaryContext {
             cancel,
             &self.0.guard,
         )
-        .await?;
+        .await
+        .map_err(|error| error.at_attach_stage_for(role, super::AttachStage::Relay))?;
         let expected = self.0.info.clone();
         let key = self.0.key.key.clone();
         let guard = self.0.guard.clone();
@@ -126,7 +127,11 @@ impl OrdinaryContext {
             },
             move || check.check(),
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            super::Failure::Control(error)
+                .at_attach_stage_for(role, super::AttachStage::Authentication)
+        })?;
         self.0.guard.check()?;
         if !same_host(&info, &self.0.info)
             || info.policy_epoch.get() < self.0.info.policy_epoch.get()
@@ -149,7 +154,7 @@ async fn connect(
         biased;
         _=cancel.cancelled()=>Err(Error::Cancelled.into()),
         _=guard.cancel.cancelled()=>Err(Error::Cancelled.into()),
-        value=tokio::time::timeout(Duration::from_secs(15),relay::connect_ordinary_endpoint(endpoint,port,token)) => value.map_err(|_|Failure::Control(Error::Deadline))?.map_err(|_|Failure::Control(Error::Offline)),
+        value=tokio::time::timeout(Duration::from_secs(15),relay::connect_ordinary_endpoint(endpoint,port,token)) => value.map_err(|_|Failure::Control(Error::Deadline))?.map_err(|error|Failure::Control(error.into())),
     }
 }
 

@@ -25,6 +25,7 @@ pub enum Error {
     Deadline,
     Cancelled,
     Offline,
+    Io(io::ErrorKind),
     HostUpdateRequired,
     HostPolicyRefreshRequired,
 }
@@ -37,7 +38,7 @@ impl fmt::Display for Error {
             Self::Closed => "host control connection closed",
             Self::Deadline => "host control deadline exceeded",
             Self::Cancelled => "host control cancelled",
-            Self::Offline => "host control transport unavailable",
+            Self::Offline | Self::Io(_) => "host control transport unavailable",
             Self::HostUpdateRequired => "Update this host to use account-based remote access",
             Self::HostPolicyRefreshRequired => "On the host, disable then enable remote access to refresh protected policy and account readiness; existing shells are retained",
         })
@@ -53,8 +54,8 @@ impl From<ContractError> for Error {
 }
 
 impl From<io::Error> for Error {
-    fn from(_: io::Error) -> Self {
-        Self::Offline
+    fn from(error: io::Error) -> Self {
+        Self::Io(error.kind())
     }
 }
 

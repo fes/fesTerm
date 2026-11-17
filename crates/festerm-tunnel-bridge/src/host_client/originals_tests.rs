@@ -176,7 +176,7 @@ async fn lost_creation(fixture: &Fixture, intent: Arc<CreationIntent>) -> Envelo
             &CancellationToken::new()
         )
         .await,
-        Err(Failure::Control(Error::Offline))
+        Err(Failure::Control(Error::Offline | Error::Io(_)))
     ));
     server.await.unwrap()
 }

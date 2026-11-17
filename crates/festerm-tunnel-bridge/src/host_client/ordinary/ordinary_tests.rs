@@ -92,7 +92,7 @@ async fn ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_
             &CancellationToken::new()
         )
         .await,
-        Err(Failure::Control(Error::Offline))
+        Err(Failure::Control(Error::Offline | Error::Io(_)))
     ));
     let first = first.await.unwrap();
     let issued = intent.issued_operation().unwrap();

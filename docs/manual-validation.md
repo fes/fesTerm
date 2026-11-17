@@ -351,6 +351,16 @@ control worker: both must still cancel and report cancellation without replay.
 Deterministic tests cover these distinctions; native lifecycle acceptance
 remains separate.
 
+HOST-03 / MOB-06 / TUNNEL-11 attachment failure: keep the viewer open after a
+controlled connection failure and read the finite stage/category/I/O-kind detail
+without navigating Back. Check that the unknown/not-absent and original-action
+warnings remain, Review host is the only recovery action, and no replacement
+creation or replay occurs. Exercise relay/authentication, snapshot/activation and
+live-stream failures without exposing raw transport text, headers or credentials.
+For a successful shared-profile connection, verify its advertised name labels the
+tab while the exact target/generation and creation-OFF policy remain unchanged.
+Framed portable failure tests do not complete Simulator/device/native acceptance.
+
 Within existing HOST-03 / MOB-06 / TUNNEL-11, discover an owned host and verify
 its friendly description (or name/locator fallback), then open **Connect this
 device**. Focus and edit the fingerprint using normal hardware and software
