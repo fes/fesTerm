@@ -3586,20 +3586,46 @@ async fn native_ordinary_generic_durable_create_attach_detach_reconnect_and_priv
         }
     ));
     for _ in 0..2 {
-        let (client, permit, terminal_server, terminal_ssh) =
-            stream(runtime.clone(), &auth, route.clone(), StreamRole::Terminal).await;
-        let mut pending = crate::host_terminal::establish(
-            client,
-            permit,
-            binding.clone(),
-            OperationId::new(),
-            target.clone(),
-            AttachmentId::new(),
-            false,
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+        let operation = OperationId::new();
+        let attachment = AttachmentId::new();
+        // The daemon's nonblocking lease poll can briefly contend admission.
+        // As in NativeScenario::pending, repeat only a drained Busy refusal,
+        // retaining this exact target and action; never repeat creation.
+        let (mut pending, terminal_server, terminal_ssh) =
+            tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    let (client, permit, terminal_server, terminal_ssh) =
+                        stream(runtime.clone(), &auth, route.clone(), StreamRole::Terminal).await;
+                    match crate::host_terminal::establish(
+                        client,
+                        permit,
+                        binding.clone(),
+                        operation.clone(),
+                        target.clone(),
+                        attachment.clone(),
+                        false,
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    {
+                        Ok(pending) => return (pending, terminal_server, terminal_ssh),
+                        Err(Error::Refused(Refusal::Busy)) => {
+                            assert!(matches!(
+                                terminal_server.await.unwrap(),
+                                Err(Error::Refused(Refusal::Busy))
+                            ));
+                            terminal_ssh.abort();
+                            let _ = terminal_ssh.await;
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        Err(error) => {
+                            panic!("ordinary native terminal admission failed: {error:?}")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("same-target ordinary terminal admission remained busy");
         assert!(pending.take_snapshot().is_some());
         let live = pending.adopt(&CancellationToken::new()).await.unwrap();
         assert_eq!(live.binding().target, target);
