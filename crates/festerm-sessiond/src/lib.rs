@@ -6493,8 +6493,14 @@ mod registry_filtering_tests {
         let fixture = RegistryFixture::new();
         let pid = std::process::id();
         let generation = 123456u128;
-        let endpoint = fixture.0.join(format!("{pid}-{generation}.sock"));
-        std::fs::write(&endpoint, b"metadata-fixture-not-an-attachment").unwrap();
+        #[cfg(unix)]
+        let endpoint = {
+            let path = fixture.0.join(format!("{pid}-{generation}.sock"));
+            std::fs::write(&path, b"metadata-fixture-not-an-attachment").unwrap();
+            path.to_str().unwrap().to_owned()
+        };
+        #[cfg(windows)]
+        let endpoint = format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}");
         let lease = OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -6505,7 +6511,7 @@ mod registry_filtering_tests {
         let expected = format!("fesTerm:{pid}:{generation}");
         let mut registry = serde_json::json!({"sessions": {"observe-test": {
             "name": "observe-test", "pid": pid,
-            "socket": endpoint.to_str().unwrap(),
+            "socket": endpoint,
             "created_at_unix_ms": generation,
             "attached": true, "attached_by": "remote",
             "correlation_id": expected
@@ -6522,7 +6528,7 @@ mod registry_filtering_tests {
             name: "observe-test".into(),
             pid,
             created_at_unix_ms: generation,
-            endpoint: endpoint.to_str().unwrap().into(),
+            endpoint,
         };
         let before = std::fs::read(fixture.0.join("registry.json")).unwrap();
         assert_eq!(
