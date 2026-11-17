@@ -167,7 +167,7 @@ fn ordinary_context_never_becomes_admin_and_refuses_temporary_creation() {
     assert!(CreationIntent::new(&common, CreationMode::Create, temporary).is_err());
     assert!(Failure::Control(Error::HostUpdateRequired)
         .message()
-        .contains("Update this HOST"));
+        .contains("Update fesTerm on this host, then try again."));
     assert!(!Failure::Control(Error::Refused(Refusal::Denied))
         .message()
         .contains("Verify explicit owner enrollment"));
@@ -257,6 +257,11 @@ async fn ordinary_account_cancel_drains_live_worker_but_chooser_cancel_does_not_
     tokio::time::timeout(Duration::from_secs(2), drained)
         .await
         .unwrap()
+        .unwrap();
+    // select! drops the losing task before its cancellation handler runs, so
+    // Drain proves task retirement but cannot acknowledge request cancellation.
+    tokio::time::timeout(Duration::from_secs(2), request_cancel.cancelled())
+        .await
         .unwrap();
     assert!(request_cancel.is_cancelled());
     let charges: Vec<_> = (0..4)

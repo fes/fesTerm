@@ -168,7 +168,7 @@ impl Failure {
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unsupported)) =>
                 "This host does not advertise this operation. Update and qualify the host; no legacy fallback was attempted.",
             Self::Control(Error::Cancelled) => "Host operation cancelled. No terminal input will be replayed.",
-            Self::Control(Error::HostUpdateRequired) => "Update this HOST to a version supporting normal account-based remoting. No manual pairing or legacy fallback was attempted.",
+            Self::Control(Error::HostUpdateRequired) => "Update fesTerm on this host, then try again.",
             Self::Control(Error::HostPolicyRefreshRequired) => "On the HOST, explicitly Disable then Enable remote access to refresh protected policy and account readiness. Existing shells are retained. This operation was not retried.",
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
             Self::Control(Error::Offline | Error::Closed) =>
