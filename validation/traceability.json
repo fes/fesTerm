@@ -6004,6 +6004,7 @@
         "ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority",
         "ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_change",
         "ordinary_context_never_becomes_admin_and_refuses_temporary_creation",
+        "selected_host_sandbox_receipt_opens_policy_created_private_root",
         "ordinary_cancelled_account_refuses_ready_results_and_new_workers",
         "ordinary_account_cancel_drains_live_worker_but_chooser_cancel_does_not_cancel_account",
         "ordinary_test_context_cannot_open_real_transport_or_grant_remote_authority",

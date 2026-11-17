@@ -262,8 +262,13 @@ impl ReceiptIndex {
         }
         // The native composition root, never imported metadata, supplies this
         // existing application directory. Normalize OS aliases such as iOS /var
-        // once; all receipt traversal beneath it remains no-follow.
+        // once; all receipt traversal beneath it remains no-follow. Windows
+        // must retain the absolute disk path: canonicalize produces a verbatim
+        // prefix that our no-reparse traversal deliberately refuses.
+        #[cfg(not(windows))]
         let root = root.canonicalize().map_err(storage_error)?;
+        #[cfg(windows)]
+        let root = root.to_path_buf();
         storage::trusted_directory(&root, false).map_err(storage_error)?;
         Ok(Self {
             root: root.join("host-client-approvals"),

@@ -1011,14 +1011,17 @@ fn ordinary_desktop_expansion_once_requires_update_without_manual_fallback() {
 
 fn ordinary_fixture_context(
     account_id: u64,
-) -> (tempfile::TempDir, host_client::ordinary::OrdinaryContext) {
+) -> (
+    festerm_sessiond::private_storage::PrivateTestDirectory,
+    host_client::ordinary::OrdinaryContext,
+) {
     use festerm_tunnel_bridge::{
         ordinary_auth::{OrdinaryHostInfo, OrdinaryRoute},
         owner_auth::PinnedHost,
     };
     use host_client::ordinary::{OrdinaryAccountGuard, OrdinaryKeyIndex};
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
-    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let root = festerm_sessiond::private_storage::private_test_directory();
     let ssh = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
     let host = festerm_host_protocol::HostId::new();
     let info = OrdinaryHostInfo {

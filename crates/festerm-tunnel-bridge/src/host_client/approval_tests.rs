@@ -207,6 +207,27 @@ fn selected_host_receipt_review_requires_exact_account_host_and_independent_pin(
     ));
 }
 
+#[test]
+fn selected_host_sandbox_receipt_opens_policy_created_private_root() {
+    let root = storage::private_test_directory();
+    let index = ReceiptIndex::in_app_sandbox(root.path()).unwrap();
+    let vault = MemorySecretStore::new();
+    let binding = binding();
+    let receipt = index.prepare_with(&vault, review(&binding)).unwrap();
+    let reopened = index
+        .load_with(&vault, &binding.host.host, &binding.account)
+        .unwrap();
+    assert!(reopened.reference() == receipt.reference());
+    assert_eq!(reopened.public_key(), receipt.public_key());
+    #[cfg(windows)]
+    {
+        assert!(ReceiptIndex::in_app_sandbox(Path::new(".")).is_err());
+        assert!(ReceiptIndex::in_app_sandbox(&root.path().canonicalize().unwrap()).is_err());
+        assert!(ReceiptIndex::in_app_sandbox(Path::new(r"\\server\share\root")).is_err());
+        assert!(ReceiptIndex::in_app_sandbox(&root.path().join("..")).is_err());
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn selected_host_mobile_receipt_uses_native_app_root_but_refuses_linked_index() {
