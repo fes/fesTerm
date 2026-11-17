@@ -29,6 +29,16 @@ creation-off/on phases and blocked prerequisites; GUI/native service, physical
 iOS and whole-ADR acceptance remain open. See the
 [validation registry](../manual-validation.md#host-based-dev-tunnel-ui-redesign-evidence).
 
+The approved client presentation separates account discovery, host controls and
+individual sessions. Desktop uses adjacent host/session panes; mobile uses a
+host-detail view. Stable identity removes duplicate shared-recipe/session rows.
+Saving a local profile is an exact-session metadata action; optional saving after
+named durable creation waits for the confirmed target and retains the original
+operation on uncertainty. Existing creation, authorization and generation gates
+are unchanged. See the canonical
+[browser workflow](../gui-design.md#account-host-and-session-browser). Native
+layout, keyboard and live-service qualification remain distinct from UI tests.
+
 ## Context
 
 The current bridge exposes one exact persistent daemon generation. Standalone
@@ -2615,3 +2625,12 @@ still verifies them without leaving the terminal. This presentation-only change
 does not change Review host, original-operation receipts, privacy cancellation,
 input gating, retry/creation/replay or session authority. Native background and
 explicit same-session reconnect are separate validation, not copy-test claims.
+
+Synchronous mobile HOST input/first-viewport admission failures retain the finite
+Full/Closed/TooLarge category (or invalid dimensions) before the existing stop.
+Closed retains an available prior finite HOST lifecycle cause, otherwise unknown.
+No input payload, lengths or queue-capacity values enter diagnostics. In-memory
+HOST/stub regressions cover category preservation, capture before cancellation
+and refused continuation. Queue limits, cancellation, admission and no-replay
+behavior are unchanged; native saturation cause/long-input acceptance remain
+separate evidence.

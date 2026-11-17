@@ -236,6 +236,43 @@ struct Original {
     recipe: PublicRecipe,
     account: TunnelAccount,
     intent: Arc<CreationIntent>,
+    // Local metadata intent only; never changes the issued remote operation.
+    local_save_name: Option<String>,
+}
+
+struct SessionSaveReview {
+    recipe: PublicRecipe,
+    account: TunnelAccount,
+}
+
+fn recipe_saves_target(
+    recipe: &PublicRecipe,
+    host: &HostReference,
+    target: &host_client::Target,
+) -> bool {
+    recipe.host == *host
+        && recipe.logical_session == target.logical
+        && matches!(recipe.behavior, ConnectionBehavior::AttachOnly { generation } if generation == target.generation)
+}
+
+fn session_shortcut(
+    base: &PublicRecipe,
+    session: &festerm_host_protocol::SessionSummary,
+    name: &str,
+) -> Result<PublicRecipe, String> {
+    let mut recipe = PublicRecipe::persistent(name.trim(), base.host.clone(), Recipe::default())
+        .map_err(|_| "Enter a valid local profile name.")?;
+    recipe.host_hint = base.host_hint.clone();
+    recipe.logical_session = session.target.logical.clone();
+    recipe.session_name = Some(session.name.clone());
+    recipe.lifetime = session.lifetime;
+    recipe.behavior = ConnectionBehavior::AttachOnly {
+        generation: session.target.generation,
+    };
+    recipe
+        .validate()
+        .map_err(|_| "The session shortcut is invalid.")?;
+    Ok(recipe)
 }
 
 struct SessionAccount {
@@ -378,6 +415,7 @@ pub(super) struct HostUi {
     pending: Option<Pending>,
     worker: Option<Arc<Worker>>,
     worker_account: Option<TunnelAccount>,
+    worker_creation: Option<(Scope, Arc<CreationIntent>)>,
     session_accounts: Vec<SessionAccount>,
     originals: Vec<Original>,
     original_store: Option<Arc<OriginalStore>>,
@@ -393,6 +431,9 @@ pub(super) struct HostUi {
     discovered: bool,
     quick_new: bool,
     quick_name: String,
+    quick_save: bool,
+    quick_profile_name: String,
+    session_save: Option<SessionSaveReview>,
     editing: bool,
     profile_name: String,
     session_name: String,
@@ -512,6 +553,21 @@ impl HostUi {
             .profiles
             .get(index)
             .ok_or("Shared profile selection expired.")?;
+        if inventory
+            .unknown
+            .iter()
+            .any(|target| target.logical == profile.logical)
+        {
+            return Err("Session state is unknown. Refresh sessions before starting it.".into());
+        }
+        if !inventory.capabilities.creation_allowed
+            && !inventory
+                .sessions
+                .iter()
+                .any(|session| session.target.logical == profile.logical)
+        {
+            return Err("This host has disabled new shell creation.".into());
+        }
         Ok(host_client::Operation::EnsureProfile {
             logical: profile.logical.clone(),
             revision: profile.revision,
@@ -861,10 +917,20 @@ impl HostUi {
                                 .into(),
                         );
                     }
+                    let local_save_name = self
+                        .originals
+                        .iter()
+                        .find(|original| {
+                            original.intent.creation().attachment == intent.creation().attachment
+                                && original.account == *account
+                                && original.recipe == recipe
+                        })
+                        .and_then(|original| original.local_save_name.clone());
                     creations.push(Original {
                         recipe,
                         account: account.clone(),
                         intent,
+                        local_save_name,
                     });
                 }
                 RecoveredIntent::End(intent) => {
@@ -1012,6 +1078,7 @@ impl HostUi {
             worker.cancel();
         }
         self.worker_account = None;
+        self.worker_creation = None;
     }
 
     fn clear_approval(&mut self) {
@@ -1039,6 +1106,9 @@ impl HostUi {
         self.selected_original = None;
         self.quick_new = false;
         self.quick_name.clear();
+        self.quick_save = false;
+        self.quick_profile_name.clear();
+        self.session_save = None;
         self.editing = false;
         self.existing_session = None;
         self.host_collapsed = false;
@@ -1153,10 +1223,13 @@ impl HostUi {
             CreationIntent::new(context, mode, creation)
                 .map_err(|error| error.message().to_owned())?,
         );
+        let local_save_name =
+            (self.quick_new && self.quick_save).then(|| self.quick_profile_name.trim().to_owned());
         self.originals.push(Original {
             recipe,
             account,
             intent: intent.clone(),
+            local_save_name,
         });
         Ok(intent)
     }
@@ -1194,14 +1267,16 @@ enum Action {
     Settings,
     QuickNew,
     QuickCreate,
-    EditProfile,
     SaveProfile,
     CancelEdit,
-    NewProfile,
     ChooseProfileHost,
     UseProfileHost,
     CancelProfileHost,
     SelectSavedProfileHost(usize),
+    BackHosts,
+    SaveSession(usize),
+    ConfirmSessionSave,
+    CancelSessionSave,
 }
 
 fn selected_target(
@@ -2109,6 +2184,7 @@ impl MobileApp {
             .as_ref()
             .and_then(|worker| worker.try_receive(worker.scope()));
         if let Some(result) = result {
+            let creation_review = self.hosts.worker_creation.take();
             self.hosts.prune_confirmed_ends();
             self.hosts.worker = None;
             self.hosts.worker_account = None;
@@ -2125,6 +2201,12 @@ impl MobileApp {
                 }
                 Outcome::Created(created) => {
                     let disposition = created.disposition();
+                    let title = Some(created.session().name.clone());
+                    if let Some((scope, intent)) = &creation_review {
+                        if scope == &result.scope {
+                            self.save_confirmed_creation_shortcut(intent, created.session());
+                        }
+                    }
                     let attachment = self.hosts.context().and_then(|context| {
                         ApprovedAttachment::from_created(context, result.scope, *created)
                             .map_err(|error| error.message().into())
@@ -2133,7 +2215,7 @@ impl MobileApp {
                         Ok(attachment) => {
                             self.hosts.connection_notice =
                                 Some((disposition, std::time::Instant::now()));
-                            self.install_host(ctx, attachment, None);
+                            self.install_host(ctx, attachment, title);
                         }
                         Err(error) => self.hosts.error = Some(error),
                     }
@@ -2186,6 +2268,75 @@ impl MobileApp {
         self.show_host_connection_notice(ctx);
     }
 
+    fn save_confirmed_creation_shortcut(
+        &mut self,
+        intent: &Arc<CreationIntent>,
+        session: &festerm_host_protocol::SessionSummary,
+    ) {
+        let Some(account) = self.host_account() else {
+            return;
+        };
+        let Ok(context) = self.hosts.context() else {
+            return;
+        };
+        let Some(index) = self.hosts.originals.iter().position(|original| {
+            original.local_save_name.is_some()
+                && original.intent.creation().attachment == intent.creation().attachment
+                && original.intent.creation() == intent.creation()
+                && original.account == account
+                && original.intent.matches_context(&context)
+                && original.intent.creation().logical == session.target.logical
+                && original.intent.confirmed_target().as_ref() == Some(&session.target)
+        }) else {
+            return;
+        };
+        let original = &self.hosts.originals[index];
+        let result = session_shortcut(
+            &original.recipe,
+            session,
+            original.local_save_name.as_deref().unwrap(),
+        )
+        .and_then(|recipe| self.save_session_shortcut(recipe));
+        match result {
+            Ok(()) => self.hosts.originals[index].local_save_name = None,
+            Err(error) => {
+                // Confirmed remote creation remains success. A local metadata
+                // refusal never reissues that original or substitutes a shell.
+                self.notice = Some(format!(
+                    "The host confirmed the session, but its local profile was not saved. {error}"
+                ));
+            }
+        }
+    }
+
+    fn save_session_shortcut(&self, recipe: PublicRecipe) -> Result<(), String> {
+        let profiles = self
+            .profiles
+            .as_ref()
+            .ok_or("Profile storage unavailable.")?;
+        let store = profiles.store_handle();
+        let mut store = store.lock().map_err(|_| "Profile store busy.")?;
+        let target = match recipe.behavior {
+            ConnectionBehavior::AttachOnly { generation } => host_client::Target {
+                logical: recipe.logical_session.clone(),
+                generation,
+            },
+            _ => return Err("Only an exact session shortcut can be saved here.".into()),
+        };
+        if store
+            .host_recipes()
+            .recipes()
+            .iter()
+            .any(|saved| recipe_saves_target(saved, &recipe.host, &target))
+        {
+            return Ok(());
+        }
+        store
+            .apply_host_recipe_command(MetadataCommand::Save(recipe))
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn start_host_operation(
         &mut self,
         ctx: &egui::Context,
@@ -2208,6 +2359,10 @@ impl MobileApp {
             generation: self.hosts.generation,
             binding: context.binding().clone(),
         };
+        let creation_review = match &operation {
+            host_client::Operation::Create(intent) => Some((scope.clone(), intent.clone())),
+            _ => None,
+        };
         let repaint = ctx.clone();
         let token = self.sink.live.host.token(self.hosts.epoch);
         let worker = Arc::new(
@@ -2223,6 +2378,7 @@ impl MobileApp {
         );
         self.sink.live.host.worker(self.hosts.epoch, &worker);
         self.hosts.worker_account = Some(account);
+        self.hosts.worker_creation = creation_review;
         self.hosts.worker = Some(worker);
         Ok(())
     }
@@ -2456,6 +2612,66 @@ impl MobileApp {
                     .into(),
             );
         }
+        if matches!(action, Action::BackHosts) {
+            self.hosts.cancel();
+            self.hosts.host_collapsed = true;
+            self.hosts.quick_new = false;
+            self.hosts.session_save = None;
+            return Ok(());
+        }
+        if matches!(action, Action::CancelSessionSave) {
+            self.hosts.session_save = None;
+            return Ok(());
+        }
+        if let Action::SaveSession(index) = action {
+            if self.hosts.busy() {
+                return Err("A host action is already running.".into());
+            }
+            let base = self.hosts.selected.as_ref().ok_or("Select a host first.")?;
+            let session = self
+                .hosts
+                .inventory
+                .as_ref()
+                .and_then(|inventory| inventory.sessions.get(index))
+                .ok_or("Session selection expired. Refresh sessions.")?;
+            let recipe = session_shortcut(base, session, &session.name)?;
+            let account = self
+                .host_account()
+                .ok_or("Select the original account first.")?;
+            if recipe.host.account
+                != (AccountReference::Github {
+                    account_id: account.account_id,
+                })
+            {
+                return Err(
+                    "The selected session belongs to another account. Review its host again."
+                        .into(),
+                );
+            }
+            self.hosts.session_save = Some(SessionSaveReview { recipe, account });
+            return Ok(());
+        }
+        if matches!(action, Action::ConfirmSessionSave) {
+            if self.hosts.busy() {
+                return Err("A host action is already running.".into());
+            }
+            let review = self
+                .hosts
+                .session_save
+                .as_ref()
+                .ok_or("Session save review expired.")?;
+            if self.host_account().as_ref() != Some(&review.account)
+                || self.hosts.selected.as_ref().map(|recipe| &recipe.host)
+                    != Some(&review.recipe.host)
+            {
+                return Err(
+                    "The selected host or account changed; review the session again.".into(),
+                );
+            }
+            self.save_session_shortcut(review.recipe.clone())?;
+            self.hosts.session_save = None;
+            return Ok(());
+        }
         if matches!(action, Action::AdvancedOwner) {
             self.hosts.clear_approval();
             self.hosts.ordinary_selected = false;
@@ -2537,6 +2753,9 @@ impl MobileApp {
             return Ok(());
         }
         if matches!(action, Action::CancelEdit) {
+            if self.hosts.busy() {
+                self.hosts.cancel();
+            }
             if let Some(original) = self.hosts.profile_edit_original.take() {
                 self.hosts.clear_approval();
                 self.hosts.locator = original
@@ -2549,31 +2768,6 @@ impl MobileApp {
             }
             self.hosts.editing = false;
             self.hosts.quick_new = false;
-            return Ok(());
-        }
-        if matches!(action, Action::EditProfile) {
-            self.hosts.begin_profile_edit();
-            return Ok(());
-        }
-        if matches!(action, Action::NewProfile) {
-            let previous = self
-                .hosts
-                .selected
-                .as_ref()
-                .ok_or("Choose a saved host first.")?;
-            let mut recipe =
-                PublicRecipe::persistent("New profile", previous.host.clone(), Recipe::default())
-                    .map_err(|_| "The saved host is invalid.")?;
-            recipe.host_hint = previous.host_hint.clone();
-            recipe.behavior = ConnectionBehavior::ChooseSession;
-            self.hosts.selected = Some(recipe);
-            self.hosts.saved = false;
-            self.hosts.selected_original = None;
-            self.hosts.launch = false;
-            self.hosts.begin_profile_edit();
-            self.hosts.profile_name.clear();
-            self.hosts.session_name.clear();
-            self.hosts.create_if_missing = false;
             return Ok(());
         }
         if let Action::FindAccount(index) = action {
@@ -2640,6 +2834,9 @@ impl MobileApp {
             self.hosts.launch = false;
             self.hosts.quick_new = true;
             self.hosts.quick_name.clear();
+            self.hosts.quick_save = false;
+            self.hosts.quick_profile_name.clear();
+            self.hosts.session_save = None;
             self.hosts.editing = false;
             return Ok(());
         }
@@ -2659,6 +2856,15 @@ impl MobileApp {
                 );
             }
             let account = self.host_account().ok_or("Sign in from Settings first.")?;
+            if self.hosts.quick_save {
+                let base = self.hosts.selected.as_ref().ok_or("Choose a host first.")?;
+                PublicRecipe::persistent(
+                    self.hosts.quick_profile_name.trim(),
+                    base.host.clone(),
+                    Recipe::default(),
+                )
+                .map_err(|_| "Enter a valid local profile name before creating the shell.")?;
+            }
             self.hosts.freeze_quick_recipe(&account)?;
             if self.hosts.original_store.is_none() {
                 let context = self.hosts.context()?;

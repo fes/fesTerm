@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a5c2ef4b934df1d2af963b218fbeb6373af0087db71f5dbdf6110e1c04cbe937"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f90f03fa4bc43cb3b393288d2ea8f0fad77527cac5d8436281827feb7e868ae2"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The desktop shell owns app lifecycle, pane/session routing, and consent-gated host and remote Access flows across the GUI.
+The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows across the egui app loop.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -16,7 +16,7 @@ Use for: When the app boots, validates CLI mode, and creates the primary window.
 - [`FesTermApplication`](../../app/festerm/src/application.rs) — Multi-window app root and restored-window policy
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Proves owned-session pumps and window lifecycle behavior
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Proves owned sessions keep pumping while window lifecycle stays coherent
 - [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Documents launcher startup and first-run flow
 
 Caveats:
@@ -32,7 +32,7 @@ Use for: When each frame pumps sessions, handles close requests, and renders the
 - [`ui_content`](../../app/festerm/src/app.rs) — Renders chrome, overlays, shortcuts, and the active pane surface
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Proves input routing is limited to the focused pane
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Proves input routing stays limited to the focused pane
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Proves session pumping and close handling still hold under stress
 
 Caveats:
@@ -60,7 +60,7 @@ Caveats:
 
 Use for: When a user reviews host recipes, tests discovery, or authorizes a remote session launch.
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Foreground host review, profile creation, and workspace attach flow
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Foreground host review, consent gate, and workspace attach flow
 - [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Desktop remote-access consent screen and review actions
 
 Evidence:
@@ -77,7 +77,7 @@ Caveats:
 Use for: When startup or shutdown fails and a lifecycle journal must persist exit intent or recovery artifacts.
 
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
-- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Records the application exit reason and shutdown context
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the application exit reason and shutdown context
 
 Evidence:
 - [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Proves diagnostic recovery and artifact retention under partial writes

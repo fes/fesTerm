@@ -1928,17 +1928,48 @@ for re-enable. Existing per-profile installations remain separately labelled
 legacy state and require explicit disable/save before a profile can use the
 shared host; they are never adopted or silently migrated.
 
-New Session offers **Find hosts · @username** for each account. Discovery is
-explicit; selecting a host explicitly obtains authorized sessions. Saved hints
-are public metadata, never online indicators. First contact still requires
-independent host verification and separate host-local owner approval. The host's
-**Connect another device** section exposes copyable public details/fingerprint
-and **Approve a client** controls; no command-line tool is required for this
-approval. Copying metadata alone never approves a client. Ordinary
-sessions offer Connect; creation appears only when supported and permitted.
-Quick creation requires a trimmed nonblank **Session name**, creates a durable
-shell only on **Create and connect**, and preserves its original operation on
-uncertainty. No temporary-session toggle appears in these new forms.
+##### Account, host and session browser
+
+The normal **Find & Connect** workflow follows account → host → sessions.
+Opening it starts one account-scoped directory request through ADR 0086's
+ordinary provider-authorized route. Selecting a host obtains its authorized
+inventory; saved hints never claim online status. Manual fingerprints and owner
+approval remain in Advanced, rather than the normal account connection path.
+
+Desktop uses a host list beside the selected host's session list. Mobile uses
+a host list and a focused host-detail view, with a clear return to the list.
+Account selection and **Refresh hosts** belong to the directory. The selected
+host owns **Refresh sessions** and the capability-gated **New host shell** action.
+Use consistent section padding and gaps between controls; narrow Desktop layouts
+must reflow without clipped actions, and mobile retains its safe-area/touch targets.
+
+Each existing persistent session has one named row, a running/state label, and
+one **Connect** action. Match an advertised shared recipe to its running session
+by stable host/logical identity, never its display name; do not render duplicate
+Connect entries. A shared shell authoritatively known not to be running is
+labelled **Not started**, with **Start & Connect** only when current host policy
+permits it. Unknown inventory remains explicitly unknown and cannot enable a
+start action by being presented as absence.
+Global creation OFF permits connection to an authorized existing running
+generation, but cannot start or replace an absent, stopped or unknown one.
+
+**Save as profile…** belongs to a selected existing session. It saves a local
+connection recipe bound to that host and exact session generation, without
+changing the remote session. A matching saved shortcut shows **Saved locally**;
+local profile editing stays in Profiles. The host browser has no host-level
+**Save / edit profile** or **New profile for this host** buttons.
+
+**New host shell** opens a separate form with a trimmed nonblank **Session name**,
+the host's default shell, and an optional **Save as a local profile** checkbox.
+The checkbox exposes a local profile name and never grants execution authority.
+**Create & Connect** issues one explicit durable creation through the existing
+protected action contract. Save the optional shortcut only for the confirmed
+created target; failure or uncertainty cannot produce a phantom shortcut or
+replacement creation. In-process explicit recovery retains the original
+operation and its bound save intent. Cold-start original recovery does not infer
+an optional save choice; the confirmed session can be saved explicitly from its
+row. A local save failure is reported separately from successful remote creation.
+No temporary-session toggle appears in the normal form.
 
 A Dev Tunnel profile separates its local name from the remote session name.
 **Create session if missing** is saveable offline even when creation is denied
@@ -1994,11 +2025,12 @@ oversize and limit distinctions; export must never claim a save succeeded or
 failed. Mobile recovery retains valid entries and uses the existing skipped-entry
 count/quarantine notification convention instead of silently clearing recipes.
 
-Opening the new host card/launcher shows local metadata only. Find hosts and
-single-host selection/Refresh are explicit network intents; cancellation and
-account changes fence results. Never inherit legacy automatic discovery or
-display cached hosts as online. Selected-host execution has a bounded actual HOST
-worker. Account-wide discovery is implemented, while mobile installation and
+Opening an offline profile editor shows local metadata only. The normal host
+browser's account-scoped directory request and explicit host selection/Refresh
+use separate bounded workers; cancellation and account changes fence results.
+Never display cached hosts as online or infer authorization from their labels.
+Selected-host execution has a bounded actual HOST worker.
+Account-wide discovery is implemented, while mobile installation and
 native GUI/vault/service qualification remain separate. The original action's logical ID, reserved
 attachment and issued operation are shown for explicit retry. The process-local
 bounded registry survives closing review, but is not durable restart

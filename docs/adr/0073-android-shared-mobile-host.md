@@ -43,6 +43,16 @@ rather than relying on a one-shot hide after `restartInput`. It preserves window
 focus, `FLAG_SECURE` and lifecycle/input-owner guards; it changes no OS preference
 or permission. See the [AOSP window-flag contract](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/view/WindowManager.java#L2804-L2821).
 
+System-mode visibility uses API 30+ `WindowInsetsController.show(ime)` plus one
+posted `showSoftInput` request (the API 29 fallback). Deferred work checks the
+current mode/field, focused view/window, foreground lifecycle and uncovered
+content; hidden/custom or covered transitions cancel pending visibility with
+both insets and legacy hiding. A window focus gain can reapply the current
+system-mode intent, but equal-mode frames do not retry. This follows Android's
+[IME visibility guidance](https://developer.android.com/develop/ui/views/touch-and-input/keyboard-input/visibility)
+and [AndroidX's compatibility sequence](https://github.com/androidx/androidx/blob/androidx-main/core/core/src/main/java/androidx/core/view/SoftwareKeyboardControllerCompat.java).
+It is not native evidence that custom/system/form switching succeeds.
+
 The shared terminal keyboards split around a vertical fold or hinge. The
 activity reads `FoldingFeature` bounds through the optional platform
 `androidx.window.extensions` library by reflection, adding no AndroidX

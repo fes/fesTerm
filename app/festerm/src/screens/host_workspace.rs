@@ -279,6 +279,23 @@ pub(crate) fn report_outcome(
 }
 
 #[cfg(test)]
+pub(crate) fn install_browser_request_for_test(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+) {
+    context.data_mut(|data| {
+        data.insert_temp(
+            state_id(tab),
+            State {
+                request: Some(request),
+                ..Default::default()
+            },
+        )
+    });
+}
+
+#[cfg(test)]
 pub(crate) fn install_profile_request_for_test(
     context: &egui::Context,
     tab: TabId,
@@ -760,6 +777,127 @@ pub(crate) fn show_profile_host_picker(
     }
     ui.data_mut(|data| data.insert_temp(id, state));
     pick
+}
+
+pub(crate) enum BrowserNavigation {
+    Command(Box<AppCommand>),
+    AccountChanged {
+        account: festerm_config::DevTunnelAccount,
+        request: egui::Id,
+    },
+}
+
+/// The same request-bound account/host choices beside the selected host's inventory.
+/// Rendering remains offline; refresh and selection use the existing app commands.
+pub(crate) fn show_browser_sidebar(
+    ui: &mut Ui,
+    tab: TabId,
+    configuration: &Configuration,
+    account_key: &str,
+    locator: &str,
+    host_name: &str,
+) -> Option<BrowserNavigation> {
+    let id = state_id(tab);
+    let mut state = ui.data(|data| data.get_temp::<State>(id).unwrap_or_default());
+    sync_accounts(&mut state, configuration, ui.ctx());
+    let mut selected = ui
+        .data(|data| data.get_temp::<String>(egui::Id::new(("host_sidebar_account", tab))))
+        .unwrap_or_else(|| account_key.to_owned());
+    if configuration.account(&selected).is_none() {
+        selected = account_key.to_owned();
+    }
+    let previous_selected = selected.clone();
+    ui.small("GitHub account");
+    egui::ComboBox::from_id_salt(("host_sidebar_account", tab))
+        .selected_text(
+            configuration
+                .account(&selected)
+                .map(|account| format!("@{}", account.login()))
+                .unwrap_or_default(),
+        )
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for account in configuration.accounts() {
+                ui.selectable_value(
+                    &mut selected,
+                    account.identifier().to_owned(),
+                    format!("@{}", account.login()),
+                );
+            }
+        });
+    let account_change = if selected != previous_selected {
+        let request = egui::Id::new(uuid::Uuid::new_v4());
+        state.request = Some(request);
+        state.reauthentication_generation = None;
+        configuration
+            .account(&selected)
+            .cloned()
+            .map(|account| BrowserNavigation::AccountChanged { account, request })
+    } else {
+        None
+    };
+    let mut command = None;
+    ui.add_enabled_ui(account_change.is_none(), |ui| {
+        if let Some(account) = configuration.account(&selected) {
+            if let Some(row) = state
+                .accounts
+                .iter_mut()
+                .find(|row| row.account == selected)
+            {
+                ui.add_space(8.0);
+                if action_button(ui, ActionButtonRole::Secondary, "Refresh hosts").clicked() {
+                    command = Some(begin_discovery(row, tab));
+                    state.reauthentication_generation = row.request;
+                }
+                if row.request.is_some() {
+                    ui.spinner();
+                }
+                if let Some(error) = &row.error {
+                    ui.add(egui::Label::new(error).wrap());
+                    if let Some(next) =
+                        reauthentication_button(ui, row, account, state.reauthentication_generation)
+                    {
+                        command = Some(next);
+                    }
+                }
+                ui.add_space(16.0);
+                ui.strong("Hosts");
+                let remembered = remembered_hosts(ui.ctx());
+                let entries = picker_entries(row, account, &remembered, configuration);
+                if !locator.is_empty()
+                    && selected == account_key
+                    && !entries.iter().any(|entry| entry.choice.locator == locator)
+                {
+                    let _ = ui.selectable_label(true, host_name);
+                }
+                for entry in entries {
+                    let host = entry.choice;
+                    if ui
+                        .selectable_label(
+                            host.account == account_key && host.locator == locator,
+                            &host.name,
+                        )
+                        .clicked()
+                    {
+                        let request = egui::Id::new(uuid::Uuid::new_v4());
+                        state.request = Some(request);
+                        state.reauthentication_generation = None;
+                        state.feedback = None;
+                        command = Some(AppCommand::ReviewDevTunnelHost {
+                            tab_id: tab,
+                            request,
+                            host,
+                        });
+                    }
+                }
+            }
+        }
+    });
+    ui.data_mut(|data| {
+        data.insert_temp(egui::Id::new(("host_sidebar_account", tab)), selected);
+        data.insert_temp(id, state);
+    });
+    account_change.or_else(|| command.map(|command| BrowserNavigation::Command(Box::new(command))))
 }
 
 fn show_mode(

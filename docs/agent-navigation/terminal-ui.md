@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "dd27b54c60eea9e84265f3c40cec4485f67242af4f8b4bf9f68aaf0435388607"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ce285f49e44108e14308f51119eafdefa1394bec8e6e03e6387f6649c149d42c"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,7 +13,7 @@ Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-de
 Use for: An input event, resize, or selection decision needs to flow through the terminal core without session I/O.
 
 - [`EncodedInputSink`](../../crates/festerm-ui-egui/src/input.rs) — Application-owned sink for encoded bytes, focus, and resize notifications
-- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains mode-aware core input into the app sink without terminal I/O
+- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Routes UI input to the terminal core and drains bytes to the app sink
 - [`route_mouse_input`](../../crates/festerm-ui-egui/src/input.rs) — Keeps local selection policy separate from terminal-owned mouse claims
 
 Evidence:
@@ -33,7 +33,6 @@ Use for: Terminal output changes or viewport geometry shifts and the renderer ne
 
 Evidence:
 - [`full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state`](../../crates/festerm-ui-egui/src/view.rs) — Covers redraw invalidation and unchanged-row preservation
-- [`docs/ui-test-plan.md`](../../docs/ui-test-plan.md) — Defines dirty-row and full-refresh invariants for each rendered frame
 
 Caveats:
 - Full refreshes are required on dimension changes and viewport reflow

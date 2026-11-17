@@ -141,6 +141,14 @@
       "notes": "All lifecycle phases, installation confirmations, acquisition stages, typed refusals and original-operation share status controls. Separate eligible-row scene captures exact-session selection. Sharing fixtures deliberately have no authenticated connected-local source and therefore show capability refusal; a real native source remains required for successful Bind."
     },
     {
+      "ids": ["host-workspace-sessions", "host-workspace-narrow", "host-workspace-new-shell", "host-workspace-new-shell-narrow"],
+      "production_symbols": ["FesTermApp::show_host_browser", "host_browser::Browser"],
+      "route": "New session → Dev Tunnel → selected host → Sessions / New host shell",
+      "exit": "Done or Escape closes the browser; issued creation remains the same original for explicit retry.",
+      "gui_ids": ["HOST-01", "HOST-02"],
+      "notes": "Offline synthetic rendering of the account/host sidebar, deduplicated session table, narrow layout and host-default persistent shell form. Optional local profile is saved only after confirmed creation; captures do not execute a remote action."
+    },
+    {
       "ids": ["host-review", "host-review-working", "host-review-error", "host-owner-key", "host-inventory-empty", "host-inventory-unknown", "host-inventory-sessions", "host-create-review", "host-temporary-review"],
       "production_symbols": ["FesTermApp::show_host_browser", "host_browser::Browser"],
       "route": "Profiles → Host/session recipes · Experimental → recipe → Review and connect…",

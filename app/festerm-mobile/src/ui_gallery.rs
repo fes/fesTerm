@@ -135,6 +135,7 @@ const HOST_STATES: &[&str] = &[
     "hosts-unknown",
     "hosts-approval-unavailable",
     "hosts-new",
+    "hosts-save-session",
     "hosts-profile",
     "hosts-owner",
     "hosts-receipt",
@@ -696,6 +697,28 @@ fn capture_host_client_ui_gallery() {
         HOST_STATES,
         &[("phone", 390.0, 844.0, 0.0), ("tablet", 834.0, 1194.0, 0.0)],
     );
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+#[test]
+#[ignore = "headless PNG review only; no native or service acceptance"]
+fn capture_host_workflow_ui_review() {
+    capture_gallery(
+        &[
+            "hosts-found",
+            "hosts-sessions",
+            "hosts-new",
+            "hosts-save-session",
+        ],
+        &[("phone", 390.0, 844.0, 0.0)],
+    );
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+#[test]
+#[ignore = "one actual host-detail widget review; no native acceptance"]
+fn capture_host_detail_ui_review() {
+    capture_gallery(&["hosts-sessions"], &[("phone", 390.0, 844.0, 0.0)]);
 }
 
 #[cfg(all(feature = "host-clients", unix))]

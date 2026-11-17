@@ -382,6 +382,15 @@ live-stream failures without exposing raw transport text, headers or credentials
 For a successful shared-profile connection, verify its advertised name labels the
 tab while the exact target/generation and creation-OFF policy remain unchanged.
 Framed portable failure tests do not complete Simulator/device/native acceptance.
+For synchronous HOST input/first-viewport refusal, read the existing diagnostics
+before reviewing/reconnecting: confirm input versus viewport-resize and the finite
+`full`/`closed`/`too-large` category. Closed shows an available prior finite HOST
+cause or unknown; invalid dimensions are distinguished. No command text, secret,
+input length or queue capacity should appear. Refusal must still retire the
+attachment and reject continuation without replay; earlier accepted input may
+have executed. Portable tests exercise these categories and cancellation, not
+the actual native queue-saturation cause or successful long-command delivery.
+
 
 Within existing HOST-03 / MOB-06 / TUNNEL-11, discover an owned host and verify
 its friendly description (or name/locator fallback), then open **Connect this
@@ -810,6 +819,21 @@ evidence and usability remain open. Desktop local Settings/Remote Access and loc
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.
 
 ## Host-based Dev Tunnel UI redesign evidence
+
+For the approved account → host → sessions browser, capture Desktop wide and
+narrow layouts and iOS/Android host list/detail navigation. Verify consistent
+padding, separated controls and one existing-session Connect row when the same
+logical session is also advertised by a shared recipe. Same-name sessions with
+different identities must stay distinct. Refresh hosts acts on the selected
+account; Refresh sessions and New host shell act on the selected host.
+Save as profile belongs to an exact session; a saved shortcut is labelled locally
+and does not rename or alter the remote shell. Exercise the new-shell form with
+and without optional local saving, failed saves, cancelled creation, uncertain
+creation and explicit original-action recovery. No shortcut may precede confirmed
+creation, and retries must not create a replacement. Creation OFF preserves
+authorized existing-session connection but cannot start an absent/stopped shared
+shell. These current-source native/layout checks remain open until exercised;
+synthetic screenshots and portable tests do not establish cloud/vault acceptance.
 
 The follow-up workflow repair removes automatic new-profile discovery, keeps
 create-if-missing explicit and editable, consolidates ordinary local sharing on

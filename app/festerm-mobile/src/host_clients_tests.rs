@@ -525,8 +525,14 @@ fn mobile_host_discovered_selection_starts_one_host_and_paint_keeps_discovery_ro
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
     harness.run_steps(3);
-    harness.get(By::new().label("Refresh hosts · @sample"));
-    harness.get(By::new().label("Collapse Build host"));
+    harness.get(By::new().label("Back"));
+    assert_eq!(
+        harness.state().hosts.hosts[0].name.as_deref(),
+        Some("Build host")
+    );
+    assert!(harness
+        .query(By::new().label("Refresh hosts · @sample"))
+        .is_none());
     assert_eq!(harness.state().hosts.hosts.len(), 1);
     assert!(harness.state().hosts.error.is_none());
     assert!(harness.state().hosts.ordinary_selected);
@@ -631,7 +637,7 @@ fn mobile_host_valid_quick_create_shows_enabled_primary_without_opening_protecte
     harness.run_steps(3);
     harness.get(
         By::new()
-            .label("Create and connect")
+            .label("Create & Connect")
             .predicate(|node| !node.is_disabled()),
     );
     assert!(harness.state().hosts.pending.is_none());
@@ -841,8 +847,13 @@ impl MobileApp {
             },
         ];
         fixture.hosts.discovered = true;
+        fixture.hosts.discover_on_open = false;
+        fixture.hosts.selected.as_mut().unwrap().host_hint = Some(HostHint {
+            locator: "fixture.test".into(),
+            name: "Build Mac".into(),
+        });
         let mut inventory = client_inventory(true);
-        for (index, name) in ["build", "notes"].into_iter().enumerate() {
+        for (index, name) in ["Lab shared"].into_iter().enumerate() {
             inventory
                 .sessions
                 .push(festerm_host_protocol::SessionSummary {
@@ -857,6 +868,13 @@ impl MobileApp {
         }
         inventory.capabilities.profiles = true;
         inventory.capabilities.ensure_profile = true;
+        inventory
+            .profiles
+            .push(festerm_host_protocol::ProfileSummary {
+                logical: inventory.sessions[0].target.logical.clone(),
+                revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+                name: "Lab shared".into(),
+            });
         inventory
             .profiles
             .push(festerm_host_protocol::ProfileSummary {
@@ -895,6 +913,21 @@ impl MobileApp {
             "hosts-new" => {
                 fixture.hosts.quick_new = true;
                 fixture.hosts.quick_name = "release".into();
+                fixture.hosts.quick_save = true;
+                fixture.hosts.quick_profile_name = "Release shortcut".into();
+            }
+            "hosts-save-session" => {
+                let session = &fixture.hosts.inventory.as_ref().unwrap().sessions[0];
+                let recipe = session_shortcut(
+                    fixture.hosts.selected.as_ref().unwrap(),
+                    session,
+                    "Daily development",
+                )
+                .unwrap();
+                fixture.hosts.session_save = Some(SessionSaveReview {
+                    recipe,
+                    account: account.clone(),
+                });
             }
             "hosts-profile" => {
                 fixture.hosts.begin_profile_edit();
@@ -968,6 +1001,9 @@ fn mobile_host_gallery_recovery_displays_cannot_dispatch() {
             Action::FindAccount(0),
             Action::Import,
             Action::Create,
+            Action::SaveSession(0),
+            Action::ConfirmSessionSave,
+            Action::BackHosts,
             Action::ConfirmEnd,
             Action::ConfirmForget,
         ] {
@@ -2263,6 +2299,7 @@ fn mobile_host_original_review_is_strict_typed_and_missing_or_ambiguous_selectio
         recipe: recipe.clone(),
         account: account.clone(),
         intent: second.clone(),
+        local_save_name: None,
     });
     assert!(hosts
         .creation_intent(&context, recipe.clone(), account.clone())
@@ -2751,6 +2788,8 @@ fn mobile_host_shared_profile_operation_keeps_exact_revision_and_requires_capabi
             revision,
             name: "Build shell".into(),
         });
+    inventory.capabilities.creation_allowed = true;
+    inventory.capabilities.create = false;
     inventory.capabilities.profiles = true;
     inventory.capabilities.ensure_profile = true;
     hosts.inventory = Some(inventory);
@@ -2872,7 +2911,12 @@ fn mobile_host_shared_profiles_are_visible_without_generic_creation_or_render_ef
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
     harness.run_steps(3);
-    harness.get(By::new().label("Connect · Shared build"));
+    harness.get(
+        By::new()
+            .label("Start & Connect · Shared build")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.query(By::new().label("New host shell")).is_none());
     assert!(harness.query(By::new().label("+ New session")).is_none());
     assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
 }
@@ -3784,6 +3828,7 @@ fn mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once() 
     inventory.capabilities.profiles = true;
     inventory.capabilities.ensure_profile = true;
     inventory.capabilities.explicit_end = false;
+    inventory.capabilities.creation_allowed = true;
     let logical = LogicalSessionId::new();
     let revision = festerm_host_protocol::Epoch::new(4).unwrap();
     inventory
@@ -4154,4 +4199,385 @@ fn mobile_host_shared_profile_title_uses_only_matching_advertised_metadata() {
             .capabilities
             .creation_allowed
     );
+}
+
+#[test]
+fn mobile_host_session_shortcuts_bind_exact_host_logical_and_generation_without_launch() {
+    let mut base = client_recipe();
+    base.launch = Recipe {
+        shell: Some("/custom/shell".into()),
+        args: vec!["unsafe-for-new-shell".into()],
+        cwd: Some("/custom".into()),
+    };
+    base.behavior = ConnectionBehavior::AlwaysCreate;
+    let session = festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Remote name".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    };
+    let recipe = session_shortcut(&base, &session, "Local name").unwrap();
+    assert_eq!(recipe.name, "Local name");
+    assert_eq!(recipe.session_name(), "Remote name");
+    assert_eq!(recipe.launch, Recipe::default());
+    assert!(recipe_saves_target(&recipe, &base.host, &session.target));
+    let mut other = session.target.clone();
+    other.generation = GenerationId::new(43).unwrap();
+    assert!(!recipe_saves_target(&recipe, &base.host, &other));
+    other = session.target.clone();
+    other.logical = LogicalSessionId::new();
+    assert!(!recipe_saves_target(&recipe, &base.host, &other));
+    let mut host = base.host.clone();
+    host.id = HostId::new();
+    assert!(!recipe_saves_target(&recipe, &host, &session.target));
+    host = base.host.clone();
+    host.account = AccountReference::Github { account_id: 8 };
+    assert!(!recipe_saves_target(&recipe, &host, &session.target));
+    let mut resume = recipe.clone();
+    resume.behavior = ConnectionBehavior::ResumeOnly {};
+    assert!(!recipe_saves_target(&resume, &base.host, &session.target));
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_save_session_is_local_reviewed_exact_target_and_refuses_changed_account() {
+    let (_root, mut app, account, _original_store) = recovery_fixture();
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    let session = festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Existing shell".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    };
+    app.hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .sessions
+        .push(session.clone());
+    let before = store.lock().unwrap().host_recipes().recipes().len();
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SaveSession(0)).unwrap();
+    assert_eq!(store.lock().unwrap().host_recipes().recipes().len(), before);
+    app.hosts.session_save.as_mut().unwrap().recipe.name = "My shell shortcut".into();
+    let other = festerm_mobile_tunnels::testing::seed_account(&store, 8, "other", false);
+    app.hosts.account = other;
+    assert!(app.host_action(&ctx, Action::ConfirmSessionSave).is_err());
+    assert_eq!(store.lock().unwrap().host_recipes().recipes().len(), before);
+    app.hosts.account = account.id;
+    app.host_action(&ctx, Action::ConfirmSessionSave).unwrap();
+    let stored = store.lock().unwrap();
+    assert_eq!(stored.host_recipes().recipes().len(), before + 1);
+    let saved = stored
+        .host_recipes()
+        .recipes()
+        .iter()
+        .find(|recipe| recipe.name == "My shell shortcut")
+        .unwrap();
+    assert!(recipe_saves_target(
+        saved,
+        &app.hosts.selected.as_ref().unwrap().host,
+        &session.target
+    ));
+    assert_eq!(saved.session_name(), "Existing shell");
+    assert!(app.hosts.session_save.is_none());
+    assert!(
+        app.hosts.worker.is_none() && app.hosts.pending.is_none() && app.hosts.originals.is_empty()
+    );
+    drop(stored);
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    use egui_kittest::kittest::{By, Queryable};
+    harness.get(By::new().label("Saved locally · edit in Profiles"));
+    assert!(harness.query(By::new().label("Save as profile…")).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_session_rows_deduplicate_only_exact_logical_identity_and_gate_unknown_creation() {
+    use egui_kittest::kittest::{By, Queryable};
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let logical = LogicalSessionId::new();
+    let different = LogicalSessionId::new();
+    let inventory = app.hosts.inventory.as_mut().unwrap();
+    inventory.capabilities.attach = true;
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory.capabilities.creation_allowed = false;
+    inventory.sessions = vec![festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: logical.clone(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Same label".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    }];
+    inventory.profiles = vec![
+        festerm_host_protocol::ProfileSummary {
+            logical,
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Same label".into(),
+        },
+        festerm_host_protocol::ProfileSummary {
+            logical: different.clone(),
+            revision: festerm_host_protocol::Epoch::new(2).unwrap(),
+            name: "Same label".into(),
+        },
+    ];
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 1100.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .query_all(By::new().label("Connect · Same label"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        harness
+            .query_all(By::new().label("Start & Connect · Same label"))
+            .count(),
+        1
+    );
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.query(By::new().label("New host shell")).is_none());
+    assert!(harness
+        .query(By::new().label("Save / edit profile"))
+        .is_none());
+    assert!(harness
+        .query(By::new().label("New profile for this host"))
+        .is_none());
+    assert!(harness.state().hosts.shared_profile_operation(1).is_err());
+    harness
+        .state_mut()
+        .hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .creation_allowed = true;
+    harness.run_steps(2);
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| !node.is_disabled()),
+    );
+    harness
+        .state_mut()
+        .hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .unknown
+        .push(host_client::Target {
+            logical: different,
+            generation: GenerationId::new(99).unwrap(),
+        });
+    harness.run_steps(2);
+    harness.get(By::new().label("Shared shell · State unknown"));
+    assert!(harness
+        .query(By::new().label("Shared shell · Not started"))
+        .is_none());
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.state().hosts.shared_profile_operation(1).is_err());
+    assert!(harness.state().hosts.worker.is_none() && harness.state().hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_new_shell_defaults_launch_and_retains_optional_save_only_on_exact_original() {
+    let (_root, mut app, account, _original_store) = recovery_fixture();
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    app.hosts.selected.as_mut().unwrap().launch = Recipe {
+        shell: Some("/custom".into()),
+        args: vec!["old".into()],
+        cwd: Some("/old".into()),
+    };
+    app.hosts.inventory = Some(client_inventory(true));
+    let before = store.lock().unwrap().host_recipes().recipes().len();
+    app.host_action(&egui::Context::default(), Action::QuickNew)
+        .unwrap();
+    assert_eq!(
+        app.hosts.selected.as_ref().unwrap().launch,
+        Recipe::default()
+    );
+    app.hosts.quick_name = "Remote created name".into();
+    app.hosts.quick_save = true;
+    app.hosts.quick_profile_name = "Local shortcut name".into();
+    app.hosts.freeze_quick_recipe(&account).unwrap();
+    let context = app.hosts.context().unwrap();
+    let recipe = app.hosts.selected.clone().unwrap();
+    let original = app
+        .hosts
+        .creation_intent(&context, recipe.clone(), account.clone())
+        .unwrap();
+    assert_eq!(original.creation().recipe, Recipe::default());
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Local shortcut name")
+    );
+    app.hosts.error = Some("Original result unknown".into());
+    app.hosts.quick_profile_name = "Changed draft must not retarget original".into();
+    let retry = app
+        .hosts
+        .creation_intent(&context, recipe, account)
+        .unwrap();
+    assert!(Arc::ptr_eq(&original, &retry));
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Local shortcut name")
+    );
+    app.save_confirmed_creation_shortcut(
+        &original,
+        &festerm_host_protocol::SessionSummary {
+            target: host_client::Target {
+                logical: original.creation().logical.clone(),
+                generation: GenerationId::new(42).unwrap(),
+            },
+            name: "Remote created name".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        },
+    );
+    assert!(original.confirmed_target().is_none());
+    assert_eq!(
+        store.lock().unwrap().host_recipes().recipes().len(),
+        before,
+        "unknown/unconfirmed result never creates phantom metadata"
+    );
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(app.hosts.worker.is_none() && app.hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_creation_and_save_forms_keep_44point_native_fields_and_12point_action_gaps() {
+    use egui_kittest::kittest::{By, Queryable};
+    for (state, fields, primary) in [
+        (
+            "hosts-new",
+            vec!["New session name", "New shell local profile name"],
+            "Create & Connect",
+        ),
+        (
+            "hosts-save-session",
+            vec!["Session local profile name"],
+            "Save profile",
+        ),
+    ] {
+        let mut app = app();
+        app.configure_host_gallery(state);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+        harness.run_steps(3);
+        for field in fields {
+            let rect = harness
+                .get(
+                    By::new()
+                        .label(field)
+                        .role(egui::accesskit::Role::TextInput),
+                )
+                .rect();
+            assert!(rect.height() >= 44.0, "{state}/{field}: {rect:?}");
+        }
+        let confirm = harness.get(By::new().label(primary)).rect();
+        let cancel = harness.get(By::new().label("Cancel")).rect();
+        assert!(
+            cancel.top() - confirm.bottom() >= 11.9,
+            "{state}: {confirm:?} {cancel:?}"
+        );
+        harness.get(By::new().label("Back"));
+        assert!(harness.query(By::new().label("Done")).is_none());
+        assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_session_card_keeps_12point_action_row_gap_and_44point_details() {
+    use egui_kittest::kittest::{By, Queryable};
+    let mut app = app();
+    app.configure_host_gallery("hosts-sessions");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    let connect = harness.get(By::new().label("Connect · Lab shared")).rect();
+    let save = harness.get(By::new().label("Save as profile…")).rect();
+    let details = harness.get(By::new().label("Details")).rect();
+    assert!(
+        save.top() - connect.bottom() >= 11.9,
+        "{connect:?} {save:?}"
+    );
+    assert!(details.height() >= 44.0, "{details:?}");
+    assert!(harness.state().hosts.worker.is_none() && harness.state().hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_host_back_from_busy_creation_cancels_worker_and_keeps_original_save_intent() {
+    let (_root, mut app, account, _store) = recovery_fixture();
+    app.hosts.inventory = Some(client_inventory(true));
+    app.host_action(&egui::Context::default(), Action::QuickNew)
+        .unwrap();
+    app.hosts.quick_name = "Original shell".into();
+    app.hosts.quick_save = true;
+    app.hosts.quick_profile_name = "Original shortcut".into();
+    app.hosts.freeze_quick_recipe(&account).unwrap();
+    let context = app.hosts.context().unwrap();
+    let intent = app
+        .hosts
+        .creation_intent(
+            &context,
+            app.hosts.selected.clone().unwrap(),
+            account.clone(),
+        )
+        .unwrap();
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: context.binding().clone(),
+    };
+    let cancel = CancellationToken::new();
+    app.hosts.worker = Some(Arc::new(
+        host_client::testing::pending_worker(scope.clone(), cancel.clone()).unwrap(),
+    ));
+    app.hosts.worker_account = Some(account);
+    app.hosts.worker_creation = Some((scope, intent.clone()));
+    app.host_action(&egui::Context::default(), Action::CancelEdit)
+        .unwrap();
+    assert!(cancel.is_cancelled());
+    assert!(
+        app.hosts.worker.is_none() && app.hosts.worker_creation.is_none() && !app.hosts.quick_new
+    );
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(Arc::ptr_eq(&app.hosts.originals[0].intent, &intent));
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Original shortcut")
+    );
+    assert!(intent.issued_operation().is_none() && intent.confirmed_target().is_none());
 }

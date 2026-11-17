@@ -2,6 +2,19 @@
 //! Fixtures invoke production renderers; no returned UI action is dispatched.
 
 use super::*;
+#[cfg(feature = "experimental-dev-tunnels")]
+fn capture_host_workspace(scene: &'static str, width: f32) -> image::RgbaImage {
+    let app = crate::app::FesTermApp::gallery_host_browser(scene);
+    let mut harness = gallery_harness(
+        egui::vec2(width, 1000.0),
+        |ui, app| {
+            crate::app::experimental_gallery::show(app, ui.ctx(), "host");
+        },
+        app,
+    );
+    finish_experimental(&mut harness)
+}
+
 #[cfg(feature = "local-host-settings")]
 use crate::app::desktop_remote_access as remote;
 use egui_kittest::kittest::NodeT;
@@ -1208,6 +1221,26 @@ pub(super) fn scenarios() -> Vec<Scenario> {
             ),
         ]);
         catalog.extend([
+            scene!(
+                "host-workspace-sessions",
+                "Find & Connect · host session table",
+                || capture_host_workspace("workspace-sessions", 1120.0)
+            ),
+            scene!(
+                "host-workspace-narrow",
+                "Find & Connect · narrow host session list",
+                || capture_host_workspace("workspace-narrow", 620.0)
+            ),
+            scene!(
+                "host-workspace-new-shell",
+                "Find & Connect · host default shell and optional local shortcut",
+                || capture_host_workspace("workspace-new-shell", 1120.0)
+            ),
+            scene!(
+                "host-workspace-new-shell-narrow",
+                "Find & Connect · narrow new shell form",
+                || capture_host_workspace("workspace-new-shell-narrow", 620.0)
+            ),
             browser!(
                 "host-review",
                 "Selected HOST · first-connect binding consent",

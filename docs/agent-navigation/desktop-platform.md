@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "2130ab0060e49778b54a462079fe52cf7d98e41ea9df9a499007efcf4f1dd9b3"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8fd58c328ac9f7479e8fd44770091ddf4b80167b83cd08b05728928f6ad523c0"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,8 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Which install marker, updater key, and package metadata are required for a release build?
 
-- [`main`](../../app/festerm/build.rs) — embeds Windows icon and release-only packaging hook
+- [`main`](../../app/festerm/build.rs) — embeds Windows icon and release packaging hook
 - [`UpdateController`](../../app/festerm/src/updates.rs) — reads build marker and public key to gate update checks
-- [`InstallationKind`](../../app/festerm/src/updates.rs) — maps package markers to self-update eligibility
-- [`packaging/linux.toml`](../../packaging/linux.toml) — AppImage/deb metadata and desktop entry layout
-- [`packaging/macos.toml`](../../packaging/macos.toml) — DMG and Info.plist packaging for native app bundles
-- [`packaging/windows.toml`](../../packaging/windows.toml) — NSIS staging and install metadata
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — release builds reject missing updater verification keys
@@ -26,13 +22,12 @@ Evidence:
 Caveats:
 - Install markers are package-specific and not interchangeable.
 - Updater signing is separate from app signing; only the public key is checked.
-- Package metadata and file staging are platform-specific and not cross-platform compatible.
 
 ## Native smoke
 
 Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — real-window smoke driver checks focus, resize, and PTY output
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — real-window smoke driver validates focus, resize, and PTY output
 - [`from_environment`](../../app/festerm/src/native_smoke.rs) — accepts exactly one smoke mode and a required result path
 
 Evidence:
@@ -49,7 +44,7 @@ Caveats:
 Use for: What should I read when a Finder open event or macOS menu action breaks?
 
 - [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — registers Finder open-document AppleEvents and drains queued paths early
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — semantic menu commands translated from AppKit selectors into app work
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — semantic AppKit menu actions are translated into app commands
 
 Evidence:
 - [`open_document_bridge_buffers_paths_and_errors_until_drained`](../../crates/festerm-macos-window/src/lib.rs) — bounded queues preserve FIFO order and drain without unbounded retention
@@ -64,14 +59,12 @@ Caveats:
 
 Use for: What should I read when resume-from-sleep, lock-screen, or privacy callbacks misfire?
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — hidden message-only window listens for resume broadcast events and invokes wake callbacks
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — message-only window listens for resume broadcasts and invokes wake callbacks
 - [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — logind session monitor fails closed on lock, inactivity, suspend, or bus failure
-- [`GnomePrivacyMonitor`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — GNOME shell lock-screen observer is the user-visible privacy cutoff
 
 Evidence:
 - [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — resume broadcasts wake while unrelated power events are ignored
 - [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — real GNOME screen-shield transition is the privacy cutoff
-- [`unavailable_locked_or_foreign_shell_fails_closed`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — unsupported or foreign shells are treated as privacy loss
 
 Caveats:
 - These monitors treat only the resume edge as wake and ignore suspend transitions.

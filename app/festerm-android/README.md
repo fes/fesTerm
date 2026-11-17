@@ -128,6 +128,13 @@ Window focus, secure-window flags and existing input-owner guards are preserved;
 no OS keyboard preference or permission changes. A one-shot hide alone cannot
 prevent a later Gboard show over the custom keys.
 
+System-keyboard transitions request API 30+ IME insets control and one posted
+`showSoftInput` (also the API 29 path), guarded by the current mode/field, focus,
+foreground lifecycle and uncovered content. A focus gain may apply the current
+system-keyboard intent; equal-mode frames never retry it. Hidden/custom and
+privacy-covered transitions cancel pending insets visibility and hide the IME.
+Native switching and actual form usability still require emulator/device proof.
+
 Java-dispatched ordinary keys and IME commits share the guarded JNI queue;
 NativeActivity can handle actual keys before Activity dispatch. `PlatformSmoke`
 checks Java/JNI ownership, exactly-once emission, masking, stale/covered rejection

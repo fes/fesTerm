@@ -67,6 +67,48 @@ public final class PlatformSmoke extends Instrumentation {
         activity.privacy(false, false, false);
     }
 
+    /** Guards used by deferred IME requests; visibility still needs native UI evidence. */
+    private static void systemImeShowGuard(FestermActivity activity, View input) throws Exception {
+        Method canShow = input.getClass().getDeclaredMethod("canShowSystemIme", int.class, long.class);
+        canShow.setAccessible(true);
+        activity.fieldDocument(2300, "", 0, 0, false, false);
+        activity.keyboardMode(3);
+        require(input.hasFocus() && input.hasWindowFocus(), "system editor owns focused window");
+        require((Boolean) canShow.invoke(input, 3, 2300L), "current field can request system IME");
+        require(!(Boolean) canShow.invoke(input, 1, 2300L), "different captured mode refuses");
+        activity.fieldDocument(2301, "", 0, 0, false, false);
+        require(!(Boolean) canShow.invoke(input, 3, 2300L), "retired field cannot show system IME");
+        require((Boolean) canShow.invoke(input, 3, 2301L), "replacement field owns its own request");
+        activity.privacy(true, true, true);
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "privacy cover cancels system IME intent");
+        activity.privacy(false, true, false);
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "covered view cannot request system IME");
+        activity.privacy(false, false, false);
+        for (String name : new String[]{"ready", "resumed", "destroyed"}) {
+            Field lifecycle = FestermActivity.class.getDeclaredField(name);
+            lifecycle.setAccessible(true);
+            boolean original = lifecycle.getBoolean(activity);
+            try {
+                lifecycle.setBoolean(activity, name.equals("destroyed"));
+                require(!(Boolean) canShow.invoke(input, 3, 2301L),
+                    "deferred system IME refuses lifecycle cut " + name);
+            } finally { lifecycle.setBoolean(activity, original); }
+        }
+        input.clearFocus();
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "lost editor focus refuses system IME");
+        input.requestFocus();
+        for (int mode : new int[]{0, 2, 4}) {
+            activity.keyboardMode(mode);
+            require(!(Boolean) canShow.invoke(input, 3, 2301L),
+                "retired system request refuses hidden/custom mode " + mode);
+            require(!(Boolean) canShow.invoke(input, mode, 2301L),
+                "hidden/custom owner never requests system IME " + mode);
+        }
+        activity.keyboardMode(1);
+        require((Boolean) canShow.invoke(input, 1, 0L), "native terminal mode may show system IME");
+        activity.keyboardMode(0);
+    }
+
     /** Real Java/IME/JNI path; sequence counts detect duplicate or missing emissions. */
     private static void orderedPlainKeys(FestermActivity activity, View input) throws Exception {
         Field sequence = input.getClass().getDeclaredField("sequence");
@@ -696,6 +738,10 @@ public final class PlatformSmoke extends Instrumentation {
             inputField.setAccessible(true);
             View input = (View) inputField.get(activity);
             onMain(() -> keyboardImeOwnership(activity));
+            onMain(() -> {
+                try { systemImeShowGuard(activity, input); }
+                catch (Exception error) { throw new AssertionError(error); }
+            });
             postedAccentOwnershipTransition(activity, input);
             onMain(() -> {
                 try { orderedPlainKeys(activity, input); }

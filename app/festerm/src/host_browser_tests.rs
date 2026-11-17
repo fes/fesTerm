@@ -1223,3 +1223,490 @@ fn ordinary_desktop_attach_installs_common_session_without_owner_enrollment() {
     assert!(app.state.host_creation_intents.is_empty());
     app.state.request_background_shutdown();
 }
+
+#[test]
+fn session_shortcut_binds_exact_host_logical_generation_without_launch_or_creation() {
+    let (app, _) = fixture();
+    let mut original = app.host_browser.as_ref().unwrap().recipe.clone();
+    original.launch.shell = Some("unrelated-command".into());
+    original.launch.args = vec!["unrelated-argument".into()];
+    original.behavior = ConnectionBehavior::AlwaysCreate;
+    let target = Target {
+        logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        generation: "9".to_owned().try_into().unwrap(),
+    };
+    let saved = session_shortcut(
+        &original,
+        &target,
+        "remote session",
+        Lifetime::Persistent {},
+        "local shortcut".into(),
+    );
+    assert_eq!(saved.host, original.host);
+    assert_eq!(saved.logical_session, target.logical);
+    assert_eq!(
+        saved.behavior,
+        ConnectionBehavior::AttachOnly {
+            generation: target.generation
+        }
+    );
+    assert_eq!(saved.session_name(), "remote session");
+    assert_eq!(saved.name, "local shortcut");
+    assert_eq!(
+        saved.launch,
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None
+        }
+    );
+    assert_ne!(saved.id, original.id);
+    let config = Configuration::empty()
+        .with_host_recipe_command(MetadataCommand::Save(saved.clone()))
+        .unwrap()
+        .0;
+    assert_eq!(
+        saved_session_profile(config.host_recipes(), &original.host, &target),
+        Some(&saved)
+    );
+    let mut other = target.clone();
+    other.generation = "10".to_owned().try_into().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &other).is_none());
+    other = target.clone();
+    other.logical = uuid::Uuid::new_v4().to_string().parse().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &other).is_none());
+    original.host.id = uuid::Uuid::new_v4().to_string().parse().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &target).is_none());
+}
+
+#[test]
+fn optional_created_shortcut_is_original_bound_single_use_and_uses_confirmed_target() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    let scope = browser.scope(&protected_creation_context(&browser.recipe));
+    let attachment = host_client::AttachmentId::new();
+    browser.pending_created_profile =
+        Some((scope.clone(), attachment.clone(), "local name".into()));
+    let session = festerm_host_protocol::SessionSummary {
+        target: Target {
+            logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+            generation: "12".to_owned().try_into().unwrap(),
+        },
+        name: "confirmed remote name".into(),
+        lifetime: Lifetime::Persistent {},
+        attached: false,
+    };
+    // Failure/Unknown changes feedback, not the issued original's process-local save intent.
+    browser.feedback = Some("The original reply is unknown.".into());
+    assert!(browser.pending_created_profile.is_some());
+    let mut stale_scope = scope.clone();
+    stale_scope.generation += 1;
+    assert!(browser
+        .confirmed_creation_shortcut(&stale_scope, &attachment, &session)
+        .is_none());
+    assert!(browser.pending_created_profile.is_some());
+    let saved = browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .unwrap();
+    assert_eq!(saved.logical_session, session.target.logical);
+    assert_eq!(
+        saved.behavior,
+        ConnectionBehavior::AttachOnly {
+            generation: session.target.generation
+        }
+    );
+    assert_eq!(saved.name, "local name");
+    assert!(browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .is_none());
+    browser.pending_created_profile = Some((
+        scope.clone(),
+        host_client::AttachmentId::new(),
+        "foreign original".into(),
+    ));
+    assert!(browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .is_none());
+    assert_eq!(
+        app.state.configuration().host_recipes().recipes().len(),
+        1,
+        "no config write before a validated Created ACK"
+    );
+}
+
+#[test]
+fn host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut app = FesTermApp::gallery_host_browser("sessions");
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.workspace = true;
+    browser.ordinary_selected = true;
+    browser.discovered = true;
+    let inventory = browser.inventory.as_mut().unwrap();
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory.capabilities.creation_allowed = false;
+    let session = inventory.sessions[0].clone();
+    inventory.profiles = vec![
+        festerm_host_protocol::ProfileSummary {
+            logical: session.target.logical.clone(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "duplicate advertisement".into(),
+        },
+        festerm_host_protocol::ProfileSummary {
+            logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: session.name.clone(),
+        },
+    ];
+    inventory.unknown.push(Target {
+        logical: inventory.profiles[1].logical.clone(),
+        generation: "1".to_owned().try_into().unwrap(),
+    });
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1120.0, 900.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| {
+                app.show_workspace_host(ui.ctx(), false);
+            },
+            app,
+        );
+    harness.run();
+    assert!(harness.query_by_label("duplicate advertisement").is_none());
+    harness.get_by_label("Unknown");
+    harness.get_by_label("Running");
+    harness.get_by_label("GitHub account");
+    harness.get_by_label("Refresh sessions");
+    assert!(harness.query_by_label("New host shell").is_none());
+    let start = harness.get_by_label("Start & Connect");
+    assert!(start.accesskit_node().is_disabled());
+    assert!(
+        harness.get_by_label("Unknown").rect().top() > harness.get_by_label("Running").rect().top(),
+        "separate logical sessions occupy separate table rows"
+    );
+    {
+        let browser = harness.state_mut().host_browser.as_mut().unwrap();
+        let inventory = browser.inventory.as_mut().unwrap();
+        inventory.unknown.clear();
+        inventory.capabilities.creation_allowed = true;
+        inventory.capabilities.create = true;
+    }
+    harness.run();
+    assert!(!harness
+        .get_by_label("Start & Connect")
+        .accesskit_node()
+        .is_disabled());
+    harness.get_by_label("New host shell");
+    assert!(harness
+        .state()
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .worker
+        .is_none());
+}
+
+#[test]
+fn new_host_shell_discards_selected_recipe_launch_and_uses_persistent_host_default() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.recipe.launch = Recipe {
+        shell: Some("custom-shell".into()),
+        args: vec!["custom-arg".into()],
+        cwd: Some("/custom".into()),
+    };
+    browser.recipe.lifetime = Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    };
+    browser.session_name = "  new work  ".into();
+    browser.prepare_new_host_shell();
+    browser.host_approved = true;
+    browser.inventory = Some(Inventory {
+        capabilities: festerm_host_protocol::Capabilities {
+            create: true,
+            creation_allowed: true,
+            attach: true,
+            ..Default::default()
+        },
+        sessions: Vec::new(),
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let (mode, request) = browser.creation_request().unwrap();
+    assert_eq!(mode, CreationMode::Create);
+    assert_eq!(request.name.as_deref(), Some("new work"));
+    assert_eq!(
+        request.recipe,
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None
+        }
+    );
+    assert_eq!(request.lifetime, Lifetime::Persistent {});
+}
+
+#[test]
+fn narrow_host_browser_keeps_new_shell_actions_and_fields_inside_viewport() {
+    use egui_kittest::kittest::Queryable;
+    let app = FesTermApp::gallery_host_browser("workspace-new-shell-narrow");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(620.0, 1000.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| app.show_workspace_host(ui.ctx(), false),
+            app,
+        );
+    harness.run();
+    for label in [
+        "Find & Connect",
+        "Refresh hosts",
+        "Save as a local profile",
+        "Create & Connect",
+        "Cancel",
+    ] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(
+            rect.left() >= 0.0
+                && rect.right() <= 620.0
+                && rect.top() >= 0.0
+                && rect.bottom() <= 1000.0,
+            "{label}: {rect:?}"
+        );
+    }
+}
+
+#[test]
+fn account_switch_keeps_directory_open_retires_old_authority_and_selects_new_account_host() {
+    assert_account_switch_keeps_directory(true);
+}
+
+#[test]
+fn saved_profile_account_switch_retires_profile_request_and_keeps_directory_open() {
+    assert_account_switch_keeps_directory(false);
+}
+
+fn assert_account_switch_keeps_directory(workspace_entry: bool) {
+    use crate::screens::host_workspace::{self, HostSessions};
+    use egui_kittest::kittest::Queryable;
+    let (mut app, context) = fixture();
+    let second = DevTunnelAccount::new(
+        "second-github",
+        AccountProvider::Github,
+        99,
+        "second-user",
+        SecretReference::generate(),
+    )
+    .unwrap();
+    let configuration = app
+        .state
+        .configuration()
+        .with_account(second.clone())
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    app.secret_store = Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    let mut recipe = app.host_browser.take().unwrap().recipe.clone();
+    recipe.host_hint = Some(HostHint {
+        name: "First account host".into(),
+        locator: "first.fixture".into(),
+    });
+    recipe.behavior = ConnectionBehavior::AttachOnly {
+        generation: "7".to_owned().try_into().unwrap(),
+    };
+    let configuration = app
+        .state
+        .configuration()
+        .with_host_recipe_command(MetadataCommand::Edit(recipe.clone()))
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    let saved_metadata = app.state.configuration().host_recipes().clone();
+    let tab = app.state.active();
+    let request = egui::Id::new("account-switch-entry");
+    if workspace_entry {
+        host_workspace::install_browser_request_for_test(&context, tab, request);
+        app.review_discovered_host(
+            tab,
+            request,
+            host_workspace::HostChoice {
+                account: "github-user".into(),
+                name: "First account host".into(),
+                locator: "first.fixture".into(),
+                reference: Some(recipe.host.clone()),
+            },
+            &context,
+        );
+    } else {
+        crate::screens::install_host_recipe_request_for_test(&context, tab, request);
+        app.review_host(tab, request, recipe, &context);
+    }
+    let browser = app.host_browser.as_mut().expect("normal entry factory");
+    assert_eq!(browser.workspace, workspace_entry);
+    assert!(browser.current(&app.state, &context));
+    browser.host_approved = true;
+    browser.inventory = Some(Inventory {
+        capabilities: Default::default(),
+        sessions: Vec::new(),
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let old_request = browser.request;
+    let old_cancel = browser.cancel.clone();
+    let shared_account_lifetime = CancellationToken::new();
+    browser.ordinary_lifetime = Some(shared_account_lifetime.clone());
+    let scope = browser.scope(&protected_creation_context(&browser.recipe));
+    browser.pending_created_profile = Some((
+        scope,
+        host_client::AttachmentId::new(),
+        "old optional shortcut".into(),
+    ));
+    let (late, receiver) = mpsc::channel();
+    browser.receiver = Some(receiver);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1120.0, 900.0))
+        .build_ui_state(
+            |ui, (app, first): &mut (FesTermApp, bool)| {
+                if *first {
+                    let browser = app.host_browser.as_ref().unwrap();
+                    host_workspace::install_browser_request_for_test(
+                        ui.ctx(),
+                        browser.tab,
+                        browser.request,
+                    );
+                    if !browser.workspace {
+                        crate::screens::install_host_recipe_request_for_test(
+                            ui.ctx(),
+                            browser.tab,
+                            browser.request,
+                        );
+                    }
+                    *first = false;
+                }
+                app.poll_host_browser(ui.ctx());
+                app.show_host_browser(ui.ctx(), false);
+            },
+            (app, true),
+        );
+    harness.get_by_role(accesskit::Role::ComboBox).click();
+    harness.run_steps(3);
+    harness.get_by_label("@second-user").click();
+    harness.run_steps(3);
+    let browser = harness
+        .state()
+        .0
+        .host_browser
+        .as_ref()
+        .expect("account switch retains Find & Connect");
+    assert!(
+        browser.workspace
+            && browser.directory_only
+            && browser.current(&harness.state().0.state, &harness.ctx)
+    );
+    if !workspace_entry {
+        assert!(!crate::screens::host_recipe_request_is_current(
+            &harness.ctx,
+            browser.tab,
+            old_request
+        ));
+    }
+    assert_eq!(browser.account, second);
+    assert_ne!(browser.request, old_request);
+    assert!(old_cancel.is_cancelled());
+    assert!(
+        !shared_account_lifetime.is_cancelled(),
+        "other tabs using the account are unaffected"
+    );
+    assert!(
+        browser.receiver.is_none()
+            && browser.worker.is_none()
+            && browser.inventory.is_none()
+            && browser.ordinary.is_none()
+            && browser.receipt.is_none()
+    );
+    assert!(
+        !browser.host_approved
+            && !browser.auto_connect
+            && browser.pending_created_profile.is_none()
+    );
+    assert!(browser.context().is_err() && !browser.allows_creation());
+    assert!(late.send(Err("late old-account result".into())).is_err());
+    harness.get_by_label("Choose a host");
+    assert!(harness.query_by_label("late old-account result").is_none());
+    // Drive the actual Refresh command while admission is held, then deliver
+    // its controlled result. No native credential or provider access occurs.
+    let mut admission = Vec::new();
+    while let Ok(permit) = ConnectionPermit::reserve(&harness.state().0.state.host_client_budgets) {
+        admission.push(permit);
+    }
+    assert!(!admission.is_empty());
+    harness.state_mut().0.secret_store =
+        Ok(Arc::new(festerm_secret_store::MemorySecretStore::new()));
+    harness.get_by_label("Refresh hosts").click();
+    harness.run_steps(3);
+    let queued = harness
+        .state()
+        .0
+        .host_discovery_queue
+        .front()
+        .expect("account-scoped discovery waits for admission");
+    let tab = queued.tab;
+    let discovery_request = queued.request;
+    assert_eq!(queued.account, second);
+    let directory_request = harness.state().0.host_browser.as_ref().unwrap().request;
+    assert_ne!(
+        directory_request, discovery_request,
+        "chooser lifetime and directory network attempt are distinct"
+    );
+    host_workspace::report_discovery(
+        &harness.ctx,
+        tab,
+        discovery_request,
+        second.identifier(),
+        Ok(vec![festerm_tunnel_client::service::TunnelSummary {
+            locator: "second.fixture".into(),
+            name: Some("Second account build host".into()),
+            description: None,
+            active: true,
+        }]),
+    );
+    harness.run_steps(3);
+    let browser = harness
+        .state()
+        .0
+        .host_browser
+        .as_ref()
+        .expect("refresh completion retains chooser");
+    assert!(browser.directory_only && browser.current(&harness.state().0.state, &harness.ctx));
+    assert_eq!(browser.request, directory_request);
+    harness.state_mut().0.secret_store =
+        Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    let reference = HostReference {
+        id: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        account: AccountReference::Github { account_id: 99 },
+    };
+    host_workspace::remember_host(
+        &harness.ctx,
+        HostSessions {
+            reference: reference.clone(),
+            hint: HostHint {
+                name: "Second account build host".into(),
+                locator: "second.fixture".into(),
+            },
+            sessions: Vec::new(),
+        },
+    );
+    harness.run_steps(3);
+    harness.get_by_label("Second account build host").click();
+    harness.run_steps(3);
+    let browser = harness.state().0.host_browser.as_ref().unwrap();
+    assert!(!browser.directory_only);
+    assert_eq!(browser.account, second);
+    assert_eq!(browser.recipe.host, reference);
+    assert!(browser.inventory.is_none() && browser.ordinary.is_none() && !browser.host_approved);
+    assert!(browser.current(&harness.state().0.state, &harness.ctx));
+    assert_eq!(
+        harness.state().0.state.configuration().host_recipes(),
+        &saved_metadata,
+        "account/host browsing never retargets saved metadata"
+    );
+}

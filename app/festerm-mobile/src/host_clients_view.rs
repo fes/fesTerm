@@ -14,6 +14,15 @@ fn host_field(
     multiline: bool,
 ) -> egui::Response {
     let id = ui.make_persistent_id(("host_client_field", name));
+    let edit = if multiline {
+        edit.margin(egui::Margin::same(8))
+    } else {
+        let padding = ((44.0 - ui.text_style_height(&egui::TextStyle::Body)) / 2.0)
+            .ceil()
+            .max(8.0) as i8;
+        edit.margin(egui::Margin::symmetric(8, padding))
+            .vertical_align(egui::Align::Center)
+    };
     let response = crate::widgets::local_text_edit(ui, id, edit, false, multiline)
         .response
         .response;
@@ -68,21 +77,44 @@ pub(super) fn host_display_name(host: &TunnelSummary) -> &str {
         .unwrap_or(&host.locator)
 }
 
+fn selected_host_title(hosts: &HostUi) -> &str {
+    hosts
+        .hosts
+        .iter()
+        .find(|host| host.locator == hosts.locator)
+        .map(host_display_name)
+        .or_else(|| {
+            hosts
+                .selected
+                .as_ref()
+                .and_then(|recipe| recipe.host_hint.as_ref())
+                .map(|hint| hint.name.as_str())
+        })
+        .unwrap_or(if hosts.locator.is_empty() {
+            "Selected host"
+        } else {
+            &hosts.locator
+        })
+}
+
 fn card<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     surface_card(ui, |ui| {
         egui::Frame::new()
             .inner_margin(egui::Margin::same(8))
-            .show(ui, contents)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 12.0;
+                contents(ui)
+            })
             .inner
     })
 }
 
-fn navigation(ui: &mut egui::Ui, title: &str) -> bool {
+fn navigation(ui: &mut egui::Ui, title: &str, back: bool) -> bool {
     ui.horizontal(|ui| {
         let done = button_sized(
             ui,
             ButtonKind::Secondary,
-            "Done",
+            if back { "Back" } else { "Done" },
             true,
             egui::vec2(64.0, 44.0),
         );
@@ -223,8 +255,6 @@ impl MobileApp {
         let old_prerequisite = self.hosts.prerequisite.clone();
         let old_consent = (self.hosts.trust, self.hosts.enrolled, self.hosts.launch);
         let mut action = None;
-        let mut selection = None;
-        let mut saved_connect = None;
         egui::Window::new("Dev Tunnel")
             .id(egui::Id::new("mobile-hosts"))
             .title_bar(false)
@@ -241,19 +271,26 @@ impl MobileApp {
                     ui.add_space(inset);
                     ui.vertical(|ui| {
                         ui.set_width(width);
-                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                        ui.spacing_mut().interact_size.y = 44.0;
                         egui::Frame::new()
                             .inner_margin(egui::Margin::same(8))
                             .show(ui, |ui| {
-                                if navigation(
-                                    ui,
-                                    if self.hosts.editing {
-                                        "Dev Tunnel profile"
-                                    } else {
-                                        "Find & Connect"
-                                    },
-                                ) {
-                                    action = Some(Action::Close);
+                                let detail =
+                                    !self.hosts.locator.is_empty() && !self.hosts.host_collapsed;
+                                let (title, header_action) = if self.hosts.editing {
+                                    ("Dev Tunnel profile", Action::Close)
+                                } else if self.hosts.session_save.is_some() {
+                                    ("Save as profile", Action::CancelSessionSave)
+                                } else if self.hosts.quick_new {
+                                    ("New host shell", Action::CancelEdit)
+                                } else if detail {
+                                    (selected_host_title(&self.hosts), Action::BackHosts)
+                                } else {
+                                    ("Find & Connect", Action::Close)
+                                };
+                                if navigation(ui, title, !matches!(header_action, Action::Close)) {
+                                    action = Some(header_action);
                                 }
                                 if self.hosts.busy() {
                                     ui.horizontal(|ui| {
@@ -272,8 +309,29 @@ impl MobileApp {
                                     self.show_host_profile_form(ui, &mut action);
                                     return;
                                 }
+                                if self.hosts.session_save.is_some() {
+                                    self.show_session_save_form(ui, &mut action);
+                                    return;
+                                }
                                 if self.hosts.quick_new {
-                                    self.show_host_quick_form(ui, &mut action);
+                                    let scope = self
+                                        .hosts
+                                        .selected
+                                        .as_ref()
+                                        .map(|recipe| recipe.id.as_str().to_owned());
+                                    ui.push_id(("new-host-shell", scope), |ui| {
+                                        self.show_host_quick_form(ui, &mut action)
+                                    });
+                                    return;
+                                }
+                                if !self.hosts.locator.is_empty() && !self.hosts.host_collapsed {
+                                    if let Some(account) = accounts
+                                        .iter()
+                                        .find(|account| account.id == self.hosts.account)
+                                    {
+                                        footnote(ui, &format!("@{}", account.login));
+                                    }
+                                    self.show_selected_host(ui, &recipes, &mut action);
                                 } else {
                                     if self.hosts.profile_host_review.is_some() {
                                         section_header(ui, "Choose profile host", None, false);
@@ -296,117 +354,101 @@ impl MobileApp {
                                             action = Some(Action::CancelProfileHost);
                                         }
                                     }
-                                    section_header(ui, "GitHub accounts", None, false);
+                                    section_header(ui, "GitHub account", None, false);
                                     if accounts.is_empty()
                                         && primary(ui, "Sign in to GitHub", !self.hosts.busy())
                                     {
                                         action = Some(Action::SignIn);
                                     }
-                                    for (index, account) in accounts.iter().enumerate() {
-                                        let current = self.hosts.account == account.id;
-                                        let label = if current {
-                                            format!("Refresh hosts · @{}", account.login)
-                                        } else {
-                                            format!("@{}", account.login)
-                                        };
-                                        let choose = if self.hosts.inventory.is_some() {
-                                            secondary
-                                        } else {
-                                            primary
-                                        };
-                                        if choose(ui, &label, !current || !self.hosts.busy()) {
-                                            action = Some(Action::FindAccount(index));
-                                        }
-                                    }
-                                    if secondary(ui, "Manage accounts in Settings", true) {
-                                        action = Some(Action::Settings);
-                                    }
-                                    if !recipes.is_empty()
-                                        && self.hosts.profile_host_review.is_none()
-                                    {
-                                        section_header(ui, "Saved profiles", None, false);
-                                        card(ui, |ui| {
-                                            for recipe in &recipes {
-                                                if primary(
-                                                    ui,
-                                                    &format!("Connect · {}", recipe.name),
-                                                    !self.hosts.busy(),
-                                                ) {
-                                                    saved_connect =
-                                                        Some(recipe.id.as_str().to_owned());
-                                                }
-                                                if secondary(
-                                                    ui,
-                                                    &format!("Edit · {}", recipe.name),
-                                                    !self.hosts.busy(),
-                                                ) {
-                                                    selection = Some(recipe.clone());
+                                    if !accounts.is_empty() {
+                                        let current = accounts
+                                            .iter()
+                                            .position(|account| account.id == self.hosts.account);
+                                        let selected = current
+                                            .map(|index| format!("@{}", accounts[index].login))
+                                            .unwrap_or_else(|| "Select account".into());
+                                        ui.horizontal(|ui| {
+                                            let width = (ui.available_width() - 12.0) / 2.0;
+                                            egui::ComboBox::from_id_salt("host-account")
+                                                .selected_text(&selected)
+                                                .width(width)
+                                                .show_ui(ui, |ui| {
+                                                    for (index, account) in
+                                                        accounts.iter().enumerate()
+                                                    {
+                                                        if ui
+                                                            .selectable_label(
+                                                                current == Some(index),
+                                                                format!("@{}", account.login),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            action =
+                                                                Some(Action::FindAccount(index));
+                                                        }
+                                                    }
+                                                    ui.separator();
+                                                    if ui
+                                                        .selectable_label(false, "Manage accounts…")
+                                                        .clicked()
+                                                    {
+                                                        action = Some(Action::Settings);
+                                                    }
+                                                });
+                                            if let Some(index) = current {
+                                                let enabled = !self.hosts.busy();
+                                                if labelled(
+                                                    button_sized(
+                                                        ui,
+                                                        ButtonKind::Secondary,
+                                                        "Refresh hosts",
+                                                        enabled,
+                                                        egui::vec2(width, 44.0),
+                                                    ),
+                                                    &format!(
+                                                        "Refresh hosts · @{}",
+                                                        accounts[index].login
+                                                    ),
+                                                    enabled,
+                                                )
+                                                .clicked()
+                                                {
+                                                    action = Some(Action::FindAccount(index));
                                                 }
                                             }
                                         });
+                                    } else if ui
+                                        .add(
+                                            egui::Button::new("Manage accounts…")
+                                                .frame(false)
+                                                .min_size(egui::vec2(0.0, 44.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(Action::Settings);
                                     }
+                                    section_header(ui, "Hosts", None, false);
                                     if self.hosts.discovered && self.hosts.hosts.is_empty() {
                                         footnote(
                                             ui,
                                             "No hosts found. Your saved profiles are unchanged.",
                                         );
                                     }
-                                    let hosts = self.hosts.hosts.clone();
-                                    if !hosts.is_empty() {
-                                        if let Some(account) = accounts
-                                            .iter()
-                                            .find(|account| account.id == self.hosts.account)
-                                        {
-                                            section_header(
-                                                ui,
-                                                &format!("Hosts · @{}", account.login),
-                                                None,
-                                                false,
-                                            );
-                                        }
-                                    }
-                                    for (index, host) in hosts.iter().enumerate() {
-                                        let selected = self.hosts.locator == host.locator
-                                            && !self.hosts.host_collapsed;
-                                        let name = host_display_name(host);
+                                    for (index, host) in self.hosts.hosts.clone().iter().enumerate()
+                                    {
                                         card(ui, |ui| {
                                             if host_disclosure(
                                                 ui,
-                                                name,
-                                                selected,
+                                                host_display_name(host),
+                                                false,
                                                 !self.hosts.busy(),
                                             )
                                             .clicked()
                                             {
                                                 action = Some(Action::SelectHost(index));
                                             }
-                                            if selected {
-                                                self.show_selected_host(ui, &mut action);
-                                            }
                                         });
-                                    }
-                                    if !self.hosts.locator.is_empty()
-                                        && !hosts
-                                            .iter()
-                                            .any(|host| host.locator == self.hosts.locator)
-                                    {
-                                        section_header(ui, "Selected host", None, false);
-                                        let title = self
-                                            .hosts
-                                            .selected
-                                            .as_ref()
-                                            .and_then(|recipe| recipe.host_hint.as_ref())
-                                            .map(|hint| hint.name.as_str())
-                                            .unwrap_or(&self.hosts.locator);
-                                        ui.label(title);
-                                        self.show_selected_host(ui, &mut action);
-                                    } else if self.hosts.selected.is_some()
-                                        && self.hosts.locator.is_empty()
-                                    {
-                                        footnote(
-                            ui,
-                            "Choose this profile's host, or enter its locator in Details.",
-                        );
+                                        ui.add_space(12.0);
                                     }
                                 }
                                 egui::CollapsingHeader::new("Details & recovery")
@@ -469,15 +511,6 @@ impl MobileApp {
         if self.hosts.gallery_display.is_some() {
             return;
         }
-        if let Some(id) = saved_connect {
-            self.connect_saved_host_profile(ctx, &id);
-            return;
-        }
-        if let Some(recipe) = selection {
-            self.select_host_recipe(recipe);
-            self.hosts.begin_profile_edit();
-            return;
-        }
         if old_locator != self.hosts.locator
             || old_fingerprint != self.hosts.fingerprint
             || old_prerequisite != self.hosts.prerequisite
@@ -497,17 +530,16 @@ impl MobileApp {
         }
     }
 
-    fn show_selected_host(&mut self, ui: &mut egui::Ui, action: &mut Option<Action>) {
+    fn show_selected_host(
+        &mut self,
+        ui: &mut egui::Ui,
+        recipes: &[PublicRecipe],
+        action: &mut Option<Action>,
+    ) {
         let busy = self.hosts.busy();
         if self.hosts.saved_connect.is_some() {
             ui.label("Connecting saved profile…");
             return;
-        }
-        if self.hosts.selected.is_some() && secondary(ui, "Save / edit profile", !busy) {
-            *action = Some(Action::EditProfile);
-        }
-        if self.hosts.selected.is_some() && secondary(ui, "New profile for this host", !busy) {
-            *action = Some(Action::NewProfile);
         }
         if self.hosts.ordinary_selected && self.hosts.inventory.is_none() {
             if busy {
@@ -587,7 +619,43 @@ impl MobileApp {
             return;
         }
         let inventory = self.hosts.inventory.as_ref().expect("checked inventory");
-        if inventory.sessions.is_empty() {
+        ui.horizontal(|ui| {
+            let create = self.hosts.quick_creation_allowed();
+            let width = if create {
+                (ui.available_width() - 12.0) / 2.0
+            } else {
+                ui.available_width()
+            };
+            if button_sized(
+                ui,
+                ButtonKind::Secondary,
+                "Refresh sessions",
+                !busy,
+                egui::vec2(width, 44.0),
+            )
+            .clicked()
+            {
+                *action = Some(Action::Resolve);
+            }
+            if create
+                && button_sized(
+                    ui,
+                    ButtonKind::Primary,
+                    "New host shell",
+                    !busy,
+                    egui::vec2(width, 44.0),
+                )
+                .clicked()
+            {
+                *action = Some(Action::QuickNew);
+            }
+        });
+        if !inventory.capabilities.creation_allowed {
+            footnote(ui, "New shell creation is disabled by this host.");
+        }
+        ui.add_space(12.0);
+        section_header(ui, "Sessions", None, false);
+        if inventory.sessions.is_empty() && inventory.profiles.is_empty() {
             footnote(ui, "No authorized sessions listed.");
         }
         if !inventory.unknown.is_empty() {
@@ -596,57 +664,143 @@ impl MobileApp {
         for (index, session) in inventory.sessions.iter().enumerate() {
             let permitted = inventory.capabilities.attach
                 && selected_target(self.hosts.selected.as_ref(), &session.target).is_ok();
-            let connect = if self.hosts.saved
-                && permitted
-                && self.hosts.selected.as_ref().is_some_and(|recipe| {
-                    matches!(
-                        recipe.behavior,
-                        ConnectionBehavior::AttachOnly { .. } | ConnectionBehavior::ResumeOnly {}
-                    )
-                }) {
-                primary
-            } else {
-                secondary
-            };
-            if connect(
-                ui,
-                &format!("Connect · {}", session.name),
-                permitted && !busy,
-            ) {
-                *action = Some(Action::Attach(index));
-            }
-            ui.collapsing(format!("Session details · {}", session.name), |ui| {
-                ui.label(format!(
-                    "{} · generation {}",
-                    session.target.logical,
-                    session.target.generation.get()
-                ));
-                if secondary(
-                    ui,
-                    "End session…",
-                    !self.hosts.ordinary_selected && inventory.capabilities.explicit_end && !busy,
-                ) {
-                    *action = Some(Action::ReviewEnd(index));
-                }
+            let saved = self.hosts.selected.as_ref().is_some_and(|selected| {
+                recipes
+                    .iter()
+                    .any(|recipe| recipe_saves_target(recipe, &selected.host, &session.target))
             });
+            ui.push_id(
+                (
+                    "host-session",
+                    session.target.logical.to_string(),
+                    session.target.generation.get(),
+                ),
+                |ui| {
+                    card(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 108.0).max(0.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, 48.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    ui.label(egui::RichText::new(&session.name).strong());
+                                    footnote(
+                                        ui,
+                                        if matches!(
+                                            session.lifetime,
+                                            festerm_host_protocol::Lifetime::Persistent {}
+                                        ) {
+                                            "Persistent session · Running"
+                                        } else {
+                                            "Temporary session · Running"
+                                        },
+                                    );
+                                },
+                            );
+                            if labelled(
+                                button_sized(
+                                    ui,
+                                    ButtonKind::Primary,
+                                    "Connect",
+                                    permitted && !busy,
+                                    egui::vec2(96.0, 44.0),
+                                ),
+                                &format!("Connect · {}", session.name),
+                                permitted && !busy,
+                            )
+                            .clicked()
+                            {
+                                *action = Some(Action::Attach(index));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 88.0).max(120.0);
+                            ui.allocate_ui(egui::vec2(width, 44.0), |ui| {
+                                if saved {
+                                    footnote(ui, "Saved locally · edit in Profiles");
+                                } else if button_sized(
+                                    ui,
+                                    ButtonKind::Secondary,
+                                    "Save as profile…",
+                                    !busy,
+                                    egui::vec2(width, 44.0),
+                                )
+                                .clicked()
+                                {
+                                    *action = Some(Action::SaveSession(index));
+                                }
+                            });
+                            ui.menu_button("Details", |ui| {
+                                ui.label(format!(
+                                    "{} · generation {}",
+                                    session.target.logical,
+                                    session.target.generation.get()
+                                ));
+                                if secondary(
+                                    ui,
+                                    "End session…",
+                                    !self.hosts.ordinary_selected
+                                        && inventory.capabilities.explicit_end
+                                        && !busy,
+                                ) {
+                                    *action = Some(Action::ReviewEnd(index));
+                                }
+                            });
+                        });
+                    });
+                },
+            );
+            ui.add_space(12.0);
         }
         if inventory.capabilities.profiles {
-            section_header(ui, "Shared profiles", None, false);
-            if inventory.profiles.is_empty() {
-                footnote(ui, "No shared profiles.");
-            }
             for (index, profile) in inventory.profiles.iter().enumerate() {
-                if secondary(
-                    ui,
-                    &format!("Connect · {}", profile.name),
-                    inventory.capabilities.ensure_profile && inventory.capabilities.attach && !busy,
-                ) {
-                    *action = Some(Action::EnsureProfile(index));
+                // An advertised profile already represented by a running session
+                // is one remote item. Labels never determine identity.
+                if inventory
+                    .sessions
+                    .iter()
+                    .any(|session| session.target.logical == profile.logical)
+                {
+                    continue;
                 }
+                let unknown = inventory
+                    .unknown
+                    .iter()
+                    .any(|target| target.logical == profile.logical);
+                let permitted = !unknown
+                    && inventory.capabilities.ensure_profile
+                    && inventory.capabilities.attach
+                    && inventory.capabilities.creation_allowed;
+                ui.push_id(("host-shared", profile.logical.to_string()), |ui| {
+                    card(ui, |ui| {
+                        ui.label(egui::RichText::new(&profile.name).strong());
+                        footnote(
+                            ui,
+                            if unknown {
+                                "Shared shell · State unknown"
+                            } else {
+                                "Shared shell · Not started"
+                            },
+                        );
+                        if labelled(
+                            button(
+                                ui,
+                                ButtonKind::Primary,
+                                "Start & Connect",
+                                permitted && !busy,
+                            ),
+                            &format!("Start & Connect · {}", profile.name),
+                            permitted && !busy,
+                        )
+                        .clicked()
+                        {
+                            *action = Some(Action::EnsureProfile(index));
+                        }
+                    });
+                });
+                ui.add_space(12.0);
             }
-        }
-        if self.hosts.quick_creation_allowed() && secondary(ui, "+ New session", !busy) {
-            *action = Some(Action::QuickNew);
         }
         if let Some(recipe) = &self.hosts.selected {
             if matches!(
@@ -687,13 +841,11 @@ impl MobileApp {
                 }
             }
         }
-        if secondary(ui, "Refresh sessions", !busy) {
-            *action = Some(Action::Resolve);
-        }
     }
 
     fn show_host_quick_form(&mut self, ui: &mut egui::Ui, action: &mut Option<Action>) {
-        section_header(ui, "New session", None, false);
+        ui.label("Host");
+        ui.label(selected_host_title(&self.hosts));
         let frozen = self.hosts.selected.as_ref().is_some_and(|recipe| {
             self.hosts
                 .originals
@@ -712,7 +864,28 @@ impl MobileApp {
                 false,
             );
         });
-        footnote(ui, "Durable shell. Disconnecting leaves it running.");
+        ui.label("Shell");
+        ui.label("Host default shell");
+        footnote(ui, "Persistent session. Disconnecting leaves it running.");
+        ui.add_enabled_ui(enabled, |ui| {
+            if ui
+                .checkbox(&mut self.hosts.quick_save, "Save as a local profile")
+                .changed()
+                && self.hosts.quick_save
+                && self.hosts.quick_profile_name.is_empty()
+            {
+                self.hosts.quick_profile_name = self.hosts.quick_name.clone();
+            }
+            if self.hosts.quick_save {
+                ui.label("Profile name");
+                host_field(
+                    ui,
+                    "New shell local profile name",
+                    egui::TextEdit::singleline(&mut self.hosts.quick_profile_name).char_limit(200),
+                    false,
+                );
+            }
+        });
         if frozen {
             footnote(ui, "Retry keeps the original request and session identity.");
         }
@@ -732,11 +905,20 @@ impl MobileApp {
         } else if primary(
             ui,
             if frozen {
-                "Retry create and connect"
+                "Retry Create & Connect"
             } else {
-                "Create and connect"
+                "Create & Connect"
             },
             self.hosts.valid_quick_name()
+                && (!self.hosts.quick_save
+                    || self.hosts.selected.as_ref().is_some_and(|base| {
+                        PublicRecipe::persistent(
+                            self.hosts.quick_profile_name.trim(),
+                            base.host.clone(),
+                            Recipe::default(),
+                        )
+                        .is_ok()
+                    }))
                 && !self.hosts.busy()
                 && self.hosts.quick_creation_allowed(),
         ) {
@@ -744,6 +926,52 @@ impl MobileApp {
         }
         if secondary(ui, "Cancel", !self.hosts.busy()) {
             *action = Some(Action::CancelEdit);
+        }
+    }
+
+    fn show_session_save_form(&mut self, ui: &mut egui::Ui, action: &mut Option<Action>) {
+        let busy = self.hosts.busy();
+        let Some(review) = self.hosts.session_save.as_mut() else {
+            return;
+        };
+        ui.label(review.recipe.session_name());
+        footnote(
+            ui,
+            if matches!(
+                review.recipe.lifetime,
+                festerm_host_protocol::Lifetime::Persistent {}
+            ) {
+                "Persistent session"
+            } else {
+                "Temporary session"
+            },
+        );
+        footnote(ui, &format!("@{}", review.account.login));
+        if let Some(host) = &review.recipe.host_hint {
+            footnote(ui, &host.name);
+        }
+        ui.push_id(("save-session", review.recipe.id.as_str()), |ui| {
+            ui.label("Profile name");
+            host_field(
+                ui,
+                "Session local profile name",
+                egui::TextEdit::singleline(&mut review.recipe.name).char_limit(200),
+                false,
+            );
+        });
+        footnote(
+            ui,
+            "Adds a shortcut to this session in this device's Profiles.",
+        );
+        if primary(
+            ui,
+            "Save profile",
+            review.recipe.validate().is_ok() && !busy,
+        ) {
+            *action = Some(Action::ConfirmSessionSave);
+        }
+        if secondary(ui, "Cancel", !busy) {
+            *action = Some(Action::CancelSessionSave);
         }
     }
 

@@ -3458,6 +3458,47 @@ async fn ordinary_client_cancelled_publication_does_not_adopt_accepted_host_info
 async fn native_ordinary_generic_durable_create_attach_detach_reconnect_and_private_denial() {
     use crate::ordinary_auth::OrdinaryDeviceKey;
     use festerm_host_protocol::{AttachmentId, EnsureDisposition, Refusal, Target};
+    use festerm_sessiond::private_storage as storage;
+
+    async fn exact_inventory(
+        control: &mut ControlClient<ClientConnection>,
+        target: &Target,
+    ) -> crate::host_client::Inventory {
+        let operation = OperationId::new();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match crate::host_client::inventory_authenticated(
+                    control,
+                    operation.clone(),
+                    &CancellationToken::new(),
+                )
+                .await
+                {
+                    Err(Error::Refused(Refusal::Busy)) => {}
+                    Ok(inventory) => {
+                        assert!(
+                            inventory.profiles.is_empty(),
+                            "generic create invented a profile"
+                        );
+                        if inventory.sessions.is_empty() && inventory.unknown == [target.clone()] {
+                            // Native observation contention is uncertainty about
+                            // this committed generation, never absence.
+                        } else {
+                            assert!(inventory.unknown.is_empty(), "foreign/extra unknown target");
+                            assert_eq!(inventory.sessions.len(), 1, "unexpected healthy inventory");
+                            assert_eq!(inventory.sessions[0].target, *target);
+                            return inventory;
+                        }
+                    }
+                    Err(error) => panic!("ordinary inventory failed: {error:?}"),
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("exact ordinary inventory remained contended")
+    }
+
     async fn stream(
         runtime: Arc<HostRuntime<OrdinaryFixturePolicy>>,
         auth: &Fixture,
@@ -3558,21 +3599,43 @@ async fn native_ordinary_generic_durable_create_attach_detach_reconnect_and_priv
         endpoint.len(),
         native.root.as_os_str().as_encoded_bytes().len()
     );
-    let inventory = crate::host_client::inventory_authenticated(
+    // Exercise the actual ordinary wire path while the exact native generation
+    // lease is held. A committed session may be unknown instead of healthy;
+    // this must not be mistaken for its absence or trigger another Create.
+    let directory = storage::private_directory(&native.root, false).unwrap();
+    let lease_lock = storage::open_private_file(
+        &directory,
+        std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+        false,
+    )
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact generation lease failed: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("exact generation lease remained busy");
+    let contended = crate::host_client::inventory_authenticated(
         &mut control,
         OperationId::new(),
         &CancellationToken::new(),
     )
     .await
     .unwrap();
-    assert!(inventory
-        .sessions
-        .iter()
-        .any(|session| session.target == target));
-    assert!(
-        inventory.profiles.is_empty(),
-        "generic create must not invent a saved profile"
-    );
+    assert!(contended.sessions.is_empty());
+    assert_eq!(contended.unknown.as_slice(), std::slice::from_ref(&target));
+    assert!(contended.profiles.is_empty());
+    drop(lease_lock);
+    let inventory = exact_inventory(&mut control, &target).await;
+    assert!(inventory.unknown.is_empty());
+    assert_eq!(observed.len(), 1);
     // OFF preserves exact Running reuse and attachment, but denies every new
     // creation. This fixture changes the protected policy in place to isolate
     // admission rules; production settings changes additionally revoke epochs.
@@ -3709,18 +3772,36 @@ async fn native_ordinary_generic_durable_create_attach_detach_reconnect_and_priv
         )
         .await;
     assert!(ended.is_err() || matches!(ended.unwrap().body, Response::Refused { .. }));
+    // Denied administrative control may also close the ordinary stream. Keep
+    // the original independent native observer for this no-End-effects oracle.
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match native.control().inventory(&policy.session.principal, |_| {
+                Ok::<_, festerm_sessiond::host_control::ControlError>(())
+            }) {
+                Err(festerm_sessiond::host_control::ControlError::Busy) => {}
+                Ok(inventory)
+                    if inventory.sessions.is_empty()
+                        && inventory.unknown.len() == 1
+                        && inventory.unknown[0].target == target => {}
+                Ok(inventory) => {
+                    assert!(inventory.unknown.is_empty(), "foreign/extra unknown target");
+                    assert_eq!(inventory.sessions.len(), 1, "unexpected final inventory");
+                    assert_eq!(inventory.sessions[0].summary.target, target);
+                    break;
+                }
+                Err(error) => panic!("final native inventory failed: {error:?}"),
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("exact final native inventory remained contended");
     assert_eq!(
-        native
-            .control()
-            .inventory(&policy.session.principal, |_| Ok::<
-                _,
-                festerm_sessiond::host_control::ControlError,
-            >(()))
+        festerm_sessiond::list_running_sessions_in(&native.root)
             .unwrap()
-            .sessions[0]
-            .summary
-            .target,
-        target
+            .len(),
+        1
     );
     drop(control);
     let _ = tokio::time::timeout(Duration::from_secs(8), server)

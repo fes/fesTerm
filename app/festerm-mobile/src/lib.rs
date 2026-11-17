@@ -1892,7 +1892,7 @@ impl MobileApp {
                 lifecycle.memory_warnings.to_string(),
             ),
             (
-                "Input bytes".to_owned(),
+                "Attempted input bytes".to_owned(),
                 self.sink.diagnostics.byte_count.to_string(),
             ),
         ];

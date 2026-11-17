@@ -516,7 +516,10 @@ public final class FestermActivity extends NativeActivity {
         runOnUiThread(() -> {
             if (destroyed) return;
             ready = true;
-            if (covered) input.clearKeyState();
+            if (covered) {
+                input.clearKeyState();
+                input.hideSystemIme();
+            }
             if (enabled && (hide || covered)) {
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
             } else {
@@ -1103,6 +1106,7 @@ public final class FestermActivity extends NativeActivity {
         @Override public void onWindowFocusChanged(boolean focused) {
             if (!focused) clearKeyState();
             super.onWindowFocusChanged(focused);
+            if (focused) showSystemIme();
         }
 
         /** Modes 3 and 4 edit the published form field; 4 has the app-owned keyboard on screen. */
@@ -1131,6 +1135,44 @@ public final class FestermActivity extends NativeActivity {
             field = 0;
         }
 
+        private boolean canShowSystemIme(int ownerMode, long ownerField) {
+            return (ownerMode == 1 || ownerMode == 3) && keyboardMode == ownerMode
+                && (!editsField(ownerMode) || field == ownerField)
+                && !destroyed && ready && resumed && !cover
+                && hasFocus() && hasWindowFocus();
+        }
+
+        private void showSystemIme() {
+            int ownerMode = keyboardMode;
+            long ownerField = field;
+            if (!canShowSystemIme(ownerMode, ownerField)) return;
+            InputMethodManager manager = getSystemService(InputMethodManager.class);
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController controller = getWindowInsetsController();
+                if (controller != null) {
+                    // Match AndroidX's focus synchronization on API 30–32.
+                    if (Build.VERSION.SDK_INT < 33) manager.isActive();
+                    controller.show(WindowInsets.Type.ime());
+                }
+            }
+            // Window/IME eligibility can settle after the mode transition. One
+            // posted request also supplies the API 29 path; stale owners refuse.
+            post(() -> {
+                if (canShowSystemIme(ownerMode, ownerField)) {
+                    manager.showSoftInput(this, 0);
+                }
+            });
+        }
+
+        private void hideSystemIme() {
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController controller = getWindowInsetsController();
+                if (controller != null) controller.hide(WindowInsets.Type.ime());
+            }
+            getSystemService(InputMethodManager.class)
+                .hideSoftInputFromWindow(getWindowToken(), 0);
+        }
+
         void mode(int mode) {
             updateImeTarget(mode);
             if (keyboardMode == mode) return;
@@ -1142,16 +1184,16 @@ public final class FestermActivity extends NativeActivity {
                 clear();
                 secure = false;
                 multiline = false;
-                manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                hideSystemIme();
                 clearFocus();
             } else {
                 if (!editsField(mode)) { clear(); secure = false; multiline = false; }
                 requestFocus();
                 manager.restartInput(this);
                 if (appOwnedKeyboard(mode)) {
-                    manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                    hideSystemIme();
                 } else {
-                    manager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+                    showSystemIme();
                 }
             }
         }

@@ -9,7 +9,7 @@ use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
     HostKeyPrompt, PasswordPrompt, Session, SessionEvent, SessionEventNotifier, SessionLifecycle,
-    SessionTryReceiveError, TerminalSize,
+    SessionSendError, SessionTryReceiveError, TerminalSize,
 };
 use festerm_ssh::{
     HostIdentity, HostKeyDecisionResolver, HostTrustDecision, PasswordDecisionResolver,
@@ -389,16 +389,50 @@ impl LiveSsh {
         self.stop(status);
     }
 
+    fn retain_host_admission_refusal(
+        &mut self,
+        operation: &'static str,
+        error: Option<&SessionSendError>,
+    ) {
+        #[cfg(feature = "host-clients")]
+        if let Some(host) = &self.host {
+            let category = match error {
+                Some(SessionSendError::Full { .. }) => "full",
+                Some(SessionSendError::Closed { .. }) => "closed",
+                Some(SessionSendError::TooLarge { .. }) => "too-large",
+                None => "invalid-dimensions",
+            };
+            // Capture before stop/cancel replaces the original lifecycle cause.
+            // HostSession constructs these messages from finite Failure diagnostics.
+            let cause = if matches!(error, Some(SessionSendError::Closed { .. })) {
+                match host.lifecycle() {
+                    SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error) => {
+                        format!(" Retained HOST cause: {}", error.message())
+                    }
+                    _ => " Retained HOST cause: unknown.".to_owned(),
+                }
+            } else {
+                String::new()
+            };
+            self.host_error = Some(format!(
+                "HOST {operation} admission refused; category: {category}. No automatic input replay.{cause}"
+            ));
+        }
+        #[cfg(not(feature = "host-clients"))]
+        let _ = (operation, error);
+    }
+
     pub(super) fn send(&mut self, bytes: &[u8]) {
         if !self.input_enabled() || bytes.is_empty() {
             return;
         }
         if let Some(session) = &self.session {
             if let Some((dimensions, _)) = self.pending_resize {
-                let accepted = session_size(dimensions)
-                    .ok()
-                    .is_some_and(|size| session.try_resize(size).is_ok());
-                if !accepted {
+                let result = session_size(dimensions)
+                    .map_err(|_| None)
+                    .and_then(|size| session.try_resize(size).map_err(Some));
+                if let Err(error) = result {
+                    self.retain_host_admission_refusal("viewport resize", error.as_ref());
                     // There is no pending input queue on mobile. Preserve the
                     // atomic refusal policy rather than send against stale geometry.
                     self.stop_failed("Input not sent: viewport resize rejected; disconnected.");
@@ -406,7 +440,8 @@ impl LiveSsh {
                 }
                 self.pending_resize = None;
             }
-            if session.try_send_input(bytes).is_err() {
+            if let Err(error) = session.try_send_input(bytes) {
+                self.retain_host_admission_refusal("input", Some(&error));
                 // Never drop part of a command and then accept its continuation.
                 // The backend admission is atomic; make refusal explicit and
                 // retire this session rather than replay input on a new shell.
@@ -790,6 +825,7 @@ mod tests {
         viewport_calls: Mutex<Vec<ViewportCall>>,
         resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         rejected: bool,
+        input_error: Option<SessionSendError>,
         closed: bool,
         shutdowns: Mutex<usize>,
     }
@@ -808,6 +844,9 @@ mod tests {
             }
         }
         fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            if let Some(error) = &self.input_error {
+                return Err(error.clone());
+            }
             if self.rejected {
                 return Err(SessionSendError::Full {
                     operation: SessionOperation::Input,
@@ -2304,6 +2343,240 @@ mod tests {
         live.send(b"continuation\n");
         assert!(session.input.lock().unwrap().is_empty());
         assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+    }
+
+    #[cfg(feature = "host-clients")]
+    async fn host_admission_fixture() -> (
+        Arc<festerm_tunnel_bridge::host_client::HostSession>,
+        tokio::io::DuplexStream,
+    ) {
+        use festerm_host_protocol::{
+            Budgets, Capabilities, Envelope, GenerationId, HostId, LogicalSessionId, OperationId,
+            Request, Response, Target,
+        };
+        use festerm_tunnel_bridge::{
+            host_client::{self, Scope},
+            host_terminal, protocol,
+        };
+        use festerm_tunnel_client::host_control::{Binding, ConnectionPermit};
+        use tokio::io::AsyncWriteExt;
+        async fn frame(peer: &mut tokio::io::DuplexStream, kind: u8, payload: &[u8]) {
+            peer.write_u8(kind).await.unwrap();
+            peer.write_u32(payload.len() as u32).await.unwrap();
+            peer.write_all(payload).await.unwrap();
+        }
+        let scope = Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: Binding::new(HostId::new(), "github:7".into(), "fixture-endpoint".into())
+                .unwrap(),
+        };
+        let (stream, mut peer) = tokio::io::duplex(128 * 1024);
+        let host = host_client::testing::session_from_stream(
+            stream,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            scope,
+            Target {
+                logical: LogicalSessionId::new(),
+                generation: GenerationId::new(3).unwrap(),
+            },
+            Arc::new(Repaint(egui::Context::default())),
+        )
+        .unwrap();
+        let server = tokio::spawn(async move {
+            let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let hello: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            assert!(matches!(hello.body, Request::Capabilities {}));
+            let response = Envelope::new(
+                hello.host,
+                hello.operation,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        attach: true,
+                        detach: true,
+                        ..Default::default()
+                    },
+                },
+            );
+            frame(
+                &mut peer,
+                host_terminal::HOST_REPLY,
+                &festerm_host_protocol::encode(&response).unwrap(),
+            )
+            .await;
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let request: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            let Request::Attach {
+                target, attachment, ..
+            } = request.body
+            else {
+                panic!("attach");
+            };
+            let terminal = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+            let snapshot = protocol::encode_snapshot(&terminal.recovery_clone()).unwrap();
+            frame(&mut peer, protocol::SNAPSHOT, &snapshot).await;
+            let adopted = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(adopted.kind(), protocol::ADOPTED);
+            let response = Envelope::new(
+                request.host,
+                request.operation,
+                Response::Attached {
+                    target,
+                    attachment,
+                    lease: None,
+                },
+            );
+            frame(
+                &mut peer,
+                host_terminal::HOST_REPLY,
+                &festerm_host_protocol::encode(&response).unwrap(),
+            )
+            .await;
+            peer
+        });
+        let mut presented = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while host.lifecycle() != SessionLifecycle::Running {
+                host.adopt_into(&mut presented).unwrap();
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        (host, server.await.unwrap())
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_synchronous_admission_refusals_preserve_category_and_cancel_without_replay(
+    ) {
+        for resize in [false, true] {
+            let operation = if resize {
+                SessionOperation::Resize
+            } else {
+                SessionOperation::Input
+            };
+            for (category, error) in [
+                (
+                    "full",
+                    SessionSendError::Full {
+                        operation,
+                        capacity: usize::MAX,
+                    },
+                ),
+                ("closed", SessionSendError::Closed { operation }),
+                (
+                    "too-large",
+                    SessionSendError::TooLarge {
+                        operation,
+                        maximum: 1,
+                        actual: usize::MAX,
+                    },
+                ),
+            ] {
+                let (host, _peer) = host_admission_fixture().await;
+                let session = Arc::new(FakeSession {
+                    input_error: (!resize).then_some(error.clone()),
+                    ..Default::default()
+                });
+                if resize {
+                    session.resize_results.lock().unwrap().push_back(Err(error));
+                }
+                let mut live = connection(session.clone());
+                live.host = Some(host.clone());
+                if resize {
+                    live.resize(Dimensions::new(100, 32).unwrap());
+                }
+                live.send(b"private-command-marker");
+                let diagnostic = live.host_error().unwrap().to_owned();
+                let operation = if resize { "viewport resize" } else { "input" };
+                let cause = if category == "closed" {
+                    " Retained HOST cause: unknown."
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    diagnostic,
+                    format!(
+                        "HOST {operation} admission refused; category: {category}. No automatic input replay.{cause}"
+                    )
+                );
+                assert!(!diagnostic.contains("private-command-marker"));
+                assert!(!diagnostic.contains(&usize::MAX.to_string()));
+                assert!(!live.input_enabled());
+                assert!(live.session.is_none());
+                assert!(matches!(
+                    host.lifecycle(),
+                    SessionLifecycle::Disconnected(_)
+                ));
+                live.send(b"must-not-continue-or-replay");
+                assert!(session.input.lock().unwrap().is_empty());
+                assert_eq!(
+                    *session.shutdowns.lock().unwrap(),
+                    0,
+                    "HOST cancellation owns shutdown"
+                );
+                assert_eq!(live.host_error(), Some(diagnostic.as_str()));
+            }
+        }
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_closed_admission_captures_original_finite_cause_before_cancel() {
+        let (host, peer) = host_admission_fixture().await;
+        drop(peer);
+        let original = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let _ = host.try_recv_event();
+                if let SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error) =
+                    host.lifecycle()
+                {
+                    break error.message().to_owned();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let session = Arc::new(FakeSession {
+            input_error: Some(SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            }),
+            ..Default::default()
+        });
+        let mut live = connection(session.clone());
+        live.host = Some(host.clone());
+        // An already observed terminal failure gates ordinary send. Exercise
+        // the same capture-before-cancel helper without bypassing that guard.
+        live.retain_host_admission_refusal(
+            "input",
+            Some(&SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            }),
+        );
+        live.stop_failed("Input rejected; disconnected. Earlier accepted input may have executed.");
+        assert_eq!(live.host_error(), Some(format!("HOST input admission refused; category: closed. No automatic input replay. Retained HOST cause: {original}").as_str()));
+        assert!(!live
+            .host_error()
+            .unwrap()
+            .contains("private-command-marker"));
+        assert!(!live.input_enabled());
+        assert!(live.session.is_none());
+        assert!(session.input.lock().unwrap().is_empty());
+        assert!(matches!(
+            host.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        ));
     }
 
     #[test]
