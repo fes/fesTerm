@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "documents", "generator": "2", "model": "mai-code-1.1-flash", "sources": "97c0c1212dbf38b341e2d9a7dc0648639e950d40f9f5b37e9e5508210cfe25d4"} -->
+<!-- agent-navigation: {"domain": "documents", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1c8cc27399e1e528a27580860342040df0b0c14a0f296740d0b0edff7f10ef04"} -->
 # Documents, editor, and Markdown
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state.
+This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state.
 
 Canonical docs: [docs/text-editor-design.md](../../docs/text-editor-design.md), [docs/markdown-viewer-design.md](../../docs/markdown-viewer-design.md)
 
@@ -12,8 +12,8 @@ Canonical docs: [docs/text-editor-design.md](../../docs/text-editor-design.md), 
 
 Use for: Opening, reusing, or refreshing a file across tabs and splits
 
-- [`TextDocument`](../../crates/festerm-document/src/text.rs) — shared mutable buffer, normalization, dirty/save revision, and undo state
-- [`DocumentRegistry`](../../app/festerm/src/documents.rs) — deduplicates open files by origin and tracks reload and save state
+- [`TextDocument`](../../crates/festerm-document/src/text.rs) — shared mutable buffer, dirty/save revision, and undo state
+- [`DocumentRegistry`](../../app/festerm/src/documents.rs) — deduplicates open files by origin and tracks reload/save state
 
 Evidence:
 - [`opening_one_path_twice_shares_a_single_buffer`](../../app/festerm/src/documents.rs) — same path reuses one buffer and shared view count
@@ -28,8 +28,8 @@ Caveats:
 
 Use for: Opening a local text file or issuing save, refresh, preview, and split commands
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — app-level document intent including open, save, refresh, and Markdown preview actions
-- [`TextEditorTab`](../../app/festerm/src/text_editor.rs) — view state binds to the shared document while keeping caret, scroll, and selection private
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — app-level document intent including open, save, refresh, and preview actions
+- [`TextEditorTab`](../../app/festerm/src/text_editor.rs) — view state binds to the shared document while keeping caret and scroll private
 
 Evidence:
 - [`open_remote_markdown_snapshot_opens_a_new_tab`](../../app/festerm/src/tabs.rs) — remote Markdown commands route into a new Markdown viewer tab

@@ -31,6 +31,39 @@ mod imp {
         Ok(user.dir)
     }
 
+    /// Resolves Apple's account-scoped cache location without trusting TMPDIR.
+    /// The public confstr API may initialize the OS base directory. This helper
+    /// creates no application/generation child and never repairs permissions.
+    #[cfg(target_os = "macos")]
+    pub fn current_user_cache_directory() -> io::Result<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        current_user_id()?;
+        let mut bytes = [0_u8; 4096];
+        // SAFETY: bytes is writable for its stated length; confstr returns the
+        // required NUL-inclusive size, checked before interpreting the buffer.
+        let length = unsafe {
+            nix::libc::confstr(
+                nix::libc::_CS_DARWIN_USER_CACHE_DIR,
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+            )
+        };
+        if length == 0
+            || length > bytes.len()
+            || bytes[length - 1] != 0
+            || bytes[..length - 1].contains(&0)
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        let path = std::path::PathBuf::from(OsString::from_vec(bytes[..length - 1].to_vec()));
+        if !path.is_absolute() {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        // Normalize the OS-provided /var alias once. Callers still validate
+        // the resulting path through no-follow, owner/ACL-checked directory FDs.
+        std::fs::canonicalize(path)
+    }
+
     /// Checks effective write/search access without creating entries or reopening a path.
     pub fn writable_directory(directory: &File) -> io::Result<()> {
         current_user_id()?;
@@ -478,6 +511,30 @@ mod imp {
         let file = open_directory_read_nofollow(directory, name)?;
         make_private_directory(&file)?;
         Ok(file)
+    }
+
+    /// Removes only the same private, empty directory relative to its retained
+    /// private parent. A replacement, symlink or nonempty directory is refused.
+    pub fn remove_empty_private_directory(
+        parent: &File,
+        name: &Path,
+        expected: &File,
+    ) -> io::Result<()> {
+        one_component(name)?;
+        if !is_current_user_only(parent, true)? || !is_current_user_only(expected, true)? {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let current = open_directory_read_nofollow(parent, name)?;
+        if !is_current_user_only(&current, true)? {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let actual = current.metadata()?;
+        let expected = expected.metadata()?;
+        if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        nix::unistd::unlinkat(parent, name, nix::unistd::UnlinkatFlags::RemoveDir)
+            .map_err(io::Error::from)
     }
 
     /// Opens a regular read/write file without following its final component.
@@ -1148,11 +1205,15 @@ pub use imp::{
     create_private_directory, current_user_home, current_user_id, is_current_user_only,
     is_current_user_only_executable, make_private, make_private_directory,
     open_directory_read_nofollow, open_directory_search_nofollow, open_file_nofollow,
-    open_private_file, preserve_security_metadata, remove_private_staging_file, rename_noreplace,
-    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
-    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
+    open_private_file, preserve_security_metadata, remove_empty_private_directory,
+    remove_private_staging_file, rename_noreplace, reopen_directory_read, replace_private_file,
+    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
+    trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
+    SecurityMetadata, StagingParentSecurity,
 };
+
+#[cfg(target_os = "macos")]
+pub use imp::current_user_cache_directory;
 
 #[cfg(all(test, unix))]
 mod tests {
@@ -1569,5 +1630,29 @@ mod tests {
             .map(str::trim)
             .map(str::to_owned)
             .collect()
+    }
+    #[test]
+    fn empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement() {
+        use std::os::unix::fs::symlink;
+        let fixture = TemporaryDirectory::new();
+        let parent = fixture.open();
+        make_private_directory(&parent).unwrap();
+        let child = create_private_directory(&parent, Path::new("child")).unwrap();
+        fs::write(fixture.path("child").join("sentinel"), b"preserve").unwrap();
+        assert!(remove_empty_private_directory(&parent, Path::new("child"), &child).is_err());
+        assert_eq!(
+            fs::read(fixture.path("child").join("sentinel")).unwrap(),
+            b"preserve"
+        );
+        fs::remove_file(fixture.path("child").join("sentinel")).unwrap();
+        fs::rename(fixture.path("child"), fixture.path("original")).unwrap();
+        symlink(fixture.path("original"), fixture.path("child")).unwrap();
+        assert!(remove_empty_private_directory(&parent, Path::new("child"), &child).is_err());
+        fs::remove_file(fixture.path("child")).unwrap();
+        let replacement = create_private_directory(&parent, Path::new("child")).unwrap();
+        assert!(remove_empty_private_directory(&parent, Path::new("child"), &child).is_err());
+        remove_empty_private_directory(&parent, Path::new("child"), &replacement).unwrap();
+        remove_empty_private_directory(&parent, Path::new("original"), &child).unwrap();
+        assert!(!fixture.path("child").exists() && !fixture.path("original").exists());
     }
 }

@@ -64,7 +64,7 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
         values.update(overrides)
         return recovery.validate(**values)
 
-    def workflow_outputs(self, event, ref, sha, resume):
+    def workflow_outputs(self, event, ref, sha, resume, candidate="false"):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         step = workflow.split("      - name: Resolve and validate release version\n", 1)[1]
         step = step.split("      - name: Install Linux validation dependencies\n", 1)[0]
@@ -74,7 +74,7 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
         env = dict(os.environ, GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_SHA=sha,
                    GITHUB_REF_NAME="v1.2.3" if event == "push" else "main",
                    GITHUB_REPOSITORY="example/repo", GITHUB_OUTPUT=str(output),
-                   DISPATCH_VERSION="1.2.3", RESUME_PUBLISH=resume)
+                   DISPATCH_VERSION="1.2.3", RESUME_PUBLISH=resume, SIGNED_HELPERS_CANDIDATE=candidate)
         subprocess.run(["bash", "-e", "-c", script], cwd=self.root, env=env, check=True,
                        capture_output=True, text=True)
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
@@ -97,6 +97,18 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
         expected = hashlib.sha256((self.root / "scripts/build_tunnel_bundle.py").read_bytes()).hexdigest()
         self.assertEqual(outputs["helper_sha256"], expected)
         self.assertEqual(outputs["authenticated_helpers"], "true")
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "requires Bash and sha256sum")
+    def test_signed_helper_candidate_is_explicit_exact_source_nonpublishing_and_not_recovery(self):
+        normal = self.workflow_outputs("workflow_dispatch", "refs/heads/reviewed", self.head, "false")
+        self.assertEqual(normal["signed_helpers_candidate"], "false")
+        candidate = self.workflow_outputs("workflow_dispatch", "refs/heads/reviewed", self.head, "false", "true")
+        self.assertEqual((candidate["publish"], candidate["recovery"], candidate["signed_helpers_candidate"], candidate["source_commit"]),
+                         ("false", "false", "true", self.head))
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.workflow_outputs("workflow_dispatch", "refs/heads/main", self.head, "true", "true")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.workflow_outputs("push", "refs/tags/v1.2.3", self.source, "false", "true")
 
     @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "requires Bash and sha256sum")
     def test_workflow_only_exempts_explicit_recovery_of_pre_authentication_source(self):

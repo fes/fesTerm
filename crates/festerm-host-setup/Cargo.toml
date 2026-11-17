@@ -14,7 +14,7 @@ native-services = ["owner-enrollment", "dep:tokio", "festerm-windows-security/ho
 native-service-fixtures = ["native-services"]
 cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
-host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay", "dep:zeroize"]
+host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay", "dep:zeroize", "dep:festerm-session"]
 acquisition = ["lifecycle", "dep:reqwest", "dep:tokio", "dep:tokio-util"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
@@ -38,6 +38,7 @@ path = "src/bin/festerm-host-service-test-child.rs"
 required-features = ["native-service-fixtures"]
 
 [dependencies]
+festerm-session = { path = "../festerm-session", optional = true }
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 minisign-verify = { version = "0.2.5", optional = true }

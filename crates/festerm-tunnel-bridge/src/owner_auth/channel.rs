@@ -5,6 +5,58 @@ use russh::ChannelBinding;
 
 const CHANNEL_DOMAIN: &[u8] = b"fesTerm HOST owner client-to-host SSH channel proof v1\0";
 
+// A native snapshot authorizes exactly one proof attempt, not a reusable signer.
+// Its authority expires after relay + authentication budgets, even if queued.
+#[cfg(feature = "host-routing")]
+pub(crate) struct NativeOwnerAttempt {
+    seed: Zeroizing<[u8; 32]>,
+    public_key: [u8; 32],
+    approved: OwnerBinding,
+    guard: NativeProofGuard,
+}
+
+#[cfg(feature = "host-routing")]
+#[derive(Clone)]
+pub(crate) struct NativeProofGuard {
+    expires: Instant,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+#[cfg(feature = "host-routing")]
+impl NativeProofGuard {
+    pub(crate) fn check(&self) -> Result<(), OwnerKeyError> {
+        if self.cancel.is_cancelled() || Instant::now() >= self.expires {
+            Err(OwnerKeyError::ProofDenied)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "host-routing")]
+impl NativeOwnerAttempt {
+    pub(super) fn from_native_snapshot(
+        seed: Zeroizing<[u8; 32]>,
+        public_key: [u8; 32],
+        approved: OwnerBinding,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        Self {
+            seed,
+            public_key,
+            approved,
+            guard: NativeProofGuard {
+                expires: Instant::now() + Duration::from_secs(30),
+                cancel,
+            },
+        }
+    }
+
+    pub(crate) fn publication_guard(&self) -> NativeProofGuard {
+        self.guard.clone()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelOwnerChallenge {
@@ -156,6 +208,22 @@ impl crate::relay::ClientConnection {
         approved: &OwnerBinding,
         challenge: &ChannelOwnerChallenge,
     ) -> Result<ChannelOwnerProof, OwnerKeyError> {
+        let message = self.owner_proof_message(approved, challenge)?;
+        ClientOwnerKey::with_key(vault, &key.reference(), approved, |signing| {
+            if signing.public_key() != key.public_key() {
+                return Err(OwnerKeyError::ProofDenied);
+            }
+            Ok(ChannelOwnerProof(OwnerProof {
+                signature: hex(&signing.0.sign(&message).to_bytes()),
+            }))
+        })
+    }
+
+    fn owner_proof_message(
+        &self,
+        approved: &OwnerBinding,
+        challenge: &ChannelOwnerChallenge,
+    ) -> Result<Vec<u8>, OwnerKeyError> {
         challenge
             .validate()
             .map_err(|_| OwnerKeyError::ProofDenied)?;
@@ -167,17 +235,29 @@ impl crate::relay::ClientConnection {
         {
             return Err(OwnerKeyError::ProofDenied);
         }
-        ClientOwnerKey::with_key(vault, &key.reference(), approved, |signing| {
-            if signing.public_key() != key.public_key() {
-                return Err(OwnerKeyError::ProofDenied);
-            }
-            let message = challenge
-                .message()
-                .map_err(|_| OwnerKeyError::ProofDenied)?;
-            Ok(ChannelOwnerProof(OwnerProof {
-                signature: hex(&signing.0.sign(&message).to_bytes()),
-            }))
-        })
+        challenge.message().map_err(|_| OwnerKeyError::ProofDenied)
+    }
+
+    #[cfg(feature = "host-routing")]
+    pub(crate) fn prove_native_attempt(
+        &self,
+        attempt: NativeOwnerAttempt,
+        challenge: &ChannelOwnerChallenge,
+    ) -> Result<ChannelOwnerProof, OwnerKeyError> {
+        attempt.guard.check()?;
+        let message = self.owner_proof_message(&attempt.approved, challenge)?;
+        let signing = OwnerSigningKey::from_seed(&attempt.seed);
+        if signing.public_key() != attempt.public_key {
+            return Err(OwnerKeyError::ProofDenied);
+        }
+        // No await or native call separates this check from signing. The seed
+        // and temporary signing key are destroyed after this single attempt.
+        attempt.guard.check()?;
+        let proof = ChannelOwnerProof(OwnerProof {
+            signature: hex(&signing.0.sign(&message).to_bytes()),
+        });
+        attempt.guard.check()?;
+        Ok(proof)
     }
 
     #[cfg(all(test, feature = "relay"))]
@@ -277,3 +357,7 @@ impl crate::relay::HostStream {
 pub(crate) fn fixture_key(vault: &dyn SecretStore, approved: &OwnerBinding) -> ClientOwnerKey {
     ClientOwnerKey::generate(vault, approved).unwrap()
 }
+
+#[cfg(all(test, feature = "relay", feature = "host-routing"))]
+#[path = "native_attempt_tests.rs"]
+mod native_attempt_tests;

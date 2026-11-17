@@ -10,6 +10,8 @@ pub(crate) mod gallery;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "host_browser.rs"]
 mod host_browser;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use host_browser::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 mod panes;
 #[cfg(test)]
 pub(crate) mod panes_tests;
@@ -4960,6 +4962,8 @@ impl FesTermApp {
                 ui.separator();
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("Diagnostics").strong());
+                #[cfg(feature = "local-host-settings")]
+                desktop_remote_access::show_diagnostics(ui, self.local_remote_access.view().diagnostic);
                 if let Some(last_exit) = crate::diagnostics::last_exit_summary() {
                     ui.label(format!("Last exit: {last_exit}"));
                 } else {
@@ -8060,9 +8064,16 @@ impl FesTermApp {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.begin_tunnel_browser(None, ui.ctx());
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ReauthenticateHostAccount(request) => {
+                    self.dispatch_host_reauthentication(request, ui.ctx())
+                }
                 AppCommand::ReauthenticateDevTunnelAccount { account } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
-                    self.reauthenticate_dev_tunnel_account(&account, ui.ctx());
+                    self.dispatch_account_reauthentication(
+                        AppCommand::ReauthenticateDevTunnelAccount { account },
+                        ui.ctx(),
+                    );
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = account;
                 }

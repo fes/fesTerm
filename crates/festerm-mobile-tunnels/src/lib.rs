@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod sign_in_activity;
+pub use sign_in_activity::{SignInActivity, SignInForeground};
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
@@ -251,6 +253,7 @@ pub struct SignIn {
     prompt: SignInPrompt,
     state: Arc<Mutex<SignInState>>,
     cancel: CancellationToken,
+    privacy_cancel: Option<CancellationToken>,
 }
 impl SignIn {
     #[must_use]
@@ -260,7 +263,19 @@ impl SignIn {
     /// Non-blocking; poll from the UI timer.
     #[must_use]
     pub fn state(&self) -> SignInState {
-        lock(&self.state).clone()
+        let state = lock(&self.state).clone();
+        // A completed worker result is not permission to consume it after lock
+        // or explicit cancellation. Sample cancellation after copying the state.
+        if self.cancel.is_cancelled()
+            || self
+                .privacy_cancel
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+        {
+            SignInState::Failed(TunnelError::Cancelled)
+        } else {
+            state
+        }
     }
     /// Blocks until the flow finishes or `timeout` elapses.
     #[must_use]
@@ -496,6 +511,16 @@ impl TunnelClient {
         expected_account: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<SignIn, TunnelError> {
+        self.begin_sign_in_with_activity(expected_account, cancel, None)
+    }
+
+    /// Native mobile device flow with foreground-aware poll admission.
+    pub fn begin_sign_in_with_activity(
+        &self,
+        expected_account: Option<&str>,
+        cancel: &CancelToken,
+        activity: Option<SignInForeground>,
+    ) -> Result<SignIn, TunnelError> {
         let expected = match expected_account {
             Some(id) => Some(
                 lock(&self.store)
@@ -513,15 +538,25 @@ impl TunnelClient {
             self.store.clone(),
             self.client_id.clone(),
         );
+        let privacy_cancel = activity.as_ref().map(SignInForeground::cancellation_token);
         let (task_state, task_cancel) = (state.clone(), flow.clone());
         self.runtime.spawn(async move {
             let announce = early.clone();
-            let result = identity::sign_in(&*transport, &client_id, expected, &task_cancel, |p| {
+            let transport = sign_in_activity::ForegroundIdentity {
+                transport: DynIdentity(transport.0.clone()),
+                activity,
+            };
+            let result = identity::sign_in(&transport, &client_id, expected, &task_cancel, |p| {
                 let _ = announce.send(Ok(p.user_code.clone()));
             })
             .await;
             let outcome = match result {
-                Ok(identity) => persist(&store, &identity),
+                Ok(identity) => transport
+                    .commit(&task_cancel, || {
+                        persist(&store, &identity, || transport.cancelled(&task_cancel))
+                    })
+                    .map_err(TunnelError::from)
+                    .and_then(|result| result),
                 Err(error) => Err(TunnelError::from(error)),
             };
             // Reaches the caller only when the flow failed before a code existed.
@@ -542,6 +577,7 @@ impl TunnelClient {
                 },
                 state,
                 cancel: flow,
+                privacy_cancel,
             }),
             Ok(Err(error)) => Err(error),
             Err(_) => {
@@ -981,9 +1017,18 @@ fn session_info(description: &mobile::Description) -> SessionInfo {
     }
 }
 
-fn persist(store: &Mutex<ProfileStore>, identity: &Identity) -> Result<AccountInfo, TunnelError> {
+fn persist(
+    store: &Mutex<ProfileStore>,
+    identity: &Identity,
+    cancelled: impl FnOnce() -> bool,
+) -> Result<AccountInfo, TunnelError> {
     let encoded = identity.encode_private()?;
     let mut store = lock(store);
+    // Another operation may have held this mutex in native vault IO. Recheck
+    // after admission so cancelled queued work cannot start a fresh write.
+    if cancelled() {
+        return Err(TunnelError::Cancelled);
+    }
     let secret = store.store_secret(&SecretBytes::copy_from_slice(&encoded))?;
     let id = store.upsert_account(
         AccountProvider::Github,

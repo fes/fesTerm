@@ -19,10 +19,20 @@ pub mod cloud;
     feature = "native-services"
 ))]
 pub mod controller;
+#[cfg(feature = "cloud")]
+pub mod diagnostics;
 #[cfg(feature = "owner-enrollment")]
 pub mod enrollment;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
+#[cfg(all(
+    feature = "cloud",
+    feature = "host-runtime",
+    feature = "native-services"
+))]
+pub mod local_profiles;
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+pub mod ordinary;
 #[cfg(feature = "lifecycle")]
 pub mod owned_migration;
 #[cfg(feature = "owner-enrollment")]

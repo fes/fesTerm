@@ -79,6 +79,9 @@ fn fixture() -> (FesTermApp, egui::Context) {
     let request = egui::Id::new("foreground-host-review");
     crate::screens::install_host_recipe_request_for_test(&context, tab, request);
     app.review_host(tab, request, recipe, &context);
+    app.host_browser.as_mut().unwrap().ordinary_selected = false;
+    app.host_browser.as_mut().unwrap().ordinary_lifetime = None;
+    app.host_browser.as_mut().unwrap().feedback = None;
     (app, context)
 }
 
@@ -134,7 +137,7 @@ fn selected_host_desktop_imported_recipe_cannot_become_protected_owner_approval(
 
 #[test]
 fn selected_host_desktop_foreground_review_cancels_on_recipe_editor_or_credential_change() {
-    for changed in 0..4 {
+    for changed in 0..5 {
         let (mut app, context) = fixture();
         let browser = app.host_browser.as_ref().unwrap();
         let cancel = browser.cancel.clone();
@@ -151,6 +154,17 @@ fn selected_host_desktop_foreground_review_cancels_on_recipe_editor_or_credentia
             1 => {
                 let mut recipe = browser.recipe.clone();
                 recipe.name = "Changed recipe".into();
+                let (configuration, _) = app
+                    .state
+                    .configuration()
+                    .with_host_recipe_command(MetadataCommand::Edit(recipe))
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            4 => {
+                let mut recipe = browser.recipe.clone();
+                recipe.host.id = festerm_host_protocol::HostId::new();
+                recipe.logical_session = host_client::LogicalSessionId::new();
                 let (configuration, _) = app
                     .state
                     .configuration()
@@ -188,6 +202,63 @@ fn selected_host_desktop_foreground_timeout_fences_late_worker_without_parent_lo
     assert!(sender.try_send(Err("late completion".into())).is_err());
     assert!(browser.feedback.as_ref().unwrap().contains("timed out"));
     assert_unallocated(&app);
+}
+
+#[test]
+fn native_owner_prompt_budget_keeps_admission_until_worker_drains() {
+    for action in [Action::Prepare, Action::Load, Action::Inventory] {
+        for complete_before_deadline in [true, false] {
+            let (mut app, _) = fixture();
+            let started = Instant::now();
+            let browser = app.host_browser.as_mut().unwrap();
+            let cancel = browser.cancel.child_token();
+            let (_ui_sender, receiver) = mpsc::sync_channel(1);
+            browser.receiver = Some(receiver);
+            browser.pending_deadline =
+                Some((started + owner_worker_budget(&action), cancel.clone()));
+            let permit = ConnectionPermit::reserve(&app.state.host_client_budgets).unwrap();
+            let occupied: Vec<_> = (0..3)
+                .map(|_| ConnectionPermit::reserve(&app.state.host_client_budgets).unwrap())
+                .collect();
+            let (release, blocked) = mpsc::sync_channel(1);
+            let (sender, grants) = mpsc::sync_channel(1);
+            let worker_cancel = cancel.clone();
+            let worker = std::thread::spawn(move || {
+                let _permit = permit;
+                // Models a synchronous native prompt which cannot be interrupted.
+                blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+                deliver_owner_completion(&sender, &worker_cancel, "prepared grant")
+            });
+            let browser = app.host_browser.as_mut().unwrap();
+            browser.expire_pending(started + Duration::from_secs(46));
+            assert!(browser.busy());
+            assert!(!cancel.is_cancelled());
+            browser
+                .expire_pending(started + owner_worker_budget(&action) - Duration::from_nanos(1));
+            assert!(browser.busy());
+            if !complete_before_deadline {
+                browser.expire_pending(started + owner_worker_budget(&action));
+                assert!(cancel.is_cancelled());
+                assert!(!browser.cancel.is_cancelled());
+                assert!(!browser.busy());
+            }
+            // UI timeout never frees a permit still held by a native call.
+            assert!(ConnectionPermit::reserve(&app.state.host_client_budgets).is_err());
+            release.send(()).unwrap();
+            assert_eq!(worker.join().unwrap(), complete_before_deadline);
+            if complete_before_deadline {
+                assert_eq!(grants.recv().unwrap(), "prepared grant");
+            } else {
+                assert!(grants.try_recv().is_err());
+            }
+            assert!(ConnectionPermit::reserve(&app.state.host_client_budgets).is_ok());
+            drop(occupied);
+            let browser = app.host_browser.as_mut().unwrap();
+            browser.receiver = None;
+            browser.pending_deadline = None;
+            assert_unallocated(&app);
+        }
+    }
 }
 
 #[test]
@@ -311,7 +382,7 @@ fn selected_host_desktop_creation_freezes_launch_and_distinguishes_new_logical_f
     assert!(app.state.host_creation_intents.is_empty());
 }
 
-fn protected_creation_context(recipe: &PublicRecipe) -> ApprovedContext {
+fn protected_creation_context(recipe: &PublicRecipe) -> ClientContext {
     use festerm_tunnel_bridge::owner_auth::{OwnerBinding, PinnedHost};
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
@@ -346,6 +417,7 @@ fn protected_creation_context(recipe: &PublicRecipe) -> ApprovedContext {
         binding,
     )
     .unwrap()
+    .into()
 }
 
 fn registry_creation(recipe: &PublicRecipe) -> Option<(CreationMode, host_client::Creation)> {
@@ -453,4 +525,1188 @@ fn background_host_discovery_always_leaves_one_connection_permit_free() {
     drop(interactive);
     drop(running);
     assert!(reserve_with_headroom(&budgets).is_some());
+}
+
+#[test]
+fn discovered_host_reuses_only_unambiguous_same_account_exact_locator_identity() {
+    use crate::screens::host_workspace::{remember_host, HostSessions};
+    let context = egui::Context::default();
+    let configuration = Configuration::empty();
+    let reference = HostReference {
+        id: festerm_host_protocol::HostId::new(),
+        account: AccountReference::Github { account_id: 42 },
+    };
+    let remembered = HostSessions {
+        reference: reference.clone(),
+        hint: HostHint {
+            name: "Build host".into(),
+            locator: "build.use".into(),
+        },
+        sessions: Vec::new(),
+    };
+    remember_host(&context, remembered.clone());
+    assert_eq!(
+        known_host_reference(&context, &configuration, 42, "build.use"),
+        Some(reference.clone())
+    );
+    assert!(known_host_reference(&context, &configuration, 43, "build.use").is_none());
+    assert!(known_host_reference(&context, &configuration, 42, "other.use").is_none());
+    remember_host(
+        &context,
+        HostSessions {
+            reference: HostReference {
+                id: festerm_host_protocol::HostId::new(),
+                ..reference
+            },
+            ..remembered
+        },
+    );
+    assert!(known_host_reference(&context, &configuration, 42, "build.use").is_none());
+}
+
+#[test]
+fn host_auth_recovery_requires_typed_auth_failure_not_matching_error_text() {
+    use festerm_tunnel_client::Error;
+    for error in [Error::Expired, Error::AccountChanged] {
+        assert!(RequestFailure::from(error).needs_sign_in);
+    }
+    for error in [
+        Error::Denied,
+        Error::Network,
+        Error::Store,
+        Error::Response,
+        Error::Cancelled,
+        Error::Registration,
+        Error::IdentityChanged,
+    ] {
+        assert!(!RequestFailure::from(error).needs_sign_in);
+    }
+    assert!(
+        !RequestFailure::from("GitHub sign-in expired. Sign in again in Settings.").needs_sign_in
+    );
+    assert!(!format!("{:?}", RequestFailure::from("PRIVATE_TEXT")).contains("PRIVATE_TEXT"));
+}
+
+fn browser_reauthentication_fixture() -> (FesTermApp, egui::Context, Reauthentication) {
+    let (mut app, context) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    browser.receiver = Some(receiver);
+    assert!(sender.try_send(Err(RequestFailure::expired())).is_ok());
+    app.poll_host_browser(&context);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.needs_sign_in && !browser.busy());
+    let request = Reauthentication {
+        origin: ReauthenticationOrigin::Browser {
+            tab: browser.tab,
+            request: browser.request,
+            generation: browser.generation,
+        },
+        account: browser.account.clone(),
+    };
+    (app, context, request)
+}
+
+#[test]
+fn host_auth_recovery_uses_existing_central_command_for_original_browser_account() {
+    let (mut app, context, request) = browser_reauthentication_fixture();
+    let debug = format!("{request:?}");
+    assert!(!debug.contains(request.account.identifier()));
+    assert!(!debug.contains(&request.account.credential_reference().to_persisted_string()));
+    let command = app
+        .host_reauthentication_command(request, &context)
+        .unwrap();
+    assert!(
+        matches!(command, AppCommand::ReauthenticateDevTunnelAccount { account } if account == "github-user")
+    );
+    assert!(app.host_browser.is_none());
+    assert!(
+        app.tunnel_browser.is_none() && app.native_tunnel.is_none(),
+        "validation must not start authentication itself"
+    );
+}
+
+#[test]
+fn host_auth_recovery_rejects_stale_browser_generation_accounts_and_tabs_at_dispatch() {
+    for changed in 0..7 {
+        let (mut app, context, request) = browser_reauthentication_fixture();
+        match changed {
+            0 => {
+                let replacement = request
+                    .account
+                    .clone()
+                    .with_credential(SecretReference::generate());
+                let (configuration, _) =
+                    app.state.configuration().with_account(replacement).unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            1 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            2 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                let replacement = DevTunnelAccount::new(
+                    request.account.identifier(),
+                    AccountProvider::Github,
+                    77,
+                    "another-user",
+                    SecretReference::generate(),
+                )
+                .unwrap();
+                app.state
+                    .replace_configuration(configuration.with_account(replacement).unwrap().0);
+            }
+            3 => app.host_browser.as_mut().unwrap().generation += 1,
+            4 => crate::screens::install_host_recipe_request_for_test(
+                &context,
+                app.state.active(),
+                egui::Id::new("new-editor"),
+            ),
+            5 => {
+                let tab = app.state.active();
+                app.state.dispatch(AppCommand::CloseTab(tab), &context);
+            }
+            _ => app.host_browser.as_mut().unwrap().needs_sign_in = false,
+        }
+        assert!(
+            app.host_reauthentication_command(request, &context)
+                .is_none(),
+            "changed scope {changed}"
+        );
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
+}
+
+type DiscoveryHarness = egui_kittest::Harness<'static, Option<AppCommand>>;
+fn discovery_failure_fixture(failure: RequestFailure) -> (FesTermApp, DiscoveryHarness) {
+    use egui_kittest::Harness;
+    let (mut app, _) = fixture();
+    app.host_browser = None;
+    app.state.active_tab_mut().content = TabContent::Launcher;
+    let tab = app.state.active();
+    let configuration = app.state.configuration().clone();
+    let account = configuration.account("github-user").unwrap().clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(460.0, 720.0))
+        .build_ui_state(
+            move |ui, command: &mut Option<AppCommand>| {
+                if let Some(next) = crate::screens::host_workspace::show(ui, tab, &configuration) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+    harness.run_steps(2);
+    // The normal open emits one bounded discovery command; this fixture injects
+    // its worker result without native credentials or provider requests.
+    let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take() else {
+        panic!("automatic Find hosts")
+    };
+    crate::screens::host_workspace::report_typed_discovery(
+        &harness.ctx,
+        tab,
+        request,
+        &account,
+        Err(failure),
+    );
+    harness.run();
+    (app, harness)
+}
+
+fn discovery_reauthentication_fixture() -> (FesTermApp, DiscoveryHarness, Reauthentication) {
+    use egui_kittest::kittest::Queryable;
+    let (app, mut harness) = discovery_failure_fixture(RequestFailure::expired());
+    harness.get_by_label("Sign in again").click();
+    harness.run_steps(1);
+    let Some(AppCommand::ReauthenticateHostAccount(request)) = harness.state_mut().take() else {
+        panic!("scoped explicit recovery")
+    };
+    (app, harness, request)
+}
+
+#[test]
+fn automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_account_or_screen_change(
+) {
+    use egui_kittest::kittest::Queryable;
+    for change_account in [false, true] {
+        let (mut app, mut harness) = discovery_failure_fixture("Offline".into());
+        harness.get_by_label("Refresh hosts · @user").click();
+        harness.run_steps(1);
+        let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take()
+        else {
+            panic!("explicit retry of the automatic read")
+        };
+        let tab = app.state.active();
+        let account = app
+            .state
+            .configuration()
+            .account("github-user")
+            .unwrap()
+            .clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender
+            .send(Ok(vec![service::TunnelSummary {
+                locator: "stale.use".into(),
+                name: Some("Stale worker host".into()),
+                description: None,
+                active: true,
+            }]))
+            .unwrap();
+        let cancel = CancellationToken::new();
+        app.host_discovery.push(Discovery {
+            tab,
+            request,
+            account: account.clone(),
+            cancel: cancel.clone(),
+            receiver,
+        });
+        if change_account {
+            let replacement = account.with_credential(SecretReference::generate());
+            let configuration = app
+                .state
+                .configuration()
+                .with_account(replacement)
+                .unwrap()
+                .0;
+            app.state.replace_configuration(configuration);
+        } else {
+            crate::screens::host_workspace::cancel(&harness.ctx, tab);
+        }
+        app.poll_host_discovery(&harness.ctx);
+        assert!(cancel.is_cancelled());
+        assert!(app.host_discovery.is_empty());
+        assert!(app.host_discovery_queue.is_empty());
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Stale worker host").is_none());
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
+}
+
+#[test]
+fn host_auth_recovery_discovery_button_dispatches_original_account_once_without_network() {
+    let (mut app, harness, request) = discovery_reauthentication_fixture();
+    let stale = request.clone();
+    let command = app
+        .host_reauthentication_command(request, &harness.ctx)
+        .unwrap();
+    assert!(
+        matches!(command, AppCommand::ReauthenticateDevTunnelAccount { account } if account == "github-user")
+    );
+    assert!(app
+        .host_reauthentication_command(stale, &harness.ctx)
+        .is_none());
+    assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+}
+
+#[test]
+fn host_auth_recovery_discovery_rejects_replaced_removed_switched_cancelled_and_stale_scope() {
+    use egui_kittest::kittest::Queryable;
+    for changed in 0..7 {
+        let (mut app, mut harness, request) = discovery_reauthentication_fixture();
+        match changed {
+            0 => {
+                let replacement = request
+                    .account
+                    .clone()
+                    .with_credential(SecretReference::generate());
+                let (configuration, _) =
+                    app.state.configuration().with_account(replacement).unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            1 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                app.state.replace_configuration(configuration);
+            }
+            2 => {
+                let configuration = app
+                    .state
+                    .configuration()
+                    .without_account(request.account.identifier())
+                    .unwrap();
+                let replacement = DevTunnelAccount::new(
+                    request.account.identifier(),
+                    AccountProvider::Github,
+                    77,
+                    "another-user",
+                    SecretReference::generate(),
+                )
+                .unwrap();
+                app.state
+                    .replace_configuration(configuration.with_account(replacement).unwrap().0);
+            }
+            3 => {
+                harness.get_by_label("Refresh hosts · @user").click();
+                harness.run_steps(1);
+            }
+            4 => crate::screens::host_workspace::cancel(&harness.ctx, app.state.active()),
+            5 => {
+                let tab = app.state.active();
+                app.state.dispatch(AppCommand::CloseTab(tab), &harness.ctx);
+            }
+            _ => app.state.dispatch(AppCommand::OpenProfiles, &harness.ctx),
+        }
+        assert!(
+            app.host_reauthentication_command(request, &harness.ctx)
+                .is_none(),
+            "changed scope {changed}"
+        );
+        assert!(app.tunnel_browser.is_none() && app.native_tunnel.is_none());
+    }
+}
+
+#[test]
+fn host_auth_recovery_discovery_nonauth_errors_have_no_sign_in_action() {
+    use egui_kittest::kittest::Queryable;
+    use festerm_tunnel_client::Error;
+    for error in [
+        Error::Denied,
+        Error::Network,
+        Error::Store,
+        Error::Response,
+        Error::Cancelled,
+    ] {
+        let (_, harness) = discovery_failure_fixture(RequestFailure::from(error));
+        assert!(harness.query_by_label("Sign in again").is_none());
+    }
+}
+
+fn ordinary_ui_fixture(service: OrdinaryService) -> (FesTermApp, egui::Context) {
+    use festerm_secret_store::{MemorySecretStore, SecretBytes};
+    let (mut app, context) = fixture();
+    let vault: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let client_id = identity::registered_client_id().unwrap();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let mut bytes = b"FESTERM_GITHUB_IDENTITY_V2\0".to_vec();
+    bytes.extend(
+        serde_json::to_vec(&serde_json::json!({
+            "account":{"id":42,"login":"user"}, "client_id":client_id,
+            "access_token":"PRIVATE_OWNED_FAKE", "refresh_token":null,
+            "expires_at":expires, "refresh_expires_at":null
+        }))
+        .unwrap(),
+    );
+    let reference = vault.put(&SecretBytes::copy_from_slice(&bytes)).unwrap();
+    let account = DevTunnelAccount::new(
+        "github-user",
+        AccountProvider::Github,
+        42,
+        "user",
+        reference,
+    )
+    .unwrap();
+    let configuration = app
+        .state
+        .configuration()
+        .with_account(account.clone())
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    app.secret_store = Ok(vault);
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.account_reference = account.credential_reference().duplicate_for_transport();
+    browser.account = account;
+    browser.locator = "build.fixture".into();
+    browser.unbound = true;
+    browser.discovered = true;
+    browser.recipe.behavior = ConnectionBehavior::ChooseSession;
+    browser.ordinary_service = Some(service);
+    let mut rendered = context.run_ui(
+        egui::RawInput {
+            focused: true,
+            ..Default::default()
+        },
+        |_| {},
+    );
+    rendered.textures_delta.clear();
+    assert!(context.input(|input| input.focused));
+    (app, context)
+}
+
+fn wait_ordinary_ui(app: &mut FesTermApp, context: &egui::Context) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        app.poll_host_browser(context);
+        if app
+            .host_browser
+            .as_ref()
+            .is_none_or(|browser| browser.receiver.is_none())
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "owned ordinary UI worker timed out"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn ordinary_desktop_expansion_once_requires_update_without_manual_fallback() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (mut app, context) = ordinary_ui_fixture(Arc::new(move |id, locator, _| {
+        assert_eq!(id, 42);
+        assert_eq!(locator, "build.fixture");
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    }));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.begin_ordinary_host(&context);
+    wait_ordinary_ui(&mut app, &context);
+    for _ in 0..3 {
+        app.poll_host_browser(&context);
+    }
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.ordinary_selected);
+    assert!(browser.receipt.is_none() && browser.ordinary.is_none());
+    assert!(browser.inventory.is_none() && !browser.host_approved && !browser.consent);
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some(
+            host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired
+            )
+            .message()
+        )
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(700.0, 900.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| app.show_host_browser(ui.ctx(), false),
+            app,
+        );
+    harness.run_steps(2);
+    use egui_kittest::kittest::Queryable;
+    harness.get_by_label("Retry host connection");
+    assert!(harness
+        .query_by_label("Trust this exact binding and prepare native owner key")
+        .is_none());
+    assert!(harness.query_by_label("Prepare client key").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+fn ordinary_fixture_context(
+    account_id: u64,
+) -> (
+    festerm_sessiond::private_storage::PrivateTestDirectory,
+    host_client::ordinary::OrdinaryContext,
+) {
+    use festerm_tunnel_bridge::{
+        ordinary_auth::{OrdinaryHostInfo, OrdinaryRoute},
+        owner_auth::PinnedHost,
+    };
+    use host_client::ordinary::{OrdinaryAccountGuard, OrdinaryKeyIndex};
+    use russh::keys::{Algorithm, HashAlg, PrivateKey};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let ssh = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
+    let host = festerm_host_protocol::HostId::new();
+    let info = OrdinaryHostInfo {
+        version: 1,
+        installation: festerm_host_protocol::HostId::new(),
+        principal: festerm_host_protocol::PrincipalId::new(),
+        policy_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+        route: OrdinaryRoute {
+            tunnel_id: "build".into(),
+            cluster: "fixture".into(),
+            endpoint_id: format!("{host}-relay"),
+            port: 47461,
+            host: PinnedHost {
+                host,
+                host_key_fingerprint: ssh.public_key().fingerprint(HashAlg::Sha256).to_string(),
+            },
+        },
+    };
+    let token = CancellationToken::new();
+    let check = token.clone();
+    let guard = OrdinaryAccountGuard::new(
+        token,
+        Arc::new(move || {
+            if check.is_cancelled() {
+                Err(festerm_host_protocol::ContractError::Stale)
+            } else {
+                Ok(())
+            }
+        }),
+    );
+    let context = host_client::testing::ordinary_context(
+        OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap(),
+        account_id,
+        info,
+        guard,
+    )
+    .unwrap();
+    (root, context)
+}
+
+#[test]
+fn ordinary_desktop_inventory_adoption_and_durable_create_follow_global_policy() {
+    for enabled in [false, true] {
+        let (_root, context) = ordinary_fixture_context(42);
+        let binding = context.binding().clone();
+        let caps = festerm_host_protocol::Capabilities {
+            inventory: true,
+            attach: true,
+            create: true,
+            ensure: true,
+            creation_allowed: enabled,
+            issuance_epoch: Some(festerm_host_protocol::Epoch::new(1).unwrap()),
+            ..Default::default()
+        };
+        let inventory = Inventory {
+            capabilities: caps,
+            sessions: Vec::new(),
+            profiles: Vec::new(),
+            unknown: Vec::new(),
+        };
+        let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+            let result = (context.clone(), inventory.clone());
+            Box::pin(async move { Ok(result) })
+        }));
+        app.begin_ordinary_host(&ctx);
+        wait_ordinary_ui(&mut app, &ctx);
+        let browser = app.host_browser.as_mut().unwrap();
+        assert_eq!(browser.context().unwrap().binding(), &binding);
+        assert_eq!(&browser.recipe.host.id, binding.host());
+        assert!(browser.receipt.is_none() && browser.host_approved);
+        browser.creation_confirmed = true;
+        assert_eq!(browser.allows_creation(), enabled);
+        app.apply_host_review_action(Action::Create, &ctx);
+        assert_eq!(app.state.host_creation_intents.len(), usize::from(enabled));
+        assert_eq!(app.host_browser.as_ref().unwrap().worker.is_some(), enabled);
+        if enabled {
+            let (_, _, original) = &app.state.host_creation_intents[0];
+            assert!(
+                original.matches_context(&app.host_browser.as_ref().unwrap().context().unwrap())
+            );
+            assert_eq!(original.creation().lifetime, Lifetime::Persistent {});
+        }
+        // Its fixture transport is denied. This validates UI dispatch/context,
+        // not a native/server creation or provider grant.
+        app.host_browser = None;
+    }
+}
+
+#[test]
+fn ordinary_desktop_privacy_callback_cancels_pending_without_frame_and_blocks_late_adoption() {
+    let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = entered.clone();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let worker_release = release.clone();
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+        observed.store(true, std::sync::atomic::Ordering::Release);
+        let release = worker_release.clone();
+        Box::pin(async move {
+            release.notified().await;
+            Err(host_client::Failure::ProviderUnavailable)
+        })
+    }));
+    app.begin_ordinary_host(&ctx);
+    let account = app.host_browser.as_ref().unwrap().account.clone();
+    let account_token = app.state.ordinary_account_token(&account).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !entered.load(std::sync::atomic::Ordering::Acquire) {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let callback = ordinary_privacy_loss(account_token.clone());
+    callback();
+    // No UI frame/poll intervened between the platform callback and this fence.
+    assert!(account_token.is_cancelled());
+    assert!(app.host_browser.as_ref().unwrap().receiver.is_some());
+    release.notify_one();
+    wait_ordinary_ui(&mut app, &ctx);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.ordinary.is_none() && browser.inventory.is_none());
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+    );
+    let explicit_fresh = app.state.ordinary_account_token(&account).unwrap();
+    assert!(!explicit_fresh.is_cancelled());
+    assert!(account_token.is_cancelled());
+}
+
+#[test]
+fn ordinary_desktop_timeout_cancels_request_without_owner_receipt_guidance() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.ordinary_selected = true;
+    let request = browser.cancel.child_token();
+    browser.pending_deadline = Some((Instant::now(), request.clone()));
+    let (_, receiver) = mpsc::sync_channel(1);
+    browser.receiver = Some(receiver);
+    browser.expire_pending(Instant::now());
+    assert!(request.is_cancelled() && browser.receiver.is_none());
+    assert!(!browser.cancel.is_cancelled());
+    let message = browser.feedback.as_ref().unwrap();
+    assert!(message.contains("Retry this host explicitly"));
+    assert!(!message.contains("owner") && !message.contains("receipt"));
+}
+
+#[test]
+fn ordinary_desktop_privacy_unavailable_refuses_before_bootstrap() {
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(|_, _, _| {
+        panic!("privacy admission must precede bootstrap")
+    }));
+    app.host_browser.as_mut().unwrap().ordinary_privacy_loss =
+        Some(Arc::new(std::sync::atomic::AtomicBool::new(true)));
+    app.begin_ordinary_host(&ctx);
+    wait_ordinary_ui(&mut app, &ctx);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+    );
+    assert!(browser.receipt.is_none() && browser.ordinary.is_none() && browser.inventory.is_none());
+    assert!(app.state.host_creation_intents.is_empty());
+}
+
+#[test]
+fn ordinary_desktop_attach_installs_common_session_without_owner_enrollment() {
+    let (_root, context) = ordinary_fixture_context(42);
+    let target = host_client::Target {
+        logical: host_client::LogicalSessionId::new(),
+        generation: festerm_host_protocol::GenerationId::new(3).unwrap(),
+    };
+    let caps = festerm_host_protocol::Capabilities {
+        attach: true,
+        ..Default::default()
+    };
+    let inventory = Inventory {
+        capabilities: caps,
+        sessions: vec![festerm_host_protocol::SessionSummary {
+            target: target.clone(),
+            name: "Retained shell".into(),
+            lifetime: Lifetime::Persistent {},
+            attached: false,
+        }],
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    };
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+        let result = (context.clone(), inventory.clone());
+        Box::pin(async move { Ok(result) })
+    }));
+    app.begin_ordinary_host(&ctx);
+    wait_ordinary_ui(&mut app, &ctx);
+    assert!(app.host_browser.as_ref().unwrap().receipt.is_none());
+    app.apply_host_review_action(Action::Attach(target), &ctx);
+    assert!(app.host_browser.is_none());
+    assert!(matches!(
+        app.state.active_tab().content,
+        TabContent::Session(_)
+    ));
+    assert!(app.state.host_creation_intents.is_empty());
+    app.state.request_background_shutdown();
+}
+
+#[test]
+fn session_shortcut_binds_exact_host_logical_generation_without_launch_or_creation() {
+    let (app, _) = fixture();
+    let mut original = app.host_browser.as_ref().unwrap().recipe.clone();
+    original.launch.shell = Some("unrelated-command".into());
+    original.launch.args = vec!["unrelated-argument".into()];
+    original.behavior = ConnectionBehavior::AlwaysCreate;
+    let target = Target {
+        logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        generation: "9".to_owned().try_into().unwrap(),
+    };
+    let saved = session_shortcut(
+        &original,
+        &target,
+        "remote session",
+        Lifetime::Persistent {},
+        "local shortcut".into(),
+    );
+    assert_eq!(saved.host, original.host);
+    assert_eq!(saved.logical_session, target.logical);
+    assert_eq!(
+        saved.behavior,
+        ConnectionBehavior::AttachOnly {
+            generation: target.generation
+        }
+    );
+    assert_eq!(saved.session_name(), "remote session");
+    assert_eq!(saved.name, "local shortcut");
+    assert_eq!(
+        saved.launch,
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None
+        }
+    );
+    assert_ne!(saved.id, original.id);
+    let config = Configuration::empty()
+        .with_host_recipe_command(MetadataCommand::Save(saved.clone()))
+        .unwrap()
+        .0;
+    assert_eq!(
+        saved_session_profile(config.host_recipes(), &original.host, &target),
+        Some(&saved)
+    );
+    let mut other = target.clone();
+    other.generation = "10".to_owned().try_into().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &other).is_none());
+    other = target.clone();
+    other.logical = uuid::Uuid::new_v4().to_string().parse().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &other).is_none());
+    original.host.id = uuid::Uuid::new_v4().to_string().parse().unwrap();
+    assert!(saved_session_profile(config.host_recipes(), &original.host, &target).is_none());
+}
+
+#[test]
+fn optional_created_shortcut_is_original_bound_single_use_and_uses_confirmed_target() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    let scope = browser.scope(&protected_creation_context(&browser.recipe));
+    let attachment = host_client::AttachmentId::new();
+    browser.pending_created_profile =
+        Some((scope.clone(), attachment.clone(), "local name".into()));
+    let session = festerm_host_protocol::SessionSummary {
+        target: Target {
+            logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+            generation: "12".to_owned().try_into().unwrap(),
+        },
+        name: "confirmed remote name".into(),
+        lifetime: Lifetime::Persistent {},
+        attached: false,
+    };
+    // Failure/Unknown changes feedback, not the issued original's process-local save intent.
+    browser.feedback = Some("The original reply is unknown.".into());
+    assert!(browser.pending_created_profile.is_some());
+    let mut stale_scope = scope.clone();
+    stale_scope.generation += 1;
+    assert!(browser
+        .confirmed_creation_shortcut(&stale_scope, &attachment, &session)
+        .is_none());
+    assert!(browser.pending_created_profile.is_some());
+    let saved = browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .unwrap();
+    assert_eq!(saved.logical_session, session.target.logical);
+    assert_eq!(
+        saved.behavior,
+        ConnectionBehavior::AttachOnly {
+            generation: session.target.generation
+        }
+    );
+    assert_eq!(saved.name, "local name");
+    assert!(browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .is_none());
+    browser.pending_created_profile = Some((
+        scope.clone(),
+        host_client::AttachmentId::new(),
+        "foreign original".into(),
+    ));
+    assert!(browser
+        .confirmed_creation_shortcut(&scope, &attachment, &session)
+        .is_none());
+    assert_eq!(
+        app.state.configuration().host_recipes().recipes().len(),
+        1,
+        "no config write before a validated Created ACK"
+    );
+}
+
+#[test]
+fn host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut app = FesTermApp::gallery_host_browser("sessions");
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.workspace = true;
+    browser.ordinary_selected = true;
+    browser.discovered = true;
+    let inventory = browser.inventory.as_mut().unwrap();
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory.capabilities.creation_allowed = false;
+    let session = inventory.sessions[0].clone();
+    inventory.profiles = vec![
+        festerm_host_protocol::ProfileSummary {
+            logical: session.target.logical.clone(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "duplicate advertisement".into(),
+        },
+        festerm_host_protocol::ProfileSummary {
+            logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: session.name.clone(),
+        },
+    ];
+    inventory.unknown.push(Target {
+        logical: inventory.profiles[1].logical.clone(),
+        generation: "1".to_owned().try_into().unwrap(),
+    });
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1120.0, 900.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| {
+                app.show_workspace_host(ui.ctx(), false);
+            },
+            app,
+        );
+    harness.run();
+    assert!(harness.query_by_label("duplicate advertisement").is_none());
+    harness.get_by_label("Unknown");
+    harness.get_by_label("Running");
+    harness.get_by_label("GitHub account");
+    harness.get_by_label("Refresh sessions");
+    assert!(harness.query_by_label("New host shell").is_none());
+    let start = harness.get_by_label("Start & Connect");
+    assert!(start.accesskit_node().is_disabled());
+    assert!(
+        harness.get_by_label("Unknown").rect().top() > harness.get_by_label("Running").rect().top(),
+        "separate logical sessions occupy separate table rows"
+    );
+    {
+        let browser = harness.state_mut().host_browser.as_mut().unwrap();
+        let inventory = browser.inventory.as_mut().unwrap();
+        inventory.unknown.clear();
+        inventory.capabilities.creation_allowed = true;
+        inventory.capabilities.create = true;
+    }
+    harness.run();
+    assert!(!harness
+        .get_by_label("Start & Connect")
+        .accesskit_node()
+        .is_disabled());
+    harness.get_by_label("New host shell");
+    assert!(harness
+        .state()
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .worker
+        .is_none());
+}
+
+#[test]
+fn new_host_shell_discards_selected_recipe_launch_and_uses_persistent_host_default() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.recipe.launch = Recipe {
+        shell: Some("custom-shell".into()),
+        args: vec!["custom-arg".into()],
+        cwd: Some("/custom".into()),
+    };
+    browser.recipe.lifetime = Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    };
+    browser.session_name = "  new work  ".into();
+    browser.prepare_new_host_shell();
+    browser.host_approved = true;
+    browser.inventory = Some(Inventory {
+        capabilities: festerm_host_protocol::Capabilities {
+            create: true,
+            creation_allowed: true,
+            attach: true,
+            ..Default::default()
+        },
+        sessions: Vec::new(),
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let (mode, request) = browser.creation_request().unwrap();
+    assert_eq!(mode, CreationMode::Create);
+    assert_eq!(request.name.as_deref(), Some("new work"));
+    assert_eq!(
+        request.recipe,
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None
+        }
+    );
+    assert_eq!(request.lifetime, Lifetime::Persistent {});
+}
+
+#[test]
+fn narrow_host_browser_keeps_new_shell_actions_and_fields_inside_viewport() {
+    use egui_kittest::kittest::Queryable;
+    let app = FesTermApp::gallery_host_browser("workspace-new-shell-narrow");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(620.0, 1000.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| app.show_workspace_host(ui.ctx(), false),
+            app,
+        );
+    harness.run();
+    for label in [
+        "Find & Connect",
+        "Refresh hosts",
+        "Save as a local profile",
+        "Create & Connect",
+        "Cancel",
+    ] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(
+            rect.left() >= 0.0
+                && rect.right() <= 620.0
+                && rect.top() >= 0.0
+                && rect.bottom() <= 1000.0,
+            "{label}: {rect:?}"
+        );
+    }
+}
+
+#[test]
+fn account_switch_keeps_directory_open_retires_old_authority_and_selects_new_account_host() {
+    assert_account_switch_keeps_directory(true);
+}
+
+#[test]
+fn saved_profile_account_switch_retires_profile_request_and_keeps_directory_open() {
+    assert_account_switch_keeps_directory(false);
+}
+
+fn assert_account_switch_keeps_directory(workspace_entry: bool) {
+    use crate::screens::host_workspace::{self, HostSessions};
+    use egui_kittest::kittest::Queryable;
+    let (mut app, context) = fixture();
+    let second = DevTunnelAccount::new(
+        "second-github",
+        AccountProvider::Github,
+        99,
+        "second-user",
+        SecretReference::generate(),
+    )
+    .unwrap();
+    let configuration = app
+        .state
+        .configuration()
+        .with_account(second.clone())
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    app.secret_store = Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    let mut recipe = app.host_browser.take().unwrap().recipe.clone();
+    recipe.host_hint = Some(HostHint {
+        name: "First account host".into(),
+        locator: "first.fixture".into(),
+    });
+    recipe.behavior = ConnectionBehavior::AttachOnly {
+        generation: "7".to_owned().try_into().unwrap(),
+    };
+    let configuration = app
+        .state
+        .configuration()
+        .with_host_recipe_command(MetadataCommand::Edit(recipe.clone()))
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    let saved_metadata = app.state.configuration().host_recipes().clone();
+    let tab = app.state.active();
+    let request = egui::Id::new("account-switch-entry");
+    if workspace_entry {
+        host_workspace::install_browser_request_for_test(&context, tab, request);
+        app.review_discovered_host(
+            tab,
+            request,
+            host_workspace::HostChoice {
+                account: "github-user".into(),
+                name: "First account host".into(),
+                locator: "first.fixture".into(),
+                reference: Some(recipe.host.clone()),
+            },
+            &context,
+        );
+    } else {
+        crate::screens::install_host_recipe_request_for_test(&context, tab, request);
+        app.review_host(tab, request, recipe, &context);
+    }
+    let browser = app.host_browser.as_mut().expect("normal entry factory");
+    assert_eq!(browser.workspace, workspace_entry);
+    assert!(browser.current(&app.state, &context));
+    browser.host_approved = true;
+    browser.inventory = Some(Inventory {
+        capabilities: Default::default(),
+        sessions: Vec::new(),
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let old_request = browser.request;
+    let old_cancel = browser.cancel.clone();
+    let shared_account_lifetime = CancellationToken::new();
+    browser.ordinary_lifetime = Some(shared_account_lifetime.clone());
+    let scope = browser.scope(&protected_creation_context(&browser.recipe));
+    browser.pending_created_profile = Some((
+        scope,
+        host_client::AttachmentId::new(),
+        "old optional shortcut".into(),
+    ));
+    let (late, receiver) = mpsc::channel();
+    browser.receiver = Some(receiver);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1120.0, 900.0))
+        .build_ui_state(
+            |ui, (app, first): &mut (FesTermApp, bool)| {
+                if *first {
+                    let browser = app.host_browser.as_ref().unwrap();
+                    host_workspace::install_browser_request_for_test(
+                        ui.ctx(),
+                        browser.tab,
+                        browser.request,
+                    );
+                    if !browser.workspace {
+                        crate::screens::install_host_recipe_request_for_test(
+                            ui.ctx(),
+                            browser.tab,
+                            browser.request,
+                        );
+                    }
+                    *first = false;
+                }
+                app.poll_host_browser(ui.ctx());
+                app.show_host_browser(ui.ctx(), false);
+            },
+            (app, true),
+        );
+    harness.get_by_role(accesskit::Role::ComboBox).click();
+    harness.run_steps(3);
+    harness.get_by_label("@second-user").click();
+    harness.run_steps(3);
+    let browser = harness
+        .state()
+        .0
+        .host_browser
+        .as_ref()
+        .expect("account switch retains Find & Connect");
+    assert!(
+        browser.workspace
+            && browser.directory_only
+            && browser.current(&harness.state().0.state, &harness.ctx)
+    );
+    if !workspace_entry {
+        assert!(!crate::screens::host_recipe_request_is_current(
+            &harness.ctx,
+            browser.tab,
+            old_request
+        ));
+    }
+    assert_eq!(browser.account, second);
+    assert_ne!(browser.request, old_request);
+    assert!(old_cancel.is_cancelled());
+    assert!(
+        !shared_account_lifetime.is_cancelled(),
+        "other tabs using the account are unaffected"
+    );
+    assert!(
+        browser.receiver.is_none()
+            && browser.worker.is_none()
+            && browser.inventory.is_none()
+            && browser.ordinary.is_none()
+            && browser.receipt.is_none()
+    );
+    assert!(
+        !browser.host_approved
+            && !browser.auto_connect
+            && browser.pending_created_profile.is_none()
+    );
+    assert!(browser.context().is_err() && !browser.allows_creation());
+    assert!(late.send(Err("late old-account result".into())).is_err());
+    harness.get_by_label("Choose a host");
+    assert!(harness.query_by_label("late old-account result").is_none());
+    // Drive the actual Refresh command while admission is held, then deliver
+    // its controlled result. No native credential or provider access occurs.
+    let mut admission = Vec::new();
+    while let Ok(permit) = ConnectionPermit::reserve(&harness.state().0.state.host_client_budgets) {
+        admission.push(permit);
+    }
+    assert!(!admission.is_empty());
+    harness.state_mut().0.secret_store =
+        Ok(Arc::new(festerm_secret_store::MemorySecretStore::new()));
+    harness.get_by_label("Refresh hosts").click();
+    harness.run_steps(3);
+    let queued = harness
+        .state()
+        .0
+        .host_discovery_queue
+        .front()
+        .expect("account-scoped discovery waits for admission");
+    let tab = queued.tab;
+    let discovery_request = queued.request;
+    assert_eq!(queued.account, second);
+    let directory_request = harness.state().0.host_browser.as_ref().unwrap().request;
+    assert_ne!(
+        directory_request, discovery_request,
+        "chooser lifetime and directory network attempt are distinct"
+    );
+    host_workspace::report_discovery(
+        &harness.ctx,
+        tab,
+        discovery_request,
+        second.identifier(),
+        Ok(vec![festerm_tunnel_client::service::TunnelSummary {
+            locator: "second.fixture".into(),
+            name: Some("Second account build host".into()),
+            description: None,
+            active: true,
+        }]),
+    );
+    harness.run_steps(3);
+    let browser = harness
+        .state()
+        .0
+        .host_browser
+        .as_ref()
+        .expect("refresh completion retains chooser");
+    assert!(browser.directory_only && browser.current(&harness.state().0.state, &harness.ctx));
+    assert_eq!(browser.request, directory_request);
+    harness.state_mut().0.secret_store =
+        Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    let reference = HostReference {
+        id: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        account: AccountReference::Github { account_id: 99 },
+    };
+    host_workspace::remember_host(
+        &harness.ctx,
+        HostSessions {
+            reference: reference.clone(),
+            hint: HostHint {
+                name: "Second account build host".into(),
+                locator: "second.fixture".into(),
+            },
+            sessions: Vec::new(),
+        },
+    );
+    harness.run_steps(3);
+    harness.get_by_label("Second account build host").click();
+    harness.run_steps(3);
+    let browser = harness.state().0.host_browser.as_ref().unwrap();
+    assert!(!browser.directory_only);
+    assert_eq!(browser.account, second);
+    assert_eq!(browser.recipe.host, reference);
+    assert!(browser.inventory.is_none() && browser.ordinary.is_none() && !browser.host_approved);
+    assert!(browser.current(&harness.state().0.state, &harness.ctx));
+    assert_eq!(
+        harness.state().0.state.configuration().host_recipes(),
+        &saved_metadata,
+        "account/host browsing never retargets saved metadata"
+    );
 }

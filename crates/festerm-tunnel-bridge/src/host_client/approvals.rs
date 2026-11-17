@@ -5,32 +5,36 @@ use crate::owner_auth::{ClientOwnerKey, OwnerBinding, OwnerKeyError};
 use festerm_host_protocol::{HostId, Validate};
 use festerm_secret_store::{native_store, SecretReference, SecretStore, SecretStoreError};
 #[cfg(feature = "relay")]
-use festerm_sessiond::private_storage as storage;
+pub(super) use festerm_sessiond::private_storage as storage;
 #[cfg(all(not(feature = "relay"), unix))]
 #[path = "approval_storage.rs"]
-mod storage;
+pub(super) mod storage;
 #[cfg(all(not(feature = "relay"), not(unix)))]
-mod storage {
+pub(super) mod storage {
     use std::{fs::File, io, path::Path};
     fn unsupported<T>() -> io::Result<T> {
         Err(io::ErrorKind::Unsupported.into())
     }
-    pub(super) fn trusted_directory(_: &Path, _: bool) -> io::Result<File> {
+    pub(in crate::host_client) fn trusted_directory(_: &Path, _: bool) -> io::Result<File> {
         unsupported()
     }
-    pub(super) fn private_directory(_: &Path, _: bool) -> io::Result<File> {
+    pub(in crate::host_client) fn private_directory(_: &Path, _: bool) -> io::Result<File> {
         unsupported()
     }
-    pub(super) fn open_trusted_lock(_: &File, _: &Path) -> io::Result<File> {
+    pub(in crate::host_client) fn open_trusted_lock(_: &File, _: &Path) -> io::Result<File> {
         unsupported()
     }
-    pub(super) fn read_private(_: &File, _: &Path, _: usize) -> io::Result<Vec<u8>> {
+    pub(in crate::host_client) fn read_private(
+        _: &File,
+        _: &Path,
+        _: usize,
+    ) -> io::Result<Vec<u8>> {
         unsupported()
     }
-    pub(super) fn publish_new(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
+    pub(in crate::host_client) fn publish_new(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
         unsupported()
     }
-    pub(super) fn replace_private(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
+    pub(in crate::host_client) fn replace_private(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
         unsupported()
     }
 }
@@ -114,10 +118,15 @@ struct Record {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct OriginalsAnchor {
-    reference: String,
-    ready: bool,
-    pending: Option<String>,
+pub(super) struct OriginalsAnchor {
+    pub(super) reference: String,
+    pub(super) ready: bool,
+    pub(super) pending: Option<String>,
+}
+
+pub(super) trait OriginalCommitter {
+    fn pending(&self) -> Option<&str>;
+    fn mark(&mut self, pending: Option<String>) -> Result<(), Error>;
 }
 
 pub(super) struct OriginalCommit<'a> {
@@ -142,6 +151,15 @@ impl OriginalCommit<'_> {
             .pending = pending;
         let bytes = serde_json::to_vec(self.record).map_err(|_| Error::Storage)?;
         storage::replace_private(self.directory, &self.name, &bytes).map_err(storage_error)
+    }
+}
+
+impl OriginalCommitter for OriginalCommit<'_> {
+    fn pending(&self) -> Option<&str> {
+        self.pending()
+    }
+    fn mark(&mut self, pending: Option<String>) -> Result<(), Error> {
+        self.mark(pending)
     }
 }
 
@@ -244,8 +262,13 @@ impl ReceiptIndex {
         }
         // The native composition root, never imported metadata, supplies this
         // existing application directory. Normalize OS aliases such as iOS /var
-        // once; all receipt traversal beneath it remains no-follow.
+        // once; all receipt traversal beneath it remains no-follow. Windows
+        // must retain the absolute disk path: canonicalize produces a verbatim
+        // prefix that our no-reparse traversal deliberately refuses.
+        #[cfg(not(windows))]
         let root = root.canonicalize().map_err(storage_error)?;
+        #[cfg(windows)]
+        let root = root.to_path_buf();
         storage::trusted_directory(&root, false).map_err(storage_error)?;
         Ok(Self {
             root: root.join("host-client-approvals"),
@@ -308,7 +331,7 @@ impl ReceiptIndex {
         self.load_with(vault.as_ref(), host, account)
     }
 
-    fn directory(&self, create: bool) -> Result<File, Error> {
+    pub(super) fn directory(&self, create: bool) -> Result<File, Error> {
         #[cfg(unix)]
         if let Some(root) = &self.native_root {
             return root
@@ -435,12 +458,12 @@ impl ReceiptIndex {
     }
 
     #[cfg(feature = "relay")]
-    fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+    pub(super) fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
         crate::setup_storage::publish_new_private(directory, name, bytes)
     }
 
     #[cfg(not(feature = "relay"))]
-    fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+    pub(super) fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
         storage::publish_new(directory, name, bytes)
     }
 

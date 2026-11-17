@@ -21,6 +21,15 @@ pub enum SettingsError {
     Persist(String),
 }
 
+/// Why the existing synchronous privacy callback is being invoked.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContentLockReason {
+    /// Inactive/background with content protection still unlocked.
+    Inactive,
+    /// Content protection is engaged, or the physical device locked.
+    Locked,
+}
+
 enum Pending {
     Unlock,
     Disable(LockSettings),
@@ -53,7 +62,7 @@ struct Shared {
     locker: Arc<dyn Locker>,
     clock: Arc<dyn MonotonicClock>,
     repaint: Box<dyn Fn() + Send + Sync>,
-    content_lock: Box<dyn Fn() + Send + Sync>,
+    content_lock: Box<dyn Fn(ContentLockReason) + Send + Sync>,
 }
 
 /// Thread-safe handle: the lifecycle bridge, the egui host and the Locker
@@ -84,6 +93,21 @@ impl AppLock {
         clock: Arc<dyn MonotonicClock>,
         repaint: impl Fn() + Send + Sync + 'static,
         content_lock: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self::new_with_content_lock_reason_callback(store, locker, clock, repaint, move |_| {
+            content_lock()
+        })
+    }
+
+    /// Same privacy callback points as the compatibility constructor, with an
+    /// explicit distinction between inactivity and actual content/device lock.
+    /// The callback must not call back into this `AppLock`.
+    pub fn new_with_content_lock_reason_callback(
+        store: Option<SettingsStore>,
+        locker: Arc<dyn Locker>,
+        clock: Arc<dyn MonotonicClock>,
+        repaint: impl Fn() + Send + Sync + 'static,
+        content_lock: impl Fn(ContentLockReason) + Send + Sync + 'static,
     ) -> Self {
         let (settings, load_status) = store
             .as_ref()
@@ -253,7 +277,14 @@ impl AppLock {
             ) || (content_was_available && !inner.policy.should_draw_content())
             {
                 inner.privacy_generation = inner.privacy_generation.saturating_add(1);
-                (self.shared.content_lock)();
+                let reason = if event == LifecycleEvent::DeviceLocked
+                    || !inner.policy.should_draw_content()
+                {
+                    ContentLockReason::Locked
+                } else {
+                    ContentLockReason::Inactive
+                };
+                (self.shared.content_lock)(reason);
             }
             retired
         };
@@ -271,7 +302,7 @@ impl AppLock {
             inner.automatic_unlock = inner.policy.state() == LockState::Locked;
             if content_was_available && !inner.policy.should_draw_content() {
                 inner.privacy_generation = inner.privacy_generation.saturating_add(1);
-                (self.shared.content_lock)();
+                (self.shared.content_lock)(ContentLockReason::Locked);
             }
             retired
         };

@@ -141,6 +141,42 @@ impl ClientOwnerKey {
         Self::open(native_store()?.as_ref(), reference, approved)
     }
 
+    #[cfg(feature = "host-routing")]
+    pub(crate) fn prepare_native_attempt(
+        reference: SecretReference,
+        approved: &OwnerBinding,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<super::NativeOwnerAttempt, OwnerKeyError> {
+        Self::prepare_attempt_using(native_store()?.as_ref(), reference, approved, cancel)
+    }
+
+    #[cfg(all(test, feature = "host-routing", feature = "relay"))]
+    pub(crate) fn prepare_native_attempt_fixture(
+        vault: &dyn SecretStore,
+        reference: SecretReference,
+        approved: &OwnerBinding,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<super::NativeOwnerAttempt, OwnerKeyError> {
+        Self::prepare_attempt_using(vault, reference, approved, cancel)
+    }
+
+    #[cfg(feature = "host-routing")]
+    pub(super) fn prepare_attempt_using(
+        vault: &dyn SecretStore,
+        reference: SecretReference,
+        approved: &OwnerBinding,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<super::NativeOwnerAttempt, OwnerKeyError> {
+        Self::with_key(vault, &reference, approved, |key| {
+            Ok(super::NativeOwnerAttempt::from_native_snapshot(
+                key.secret_seed(),
+                key.public_key(),
+                approved.clone(),
+                cancel,
+            ))
+        })
+    }
+
     pub fn reference(&self) -> SecretReference {
         self.reference.duplicate_for_transport()
     }

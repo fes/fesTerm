@@ -1,9 +1,11 @@
 //! Selected-host execution shared by desktop and mobile composition roots.
-//! Public recipes are not credentials. The caller supplies an already approved
-//! protected owner context; this module never enrolls, signs in or discovers.
+//! Normal bootstrap resolves an authenticated provider route and prepares a
+//! purpose-bound native device key. Advanced clients retain explicit protected
+//! owner approval. Public recipes grant neither role; this module never signs in
+//! or enrolls an owner.
 
 use crate::{
-    host_runtime::{authenticate_client, StreamRole},
+    host_runtime::{authenticate_native_client, StreamRole},
     host_terminal::{self, TerminalHandle},
     owner_auth::{ClientOwnerKey, OwnerBinding, OwnerKeyError},
     relay,
@@ -22,10 +24,15 @@ use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
 
 pub mod approvals;
+mod client_context;
+pub use client_context::{ClientContext, ClientContextRef};
 mod creation;
 #[cfg(test)]
 mod creation_tests;
+mod diagnostics;
 mod ending;
+pub mod ordinary;
+pub use diagnostics::AttachStage;
 pub mod originals;
 mod session;
 pub(crate) use creation::create_authenticated;
@@ -38,7 +45,31 @@ pub use festerm_host_protocol::{
 pub use session::HostSession;
 #[cfg(feature = "testing")]
 pub mod testing {
+    /// Synthetic UI-only context; memory vault/private fixture storage, and all
+    /// transport attempts fail closed. Never provider or native evidence.
+    pub fn ordinary_context(
+        index: ordinary::OrdinaryKeyIndex,
+        account_id: u64,
+        info: crate::ordinary_auth::OrdinaryHostInfo,
+        guard: ordinary::OrdinaryAccountGuard,
+    ) -> Result<ordinary::OrdinaryContext, Failure> {
+        ordinary::testing_context(index, account_id, info, guard)
+    }
+
     use super::*;
+
+    /// In-memory admitted worker for cancellation-only composition tests.
+    pub fn pending_worker(scope: Scope, cancel: CancellationToken) -> Result<Worker, Failure> {
+        Worker::spawn_with_cancellation(
+            scope,
+            Arc::new(|| {}),
+            cancel,
+            |_, cancel, _, _| async move {
+                cancel.cancelled().await;
+                Err(Error::Cancelled.into())
+            },
+        )
+    }
 
     /// Explicit authenticated control-stream injection for headless tests.
     pub async fn end_from_stream<S>(
@@ -86,10 +117,14 @@ pub const ENROLLMENT_PREREQUISITE: &str =
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Failure {
+    OrdinaryKey(ordinary::KeyError),
+    ProviderIdentityExpired,
+    ProviderUnavailable,
     MissingApproval,
     BindingMismatch,
     OwnerKey(OwnerKeyError),
     Control(Error),
+    Attachment { stage: AttachStage, error: Error },
     WorkerUnavailable,
     OriginalStorage,
 }
@@ -109,6 +144,10 @@ impl From<ContractError> for Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::Attachment { error, .. } => Self::Control(error).message(),
+            Self::OrdinaryKey(e) => e.message(),
+            Self::ProviderIdentityExpired => "GitHub sign-in expired or its account changed. Sign in again before finding hosts.",
+            Self::ProviderUnavailable => "The provider could not verify the selected account and host. Retry the explicit host read.",
             Self::OriginalStorage => "The protected original-action checkpoint is missing, corrupt, incomplete, full or could not be durably updated. No replacement was issued. Explicitly reopen protected originals; storage uncertainty is not absence.",
             Self::MissingApproval => ENROLLMENT_PREREQUISITE,
             Self::BindingMismatch => "The approved host, key, account or endpoint changed. Review the selected host in the foreground; the saved recipe was not changed.",
@@ -123,7 +162,7 @@ impl Failure {
                 "Host access was revoked. Fresh explicit host-local authorization is required.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Denied)
                 | Error::Contract(ContractError::Denied)) =>
-                "The host denied this operation. Verify explicit owner enrollment and the required host permission; no enrollment, takeover or replacement shell was attempted.",
+                "The host denied this operation under its current remoting or creation policy. No key enrollment, takeover or replacement shell was attempted.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unknown
                 | festerm_host_protocol::Refusal::OutcomeUncertain)) =>
                 "The host could not establish the operation's current outcome. Retain the original request; do not infer absence or create a replacement shell.",
@@ -133,8 +172,10 @@ impl Failure {
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unsupported)) =>
                 "This host does not advertise this operation. Update and qualify the host; no legacy fallback was attempted.",
             Self::Control(Error::Cancelled) => "Host operation cancelled. No terminal input will be replayed.",
+            Self::Control(Error::HostUpdateRequired) => "Update fesTerm on this host, then try again.",
+            Self::Control(Error::HostPolicyRefreshRequired) => "On the HOST, explicitly Disable then Enable remote access to refresh protected policy and account readiness. Existing shells are retained. This operation was not retried.",
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
-            Self::Control(Error::Offline | Error::Closed) =>
+            Self::Control(Error::Offline | Error::Io(_) | Error::Closed) =>
                 "The host connection is unavailable. Its sessions are not known to be absent.",
             Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. Its outcome is not known; retain the original action rather than creating a replacement.",
             Self::WorkerUnavailable => "The bounded host worker could not start. Retry the explicit action.",
@@ -203,39 +244,71 @@ impl ApprovedContext {
         }
         // The worker is already admitted. Vault access is blocking and never
         // runs in a GUI callback. It cannot generate a replacement on failure.
-        let permit = Arc::new(permit);
-        let charge = permit.clone();
         let approved = self.approved.clone();
         let reference = self.reference;
-        let key_cancel = cancel.clone();
-        let key = tokio::task::spawn_blocking(move || {
-            let _charge = charge;
-            if key_cancel.is_cancelled() {
-                return Err(Failure::Control(Error::Cancelled));
-            }
-            ClientOwnerKey::open_native(reference, &approved).map_err(Failure::OwnerKey)
-        });
-        let key = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
-            value = tokio::time::timeout(Duration::from_secs(15), key) =>
-                value.map_err(|_| Failure::Control(Error::Deadline))?
-                    .map_err(|_| Failure::WorkerUnavailable)?
-                    ?,
-        };
-        let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
+        let native_cancel = cancel.clone();
+        let (attempt, permit) = open_native_owner_key(permit, cancel, move || {
+            ClientOwnerKey::prepare_native_attempt(reference, &approved, native_cancel)
+                .map_err(Failure::OwnerKey)
+        })
+        .await?;
+        attempt
+            .publication_guard()
+            .check()
+            .map_err(Failure::OwnerKey)?;
         let stream = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
             value = tokio::time::timeout(Duration::from_secs(15),
                 relay::connect_endpoint(&self.endpoint, self.port, &self.token)) =>
-                value.map_err(|_| Failure::Control(Error::Deadline))?
-                    .map_err(|_| Failure::Control(Error::Offline))?,
+                value.map_err(|_| Failure::Control(Error::Deadline).at_attach_stage_for(role, AttachStage::Relay))?
+                    .map_err(|error| Failure::Control(error.into()).at_attach_stage_for(role, AttachStage::Relay))?,
         };
         let (stream, permit) =
-            authenticate_client(stream, permit, key, self.approved, role, cancel.clone()).await?;
+            authenticate_native_client(stream, permit, attempt, role, cancel.clone())
+                .await
+                .map_err(|error| {
+                    Failure::Control(error).at_attach_stage_for(role, AttachStage::Authentication)
+                })?;
         Ok((stream, permit, self.binding))
     }
+}
+
+// Native consent can require multiple human-paced vault prompts. This does
+// not change relay connection, authentication or control-operation deadlines.
+const NATIVE_OWNER_KEY_BUDGET: Duration = Duration::from_secs(300);
+
+async fn open_native_owner_key<T, F>(
+    permit: ConnectionPermit,
+    cancel: &CancellationToken,
+    open: F,
+) -> Result<(T, ConnectionPermit), Failure>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, Failure> + Send + 'static,
+{
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled.into());
+    }
+    let permit = Arc::new(permit);
+    let charge = permit.clone();
+    let key_cancel = cancel.clone();
+    let key = tokio::task::spawn_blocking(move || {
+        let _charge = charge;
+        if key_cancel.is_cancelled() {
+            return Err(Failure::Control(Error::Cancelled));
+        }
+        open()
+    });
+    let key = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
+        value = tokio::time::timeout(NATIVE_OWNER_KEY_BUDGET, key) =>
+            value.map_err(|_| Failure::Control(Error::Deadline))?
+                .map_err(|_| Failure::WorkerUnavailable)??,
+    };
+    let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
+    Ok((key, permit))
 }
 
 /// Original editor/tab request plus its account/endpoint and lifecycle epoch.
@@ -277,7 +350,7 @@ pub enum Operation {
 /// An existing target selected after foreground approval. This command carries
 /// protected context, never a portable recipe or a service-token grant.
 pub struct ApprovedAttachment {
-    context: ApprovedContext,
+    context: ClientContext,
     scope: Scope,
     target: Target,
     attachment: Option<AttachmentId>,
@@ -294,7 +367,12 @@ impl std::fmt::Debug for ApprovedAttachment {
 }
 
 impl ApprovedAttachment {
-    pub fn new(context: ApprovedContext, scope: Scope, target: Target) -> Result<Self, Failure> {
+    pub fn new(
+        context: impl Into<ClientContext>,
+        scope: Scope,
+        target: Target,
+    ) -> Result<Self, Failure> {
+        let context = context.into();
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -309,10 +387,11 @@ impl ApprovedAttachment {
     }
 
     pub fn from_created(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         created: Created,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if !created.intent.matches(&context) || context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -328,12 +407,13 @@ impl ApprovedAttachment {
     }
 
     pub fn from_profile_ensured(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         session: SessionSummary,
         disposition: EnsureDisposition,
         attachment: AttachmentId,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -373,7 +453,7 @@ impl ApprovedAttachment {
     }
 
     pub fn port(&self) -> u16 {
-        self.context.port
+        self.context.port()
     }
 
     pub fn start(
@@ -439,6 +519,7 @@ pub struct Adoption {
     scope: Scope,
     terminal: Terminal,
     acknowledge: tokio::sync::oneshot::Sender<()>,
+    _snapshot_permit: Arc<festerm_host_protocol::SnapshotPermit>,
 }
 
 impl Adoption {
@@ -462,11 +543,12 @@ pub struct Worker {
     scope: Scope,
     cancel: CancellationToken,
     events: flume::Receiver<Completion>,
+    ordinary_guard: Option<ordinary::OrdinaryAccountGuard>,
 }
 
 impl Worker {
     pub fn start(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
@@ -483,13 +565,14 @@ impl Worker {
     }
 
     pub fn start_with_cancellation(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
         wake: Arc<dyn Fn() + Send + Sync>,
         cancel: CancellationToken,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
@@ -502,16 +585,20 @@ impl Worker {
             }
         }
         if let Operation::End(intent) = &operation {
-            if !intent.matches_context(&context) {
+            if !intent.matches_context(context.as_enrolled_owner().ok_or(ContractError::Denied)?) {
                 return Err(Failure::BindingMismatch);
             }
         }
+        if let Some(guard) = context.ordinary_guard() {
+            guard.check()?;
+        }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
-        Self::spawn_with_cancellation(
+        Self::spawn_with_guard(
             scope,
             wake,
             cancel,
+            context.ordinary_guard(),
             move |scope, cancel, events, wake| async move {
                 execute(context, permit, &scope, operation, &cancel, &events, &wake).await
             },
@@ -538,10 +625,32 @@ impl Worker {
         Self::spawn_with_cancellation(scope, wake, CancellationToken::new(), task)
     }
 
+    #[cfg(any(all(test, feature = "relay", unix), feature = "testing"))]
     fn spawn_with_cancellation<F, Fut>(
         scope: Scope,
         wake: Arc<dyn Fn() + Send + Sync>,
         cancel: CancellationToken,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
+        Self::spawn_with_guard(scope, wake, cancel, None, task)
+    }
+
+    fn spawn_with_guard<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+        ordinary_guard: Option<ordinary::OrdinaryAccountGuard>,
         task: F,
     ) -> Result<Self, Failure>
     where
@@ -561,6 +670,7 @@ impl Worker {
         let (events, receiver) = flume::bounded(2);
         let worker_cancel = cancel.clone();
         let worker_scope = scope.clone();
+        let lifetime = ordinary_guard.as_ref().map(|guard| guard.cancel.clone());
         std::thread::Builder::new()
             .name("festerm-selected-host".into())
             .spawn(move || {
@@ -580,6 +690,8 @@ impl Worker {
                     return;
                 };
                 runtime.block_on(async {
+                    let cancelled_wake=wake.clone();
+                    let served=async {
                     let result = task(
                         worker_scope.clone(),
                         worker_cancel.clone(),
@@ -602,6 +714,10 @@ impl Worker {
                         // TerminalHandle's actor belongs to this runtime.
                         worker_cancel.cancelled().await;
                     }
+                    };
+                    if let Some(lifetime)=lifetime {
+                        tokio::select! { biased; _=lifetime.cancelled()=>{worker_cancel.cancel();cancelled_wake();}, _=served=>{} }
+                    } else { served.await; }
                 });
             })
             .map_err(|_| Failure::WorkerUnavailable)?;
@@ -609,6 +725,7 @@ impl Worker {
             scope,
             cancel,
             events: receiver,
+            ordinary_guard,
         })
     }
 
@@ -620,8 +737,16 @@ impl Worker {
         self.cancel.cancel();
     }
 
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+            || self
+                .ordinary_guard
+                .as_ref()
+                .is_some_and(|guard| guard.check().is_err())
+    }
+
     pub fn try_receive(&self, current: &Scope) -> Option<Completion> {
-        if current != &self.scope || self.cancel.is_cancelled() {
+        if current != &self.scope || self.is_cancelled() {
             self.cancel();
             return None;
         }
@@ -639,7 +764,7 @@ impl Drop for Worker {
 }
 
 async fn execute(
-    context: ApprovedContext,
+    context: ClientContext,
     permit: ConnectionPermit,
     scope: &Scope,
     operation: Operation,
@@ -740,7 +865,7 @@ pub(crate) async fn attach_reserved_authenticated<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let mut pending = host_terminal::establish(
+    let mut pending = host_terminal::establish_diagnostic(
         stream,
         permit,
         scope.binding.clone(),
@@ -750,12 +875,14 @@ where
         false,
         cancel,
     )
-    .await?;
+    .await
+    .map_err(|(stage, error)| Failure::Attachment { stage, error })?;
     let terminal = pending.take_snapshot().ok_or(ContractError::Denied)?;
     let (acknowledge, adopted) = tokio::sync::oneshot::channel();
     let completion = Completion {
         scope: scope.clone(),
         outcome: Outcome::Snapshot(Box::new(Adoption {
+            _snapshot_permit: pending.snapshot_permit(),
             scope: scope.clone(),
             terminal,
             acknowledge,
@@ -772,11 +899,17 @@ where
         biased;
         _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
         result = tokio::time::timeout(Duration::from_secs(15), adopted) =>
-            result.map_err(|_| Failure::Control(Error::Deadline))?
-                .map_err(|_| Failure::Control(Error::Cancelled))?,
+            result.map_err(|_| Failure::Attachment { stage: AttachStage::FrontendAdoption, error: Error::Deadline })?
+                .map_err(|_| Failure::Attachment { stage: AttachStage::FrontendAdoption, error: Error::Cancelled })?,
     }
     // Only host-committed activation may publish Attached.
-    Ok(Outcome::Attached(pending.adopt(cancel).await?.spawn()?))
+    Ok(Outcome::Attached(
+        pending
+            .adopt(cancel)
+            .await
+            .map_err(|error| Failure::Control(error).at_attach_stage(AttachStage::HostActivation))?
+            .spawn()?,
+    ))
 }
 
 pub(crate) async fn inventory_authenticated<S: AsyncRead + AsyncWrite + Unpin>(

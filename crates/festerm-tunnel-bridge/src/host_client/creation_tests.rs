@@ -135,7 +135,10 @@ async fn selected_host_end_refusals_and_lost_reply_retain_original_without_creat
             Some(expected) => assert!(
                 matches!(result, Err(Failure::Control(Error::Refused(actual))) if actual == expected)
             ),
-            None => assert!(matches!(result, Err(Failure::Control(Error::Offline)))),
+            None => assert!(matches!(
+                result,
+                Err(Failure::Control(Error::Offline | Error::Io(_)))
+            )),
         }
         assert!(intent.is_issued());
         assert!(!intent.is_resolved());
@@ -418,7 +421,10 @@ async fn selected_host_creation_refusals_and_lost_reply_retain_exact_issued_requ
                 Some(expected) => assert!(
                     matches!(result, Err(Failure::Control(Error::Refused(actual))) if actual == expected)
                 ),
-                None => assert!(matches!(result, Err(Failure::Control(Error::Offline)))),
+                None => assert!(matches!(
+                    result,
+                    Err(Failure::Control(Error::Offline | Error::Io(_)))
+                )),
             }
             assert!(!intent.is_resolved());
             let first = server.await.unwrap();

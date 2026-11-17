@@ -140,6 +140,18 @@ fn private_sharing_requires_separate_enrolled_key_and_narrow_explicit_access() {
 #[test]
 #[ignore = "one explicit current-source helper and test-owned ordinary Local frontend; no installed runtime/provider/OS services"]
 fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend() {
+    private_native_publication_case(crate::lifecycle::OrdinaryAccess::OwnerOnly);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "one explicit helper and owned Local frontend; no native services/provider"]
+fn private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend() {
+    private_native_publication_case(crate::lifecycle::OrdinaryAccess::ProviderOwner);
+}
+
+#[cfg(unix)]
+fn private_native_publication_case(mode: crate::lifecycle::OrdinaryAccess) {
     use festerm_session::{noop_session_event_notifier, Session, SessionEvent};
     use festerm_sessiond::{AttachKind, PersistentSession};
     use sha2::{Digest, Sha256};
@@ -242,11 +254,7 @@ fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_prese
         std::env::var_os("FESTERM_PRIVATE_SHARING_HELPER").expect("explicit fresh source helper"),
     );
     assert!(helper.is_absolute() && helper.is_file());
-    let project = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let project = std::env::current_dir().unwrap();
     let native_path = project.join(format!(
         "p{}",
         &uuid::Uuid::new_v4().simple().to_string()[..6]
@@ -311,7 +319,29 @@ fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_prese
 
     let (authority_root, store, vault) = setup_origin(Origin::Desktop);
     let owners = fixture_owners(&store, vault.clone());
-    let (approved, key) = approve(&owners);
+    let (approved, key) = if mode == crate::lifecycle::OrdinaryAccess::ProviderOwner {
+        owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        let mut settings = before.settings.clone();
+        settings.ordinary_access = mode;
+        let ticket = store.request_enable_if_current(&before, &settings).unwrap();
+        store
+            .record_provisioned(&ticket, before.binding.unwrap())
+            .unwrap();
+        let approved = owners.snapshot().unwrap();
+        assert!(approved.keys.is_empty() && !approved.remote_access);
+        (approved, None)
+    } else {
+        let (approved, key) = approve(&owners);
+        (approved, Some(key))
+    };
     let state = authority_root.path().join("installation");
     let sharing = Sharing::open(&store, &state, owners).unwrap();
     let original_snapshot = store.snapshot().unwrap();
@@ -349,6 +379,20 @@ fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_prese
     let active_receipt = sharing.switch(&prepared, || true).unwrap();
     assert_eq!(active_receipt.phase, BindingPhase::Active);
     marker(&frontend, "after-switch");
+    let visible = sharing
+        .sessions
+        .inventory(&approved.binding.principal, |state| {
+            assert!(state.grant.as_ref().is_none_or(|grant| grant.remote_access));
+            Ok::<_, festerm_sessiond::host_control::ControlError>(())
+        })
+        .unwrap();
+    assert!(visible
+        .sessions
+        .iter()
+        .any(|entry| entry.summary.target.logical == prepared.binding.logical));
+    if mode == crate::lifecycle::OrdinaryAccess::ProviderOwner {
+        assert!(sharing.owners.snapshot().unwrap().keys.is_empty());
+    }
     drop(sharing);
     let sharing = Sharing::open(&store, &state, fixture_owners(&store, vault)).unwrap();
     let resumed = sharing.lookup(&consent.operation).unwrap().unwrap();
@@ -358,7 +402,11 @@ fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_prese
         BindingPhase::Active
     );
     marker(&frontend, "after-resume");
-    sharing.owners.revoke(approved.revision, key).unwrap();
+    if let Some(key) = key {
+        sharing.owners.revoke(approved.revision, key).unwrap();
+    } else {
+        store.revoke().unwrap();
+    }
     assert!(matches!(
         sharing.switch(&resumed, || true),
         Err(Error::Revoked | Error::Stale)
@@ -375,7 +423,21 @@ fn private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_prese
         before,
         festerm_sessiond::list_running_sessions_strict_in(&runtime).unwrap()
     );
-    assert_eq!(store.snapshot().unwrap(), original_snapshot);
+    if mode == crate::lifecycle::OrdinaryAccess::OwnerOnly {
+        assert_eq!(store.snapshot().unwrap(), original_snapshot);
+    } else {
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert!(sharing.owners.snapshot().unwrap().keys.is_empty());
+    }
+    assert!(sharing
+        .sessions
+        .inventory(&approved.binding.principal, |_| Ok::<
+            _,
+            festerm_sessiond::host_control::ControlError,
+        >(()))
+        .unwrap()
+        .sessions
+        .is_empty());
     assert_eq!(frontend.local_session_target().unwrap(), target);
     assert!(prepared.binding.source_installation.is_empty());
     assert!(prepared.binding.source_installation_digest.is_empty());

@@ -195,6 +195,16 @@ manufacturing a shell-control grant. A worker has no target-discovery,
 arbitrary profile-open, workflow-invocation or other-tab read/write APIs in
 this mode. Receiving an arbitrary target token cannot expand authority.
 
+Authorization must hold both when a host operation is admitted and when its
+result is delivered. Input, save data, asset chunks and other host results use
+an application-owned delivery fence bound to the exact live worker generation,
+capability epoch and privacy state. Recheck at each nonblocking IPC write,
+using the existing `DisclosureGuard`/admission pattern or a separately qualified
+equivalent. Revocation discards queued undelivered results; an old authorization
+check or a queued acknowledgement is not permission for later disclosure.
+Already admitted storage publication may finish without delivering its result
+to a revoked worker; resolve that outcome through the trusted save service.
+
 Keep source snapshots immutable, validate the complete module graph and
 freeze the capabilities and assets with the launch. No dynamic package
 download, native extensions, arbitrary filesystem loader, eval fallback or
@@ -337,9 +347,13 @@ Keep the feature opt-in and show an actionable unsupported-platform error.
 Use ordinary tab identity, title, status indicators and focus behavior. Move
 between panes/windows transfers presentation without creating a second worker
 or writer lease. Starting and failures remain visible on the originating tab.
-`main` settlement means normal program exit, after accepted output is drained
-within a finite bound; exceptions, resource exhaustion and protocol faults
-produce a content-free failure while retaining the last durable save. Pending
+`main` settlement closes admission immediately. Returning with outstanding
+host calls produces `UnsettledWork`, not normal completion, preserving the
+existing worker rule. A `write` already acknowledged as accepted may still
+have display bytes queued; those bytes drain within a finite bound without
+admitting another host call. Normal completion requires all host-call Promises
+to have settled. Exceptions, resource exhaustion and protocol faults produce
+a content-free failure while retaining the last durable save. Pending
 unadmitted calls cannot survive completion. An admitted commit is settled or
 reported uncertain, never changed into a success by worker exit.
 
@@ -467,6 +481,8 @@ acceptance or enable existing automation while recording this proposal.
   - `javascript_program_resize_and_output_preserve_accepted_order`;
   - `javascript_program_backpressure_preserves_bytes_and_shutdown_progress`;
   - `javascript_program_stale_generation_cannot_publish_output_or_saves`;
+  - `javascript_program_revocation_fences_each_queued_result_chunk`;
+  - `javascript_program_return_with_unsettled_host_work_cannot_succeed`;
   - `javascript_program_cannot_invoke_automation_or_local_file_actions`;
   - `javascript_program_commit_is_atomic_revision_checked_and_recoverable`;
   - `javascript_program_universe_writer_is_exclusive_across_processes`;

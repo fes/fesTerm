@@ -10,7 +10,7 @@ validate_job() {
         (.adapter_id == "festerm") and
         (.adapter_schema_version == 1) and
         (.platform == "macos") and
-        (.mode == "native-smoke" or .mode == "os-input-smoke" or .mode == "optional-validation" or .mode == "running-session-stress" or .mode == "keyboard-routing-check" or .mode == "keyboard-routing-native") and
+        (.mode == "native-smoke" or .mode == "os-input-smoke" or .mode == "optional-validation" or .mode == "running-session-stress" or .mode == "keyboard-routing-check" or .mode == "keyboard-routing-native" or .mode == "dev-tunnel-workflow") and
         (.payload == {})
     ' "$job_path" >/dev/null
 }
@@ -33,6 +33,11 @@ mkdir -p "$artifact_directory"
 
 mode=$(jq -er '.mode' "$job_path")
 case "$mode" in
+    dev-tunnel-workflow)
+        python3 "$source_path/scripts/check_dev_tunnel_workflow.py" --run \
+            --result "$artifact_directory/dev-tunnel-workflow.txt"
+        require_pass_status "$artifact_directory/dev-tunnel-workflow.txt"
+        ;;
     keyboard-routing-check)
         result_path="$artifact_directory/keyboard-routing-check.txt"
         printf 'status=running\n' >"$result_path"

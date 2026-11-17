@@ -1032,6 +1032,13 @@ that scroll. Actions reuse the existing semantic button roles and have at least
 28 px height; narrow layouts do not shorten authorship, diagnostic sensitivity,
 update eligibility, or transmitted-data disclosures.
 
+When local host setup fails, About Diagnostics and Settings → Remote access show
+the same **Last setup operation**: a typed stage, optional HTTP status, safe error
+category, and recovery action. No raw provider response, account identifier,
+resource URL, credential, or path is copied into this summary. It is an operation
+result, not endpoint readiness. New work, changed consent, cancellation, or a
+successful result clears it; a late worker cannot restore a cancelled result.
+
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
 `latest/download/festerm-update.json` endpoint after an explicit check, download,
@@ -1896,8 +1903,20 @@ Disabling fences remote access without terminating durable local shells.
 Operator diagnostics, protected owner approval and recovery remain available
 through contextual disclosures rather than a permanent console.
 
-Only eligible durable local profiles offer **Make this profile available on
-the computer's remote host**. When the host is off, show an actionable Settings
+Normal remote-access confirmations use task names and task buttons: **Enable
+remote access? / Enable and start** (or **Enable** for paired-device-only access)
+and **Check host process? / Check process**. The Enable summary names the chosen
+GitHub account and host, creation and sign-in startup preferences, and signed
+component setup. Account-based access, bearer-credential exposure and user-level
+shell/file/command permissions remain explicit. Check process does not start or
+stop the host and never treats Running as endpoint readiness. Internal operation
+names, installation/epoch details and exact-release acquisition/recovery mechanics
+remain in Advanced / Recovery and diagnostics. These labels do not alter reviewed
+operations, confirmation dismissal, complete snapshot/draft capture or backend CAS.
+
+Only eligible durable local profiles offer **Allow remote access to this
+session** as one saved-profile opt-in. Exact-running-generation Bind/Switch
+controls are a separate Advanced workflow. When the host is off, show an actionable Settings
 link; do not launch a setup wizard or select an account per profile. Saving
 registers the exact saved recipe in the protected host catalog without starting
 a shell or creating a tunnel. Settings owns the computer-level service and its
@@ -1909,14 +1928,48 @@ for re-enable. Existing per-profile installations remain separately labelled
 legacy state and require explicit disable/save before a profile can use the
 shared host; they are never adopted or silently migrated.
 
-New Session offers **Find hosts · @username** for each account. Discovery is
-explicit; selecting a host explicitly obtains authorized sessions. Saved hints
-are public metadata, never online indicators. First contact still requires
-independent host verification and separate host-local owner approval. Ordinary
-sessions offer Connect; creation appears only when supported and permitted.
-Quick creation requires a trimmed nonblank **Session name**, creates a durable
-shell only on **Create and connect**, and preserves its original operation on
-uncertainty. No temporary-session toggle appears in these new forms.
+##### Account, host and session browser
+
+The normal **Find & Connect** workflow follows account → host → sessions.
+Opening it starts one account-scoped directory request through ADR 0086's
+ordinary provider-authorized route. Selecting a host obtains its authorized
+inventory; saved hints never claim online status. Manual fingerprints and owner
+approval remain in Advanced, rather than the normal account connection path.
+
+Desktop uses a host list beside the selected host's session list. Mobile uses
+a host list and a focused host-detail view, with a clear return to the list.
+Account selection and **Refresh hosts** belong to the directory. The selected
+host owns **Refresh sessions** and the capability-gated **New host shell** action.
+Use consistent section padding and gaps between controls; narrow Desktop layouts
+must reflow without clipped actions, and mobile retains its safe-area/touch targets.
+
+Each existing persistent session has one named row, a running/state label, and
+one **Connect** action. Match an advertised shared recipe to its running session
+by stable host/logical identity, never its display name; do not render duplicate
+Connect entries. A shared shell authoritatively known not to be running is
+labelled **Not started**, with **Start & Connect** only when current host policy
+permits it. Unknown inventory remains explicitly unknown and cannot enable a
+start action by being presented as absence.
+Global creation OFF permits connection to an authorized existing running
+generation, but cannot start or replace an absent, stopped or unknown one.
+
+**Save as profile…** belongs to a selected existing session. It saves a local
+connection recipe bound to that host and exact session generation, without
+changing the remote session. A matching saved shortcut shows **Saved locally**;
+local profile editing stays in Profiles. The host browser has no host-level
+**Save / edit profile** or **New profile for this host** buttons.
+
+**New host shell** opens a separate form with a trimmed nonblank **Session name**,
+the host's default shell, and an optional **Save as a local profile** checkbox.
+The checkbox exposes a local profile name and never grants execution authority.
+**Create & Connect** issues one explicit durable creation through the existing
+protected action contract. Save the optional shortcut only for the confirmed
+created target; failure or uncertainty cannot produce a phantom shortcut or
+replacement creation. In-process explicit recovery retains the original
+operation and its bound save intent. Cold-start original recovery does not infer
+an optional save choice; the confirmed session can be saved explicitly from its
+row. A local save failure is reported separately from successful remote creation.
+No temporary-session toggle appears in the normal form.
 
 A Dev Tunnel profile separates its local name from the remote session name.
 **Create session if missing** is saveable offline even when creation is denied
@@ -1926,7 +1979,10 @@ permit creation. Names are labels, not a substitute for host/account/logical
 identity. Existing advanced/temporary recipes remain compatible.
 Turning creation off preserves the logical identity with `resume_only`; it does
 not invent an exact generation. Profile discovery returns the chosen public
-host/session into the same draft, with one offline Save.
+host/session into the same draft, with one offline Save. Opening either new
+or saved editors starts no discovery; each account has its own Find hosts
+action. Create session if missing remains configurable without inventory or
+creation permission; changing that choice never silently follows typed text.
 
 The handoff HTML is workflow guidance, not a replacement design system. Use
 existing dark semantic tokens, integrated chip chrome and shared action roles;
@@ -1942,8 +1998,9 @@ Metadata management does not imply an online indicator or sign-in-on-save.
 The desktop surface lists public host/account/logical identity and exact
 generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
 import and explicit JSON export/copy. Arguments use a JSON string vector so
-quoting and empty arguments survive edits. Host/logical IDs cannot be retargeted
-by editing. Failed writes retain the draft; results are bound to its tab/request.
+quoting and empty arguments survive edits. Only explicit host/session selection retargets future metadata;
+unchanged names preserve the existing logical identity, and live attachments
+and protected pending operations keep their original snapshots. Failed writes retain the draft; results are bound to its tab/request.
 Delete initially focuses Cancel, Escape cancels without a command, and changed
 or removed records require reopening the confirmation rather than stale deletion.
 Import review is metadata inspection only, never persisted execution approval.
@@ -1968,16 +2025,26 @@ oversize and limit distinctions; export must never claim a save succeeded or
 failed. Mobile recovery retains valid entries and uses the existing skipped-entry
 count/quarantine notification convention instead of silently clearing recipes.
 
-Opening the new host card/launcher shows local metadata only. Find hosts and
-single-host selection/Refresh are explicit network intents; cancellation and
-account changes fence results. Never inherit legacy automatic discovery or
-display cached hosts as online. Selected-host execution has a bounded actual HOST
-worker. Account-wide discovery is implemented, while mobile installation and
+Opening an offline profile editor shows local metadata only. The normal host
+browser's account-scoped directory request and explicit host selection/Refresh
+use separate bounded workers; cancellation and account changes fence results.
+Never display cached hosts as online or infer authorization from their labels.
+Selected-host execution has a bounded actual HOST worker.
+Account-wide discovery is implemented, while mobile installation and
 native GUI/vault/service qualification remain separate. The original action's logical ID, reserved
 attachment and issued operation are shown for explicit retry. The process-local
 bounded registry survives closing review, but is not durable restart
 reconciliation. Unknown, denied, offline, busy and incompatible replies retain
 the original action; none means absence or authorizes a replacement shell.
+
+A closed mobile HOST terminal uses plain reconnect guidance and the existing
+**Review host** action. It does not claim the shell ended or that reconnection
+will succeed. Existing finite stage/category/I/O detail and unknown-generation/
+original-action mechanics remain in the terminal menu's diagnostics while the
+viewer stays open. The current presentation does not retain a reliable per-session
+background cause, so it uses generic **Connection closed** rather than attributing
+every cancellation or transport failure to leaving the app. Input remains paused;
+there is no automatic retry, replacement creation or replay.
 
 Import never grants execution consent. Before first executing an imported
 recipe, the foreground execution UI must explicitly review/reconfirm its shell,

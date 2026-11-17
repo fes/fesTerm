@@ -2,6 +2,7 @@
 //! Native, host-independent identity and service discovery. No subprocesses,
 //! browser implementation, native FFI, daemon IPC, or global account slot.
 
+pub mod diagnostics;
 pub mod host;
 pub mod host_control;
 pub mod identity;
@@ -32,10 +33,14 @@ pub enum Error {
     Store,
     Busy,
     RateLimited,
+    HostRequest(diagnostics::HostFailure),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::HostRequest(failure) = self {
+            return failure.original_error().fmt(out);
+        }
         out.write_str(match self {
             Self::Registration => "GitHub sign-in is not configured in this build.",
             Self::Cancelled => "Cancelled.",
@@ -51,10 +56,27 @@ impl fmt::Display for Error {
             Self::Store => "Secure storage unavailable. Sign in again.",
             Self::Busy => "Another sign-in is finishing. Try again.",
             Self::RateLimited => "Rate limit reached. Try later.",
+            Self::HostRequest(_) => unreachable!("handled above"),
         })
     }
 }
-impl std::error::Error for Error {}
+impl Error {
+    /// The pre-diagnostic semantic error, for existing recovery decisions.
+    pub const fn original_error(self) -> Self {
+        match self {
+            Self::HostRequest(failure) => failure.original_error(),
+            original => original,
+        }
+    }
+}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HostRequest(failure) => Some(failure),
+            _ => None,
+        }
+    }
+}
 
 pub(crate) fn valid_token(token: &str) -> bool {
     !token.is_empty()
@@ -147,6 +169,89 @@ pub enum IdentityRequest<'a> {
 }
 
 pub struct Https(reqwest::Client);
+
+#[derive(Clone, Copy)]
+enum IdentityHttpStage {
+    DeviceGrant,
+    DeviceToken,
+    Account,
+    Refresh,
+}
+
+impl IdentityHttpStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DeviceGrant => "device-grant",
+            Self::DeviceToken => "device-token",
+            Self::Account => "github-account",
+            Self::Refresh => "github-refresh",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdentityHttpCause {
+    Build,
+    SendTimeout,
+    SendConnect,
+    SendRequest,
+    SendOther,
+    HttpStatus,
+    Body,
+}
+
+impl IdentityHttpCause {
+    fn send_flags(timeout: bool, connect: bool, request: bool) -> Self {
+        if timeout {
+            Self::SendTimeout
+        } else if connect {
+            Self::SendConnect
+        } else if request {
+            Self::SendRequest
+        } else {
+            Self::SendOther
+        }
+    }
+
+    fn after_headers(oauth: bool, status: u16) -> Self {
+        if !(200..300).contains(&status) && (!oauth || status != 400) {
+            Self::HttpStatus
+        } else {
+            Self::Body
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Build => "request-build",
+            Self::SendTimeout => "send-timeout",
+            Self::SendConnect => "send-connect",
+            Self::SendRequest => "send-request",
+            Self::SendOther => "send-other",
+            Self::HttpStatus => "http-status",
+            Self::Body => "body",
+        }
+    }
+}
+
+// The callback is a small test seam; no provider error, URL or response can
+// enter this record. Keep the ordinary tracing event when a subscriber exists.
+fn identity_log_fallback(
+    tracing_set: bool,
+    stage: IdentityHttpStage,
+    cause: IdentityHttpCause,
+    status: Option<u16>,
+    emit: impl FnOnce(fmt::Arguments<'_>),
+) {
+    if !tracing_set {
+        emit(format_args!(
+            "Native GitHub request failed stage={} cause={} http_status={status:?}",
+            stage.label(),
+            cause.label(),
+        ));
+    }
+}
+
 impl Https {
     pub fn new() -> Result<Self, Error> {
         http_client().map(Self)
@@ -222,19 +327,25 @@ impl IdentityTransport for Https {
     ) -> ResponseFuture<'a> {
         Box::pin(async move {
             let stage = match &operation {
-                IdentityRequest::Device { .. } => "device-grant",
-                IdentityRequest::Poll { .. } => "device-token",
-                IdentityRequest::Account { .. } => "github-account",
-                IdentityRequest::Refresh { .. } => "github-refresh",
+                IdentityRequest::Device { .. } => IdentityHttpStage::DeviceGrant,
+                IdentityRequest::Poll { .. } => IdentityHttpStage::DeviceToken,
+                IdentityRequest::Account { .. } => IdentityHttpStage::Account,
+                IdentityRequest::Refresh { .. } => IdentityHttpStage::Refresh,
             };
             let mut http_status = None;
+            let mut cause = IdentityHttpCause::Build;
             let result = async {
                 let (oauth, request) = self.build_request(operation)?;
                 let response = tokio::select! {
                     _ = cancel.cancelled() => return Err(Error::Cancelled),
-                    result = request.send() => result.map_err(|_| Error::Network)?,
+                    result = request.send() => result.map_err(|error| {
+                        cause = IdentityHttpCause::send_flags(
+                            error.is_timeout(), error.is_connect(), error.is_request());
+                        Error::Network
+                    })?,
                 };
                 http_status = Some(response.status().as_u16());
+                cause = IdentityHttpCause::after_headers(oauth, response.status().as_u16());
                 if !oauth && !response.status().is_success() {
                     return Err(Error::Denied);
                 }
@@ -243,7 +354,11 @@ impl IdentityTransport for Https {
             .await;
             result.inspect_err(|error| {
                 if *error != Error::Cancelled {
-                    tracing::warn!(stage, http_status = ?http_status, error = ?error, "Native GitHub request failed");
+                    tracing::warn!(stage = stage.label(), http_status = ?http_status, error = ?error, "Native GitHub request failed");
+                    identity_log_fallback(
+                        tracing::dispatcher::has_been_set(), stage, cause, http_status,
+                        |record| log::warn!(target: "festerm_tunnel_client::identity", "{record}"),
+                    );
                 }
             })
         })

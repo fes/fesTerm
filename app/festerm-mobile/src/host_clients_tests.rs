@@ -324,7 +324,7 @@ fn mobile_host_saved_connect_loaded_receipt_continues_without_asserting_host_enr
     app.hosts.saved_connect = None;
     assert!(
         app.hosts.context().is_err(),
-        "ordinary UI still requires explicit owner review"
+        "advanced owner UI still requires explicit owner review"
     );
     app.hosts.saved_connect = Some(SavedConnect::Receipt);
     app.hosts.receipt = None;
@@ -386,7 +386,9 @@ fn mobile_host_selecting_another_host_clears_saved_recipe_and_trust_but_preserve
     assert!(app.hosts.prerequisite.is_empty());
     assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
     assert!(Arc::ptr_eq(&app.hosts.originals[0].intent, &original));
-    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(app.hosts.ordinary_selected && app.hosts.pending.is_some());
+    assert!(app.hosts.worker.is_none());
+    app.hosts.clear_approval();
 }
 
 #[test]
@@ -501,7 +503,7 @@ fn mobile_host_settings_sign_out_is_per_account_and_opening_saved_editor_is_offl
 }
 
 #[test]
-fn mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_results() {
+fn mobile_host_discovered_selection_starts_one_host_and_paint_keeps_discovery_rows() {
     use egui_kittest::kittest::{By, Queryable};
     let profiles = crate::profiles::testing::profiles();
     let store = profiles.store_handle();
@@ -523,11 +525,18 @@ fn mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_result
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
     harness.run_steps(3);
-    harness.get(By::new().label("Find hosts · @sample"));
-    harness.get(By::new().label("Collapse Build host"));
+    harness.get(By::new().label("Back"));
+    assert_eq!(
+        harness.state().hosts.hosts[0].name.as_deref(),
+        Some("Build host")
+    );
+    assert!(harness
+        .query(By::new().label("Refresh hosts · @sample"))
+        .is_none());
     assert_eq!(harness.state().hosts.hosts.len(), 1);
-    assert!(harness.state().hosts.error.is_some());
-    assert!(harness.state().hosts.pending.is_none());
+    assert!(harness.state().hosts.error.is_none());
+    assert!(harness.state().hosts.ordinary_selected);
+    assert!(harness.state().hosts.pending.is_some());
     assert!(harness.state().hosts.worker.is_none());
     assert!(harness.state().hosts.selected.is_none());
     assert!(harness.state().hosts.receipt.is_none());
@@ -553,7 +562,7 @@ fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
                 .get(By::new().label(if editing {
                     "Dev Tunnel profile"
                 } else {
-                    "Find & connect"
+                    "Find & Connect"
                 }))
                 .rect();
             assert!(done.width() <= 80.0 && done.height() >= 44.0, "{done:?}");
@@ -567,6 +576,10 @@ fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
             );
             assert!(done.left() >= ((width - 560.0) / 2.0).max(8.0), "{done:?}");
             assert!(title.right() - done.left() <= 560.0, "{done:?} {title:?}");
+            assert!(
+                (title.center().x - width / 2.0).abs() <= 1.0,
+                "header must center across the full content width: {width} {title:?}"
+            );
             assert!(harness.state().hosts.pending.is_none());
         }
     }
@@ -624,7 +637,7 @@ fn mobile_host_valid_quick_create_shows_enabled_primary_without_opening_protecte
     harness.run_steps(3);
     harness.get(
         By::new()
-            .label("Create and connect")
+            .label("Create & Connect")
             .predicate(|node| !node.is_disabled()),
     );
     assert!(harness.state().hosts.pending.is_none());
@@ -672,8 +685,9 @@ fn quick_check_fixture() -> (tempfile::TempDir, MobileApp, TunnelAccount) {
         account: account.clone(),
         epoch: app.hosts.epoch,
         generation: app.hosts.generation,
-        owner: receipt.binding().clone(),
-        reference: receipt.reference(),
+        owner: Some(receipt.binding().clone()),
+        reference: Some(receipt.reference()),
+        binding: app.hosts.context().unwrap().binding().clone(),
     });
     app.hosts.launch = false;
     (root, app, account)
@@ -717,7 +731,7 @@ fn mobile_host_explicit_quick_create_history_continuation_keeps_frozen_draft_and
                 .push_str("-changed"),
             _ => {
                 app.hosts.quick_check.as_mut().unwrap().reference =
-                    festerm_secret_store::SecretReference::generate()
+                    Some(festerm_secret_store::SecretReference::generate())
             }
         }
         assert!(app.hosts.finish_quick_check(&account).is_err());
@@ -833,8 +847,13 @@ impl MobileApp {
             },
         ];
         fixture.hosts.discovered = true;
+        fixture.hosts.discover_on_open = false;
+        fixture.hosts.selected.as_mut().unwrap().host_hint = Some(HostHint {
+            locator: "fixture.test".into(),
+            name: "Build Mac".into(),
+        });
         let mut inventory = client_inventory(true);
-        for (index, name) in ["build", "notes"].into_iter().enumerate() {
+        for (index, name) in ["Lab shared"].into_iter().enumerate() {
             inventory
                 .sessions
                 .push(festerm_host_protocol::SessionSummary {
@@ -847,6 +866,22 @@ impl MobileApp {
                     attached: false,
                 });
         }
+        inventory.capabilities.profiles = true;
+        inventory.capabilities.ensure_profile = true;
+        inventory
+            .profiles
+            .push(festerm_host_protocol::ProfileSummary {
+                logical: inventory.sessions[0].target.logical.clone(),
+                revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+                name: "Lab shared".into(),
+            });
+        inventory
+            .profiles
+            .push(festerm_host_protocol::ProfileSummary {
+                logical: LogicalSessionId::new(),
+                revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+                name: "Shared build profile".into(),
+            });
         fixture.hosts.inventory = Some(inventory);
         fixture.surface = Surface::Tabs;
         fixture.shell.tab = crate::shell::Tab::Profiles;
@@ -878,6 +913,21 @@ impl MobileApp {
             "hosts-new" => {
                 fixture.hosts.quick_new = true;
                 fixture.hosts.quick_name = "release".into();
+                fixture.hosts.quick_save = true;
+                fixture.hosts.quick_profile_name = "Release shortcut".into();
+            }
+            "hosts-save-session" => {
+                let session = &fixture.hosts.inventory.as_ref().unwrap().sessions[0];
+                let recipe = session_shortcut(
+                    fixture.hosts.selected.as_ref().unwrap(),
+                    session,
+                    "Daily development",
+                )
+                .unwrap();
+                fixture.hosts.session_save = Some(SessionSaveReview {
+                    recipe,
+                    account: account.clone(),
+                });
             }
             "hosts-profile" => {
                 fixture.hosts.begin_profile_edit();
@@ -951,6 +1001,9 @@ fn mobile_host_gallery_recovery_displays_cannot_dispatch() {
             Action::FindAccount(0),
             Action::Import,
             Action::Create,
+            Action::SaveSession(0),
+            Action::ConfirmSessionSave,
+            Action::BackHosts,
             Action::ConfirmEnd,
             Action::ConfirmForget,
         ] {
@@ -978,6 +1031,97 @@ fn mobile_host_suspend_fences_pending_work_and_never_arms_automatic_creation() {
         .host_action(&egui::Context::default(), Action::Create)
         .is_err());
     assert!(app.hosts.worker.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_idle_privacy_changes_preserve_diagnostics_without_cancellation_error() {
+    for previous in [None, Some("Original diagnostic remains.")] {
+        for cause in 0..3 {
+            let (_root, mut app, account, _store) = recovery_fixture();
+            app.hosts.error = previous.map(str::to_owned);
+            assert!(!app.hosts.busy() && app.hosts.receipt.is_some());
+            match cause {
+                0 => app.sink.live.suspend(),
+                1 => app.sink.live.content_lock_callback()(),
+                _ => app.sign_out_account(&account.id),
+            }
+            app.poll_hosts(&egui::Context::default());
+            assert_eq!(app.hosts.error.as_deref(), previous);
+            assert!(app.hosts.receipt.is_none() && app.hosts.inventory.is_none());
+            assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
+            assert_eq!(app.hosts.epoch, app.sink.live.host.epoch());
+            app.open_hosts();
+            assert_eq!(app.hosts.error.as_deref(), previous);
+            assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_privacy_change_cancels_pending_and_control_work_with_diagnostic() {
+    for control in [false, true] {
+        let (_root, mut app, account, _store) = recovery_fixture();
+        let token = CancellationToken::new();
+        if control {
+            let context = app.hosts.context().unwrap();
+            let worker = host_client::testing::pending_worker(
+                Scope {
+                    request: OperationId::new(),
+                    generation: 1,
+                    binding: context.binding().clone(),
+                },
+                token.clone(),
+            )
+            .unwrap();
+            app.hosts.worker = Some(Arc::new(worker));
+            app.hosts.worker_account = Some(account);
+        } else {
+            app.hosts.pending = Some(Pending {
+                account,
+                recipe: app.hosts.selected.clone(),
+                epoch: app.hosts.epoch,
+                token: Arc::new(token.clone()),
+                job: Job::spawn(&egui::Context::default(), |cancel| {
+                    while !cancel.is_cancelled() {
+                        std::thread::park_timeout(Duration::from_millis(1));
+                    }
+                    Err("Cancelled fixture".into())
+                }),
+            });
+        }
+        assert!(app.hosts.busy() && !token.is_cancelled());
+        app.sink.live.host.invalidate();
+        app.poll_hosts(&egui::Context::default());
+        assert!(token.is_cancelled());
+        assert!(!app.hosts.busy() && app.hosts.receipt.is_none());
+        assert!(app
+            .hosts
+            .error
+            .as_deref()
+            .unwrap()
+            .starts_with("HOST work cancelled"));
+        assert!(!app.hosts.trust && !app.hosts.enrolled && !app.hosts.launch);
+    }
+}
+
+#[test]
+fn mobile_host_test_worker_drop_cancels_its_in_memory_task() {
+    let context = creation_context();
+    let token = CancellationToken::new();
+    let worker = host_client::testing::pending_worker(
+        Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: context.binding().clone(),
+        },
+        token.clone(),
+    )
+    .unwrap();
+    assert!(!token.is_cancelled());
+    drop(worker);
+    assert!(token.is_cancelled());
 }
 
 #[test]
@@ -1460,15 +1604,15 @@ fn mobile_host_native_privacy_handle_is_shared_with_suspension_owner() {
     assert!(token.is_cancelled());
 }
 
-fn creation_context() -> ApprovedContext {
+fn creation_context() -> ClientContext {
     creation_context_for(HostId::new())
 }
 
-fn creation_context_for(host: HostId) -> ApprovedContext {
+fn creation_context_for(host: HostId) -> ClientContext {
     creation_context_at(host, "fixture")
 }
 
-fn creation_context_at(host: HostId, endpoint: &str) -> ApprovedContext {
+fn creation_context_at(host: HostId, endpoint: &str) -> ClientContext {
     use festerm_tunnel_bridge::owner_auth::PinnedHost;
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
@@ -1480,7 +1624,7 @@ fn creation_context_at(host: HostId, endpoint: &str) -> ApprovedContext {
     }, festerm_secret_store::SecretReference::generate(),
     serde_json::from_value(serde_json::json!({"connectionMode":"TunnelRelay","hostId":"fixture",
         "hostPublicKeys":[public.split_whitespace().nth(1).unwrap()],"clientRelayUri":"wss://example.invalid/client"})).unwrap(),
-    22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), endpoint.into()).unwrap()).unwrap()
+    22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), endpoint.into()).unwrap()).unwrap().into()
 }
 
 #[cfg(unix)]
@@ -1519,7 +1663,10 @@ fn recovery_fixture_with_login(
         .find(|account| account.id == id)
         .unwrap()
         .clone();
-    let context = creation_context_at(HostId::new(), "fixture.test");
+    let context = match creation_context_at(HostId::new(), "fixture.test") {
+        ClientContext::EnrolledOwner(owner) => *owner,
+        ClientContext::Ordinary(_) => panic!("advanced owner fixture"),
+    };
     let (receipt, resolved, originals) =
         host_client::originals::testing::memory_fixture(root.path(), context).unwrap();
     let mut app = app().with_profiles(profiles);
@@ -1570,7 +1717,7 @@ async fn checkpoint_end(
     use festerm_tunnel_client::host_control::{read_frame, write_frame};
     let context = app.hosts.context().unwrap();
     let intent = Arc::new(EndIntent::new(
-        &context,
+        context.as_enrolled_owner().unwrap(),
         host_client::Target {
             logical: LogicalSessionId::new(),
             generation: GenerationId::new(9).unwrap(),
@@ -2068,7 +2215,7 @@ fn mobile_host_recovery_fence_create_and_end_before_explicit_reopen_issue_nothin
     );
     assert!(app.hosts.originals.is_empty());
     let intent = Arc::new(EndIntent::new(
-        &context,
+        context.as_enrolled_owner().unwrap(),
         host_client::Target {
             logical: LogicalSessionId::new(),
             generation: GenerationId::new(9).unwrap(),
@@ -2152,6 +2299,7 @@ fn mobile_host_original_review_is_strict_typed_and_missing_or_ambiguous_selectio
         recipe: recipe.clone(),
         account: account.clone(),
         intent: second.clone(),
+        local_save_name: None,
     });
     assert!(hosts
         .creation_intent(&context, recipe.clone(), account.clone())
@@ -2336,7 +2484,7 @@ fn mobile_host_end_confirmation_fences_account_native_epoch_generation_and_prote
         .clone();
     let context = creation_context();
     let intent = Arc::new(EndIntent::new(
-        &context,
+        context.as_enrolled_owner().unwrap(),
         host_client::Target {
             logical: LogicalSessionId::new(),
             generation: GenerationId::new(9).unwrap(),
@@ -2382,7 +2530,7 @@ fn mobile_host_end_cancel_close_lock_and_metadata_never_issue_and_keep_original(
         .clone();
     let context = creation_context();
     let intent = Arc::new(EndIntent::new(
-        &context,
+        context.as_enrolled_owner().unwrap(),
         host_client::Target {
             logical: LogicalSessionId::new(),
             generation: GenerationId::new(9).unwrap(),
@@ -2624,4 +2772,1822 @@ fn mobile_host_changed_account_or_recipe_discards_completed_work_without_a_repla
     app.poll_hosts(&context);
     assert!(app.hosts.receipt.is_none() && app.hosts.inventory.is_none());
     assert!(app.hosts.originals.is_empty());
+}
+
+#[test]
+fn mobile_host_shared_profile_operation_keeps_exact_revision_and_requires_capabilities() {
+    let mut hosts = HostUi::default();
+    assert!(hosts.shared_profile_operation(0).is_err());
+    let mut inventory = client_inventory(false);
+    let logical = LogicalSessionId::new();
+    let revision = festerm_host_protocol::Epoch::new(4).unwrap();
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: logical.clone(),
+            revision,
+            name: "Build shell".into(),
+        });
+    inventory.capabilities.creation_allowed = true;
+    inventory.capabilities.create = false;
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    hosts.inventory = Some(inventory);
+    assert!(matches!(hosts.shared_profile_operation(0).unwrap(),
+        host_client::Operation::EnsureProfile { logical: selected, revision: selected_revision, .. }
+        if selected == logical && selected_revision == revision));
+    assert!(hosts.shared_profile_operation(1).is_err());
+    hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .ensure_profile = false;
+    assert!(hosts.shared_profile_operation(0).is_err());
+    assert!(
+        !hosts.quick_creation_allowed(),
+        "profile permission must not imply generic shell creation"
+    );
+}
+
+#[test]
+fn mobile_host_profile_can_explicitly_change_saved_host_without_network_or_losing_draft() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut original = client_recipe();
+    original.session_name = Some("build".into());
+    let mut other = client_recipe();
+    other.name = "Other host".into();
+    other.host_hint = Some(HostHint {
+        locator: "other.test".into(),
+        name: "Other host".into(),
+    });
+    for recipe in [&original, &other] {
+        store
+            .lock()
+            .unwrap()
+            .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+    }
+    let mut app = app().with_profiles(profiles);
+    assert!(app.select_host_profile(original.id.as_str(), true));
+    app.hosts.profile_name = "Edited shortcut".into();
+    app.hosts.session_name = "release".into();
+    app.hosts.create_if_missing = true;
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.host_action(&ctx, Action::SelectSavedProfileHost(1))
+        .unwrap();
+    assert_eq!(app.hosts.profile_name, "Edited shortcut");
+    assert_eq!(app.hosts.session_name, "release");
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, other.host);
+    assert_ne!(
+        app.hosts.selected.as_ref().unwrap().logical_session,
+        original.logical_session
+    );
+    assert!(app.hosts.receipt.is_none() && !app.hosts.enrolled);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.host_action(&ctx, Action::SaveProfile).unwrap();
+    let saved = store
+        .lock()
+        .unwrap()
+        .host_recipes()
+        .get(&original.id)
+        .unwrap()
+        .clone();
+    assert_eq!(saved.id, original.id);
+    assert_eq!(saved.host, other.host);
+    assert_eq!(saved.name, "Edited shortcut");
+    assert_eq!(saved.session_name(), "release");
+    assert!(matches!(saved.behavior, ConnectionBehavior::ResumeOrCreate));
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_profile_host_selection_cancel_preserves_original_target_and_draft() {
+    let profiles = crate::profiles::testing::profiles();
+    let original = client_recipe();
+    profiles
+        .store_handle()
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(original.clone()))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    assert!(app.select_host_profile(original.id.as_str(), true));
+    app.hosts.profile_name = "Unsaved name".into();
+    app.hosts.session_name = "Unsaved session".into();
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    app.host_action(&ctx, Action::CancelProfileHost).unwrap();
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, original.host);
+    assert_eq!(app.hosts.profile_name, "Unsaved name");
+    assert_eq!(app.hosts.session_name, "Unsaved session");
+    assert!(app.hosts.editing && app.host_recipe_current());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_shared_profiles_are_visible_without_generic_creation_or_render_effects() {
+    use egui_kittest::kittest::{By, Queryable};
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    let mut inventory = client_inventory(false);
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: LogicalSessionId::new(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Shared build".into(),
+        });
+    app.hosts.inventory = Some(inventory);
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    harness.get(
+        By::new()
+            .label("Start & Connect · Shared build")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.query(By::new().label("New host shell")).is_none());
+    assert!(harness.query(By::new().label("+ New session")).is_none());
+    assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_explicit_session_name_edit_binds_unique_authorized_name_or_new_identity() {
+    let original = client_recipe();
+    let previous = original.logical_session.clone();
+    let mut hosts = HostUi {
+        selected: Some(original),
+        ..Default::default()
+    };
+    hosts.session_name = "release".into();
+    hosts.reconcile_profile_session_name();
+    let next = hosts.selected.as_ref().unwrap().logical_session.clone();
+    assert_ne!(next, previous);
+    hosts.reconcile_profile_session_name();
+    assert_eq!(
+        hosts.selected.as_ref().unwrap().logical_session,
+        next,
+        "rendering/validation must not allocate another identity"
+    );
+    let listed = LogicalSessionId::new();
+    let mut inventory = client_inventory(false);
+    inventory
+        .sessions
+        .push(festerm_host_protocol::SessionSummary {
+            target: host_client::Target {
+                logical: listed.clone(),
+                generation: GenerationId::new(1).unwrap(),
+            },
+            name: "build".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        });
+    hosts.inventory = Some(inventory);
+    hosts.session_name = "build".into();
+    hosts.reconcile_profile_session_name();
+    assert_eq!(hosts.selected.as_ref().unwrap().logical_session, listed);
+    assert_eq!(hosts.existing_session, Some(0));
+}
+
+#[test]
+fn mobile_host_reverting_session_name_restores_saved_identity_and_creation_off_needs_a_target() {
+    let recipe = client_recipe();
+    let logical = recipe.logical_session.clone();
+    let name = recipe.session_name().to_owned();
+    let mut hosts = HostUi {
+        selected: Some(recipe),
+        saved: true,
+        ..Default::default()
+    };
+    hosts.begin_profile_edit();
+    hosts.create_if_missing = true;
+    hosts.session_name = "another shell".into();
+    hosts.reconcile_profile_session_name();
+    assert_ne!(hosts.selected.as_ref().unwrap().logical_session, logical);
+    hosts.create_if_missing = false;
+    assert!(
+        hosts.profile_draft().is_err(),
+        "a new logical identity is not an existing session"
+    );
+    hosts.session_name = name;
+    hosts.reconcile_profile_session_name();
+    assert_eq!(hosts.selected.as_ref().unwrap().logical_session, logical);
+    hosts.profile_name = "Renamed shortcut".into();
+    let draft = hosts.profile_draft().unwrap();
+    assert_eq!(draft.logical_session, logical);
+    assert!(matches!(draft.behavior, ConnectionBehavior::ResumeOnly {}));
+}
+
+#[test]
+fn mobile_host_cancel_host_selection_restores_original_account_and_discards_foreign_results() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let first = festerm_mobile_tunnels::testing::seed_account(&store, 7, "first", false);
+    let second = festerm_mobile_tunnels::testing::seed_account(&store, 8, "second", false);
+    let original = client_recipe();
+    store
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Save(original.clone()))
+        .unwrap();
+    let mut app = app().with_profiles(profiles);
+    app.select_host_profile(original.id.as_str(), true);
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::ChooseProfileHost).unwrap();
+    app.hosts.account = second;
+    app.hosts.discovered = true;
+    app.hosts.hosts.push(TunnelSummary {
+        locator: "foreign.test".into(),
+        name: None,
+        description: None,
+        active: false,
+    });
+    app.host_action(&ctx, Action::CancelProfileHost).unwrap();
+    assert_eq!(app.hosts.account, first);
+    assert!(app.hosts.hosts.is_empty() && !app.hosts.discovered);
+    assert_eq!(app.hosts.selected.as_ref().unwrap().host, original.host);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_legacy_long_implicit_name_stays_editable_without_allocating_a_session() {
+    let mut original = client_recipe();
+    original.name = "x".repeat(200);
+    let logical = original.logical_session.clone();
+    let mut hosts = HostUi {
+        selected: Some(original),
+        saved: true,
+        ..Default::default()
+    };
+    hosts.begin_profile_edit();
+    hosts.profile_name = "Short local label".into();
+    hosts.create_if_missing = false;
+    let draft = hosts.profile_draft().unwrap();
+    assert_eq!(draft.logical_session, logical);
+    assert_eq!(draft.session_name, None);
+    assert!(matches!(draft.behavior, ConnectionBehavior::ResumeOnly {}));
+}
+
+#[test]
+fn mobile_host_known_identity_reuse_refuses_ambiguous_or_foreign_account_locators() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut first = client_recipe();
+    first.host_hint = Some(HostHint {
+        locator: "same.test".into(),
+        name: "First".into(),
+    });
+    let mut second = client_recipe();
+    second.host_hint = first.host_hint.clone();
+    for recipe in [&first, &second] {
+        store
+            .lock()
+            .unwrap()
+            .apply_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+    }
+    let mut app = app().with_profiles(profiles);
+    app.hosts.account = account;
+    assert!(app.known_host_recipe("same.test").is_none());
+    store
+        .lock()
+        .unwrap()
+        .apply_host_recipe_command(MetadataCommand::Delete(second.id))
+        .unwrap();
+    assert_eq!(app.known_host_recipe("same.test").unwrap().host, first.host);
+    app.hosts.account = "foreign".into();
+    assert!(app.known_host_recipe("same.test").is_none());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_pairing_fields_publish_native_documents_and_accept_targeted_input() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    use festerm_ios_window::FieldInput;
+    use std::cell::RefCell;
+
+    let pending = Rc::new(RefCell::new(Vec::new()));
+    let incoming = pending.clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            move |ui, state: &mut (String, String)| {
+                crate::apply_field_input(ui.ctx(), std::mem::take(&mut *incoming.borrow_mut()));
+                super::view::pairing_fields(
+                    ui,
+                    egui::Id::new("fixture-host-account"),
+                    &mut state.0,
+                    &mut state.1,
+                );
+            },
+            (String::new(), String::new()),
+        );
+    harness.run();
+    for (index, expected) in [(0, "SHA256:fixtureé"), (1, "public connection\ndetails")] {
+        harness
+            .get(
+                By::new()
+                    .label(if index == 0 {
+                        "Independent host fingerprint"
+                    } else {
+                        "Host connection details"
+                    })
+                    .role(if index == 0 {
+                        egui::accesskit::Role::TextInput
+                    } else {
+                        egui::accesskit::Role::MultilineTextInput
+                    }),
+            )
+            .click();
+        harness.run();
+        let field = crate::widgets::take_field_document(&harness.ctx).unwrap();
+        let id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        assert_eq!(field.field, id.value());
+        assert_eq!(field.multiline, index == 1);
+        assert!(!field.secure);
+        let mut inputs = vec![FieldInput::Select(0..0)];
+        for (line, text) in expected.split('\n').enumerate() {
+            if line != 0 {
+                inputs.push(FieldInput::Insert("\n".into()));
+            }
+            inputs.push(FieldInput::Insert(text.into()));
+        }
+        *pending.borrow_mut() = inputs;
+        harness.run();
+        // TextEdit may publish its previous multiline galley on the edit frame.
+        // Check the model immediately, then settle the next layout before
+        // inspecting the native document's text.
+        assert_eq!(
+            if index == 0 {
+                &harness.state().0
+            } else {
+                &harness.state().1
+            },
+            expected
+        );
+        harness.step();
+        let field = crate::widgets::take_field_document(&harness.ctx).unwrap();
+        assert_eq!(field.field, id.value());
+        assert_eq!(field.text, expected);
+        if index == 0 {
+            assert_eq!(harness.state().0, expected);
+            assert!(harness.state().1.is_empty());
+        } else {
+            assert_eq!(harness.state().0, "SHA256:fixtureé");
+            assert_eq!(harness.state().1, expected);
+        }
+    }
+}
+
+#[test]
+fn mobile_host_label_prefers_bounded_description_then_name_then_locator() {
+    let mut host = TunnelSummary {
+        locator: "fixture.test".into(),
+        name: Some("Named host".into()),
+        description: Some("Lab Linux host".into()),
+        active: true,
+    };
+    assert_eq!(super::view::host_display_name(&host), "Lab Linux host");
+    for description in ["  ".to_owned(), "bad\nlabel".into(), "é".repeat(65)] {
+        host.description = Some(description);
+        assert_eq!(super::view::host_display_name(&host), "Named host");
+    }
+    host.description = None;
+    host.name = Some(" ".into());
+    assert_eq!(super::view::host_display_name(&host), "fixture.test");
+}
+
+#[test]
+fn mobile_host_pairing_scope_changes_with_account_host_and_recipe() {
+    let mut hosts = HostUi {
+        account: "account-a".into(),
+        locator: "fixture.test".into(),
+        ..Default::default()
+    };
+    let first = super::view::pairing_scope(&hosts);
+    hosts.account = "account-b".into();
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    hosts.account = "account-a".into();
+    hosts.locator = "other.test".into();
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    hosts.locator = "fixture.test".into();
+    hosts.selected = Some(client_recipe());
+    assert_ne!(first, super::view::pairing_scope(&hosts));
+    let selected = super::view::pairing_scope(&hosts);
+    hosts.selected.as_mut().unwrap().host.id = HostId::new();
+    assert_ne!(selected, super::view::pairing_scope(&hosts));
+}
+
+#[test]
+fn mobile_host_native_pairing_edit_clears_consent_and_inventory() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    use std::cell::RefCell;
+
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.trust = true;
+    app.hosts.enrolled = true;
+    app.hosts.launch = true;
+    app.hosts.inventory = Some(client_inventory(false));
+    let pending = Rc::new(RefCell::new(Vec::new()));
+    let incoming = pending.clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            move |ui, app: &mut MobileApp| {
+                crate::apply_field_input(ui.ctx(), std::mem::take(&mut *incoming.borrow_mut()));
+                app.show_hosts(ui.ctx());
+            },
+            app,
+        );
+    harness.run();
+    harness.get(By::new().label("Connect this device")).click();
+    harness.run();
+    harness
+        .get(
+            By::new()
+                .label("Independent host fingerprint")
+                .role(egui::accesskit::Role::TextInput),
+        )
+        .click();
+    harness.run();
+    *pending.borrow_mut() = vec![festerm_ios_window::FieldInput::Insert(
+        "SHA256:fixture".into(),
+    )];
+    harness.run();
+    let hosts = &harness.state().hosts;
+    assert_eq!(hosts.fingerprint, "SHA256:fixture");
+    assert!(!hosts.trust && !hosts.enrolled && !hosts.launch);
+    assert!(hosts.inventory.is_none() && hosts.receipt.is_none());
+    assert!(hosts.pending.is_none() && hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_content_lock_never_waits_for_sign_in_credential_io() {
+    let suspension = SuspensionHandle::default();
+    let host = suspension.host.token(0);
+    let activity = suspension.sign_in.capture();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        festerm_mobile_tunnels::testing::sign_in_commit_fixture(activity, || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let callback = suspension.content_lock_callback();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let privacy = std::thread::spawn(move || {
+        callback();
+        done_tx.send(()).unwrap();
+    });
+    let returned_before_release = done_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .is_ok();
+    let host_cancelled_before_release = host.is_cancelled();
+    // Always drain the fake worker, including the original blocking regression.
+    release_tx.send(()).unwrap();
+    let outcome = worker.join().unwrap();
+    privacy.join().unwrap();
+    assert!(
+        matches!(outcome, Err(festerm_tunnel_client::Error::Cancelled)),
+        "stale credential completion was published after lock"
+    );
+    assert!(
+        returned_before_release,
+        "native privacy callback waited for credential IO"
+    );
+    assert!(
+        host_cancelled_before_release,
+        "HOST cancellation waited for credential IO"
+    );
+}
+
+#[test]
+fn mobile_host_app_lock_monitor_preserves_background_sign_in_but_revokes_host_and_device_lock() {
+    use festerm_ios_lock::{
+        AppLock, Availability, BackgroundGrace, BiometryKind, FakeLocker, LifecycleEvent,
+        LockSettings, ManualClock,
+    };
+    let suspension = SuspensionHandle::default();
+    let lock = AppLock::new_with_content_lock_reason_callback(
+        None,
+        FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+        Arc::new(ManualClock::new()),
+        || {},
+        suspension.content_lock_reason_callback(),
+    );
+    let pending =
+        festerm_mobile_tunnels::testing::pending_sign_in_fixture(suspension.sign_in.capture());
+    let host = suspension.host.token(0);
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert!(host.is_cancelled());
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Waiting
+    );
+    lock.handle_lifecycle(LifecycleEvent::DeviceLocked); // Even with App lock disabled.
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    let pending =
+        festerm_mobile_tunnels::testing::pending_sign_in_fixture(suspension.sign_in.capture());
+    lock.apply_settings(LockSettings {
+        enabled: true,
+        background_grace: BackgroundGrace::Never,
+        ..Default::default()
+    })
+    .unwrap();
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Waiting
+    );
+    lock.lock_now();
+    assert_eq!(
+        pending.state(),
+        festerm_mobile_tunnels::SignInState::Failed(festerm_mobile_tunnels::TunnelError::Cancelled)
+    );
+}
+
+fn discovery_fixture(directory: DiscoveryService) -> (MobileApp, String) {
+    let profiles = crate::profiles::testing::profiles();
+    let account =
+        festerm_mobile_tunnels::testing::seed_account(&profiles.store_handle(), 7, "mobile", false);
+    let mut app = app().with_profiles(profiles);
+    app.hosts.discovery_service = Some(directory);
+    (app, account)
+}
+
+fn discovery_row(name: &str) -> TunnelSummary {
+    TunnelSummary {
+        locator: format!("{name}.fixture"),
+        name: Some(name.into()),
+        description: None,
+        active: true,
+    }
+}
+
+fn wait_for_discovery(app: &mut MobileApp, ctx: &egui::Context) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        app.poll_hosts(ctx);
+        if app.hosts.pending.is_none() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owned discovery fixture timed out"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn mobile_host_normal_open_discovers_saved_account_once_without_inventory_or_paint_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, account) = discovery_fixture(Arc::new(move |id, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            assert_eq!(id, 7);
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok((0..40)
+                .map(|n| discovery_row(&format!("host{n}")))
+                .collect())
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    assert!(
+        app.hosts.pending.is_some(),
+        "opening the normal dialog must schedule discovery"
+    );
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(app.hosts.account, account);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.hosts.hosts.len(), 32);
+    assert!(app.hosts.discovered && app.hosts.error.is_none());
+    assert!(app.hosts.inventory.is_none() && app.hosts.worker.is_none());
+    assert!(app.hosts.receipt.is_none() && app.hosts.resolved.is_none());
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    app.host_action(&ctx, Action::Close).unwrap();
+    app.open_hosts();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn mobile_host_discovery_failure_waits_for_explicit_refresh_and_preserves_results() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, _) = discovery_fixture(Arc::new(move |_, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(festerm_tunnel_client::Error::RateLimited)
+            } else {
+                Ok(vec![discovery_row("refreshed")])
+            }
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.hosts.hosts = vec![discovery_row("retained")];
+    wait_for_discovery(&mut app, &ctx);
+    assert!(app.hosts.error.as_ref().unwrap().contains("Rate limit"));
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("retained"));
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    app.host_action(&ctx, Action::FindAccount(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("refreshed"));
+}
+
+#[test]
+fn mobile_host_account_editor_event_cancels_old_discovery_and_lists_new_account_once() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let log = calls.clone();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let (mut app, first) = discovery_fixture(Arc::new(move |id, cancel| {
+        let log = log.clone();
+        let gate = gate.clone();
+        Box::pin(async move {
+            log.lock().unwrap().push(id);
+            if id == 7 {
+                gate.notified().await;
+            }
+            if cancel.is_cancelled() {
+                return Err(festerm_tunnel_client::Error::Cancelled);
+            }
+            Ok(vec![discovery_row(if id == 7 {
+                "stale"
+            } else {
+                "current"
+            })])
+        })
+    }));
+    let second = festerm_mobile_tunnels::testing::seed_account(
+        &app.profiles.as_ref().unwrap().store_handle(),
+        8,
+        "other",
+        false,
+    );
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while calls.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let old_token = app.hosts.pending.as_ref().unwrap().token.clone();
+    app.hosts.hosts = vec![discovery_row("old-visible")];
+    app.editor.tunnel = Some(crate::model::DevTunnelChoices {
+        accounts: vec![(first, "mobile".into()), (second.clone(), "other".into())],
+        ..Default::default()
+    });
+    app.apply_tunnel_editor_action(&ctx, crate::forms::EditorAction::SelectTunnelAccount(1));
+    assert!(old_token.is_cancelled());
+    assert!(app.hosts.hosts.is_empty());
+    wait_for_discovery(&mut app, &ctx);
+    release.notify_one();
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(app.hosts.account, second);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("current"));
+    assert_eq!(*calls.lock().unwrap(), vec![7, 8]);
+    assert!(app.hosts.inventory.is_none() && app.hosts.receipt.is_none());
+}
+
+#[test]
+fn mobile_host_no_account_renders_primary_sign_in_without_starting_browser_or_discovery() {
+    use egui_kittest::kittest::{By, Queryable};
+    let mut app = app().with_profiles(crate::profiles::testing::profiles());
+    app.open_hosts();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            |ui, app: &mut MobileApp| {
+                app.poll_hosts(ui.ctx());
+                app.show_hosts(ui.ctx());
+            },
+            app,
+        );
+    harness.run_steps(3);
+    harness.get(By::new().label("Sign in to GitHub"));
+    assert!(harness.state().tunnel.sign_in.is_none());
+    assert!(harness.state().hosts.pending.is_none());
+}
+
+#[test]
+fn mobile_host_profile_edit_and_save_remain_offline_with_saved_account() {
+    let (mut app, _) = discovery_fixture(Arc::new(|_, _| {
+        Box::pin(async { panic!("metadata edit must not discover") })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.hosts.selected = Some(client_recipe());
+    app.hosts.begin_profile_edit();
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    app.host_action(&ctx, Action::SaveProfile).unwrap();
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(!app.hosts.discovered);
+}
+
+#[test]
+fn mobile_host_successful_sign_in_event_arms_open_dialog_discovery_only_in_foreground() {
+    use festerm_mobile_tunnels::{
+        testing::{FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
+        TunnelClient,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let profiles = crate::profiles::testing::profiles();
+    let client = TunnelClient::with_parts(
+        profiles.store_handle(),
+        Arc::new(FakeGithub::new(9, "signed-in")),
+        Arc::new(FixedDirectory::new()),
+        Arc::new(StreamConnector(
+            || -> festerm_tunnel_bridge::mobile::BoxStream { panic!("discovery must not attach") },
+        )),
+        CLIENT_ID.into(),
+    )
+    .unwrap();
+    let mut app = app()
+        .with_profiles(profiles)
+        .with_tunnel_client(Arc::new(client));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    app.hosts.discovery_service = Some(Arc::new(move |id, _| {
+        let count = count.clone();
+        Box::pin(async move {
+            assert_eq!(id, 9);
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![discovery_row("signed-in")])
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.host_action(&ctx, Action::SignIn).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while app.tunnel.sign_in.is_some() {
+        app.poll_tunnels(&ctx);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.lifecycle.set(Lifecycle {
+        active: false,
+        ..app.lifecycle.get()
+    });
+    app.poll_hosts(&ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.lifecycle.set(Lifecycle {
+        active: true,
+        ..app.lifecycle.get()
+    });
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.hosts.hosts[0].name.as_deref(), Some("signed-in"));
+    assert!(app.hosts.inventory.is_none() && app.hosts.worker.is_none());
+}
+
+#[test]
+fn mobile_host_privacy_cancels_automatic_discovery_without_restarting_on_resume() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let (mut app, _) = discovery_fixture(Arc::new(move |_, cancel| {
+        let count = count.clone();
+        Box::pin(async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            cancel.cancelled().await;
+            Err(festerm_tunnel_client::Error::Cancelled)
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let token = app.hosts.pending.as_ref().unwrap().token.clone();
+    app.sink.live.host.invalidate();
+    app.poll_hosts(&ctx);
+    assert!(token.is_cancelled());
+    assert!(app.hosts.pending.is_none());
+    for _ in 0..10 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(app.hosts.hosts.is_empty() && !app.hosts.discovered);
+    assert!(app.hosts.inventory.is_none() && app.hosts.receipt.is_none());
+}
+
+#[test]
+fn mobile_ordinary_host_expansion_runs_once_and_old_host_has_no_manual_fallback() {
+    use egui_kittest::kittest::{By, Queryable};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (mut app, account) = discovery_fixture(Arc::new(|_, _| panic!("no discovery fanout")));
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.discovery_attempt = app.host_account();
+    app.hosts.hosts = vec![discovery_row("build")];
+    app.hosts.ordinary_service = Some(Arc::new(move |id, locator, _| {
+        assert_eq!(id, 7);
+        assert_eq!(locator, "build.fixture");
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    }));
+    let ctx = egui::Context::default();
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    assert!(app.hosts.pending.is_some());
+    wait_for_discovery(&mut app, &ctx);
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(app.hosts.ordinary_selected);
+    assert!(app.hosts.receipt.is_none() && app.hosts.ordinary.is_none());
+    assert!(!app.hosts.trust && !app.hosts.enrolled);
+    assert!(app.hosts.inventory.is_none() && app.hosts.originals.is_empty());
+    assert_eq!(
+        app.hosts.error.as_deref(),
+        Some(
+            host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired
+            )
+            .message()
+        )
+    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(2);
+    harness.get(By::new().label("Retry host connection"));
+    assert!(harness.query_by_label("Prepare this device").is_none());
+    assert!(harness
+        .query_by_label("Independent host fingerprint")
+        .is_none());
+    assert!(harness.query_by_label("Host connection details").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    #[cfg(unix)]
+    {
+        let (_root, mut advanced, _, _) = recovery_fixture();
+        assert!(advanced.hosts.context().is_ok());
+        advanced.hosts.ordinary_selected = true;
+        assert!(advanced.hosts.receipt.is_some());
+        assert_eq!(
+            advanced.hosts.context().err().as_deref(),
+            Some("Connect to this host with the selected provider account first.")
+        );
+    }
+}
+
+#[test]
+fn mobile_ordinary_host_switch_cancels_pending_expansion_before_stale_publication() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let first_cancel = Arc::new(std::sync::Mutex::new(None));
+    let captured = first_cancel.clone();
+    let (mut app, account) = discovery_fixture(Arc::new(|_, _| panic!("no discovery fanout")));
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.discovery_attempt = app.host_account();
+    app.hosts.hosts = vec![discovery_row("first"), discovery_row("second")];
+    app.hosts.ordinary_service = Some(Arc::new(move |_, locator, cancel| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        if locator == "first.fixture" {
+            *captured.lock().unwrap() = Some(cancel.clone());
+        }
+        Box::pin(async move {
+            if locator == "first.fixture" {
+                cancel.cancelled().await;
+            }
+            Err(host_client::Failure::ProviderUnavailable)
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while first_cancel.lock().unwrap().is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    app.host_action(&ctx, Action::SelectHost(1)).unwrap();
+    assert!(first_cancel
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .is_cancelled());
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(app.hosts.locator, "second.fixture");
+    assert!(app.hosts.ordinary.is_none() && app.hosts.inventory.is_none());
+    assert!(app.hosts.receipt.is_none() && app.hosts.originals.is_empty());
+}
+
+fn ordinary_fixture_context(
+    account_id: u64,
+) -> (tempfile::TempDir, host_client::ordinary::OrdinaryContext) {
+    use festerm_tunnel_bridge::{
+        ordinary_auth::{OrdinaryHostInfo, OrdinaryRoute},
+        owner_auth::PinnedHost,
+    };
+    use host_client::ordinary::{OrdinaryAccountGuard, OrdinaryKeyIndex};
+    use russh::keys::{Algorithm, HashAlg, PrivateKey};
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let ssh = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
+    let host = festerm_host_protocol::HostId::new();
+    let info = OrdinaryHostInfo {
+        version: 1,
+        installation: festerm_host_protocol::HostId::new(),
+        principal: festerm_host_protocol::PrincipalId::new(),
+        policy_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+        route: OrdinaryRoute {
+            tunnel_id: "build".into(),
+            cluster: "fixture".into(),
+            endpoint_id: format!("{host}-relay"),
+            port: 47461,
+            host: PinnedHost {
+                host,
+                host_key_fingerprint: ssh.public_key().fingerprint(HashAlg::Sha256).to_string(),
+            },
+        },
+    };
+    let token = CancellationToken::new();
+    let check = token.clone();
+    let guard = OrdinaryAccountGuard::new(
+        token,
+        Arc::new(move || {
+            if check.is_cancelled() {
+                Err(festerm_host_protocol::ContractError::Stale)
+            } else {
+                Ok(())
+            }
+        }),
+    );
+    let context = host_client::testing::ordinary_context(
+        OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap(),
+        account_id,
+        info,
+        guard,
+    )
+    .unwrap();
+    (root, context)
+}
+
+fn ordinary_mobile_ui_fixture(
+    context: host_client::ordinary::OrdinaryContext,
+    inventory: Inventory,
+    root: &std::path::Path,
+) -> (MobileApp, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let profiles = Profiles::open(
+        root,
+        Arc::new(festerm_secret_store::MemorySecretStore::new()),
+        true,
+    )
+    .unwrap();
+    let account =
+        festerm_mobile_tunnels::testing::seed_account(&profiles.store_handle(), 7, "mobile", false);
+    let mut app = app().with_profiles(profiles);
+    app.hosts.discovery_service = Some(Arc::new(|_, _| panic!("no discovery fanout")));
+    app.open_hosts();
+    app.hosts.account = account;
+    app.hosts.discovery_attempt = app.host_account();
+    app.hosts.hosts = vec![discovery_row("build")];
+    app.hosts.ordinary_service = Some(Arc::new(move |_, _, _| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        let result = (context.clone(), inventory.clone());
+        Box::pin(async move { Ok(result) })
+    }));
+    (app, calls)
+}
+
+#[test]
+fn mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once() {
+    use std::sync::atomic::Ordering;
+    let (_root, context) = ordinary_fixture_context(7);
+    let binding = context.binding().clone();
+    let mut inventory = client_inventory(false);
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory.capabilities.explicit_end = false;
+    inventory.capabilities.creation_allowed = true;
+    let logical = LogicalSessionId::new();
+    let revision = festerm_host_protocol::Epoch::new(4).unwrap();
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: logical.clone(),
+            revision,
+            name: "Shared shell".into(),
+        });
+    let (mut app, calls) = ordinary_mobile_ui_fixture(context, inventory, _root.path());
+    // Provider-created hosts carry the friendly label in description, not name.
+    app.hosts.hosts[0].name = None;
+    app.hosts.hosts[0].description = Some("Lab Linux host".into());
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    for _ in 0..3 {
+        app.poll_hosts(&ctx);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.hosts.context().unwrap().binding(), &binding);
+    let selected = app.hosts.selected.as_ref().unwrap();
+    assert_eq!(selected.name, "Lab Linux host");
+    assert_eq!(selected.host_hint.as_ref().unwrap().name, "Lab Linux host");
+    assert_eq!(
+        selected.host_hint.as_ref().unwrap().locator,
+        app.hosts.locator
+    );
+    assert_eq!(
+        &app.hosts.selected.as_ref().unwrap().host.id,
+        binding.host()
+    );
+    assert!(app.hosts.receipt.is_none() && !app.hosts.enrolled && !app.hosts.trust);
+    assert!(
+        matches!(app.hosts.shared_profile_operation(0).unwrap(), host_client::Operation::EnsureProfile { logical: selected, revision: actual, .. } if selected == logical && actual == revision)
+    );
+    app.host_action(&ctx, Action::EnsureProfile(0)).unwrap();
+    assert!(
+        app.hosts.worker.is_some(),
+        "shared Ensure must use common worker without owner receipt"
+    );
+    app.hosts.clear_approval();
+    assert!(app.hosts.ordinary.is_none());
+}
+
+#[test]
+fn mobile_ordinary_durable_creation_obeys_global_policy_and_protects_original() {
+    for enabled in [false, true] {
+        let (_root, context) = ordinary_fixture_context(7);
+        let (mut app, _) =
+            ordinary_mobile_ui_fixture(context, client_inventory(enabled), _root.path());
+        let ctx = egui::Context::default();
+        app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+        wait_for_discovery(&mut app, &ctx);
+        if !enabled {
+            assert!(app.host_action(&ctx, Action::QuickNew).is_err());
+            assert!(
+                app.hosts.originals.is_empty()
+                    && app.hosts.pending.is_none()
+                    && app.hosts.worker.is_none()
+            );
+            continue;
+        }
+        app.host_action(&ctx, Action::QuickNew).unwrap();
+        app.hosts.quick_name = "Build shell".into();
+        app.host_action(&ctx, Action::QuickCreate).unwrap();
+        wait_for_discovery(&mut app, &ctx);
+        assert!(app.hosts.receipt.is_none());
+        assert_eq!(app.hosts.originals.len(), 1, "{:?}", app.hosts.error);
+        assert!(app.hosts.originals[0].intent.is_protected_original());
+        assert!(app.hosts.originals[0]
+            .intent
+            .matches_context(&app.hosts.context().unwrap()));
+        assert_eq!(
+            app.hosts.originals[0].recipe.lifetime,
+            festerm_host_protocol::Lifetime::Persistent {}
+        );
+        assert_eq!(app.hosts.originals[0].recipe.session_name(), "Build shell");
+        // Fixture transport is deliberately denied; this proves dispatch and
+        // retained original ownership, not server/provider authorization.
+        let original = app.hosts.originals[0].intent.clone();
+        app.hosts.clear_review();
+        app.host_action(&ctx, Action::ReviewOriginal(0)).unwrap();
+        wait_for_discovery(&mut app, &ctx);
+        assert!(app.hosts.ordinary_selected && app.hosts.ordinary.is_some());
+        assert!(app.hosts.receipt.is_none() && app.hosts.original_store.is_none());
+        assert_eq!(app.hosts.originals.len(), 1);
+        assert!(Arc::ptr_eq(&app.hosts.originals[0].intent, &original));
+        assert!(
+            app.hosts.worker.is_none(),
+            "reopening original must not replay Create"
+        );
+        app.hosts.clear_approval();
+    }
+}
+
+#[test]
+fn mobile_ordinary_attach_installs_common_session_without_owner_enrollment() {
+    let (_root, context) = ordinary_fixture_context(7);
+    let binding = context.binding().clone();
+    let target = host_client::Target {
+        logical: LogicalSessionId::new(),
+        generation: festerm_host_protocol::GenerationId::new(3).unwrap(),
+    };
+    let mut inventory = client_inventory(false);
+    inventory
+        .sessions
+        .push(festerm_host_protocol::SessionSummary {
+            target,
+            name: "Retained shell".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        });
+    let (mut app, _) = ordinary_mobile_ui_fixture(context, inventory, _root.path());
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    app.host_action(&ctx, Action::Attach(0)).unwrap();
+    assert!(!app.hosts.open);
+    assert!(app.tabs.last().unwrap().host);
+    assert_eq!(app.tabs.last().unwrap().title, "Retained shell");
+    let owner = app.hosts.session_accounts.last().unwrap();
+    assert_eq!(owner.account.account_id, 7);
+    assert!(owner.owner.is_none());
+    assert_eq!(owner.session.upgrade().unwrap().binding(), &binding);
+    assert!(app.hosts.originals.is_empty());
+    app.sink.live.host.invalidate();
+}
+
+#[test]
+fn mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes() {
+    for via_sign_out in [false, true] {
+        let profiles = crate::profiles::testing::profiles();
+        let store = profiles.store_handle();
+        let first_id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "first", false);
+        let second_id = festerm_mobile_tunnels::testing::seed_account(&store, 8, "second", false);
+        let accounts = store.lock().unwrap().accounts().to_vec();
+        let first = accounts
+            .iter()
+            .find(|account| account.id == first_id)
+            .unwrap()
+            .clone();
+        let second = accounts
+            .iter()
+            .find(|account| account.id == second_id)
+            .unwrap()
+            .clone();
+        let mut app = app().with_profiles(profiles);
+        app.open_hosts();
+        app.hosts.discover_on_open = false;
+        app.hosts.account = second_id;
+        let epoch = app.hosts.epoch;
+        let first_token = app.sink.live.host.token(epoch);
+        let second_token = app.sink.live.host.token(epoch);
+        app.hosts.ordinary_lifetime = Some(second_token.clone());
+        let ctx = egui::Context::default();
+        let make_session = |account: &TunnelAccount| {
+            let (stream, peer) = tokio::io::duplex(128 * 1024);
+            let scope = Scope {
+                request: OperationId::new(),
+                generation: 1,
+                binding: Binding::new(
+                    HostId::new(),
+                    format!("github:{}", account.account_id),
+                    "owned-fixture".into(),
+                )
+                .unwrap(),
+            };
+            let session = host_client::testing::session_from_stream(
+                stream,
+                ConnectionPermit::reserve(&app.hosts.budgets).unwrap(),
+                scope,
+                host_client::Target {
+                    logical: LogicalSessionId::new(),
+                    generation: GenerationId::new(1).unwrap(),
+                },
+                Arc::new(live_ssh::Repaint(ctx.clone())),
+            )
+            .unwrap();
+            (session, peer)
+        };
+        let (first_session, _first_peer) = make_session(&first);
+        let (second_session, _second_peer) = make_session(&second);
+        app.hosts.session_accounts = vec![
+            SessionAccount {
+                session: Arc::downgrade(&first_session),
+                account: first,
+                tab: 11,
+                owner: None,
+                ordinary_lifetime: Some(first_token.clone()),
+            },
+            SessionAccount {
+                session: Arc::downgrade(&second_session),
+                account: second,
+                tab: 12,
+                owner: None,
+                ordinary_lifetime: Some(second_token.clone()),
+            },
+        ];
+        if via_sign_out {
+            app.sign_out_account(&first_id);
+            // The explicit account mutation revokes its lifetimes before a UI frame.
+            assert!(first_token.is_cancelled());
+            assert!(!second_token.is_cancelled());
+        } else {
+            store.lock().unwrap().remove_account(&first_id).unwrap();
+        }
+        app.poll_hosts(&ctx);
+        assert!(first_token.is_cancelled());
+        assert!(!second_token.is_cancelled());
+        assert!(matches!(
+            first_session.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        ));
+        assert_eq!(second_session.lifecycle(), SessionLifecycle::Starting);
+        assert_eq!(app.hosts.session_accounts.len(), 1);
+        assert_eq!(app.hosts.session_accounts[0].account.account_id, 8);
+        assert_eq!(app.sink.live.host.epoch(), epoch);
+        app.sink.live.host.invalidate();
+        assert!(
+            second_token.is_cancelled(),
+            "OS privacy still revokes all account lifetimes"
+        );
+        second_session.cancel();
+    }
+}
+
+#[tokio::test]
+async fn mobile_host_viewer_shows_real_finite_attach_failure_without_leaving_terminal() {
+    use egui_kittest::kittest::{By, Queryable as _};
+    let context = egui::Context::default();
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: Binding::new(HostId::new(), "github:7".into(), "fixture-endpoint".into()).unwrap(),
+    };
+    let target = host_client::Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(3).unwrap(),
+    };
+    let (stream, mut peer) = tokio::io::duplex(128 * 1024);
+    let session = host_client::testing::session_from_stream(
+        stream,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        scope,
+        target,
+        Arc::new(live_ssh::Repaint(context.clone())),
+    )
+    .unwrap();
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = account.clone();
+    app.hosts.approval_account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|a| a.id == account)
+        .cloned();
+    app.install_host_session(&context, "Shared profile".into(), session.clone());
+    let server = tokio::spawn(async move {
+        // Read the real capabilities request, then close before its reply.
+        assert_eq!(
+            peer.read_u8().await.unwrap(),
+            festerm_tunnel_bridge::host_terminal::HOST_REQUEST
+        );
+        let length = peer.read_u32().await.unwrap() as usize;
+        let mut bytes = vec![0; length];
+        peer.read_exact(&mut bytes).await.unwrap();
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            app.sink
+                .live
+                .connection
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .poll(&mut app.terminal, &context);
+            if app
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .host_error()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    server.await.unwrap();
+    app.notice = Some("UNRELATED NOTICE MUST NOT ENTER VIEWER".into());
+    let banner = app.reconnect_banner();
+    assert!(
+        banner.detail.is_none(),
+        "technical details belong in the existing diagnostics menu"
+    );
+    assert_eq!(banner.status, "Input is paused.");
+    let text = banner.custom.as_ref().unwrap();
+    assert_eq!(text.title, "Connection closed");
+    assert_eq!(
+        text.body,
+        "Review this host to reconnect to the same session."
+    );
+    assert!(
+        !text.body.contains("away"),
+        "a generic failure must not invent a background cause"
+    );
+    let detail = app
+        .diagnostics()
+        .into_iter()
+        .find(|(label, _)| label == "HOST connection details")
+        .unwrap()
+        .1;
+    assert!(detail.contains("terminal capabilities") && detail.contains("unexpected-eof"));
+    assert!(detail.contains("unknown, not absent") && detail.contains("original issued action"));
+    assert!(!detail.contains("UNRELATED"));
+    assert!(banner.reattach.is_none());
+    assert_eq!(text.action, "Review host");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui(move |ui| {
+            crate::terminal_chrome::reconnect_banner(ui, &banner, false);
+        });
+    harness.run();
+    harness.get(By::new().label("Review host"));
+    harness.get(By::new().label("Connection closed"));
+    harness.get(By::new().label("Review this host to reconnect to the same session."));
+    assert!(harness.query(By::new().label(detail.as_str())).is_none());
+    assert!(harness
+        .query(By::new().label("Reconnect · new shell"))
+        .is_none());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    app.active_tab = None;
+    assert!(
+        !app.diagnostics()
+            .iter()
+            .any(|(label, _)| label == "HOST connection details"),
+        "inactive HOST failures must not enter another surface's diagnostics"
+    );
+}
+
+#[test]
+fn mobile_host_shared_profile_title_uses_only_matching_advertised_metadata() {
+    let logical = LogicalSessionId::new();
+    let mut hosts = HostUi::default();
+    assert!(hosts.shared_profile_title(&logical).is_none());
+    let mut inventory = client_inventory(false);
+    inventory
+        .profiles
+        .push(festerm_host_protocol::ProfileSummary {
+            logical: logical.clone(),
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Shared profile label".into(),
+        });
+    hosts.inventory = Some(inventory);
+    assert_eq!(
+        hosts.shared_profile_title(&logical).as_deref(),
+        Some("Shared profile label")
+    );
+    assert!(hosts
+        .shared_profile_title(&LogicalSessionId::new())
+        .is_none());
+    assert!(
+        !hosts
+            .inventory
+            .as_ref()
+            .unwrap()
+            .capabilities
+            .creation_allowed
+    );
+}
+
+#[test]
+fn mobile_host_session_shortcuts_bind_exact_host_logical_and_generation_without_launch() {
+    let mut base = client_recipe();
+    base.launch = Recipe {
+        shell: Some("/custom/shell".into()),
+        args: vec!["unsafe-for-new-shell".into()],
+        cwd: Some("/custom".into()),
+    };
+    base.behavior = ConnectionBehavior::AlwaysCreate;
+    let session = festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Remote name".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    };
+    let recipe = session_shortcut(&base, &session, "Local name").unwrap();
+    assert_eq!(recipe.name, "Local name");
+    assert_eq!(recipe.session_name(), "Remote name");
+    assert_eq!(recipe.launch, Recipe::default());
+    assert!(recipe_saves_target(&recipe, &base.host, &session.target));
+    let mut other = session.target.clone();
+    other.generation = GenerationId::new(43).unwrap();
+    assert!(!recipe_saves_target(&recipe, &base.host, &other));
+    other = session.target.clone();
+    other.logical = LogicalSessionId::new();
+    assert!(!recipe_saves_target(&recipe, &base.host, &other));
+    let mut host = base.host.clone();
+    host.id = HostId::new();
+    assert!(!recipe_saves_target(&recipe, &host, &session.target));
+    host = base.host.clone();
+    host.account = AccountReference::Github { account_id: 8 };
+    assert!(!recipe_saves_target(&recipe, &host, &session.target));
+    let mut resume = recipe.clone();
+    resume.behavior = ConnectionBehavior::ResumeOnly {};
+    assert!(!recipe_saves_target(&resume, &base.host, &session.target));
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_save_session_is_local_reviewed_exact_target_and_refuses_changed_account() {
+    let (_root, mut app, account, _original_store) = recovery_fixture();
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    let session = festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Existing shell".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    };
+    app.hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .sessions
+        .push(session.clone());
+    let before = store.lock().unwrap().host_recipes().recipes().len();
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SaveSession(0)).unwrap();
+    assert_eq!(store.lock().unwrap().host_recipes().recipes().len(), before);
+    app.hosts.session_save.as_mut().unwrap().recipe.name = "My shell shortcut".into();
+    let other = festerm_mobile_tunnels::testing::seed_account(&store, 8, "other", false);
+    app.hosts.account = other;
+    assert!(app.host_action(&ctx, Action::ConfirmSessionSave).is_err());
+    assert_eq!(store.lock().unwrap().host_recipes().recipes().len(), before);
+    app.hosts.account = account.id;
+    app.host_action(&ctx, Action::ConfirmSessionSave).unwrap();
+    let stored = store.lock().unwrap();
+    assert_eq!(stored.host_recipes().recipes().len(), before + 1);
+    let saved = stored
+        .host_recipes()
+        .recipes()
+        .iter()
+        .find(|recipe| recipe.name == "My shell shortcut")
+        .unwrap();
+    assert!(recipe_saves_target(
+        saved,
+        &app.hosts.selected.as_ref().unwrap().host,
+        &session.target
+    ));
+    assert_eq!(saved.session_name(), "Existing shell");
+    assert!(app.hosts.session_save.is_none());
+    assert!(
+        app.hosts.worker.is_none() && app.hosts.pending.is_none() && app.hosts.originals.is_empty()
+    );
+    drop(stored);
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    use egui_kittest::kittest::{By, Queryable};
+    harness.get(By::new().label("Saved locally · edit in Profiles"));
+    assert!(harness.query(By::new().label("Save as profile…")).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_session_rows_deduplicate_only_exact_logical_identity_and_gate_unknown_creation() {
+    use egui_kittest::kittest::{By, Queryable};
+    let (_root, mut app, _account, _store) = recovery_fixture();
+    app.hosts.locator = "fixture.test".into();
+    app.hosts.selected.as_mut().unwrap().behavior = ConnectionBehavior::ChooseSession;
+    let logical = LogicalSessionId::new();
+    let different = LogicalSessionId::new();
+    let inventory = app.hosts.inventory.as_mut().unwrap();
+    inventory.capabilities.attach = true;
+    inventory.capabilities.profiles = true;
+    inventory.capabilities.ensure_profile = true;
+    inventory.capabilities.creation_allowed = false;
+    inventory.sessions = vec![festerm_host_protocol::SessionSummary {
+        target: host_client::Target {
+            logical: logical.clone(),
+            generation: GenerationId::new(42).unwrap(),
+        },
+        name: "Same label".into(),
+        lifetime: festerm_host_protocol::Lifetime::Persistent {},
+        attached: false,
+    }];
+    inventory.profiles = vec![
+        festerm_host_protocol::ProfileSummary {
+            logical,
+            revision: festerm_host_protocol::Epoch::new(1).unwrap(),
+            name: "Same label".into(),
+        },
+        festerm_host_protocol::ProfileSummary {
+            logical: different.clone(),
+            revision: festerm_host_protocol::Epoch::new(2).unwrap(),
+            name: "Same label".into(),
+        },
+    ];
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 1100.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .query_all(By::new().label("Connect · Same label"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        harness
+            .query_all(By::new().label("Start & Connect · Same label"))
+            .count(),
+        1
+    );
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.query(By::new().label("New host shell")).is_none());
+    assert!(harness
+        .query(By::new().label("Save / edit profile"))
+        .is_none());
+    assert!(harness
+        .query(By::new().label("New profile for this host"))
+        .is_none());
+    assert!(harness.state().hosts.shared_profile_operation(1).is_err());
+    harness
+        .state_mut()
+        .hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .creation_allowed = true;
+    harness.run_steps(2);
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| !node.is_disabled()),
+    );
+    harness
+        .state_mut()
+        .hosts
+        .inventory
+        .as_mut()
+        .unwrap()
+        .unknown
+        .push(host_client::Target {
+            logical: different,
+            generation: GenerationId::new(99).unwrap(),
+        });
+    harness.run_steps(2);
+    harness.get(By::new().label("Shared shell · State unknown"));
+    assert!(harness
+        .query(By::new().label("Shared shell · Not started"))
+        .is_none());
+    harness.get(
+        By::new()
+            .label("Start & Connect · Same label")
+            .predicate(|node| node.is_disabled()),
+    );
+    assert!(harness.state().hosts.shared_profile_operation(1).is_err());
+    assert!(harness.state().hosts.worker.is_none() && harness.state().hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_new_shell_defaults_launch_and_retains_optional_save_only_on_exact_original() {
+    let (_root, mut app, account, _original_store) = recovery_fixture();
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    app.hosts.selected.as_mut().unwrap().launch = Recipe {
+        shell: Some("/custom".into()),
+        args: vec!["old".into()],
+        cwd: Some("/old".into()),
+    };
+    app.hosts.inventory = Some(client_inventory(true));
+    let before = store.lock().unwrap().host_recipes().recipes().len();
+    app.host_action(&egui::Context::default(), Action::QuickNew)
+        .unwrap();
+    assert_eq!(
+        app.hosts.selected.as_ref().unwrap().launch,
+        Recipe::default()
+    );
+    app.hosts.quick_name = "Remote created name".into();
+    app.hosts.quick_save = true;
+    app.hosts.quick_profile_name = "Local shortcut name".into();
+    app.hosts.freeze_quick_recipe(&account).unwrap();
+    let context = app.hosts.context().unwrap();
+    let recipe = app.hosts.selected.clone().unwrap();
+    let original = app
+        .hosts
+        .creation_intent(&context, recipe.clone(), account.clone())
+        .unwrap();
+    assert_eq!(original.creation().recipe, Recipe::default());
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Local shortcut name")
+    );
+    app.hosts.error = Some("Original result unknown".into());
+    app.hosts.quick_profile_name = "Changed draft must not retarget original".into();
+    let retry = app
+        .hosts
+        .creation_intent(&context, recipe, account)
+        .unwrap();
+    assert!(Arc::ptr_eq(&original, &retry));
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Local shortcut name")
+    );
+    app.save_confirmed_creation_shortcut(
+        &original,
+        &festerm_host_protocol::SessionSummary {
+            target: host_client::Target {
+                logical: original.creation().logical.clone(),
+                generation: GenerationId::new(42).unwrap(),
+            },
+            name: "Remote created name".into(),
+            lifetime: festerm_host_protocol::Lifetime::Persistent {},
+            attached: false,
+        },
+    );
+    assert!(original.confirmed_target().is_none());
+    assert_eq!(
+        store.lock().unwrap().host_recipes().recipes().len(),
+        before,
+        "unknown/unconfirmed result never creates phantom metadata"
+    );
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(app.hosts.worker.is_none() && app.hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_creation_and_save_forms_keep_44point_native_fields_and_12point_action_gaps() {
+    use egui_kittest::kittest::{By, Queryable};
+    for (state, fields, primary) in [
+        (
+            "hosts-new",
+            vec!["New session name", "New shell local profile name"],
+            "Create & Connect",
+        ),
+        (
+            "hosts-save-session",
+            vec!["Session local profile name"],
+            "Save profile",
+        ),
+    ] {
+        let mut app = app();
+        app.configure_host_gallery(state);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+        harness.run_steps(3);
+        for field in fields {
+            let rect = harness
+                .get(
+                    By::new()
+                        .label(field)
+                        .role(egui::accesskit::Role::TextInput),
+                )
+                .rect();
+            assert!(rect.height() >= 44.0, "{state}/{field}: {rect:?}");
+        }
+        let confirm = harness.get(By::new().label(primary)).rect();
+        let cancel = harness.get(By::new().label("Cancel")).rect();
+        assert!(
+            cancel.top() - confirm.bottom() >= 11.9,
+            "{state}: {confirm:?} {cancel:?}"
+        );
+        harness.get(By::new().label("Back"));
+        assert!(harness.query(By::new().label("Done")).is_none());
+        assert!(harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn mobile_host_session_card_keeps_12point_action_row_gap_and_44point_details() {
+    use egui_kittest::kittest::{By, Queryable};
+    let mut app = app();
+    app.configure_host_gallery("hosts-sessions");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    let connect = harness.get(By::new().label("Connect · Lab shared")).rect();
+    let save = harness.get(By::new().label("Save as profile…")).rect();
+    let details = harness.get(By::new().label("Details")).rect();
+    assert!(
+        save.top() - connect.bottom() >= 11.9,
+        "{connect:?} {save:?}"
+    );
+    assert!(details.height() >= 44.0, "{details:?}");
+    assert!(harness.state().hosts.worker.is_none() && harness.state().hosts.pending.is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_host_back_from_busy_creation_cancels_worker_and_keeps_original_save_intent() {
+    let (_root, mut app, account, _store) = recovery_fixture();
+    app.hosts.inventory = Some(client_inventory(true));
+    app.host_action(&egui::Context::default(), Action::QuickNew)
+        .unwrap();
+    app.hosts.quick_name = "Original shell".into();
+    app.hosts.quick_save = true;
+    app.hosts.quick_profile_name = "Original shortcut".into();
+    app.hosts.freeze_quick_recipe(&account).unwrap();
+    let context = app.hosts.context().unwrap();
+    let intent = app
+        .hosts
+        .creation_intent(
+            &context,
+            app.hosts.selected.clone().unwrap(),
+            account.clone(),
+        )
+        .unwrap();
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: context.binding().clone(),
+    };
+    let cancel = CancellationToken::new();
+    app.hosts.worker = Some(Arc::new(
+        host_client::testing::pending_worker(scope.clone(), cancel.clone()).unwrap(),
+    ));
+    app.hosts.worker_account = Some(account);
+    app.hosts.worker_creation = Some((scope, intent.clone()));
+    app.host_action(&egui::Context::default(), Action::CancelEdit)
+        .unwrap();
+    assert!(cancel.is_cancelled());
+    assert!(
+        app.hosts.worker.is_none() && app.hosts.worker_creation.is_none() && !app.hosts.quick_new
+    );
+    assert_eq!(app.hosts.originals.len(), 1);
+    assert!(Arc::ptr_eq(&app.hosts.originals[0].intent, &intent));
+    assert_eq!(
+        app.hosts.originals[0].local_save_name.as_deref(),
+        Some("Original shortcut")
+    );
+    assert!(intent.issued_operation().is_none() && intent.confirmed_target().is_none());
 }

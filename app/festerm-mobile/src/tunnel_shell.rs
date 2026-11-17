@@ -52,10 +52,11 @@ impl MobileApp {
             .as_ref()
             .is_some_and(|flow| flow.expected.as_deref() == Some(id))
         {
+            self.sink.live.sign_in.cancel();
             self.tunnel.sign_in = None;
         }
         #[cfg(feature = "host-clients")]
-        self.sink.live.host.invalidate();
+        self.invalidate_host_account(id);
         if let Some(client) = self.tunnel_client() {
             if let Err(error) = client.sign_out(id) {
                 self.notice = Some(describe_error(&error));
@@ -89,8 +90,10 @@ impl MobileApp {
             return;
         }
         let start_for = expected.clone();
+        self.sink.live.sign_in.cancel();
+        let activity = self.sink.live.sign_in.capture();
         let start = Job::spawn(ctx, move |cancel| {
-            client.begin_sign_in(start_for.as_deref(), cancel)
+            client.begin_sign_in_with_activity(start_for.as_deref(), cancel, Some(activity))
         });
         self.tunnel.sign_in = Some(SignInFlow {
             start: Some(start),
@@ -486,11 +489,16 @@ impl MobileApp {
         if let Some(job) = &flow.start {
             match job.poll() {
                 Poll::Pending => {}
-                Poll::Done(Ok(sign_in)) => {
-                    flow.effects.initial(&sign_in.prompt().user_code, ctx);
-                    flow.active = Some(sign_in);
-                    flow.started = flow.start.take();
-                }
+                Poll::Done(Ok(sign_in)) => match flow.effects.initial(&sign_in, ctx) {
+                    Ok(()) => {
+                        flow.active = Some(sign_in);
+                        flow.started = flow.start.take();
+                    }
+                    Err(error) => {
+                        flow.error = Some(describe_error(&error));
+                        flow.start = None;
+                    }
+                },
                 Poll::Done(Err(error)) => {
                     flow.error = Some(describe_error(&error));
                     flow.start = None;
@@ -511,6 +519,11 @@ impl MobileApp {
                 }
                 SignInState::Done(account) => {
                     self.tunnel.attach_error = None;
+                    #[cfg(feature = "host-clients")]
+                    {
+                        self.invalidate_host_account(&account.id);
+                        self.host_discovery_signed_in(&account.id);
+                    }
                     match flow.resume {
                         Resume::Connect { profile, tab } => {
                             self.start_tunnel_connect(ctx, &profile, tab, false);
@@ -545,7 +558,10 @@ impl MobileApp {
             };
             match tunnel_link::sign_in_sheet(ctx, bounds, &view) {
                 SignInAction::None => {}
-                SignInAction::Cancel => self.tunnel.sign_in = None,
+                SignInAction::Cancel => {
+                    self.sink.live.sign_in.cancel();
+                    self.tunnel.sign_in = None;
+                }
                 SignInAction::Retry => {
                     if let Some(flow) = self.tunnel.sign_in.take() {
                         let SignInFlow {
@@ -653,6 +669,8 @@ impl MobileApp {
 impl MobileApp {
     /// Changing identity invalidates account-scoped discovery and the draft target.
     fn select_tunnel_account(&mut self, account: String) {
+        #[cfg(feature = "host-clients")]
+        self.host_discovery_account_changed(&account);
         if self.editor.tunnel_account.as_ref() != Some(&account) {
             self.clear_tunnel_draft();
             self.editor.tunnel_account = Some(account);

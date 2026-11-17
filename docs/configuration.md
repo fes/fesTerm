@@ -159,8 +159,10 @@ Export is read-only. Failed saves do not publish candidate state. These
 commands cannot sign in, discover, connect, create/end a shell or install a
 host. Deleting a recipe removes only metadata; editing launch/lifetime/behavior
 affects future actions and never mutates an attached session's snapshot.
-Host/logical identity edits require a new recipe rather than silently
-retargeting an existing one.
+Explicit host/session selection may replace a recipe's public host/logical
+identity for future connections. It never transfers protected owner approval or
+retargets a live attachment or an already-issued operation; changed drafts
+invalidate pending foreground review. Import collisions remain errors, not edits.
 
 Adapters preserve content-free `RecipeError` categories for invalid metadata,
 identifier conflicts, missing recipes, unsupported portable versions, oversize

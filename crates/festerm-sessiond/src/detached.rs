@@ -346,6 +346,8 @@ fn verified_live(
     directory: &File,
     record: &SessionRecord,
 ) -> Result<bool, PersistentSessionError> {
+    #[cfg(not(unix))]
+    let _ = root;
     if record.pid == 0 || record.created_at_unix_ms == 0 {
         return Err(refused("invalid native generation"));
     }
@@ -353,9 +355,13 @@ fn verified_live(
         return Ok(false);
     }
     let generation = format!("{}-{}", record.pid, record.created_at_unix_ms);
-    if !record.socket.ends_with(&generation)
-        && !record.socket.ends_with(&format!("{generation}.sock"))
-    {
+    #[cfg(unix)]
+    let generation_endpoint =
+        crate::unix_endpoint::matches_generation(root, &generation, Path::new(&record.socket))
+            .map_err(storage_error)?;
+    #[cfg(not(unix))]
+    let generation_endpoint = record.socket.ends_with(&generation);
+    if !generation_endpoint {
         return Err(refused("legacy daemon lacks hosting evidence; preserve it and authorize a fresh session separately"));
     }
     // Inspect the lease through the pinned private directory, not an arbitrary
@@ -372,11 +378,15 @@ fn verified_live(
     match FileExt::try_lock_shared(&*lease) {
         Ok(()) => Ok(false),
         Err(error) if lock_is_contended(&error) => {
-            if cfg!(unix) {
-                let expected = root.join(format!("{generation}.sock"));
-                if Path::new(&record.socket) != expected {
-                    return Err(refused("invalid native endpoint"));
-                }
+            #[cfg(unix)]
+            if !crate::unix_endpoint::matches_generation(
+                root,
+                &generation,
+                Path::new(&record.socket),
+            )
+            .map_err(storage_error)?
+            {
+                return Err(refused("invalid native endpoint"));
             }
             #[cfg(windows)]
             if record.socket != format!(r"\\.\pipe\festerm-sessiond-{generation}") {

@@ -84,7 +84,7 @@ class DeviceBuildTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         device.require_local_identity(IDENTITY)
 
-    def exercise(self, root, preflight=False, fail_signing=False, live_ssh=False, refuse_graph=False):
+    def exercise(self, root, preflight=False, fail_signing=False, live_ssh=False, refuse_graph=False, host_clients=False):
         local_profile = root / "fixture.mobileprovision"
         local_profile.write_bytes(b"synthetic signed profile")
         calls = []
@@ -115,6 +115,8 @@ class DeviceBuildTests(unittest.TestCase):
             arguments.append("--preflight-only")
         if live_ssh:
             arguments.append("--live-ssh")
+        if host_clients:
+            arguments.append("--host-clients")
         with patch.object(device, "ROOT", root), \
                 patch.object(device.platform, "system", return_value="Darwin"), \
                 patch.object(device, "run", side_effect=run), \
@@ -125,8 +127,23 @@ class DeviceBuildTests(unittest.TestCase):
                     device.main(arguments)
             else:
                 self.assertEqual(device.main(arguments), 0)
-            graph.assert_called_once_with("aarch64-apple-ios", live_ssh=live_ssh)
+            graph.assert_called_once_with("aarch64-apple-ios", live_ssh=live_ssh, host_clients=host_clients)
         return calls
+
+    def test_host_client_device_build_selects_the_checked_graph_and_records_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = self.exercise(root, host_clients=True)
+            output = next((root / "target/ios-device").iterdir())
+            self.assertTrue(output.name.startswith("development-host-clients-"))
+            cargo = next(args for args, _ in calls if args[:2] == ("cargo", "build"))
+            self.assertEqual(cargo[cargo.index("--features") + 1], "host-clients")
+            receipt = json.loads((output / "build-receipt.json").read_text())
+            self.assertEqual(receipt["prototype_mode"], "host-clients")
+            self.assertEqual(receipt["cargo_features"], ["host-clients"])
+            self.assertEqual(receipt["native_validation"], "not-run")
+            info = plistlib.loads((output / "fesTermSpike.app/Info.plist").read_bytes())
+            self.assertIn("NSLocalNetworkUsageDescription", info)
 
     def test_preflight_never_builds_signs_or_creates_output(self):
         with tempfile.TemporaryDirectory() as directory:

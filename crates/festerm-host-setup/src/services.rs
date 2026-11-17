@@ -2,6 +2,8 @@
 //! CLI management never treats a native process observation as endpoint readiness.
 mod definitions;
 pub mod native;
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+mod reconfiguration;
 mod replacement;
 mod trusted;
 pub use replacement::{ReplacementReport, ReplacementState};
@@ -516,9 +518,23 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Recover exact release authority for run after a service-manager restart.
     /// Older receipt-only registrations remain removable, not executable trust.
     pub fn reopen_stage(&self, epoch: u64) -> io::Result<TrustedStage> {
+        self.reopen_stage_in_phase(epoch, Phase::Provisioned)
+    }
+
+    /// Local explicit profile launch may use retained authenticated helpers
+    /// while remoting is disabled. This never registers or starts the HOST.
+    pub fn reopen_local_profile_stage(&self, epoch: u64) -> io::Result<TrustedStage> {
+        let snapshot = self.store.snapshot()?;
+        if !matches!(snapshot.phase, Phase::Disabled | Phase::Provisioned) {
+            return Err(refused("host.local_profile_reconciliation_required"));
+        }
+        self.reopen_stage_in_phase(epoch, snapshot.phase)
+    }
+
+    fn reopen_stage_in_phase(&self, epoch: u64, phase: Phase) -> io::Result<TrustedStage> {
         let _lease = self.lease()?;
         self.require_replacement_settled()?;
-        let snapshot = self.fence(epoch, Phase::Provisioned)?;
+        let snapshot = self.fence(epoch, phase)?;
         let (current, record) = self.reconciled_registration()?;
         if current != snapshot {
             return Err(refused("host.service_stale_or_unapproved_operation"));
@@ -526,6 +542,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         if record.removed {
             return Err(refused("host.service_not_installed"));
+        }
+        if record.settings != snapshot.settings {
+            return Err(refused("host.service_explicit_replacement_required"));
         }
         let provenance = record
             .provenance
@@ -540,7 +559,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         if stage.path != record.executable || stage.digest != record.digest {
             return Err(refused("host.service_authenticated_bundle_changed"));
         }
-        self.fence(epoch, Phase::Provisioned)?;
+        self.fence(epoch, phase)?;
         stage.revalidate()?;
         Ok(stage)
     }
@@ -743,11 +762,30 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Explicit start requires current protected native-vault policy. A locked
     /// vault propagates its actionable error; it never triggers sign-in/fallback.
     pub fn start(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
-        self.start_with(stage, epoch, || {
-            let enrollment = self.store.owner_enrollment()?;
+        self.start_with(stage, epoch, || self.require_start_credentials())
+    }
+
+    fn require_start_credentials(&self) -> io::Result<()> {
+        let enrollment = self.store.owner_enrollment()?;
+        self.require_start_credentials_with(&enrollment)
+    }
+
+    fn require_start_credentials_with(
+        &self,
+        enrollment: &crate::enrollment::OwnerEnrollment<'_>,
+    ) -> io::Result<()> {
+        let expected = self.store.snapshot()?;
+        if expected.settings.ordinary_access == crate::lifecycle::OrdinaryAccess::ProviderOwner {
+            let current = enrollment.current_snapshot_noninteractive()?;
+            if current.installation() != &expected || expected.phase != Phase::Provisioned {
+                return Err(refused("host.runtime_consent_changed"));
+            }
+            // The provider role is authorized separately. An authenticated
+            // installation binding is required, never an invented admin key.
+        } else {
             let _guard = enrollment.current_policy()?;
-            Ok(())
-        })
+        }
+        Ok(())
     }
 
     fn start_with(

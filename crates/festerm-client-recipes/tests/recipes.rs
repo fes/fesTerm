@@ -441,3 +441,32 @@ fn local_browser_requires_explicit_scoped_requests_and_fences_stale_results() {
     assert!(browser.complete(&current));
     assert!(!browser.complete(&current));
 }
+
+#[test]
+fn metadata_edit_explicitly_retargets_only_future_metadata_and_preserves_import_collision() {
+    let original = recipe();
+    let book = saved(original.clone());
+    let mut retargeted = original.clone();
+    retargeted.host = HostReference {
+        id: HostId::new(),
+        account: AccountReference::Github { account_id: 43 },
+    };
+    retargeted.logical_session = festerm_client_recipes::LogicalSessionId::new();
+    retargeted.session_name = Some("Another authorized session".into());
+    retargeted.behavior = ConnectionBehavior::ResumeOnly {};
+    let (next, _) = book
+        .apply(MetadataCommand::Edit(retargeted.clone()))
+        .unwrap();
+    assert_eq!(book.get(&original.id), Some(&original));
+    assert_eq!(next.get(&original.id), Some(&retargeted));
+    assert_eq!(next.recipes().len(), 1);
+    assert_eq!(
+        book.apply(MetadataCommand::Import(retargeted.export().unwrap())),
+        Err(RecipeError::Duplicate)
+    );
+    retargeted.host.account = AccountReference::Github { account_id: 0 };
+    assert_eq!(
+        next.apply(MetadataCommand::Edit(retargeted)),
+        Err(RecipeError::Invalid)
+    );
+}

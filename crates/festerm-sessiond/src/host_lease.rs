@@ -691,6 +691,50 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_persistent_generation_keeps_local_use_and_rejects_remote_admission() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.lifetime = Lifetime::Persistent {};
+        lease.temporary = None;
+        lease.deadline_ms = None;
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        let mut watch = DaemonWatch::open(&fixture.0, "fixture", 1).unwrap();
+        assert!(watch.allows_attachment(None, true));
+        watch.commit_attachment(None, true).unwrap();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.grant.remote_access = false;
+        lease.remote_revoked = true;
+        lease.grant.state = festerm_host_protocol::LogicalState::Revoked;
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        assert!(watch.attachment_cancelled(None, true));
+        assert!(watch.allows_attachment(None, false));
+        assert!(!watch.attachment_cancelled(None, false));
+        assert!(watch.commit_attachment(None, false).is_ok());
+        assert!(!watch.allows_attachment(None, true));
+        assert!(watch.attachment_cancelled(None, true));
+        assert!(watch.commit_attachment(None, true).is_err());
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        assert!(lease.remote_revoked);
+        assert!(matches!(
+            lease.grant.state,
+            festerm_host_protocol::LogicalState::Revoked
+        ));
+        lease.remote_revoked = false;
+        lease.grant.state = festerm_host_protocol::LogicalState::Running(generation);
+        lease.grant.remote_access = true;
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        assert!(watch.allows_attachment(None, true));
+    }
+
+    #[test]
     fn unticketed_local_attachment_requires_persistent_lifetime() {
         let fixture = Fixture::new();
         let generation = fixture.lease(1, now_ms() + 60_000);

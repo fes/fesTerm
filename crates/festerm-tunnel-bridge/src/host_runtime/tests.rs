@@ -12,6 +12,41 @@ use festerm_tunnel_client::host_control::{Binding, ControlClient};
 use russh::keys::{Algorithm, HashAlg, PrivateKey};
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority() {
+    let fixture = Fixture::new();
+    let (mut client, stream, ssh_task) = crate::relay_host::tests::ordinary_pair(
+        fixture.ssh_key.clone(),
+        fixture.approved.host.clone(),
+    )
+    .await;
+    assert_eq!(
+        stream.requested_authorization(),
+        crate::relay_host::RequestedAuthorization::OrdinaryV1
+    );
+    assert!(
+        stream.ordinary_route().is_none(),
+        "a local test pair is not provider admission"
+    );
+    let runtime = fixture.runtime.clone();
+    let worker =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let frame = tokio::time::timeout(
+        Duration::from_secs(2),
+        read_frame(&mut client, permit.budgets()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        frame.decode::<Authentication>().unwrap(),
+        Authentication::Denied {}
+    ));
+    assert!(worker.await.unwrap().is_err());
+    ssh_task.abort();
+}
+
 struct Fixture {
     runtime: Arc<HostRuntime<Policy>>,
     policy: OwnerPolicy,
@@ -433,7 +468,9 @@ fn native_stream_failure_code(error: Error) -> &'static str {
         Error::Closed => "closed",
         Error::Deadline => "deadline",
         Error::Cancelled => "cancelled",
-        Error::Offline => "offline",
+        Error::Offline | Error::Io(_) => "offline",
+        Error::HostUpdateRequired => "host-update-required",
+        Error::HostPolicyRefreshRequired => "host-policy-refresh-required",
     }
 }
 
@@ -586,7 +623,10 @@ impl NativeRuntimeFixture {
 
     fn new() -> Self {
         let mut auth = Fixture::new();
-        let mut native = crate::host_control::tests::native_routes::NativeFixture::new(true);
+        let mut native = crate::host_control::tests::native_routes::NativeFixture::new_in(
+            true,
+            &std::env::current_dir().unwrap(),
+        );
         auth.policy.capabilities = Capabilities {
             inventory: true,
             ensure: true,
@@ -770,7 +810,9 @@ async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_tem
         .unwrap();
         let session = Arc::new(HostSession::from_worker(worker, Arc::new(Wake)));
         tokio::time::timeout(Duration::from_secs(8), async {
-            while !session.has_pending_snapshot() {
+            while !native_snapshot_ready(&session).expect(
+                "native attachment failed before snapshot; inspect content-free server boundary",
+            ) {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
@@ -866,6 +908,56 @@ async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_tem
         "client disappearance is not persistent End"
     );
     fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+fn native_snapshot_ready(session: &crate::host_client::HostSession) -> Result<bool, &'static str> {
+    use festerm_session::Session;
+    if session.has_pending_snapshot() {
+        Ok(true)
+    } else if session.lifecycle().is_terminal() {
+        Err("native attachment terminated before snapshot")
+    } else {
+        Ok(false)
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_snapshot_wait_reports_terminal_busy_without_snapshot_timeout() {
+    use crate::host_client::{Failure, HostSession, Scope, Worker};
+    struct Wake;
+    impl festerm_session::SessionEventNotifier for Wake {
+        fn notify(&self) {}
+    }
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: Binding::new(
+            Default::default(),
+            "github:fixture".into(),
+            "fixture".into(),
+        )
+        .unwrap(),
+    };
+    let worker = Worker::spawn(scope, Arc::new(|| {}), |_, _, _, _| async {
+        Err(Failure::Control(Error::Refused(
+            festerm_host_protocol::Refusal::Busy,
+        )))
+    })
+    .unwrap();
+    let session = HostSession::from_worker(worker, Arc::new(Wake));
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match native_snapshot_ready(&session) {
+                Ok(false) => tokio::task::yield_now().await,
+                result => break result,
+            }
+        }
+    })
+    .await
+    .expect("completed failure must not wait for the eight-second snapshot deadline");
+    assert_eq!(result, Err("native attachment terminated before snapshot"));
 }
 
 #[cfg(unix)]
@@ -1473,7 +1565,34 @@ async fn terminal_output_until(
 
 #[tokio::test]
 async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.policy.capabilities.profiles = true;
+    *fixture.source.0.lock().await = OwnerVerifier::from_protected_permissions(
+        fixture.policy.clone(),
+        &[fixture.key.public_key()],
+    )
+    .unwrap();
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let shared = festerm_host_protocol::LogicalSessionId::new();
+    sessions
+        .set_profile(
+            shared.clone(),
+            &OperationId::new().to_string(),
+            "Lab shared",
+            Default::default(),
+            true,
+        )
+        .unwrap();
+    sessions
+        .set_profile(
+            festerm_host_protocol::LogicalSessionId::new(),
+            &OperationId::new().to_string(),
+            "Lab private",
+            Default::default(),
+            false,
+        )
+        .unwrap();
     let (client, stream, ssh) = fixture.pair().await;
     let runtime = fixture.runtime.clone();
     let server =
@@ -1496,6 +1615,10 @@ async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_strea
     assert!(inventory.capabilities.inventory);
     assert!(!inventory.capabilities.create && !inventory.capabilities.ensure);
     assert!(inventory.sessions.is_empty() && inventory.unknown.is_empty());
+    assert!(inventory.capabilities.profiles);
+    assert_eq!(inventory.profiles.len(), 1);
+    assert_eq!(inventory.profiles[0].logical, shared);
+    assert_eq!(inventory.profiles[0].name, "Lab shared");
     drop(client);
     assert!(server.await.unwrap().is_err());
     ssh.abort();
@@ -1732,9 +1855,13 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
                 let completion = match receiver.recv_async().await {
                     Ok(completion) => completion,
                     Err(_) => match worker.await.expect("native terminal worker panicked") {
-                        Err(crate::host_client::Failure::Control(Error::Refused(
-                            Refusal::Busy,
-                        ))) => {
+                        Err(
+                            crate::host_client::Failure::Control(Error::Refused(Refusal::Busy))
+                            | crate::host_client::Failure::Attachment {
+                                stage: crate::host_client::AttachStage::Snapshot,
+                                error: Error::Refused(Refusal::Busy),
+                            },
+                        ) => {
                             assert!(matches!(
                                 server.await.unwrap(),
                                 Err(Error::Refused(Refusal::Busy))
@@ -2769,4 +2896,1108 @@ async fn authenticated_runtime_bounds_proof_frames_and_client_admission() {
     drop((held, client));
     ssh.abort();
     let _ = ssh.await;
+}
+
+#[tokio::test]
+async fn native_proof_publication_guard_rejects_completed_but_invalidated_proof() {
+    let fixture = Fixture::new();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let proved = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let proof_ready = proved.clone();
+    let result = authenticate_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            let proof = stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)?;
+            proof_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(proof)
+        },
+        move || {
+            assert!(proved.load(std::sync::atomic::Ordering::SeqCst));
+            Err(OwnerKeyError::ProofDenied)
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(Error::Contract(ContractError::Denied))
+    ));
+    assert!(tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    let returned: Vec<_> = (0..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&fixture.runtime.budgets).unwrap())
+        .collect();
+    drop(returned);
+    ssh.abort();
+}
+
+#[cfg(feature = "host-routing")]
+#[tokio::test]
+async fn cancelled_native_proof_keeps_admission_until_blocked_work_drains() {
+    let fixture = Fixture::new();
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let held: Vec<_> = (1..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&budgets).unwrap())
+        .collect();
+    let cancel = CancellationToken::new();
+    let attempt = ClientOwnerKey::prepare_native_attempt_fixture(
+        fixture.vault.as_ref(),
+        fixture.key.reference(),
+        &fixture.approved,
+        cancel.clone(),
+    )
+    .unwrap();
+    let guard = attempt.publication_guard();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let (ready, started) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::sync_channel(1);
+    let client = tokio::spawn(authenticate_client_using_guard(
+        client,
+        permit,
+        StreamRole::Control,
+        cancel.clone(),
+        move |stream, challenge| {
+            ready.send(()).unwrap();
+            blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+            stream.prove_native_attempt(attempt, challenge)
+        },
+        move || guard.check(),
+    ));
+    tokio::time::timeout(Duration::from_secs(2), started)
+        .await
+        .unwrap()
+        .unwrap();
+    cancel.cancel();
+    assert!(matches!(client.await.unwrap(), Err(Error::Cancelled)));
+    assert!(ConnectionPermit::reserve(&budgets).is_err());
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if ConnectionPermit::reserve(&budgets).is_ok() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    drop(held);
+    ssh.abort();
+}
+
+struct OrdinaryFixturePolicy {
+    policy: std::sync::Mutex<crate::ordinary_auth::OrdinaryPolicy>,
+    observations: std::sync::atomic::AtomicUsize,
+    refuse_observation: std::sync::atomic::AtomicBool,
+}
+struct OrdinaryFixtureGuard(crate::ordinary_auth::OrdinaryPolicy);
+impl host_control::PolicyGuard for OrdinaryFixtureGuard {
+    fn view(&self) -> host_control::PolicyView<'_> {
+        host_control::PolicyView::Ordinary(&self.0)
+    }
+}
+impl ProtectedPolicySource for OrdinaryFixturePolicy {
+    type Guard = OrdinaryFixtureGuard;
+    fn current_policy(&self) -> Result<Self::Guard, ContractError> {
+        panic!("ordinary authentication must not require an enrolled admin verifier")
+    }
+    fn current_policy_for(
+        &self,
+        kind: host_control::AuthorityKind,
+    ) -> Result<Self::Guard, ContractError> {
+        if kind != host_control::AuthorityKind::Ordinary {
+            return Err(ContractError::Denied);
+        }
+        Ok(OrdinaryFixtureGuard(self.policy.lock().unwrap().clone()))
+    }
+    fn observe_ordinary<'a>(
+        &'a self,
+        route: &'a crate::ordinary_auth::OrdinaryRoute,
+        cancel: &'a CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ContractError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            self.observations
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if cancel.is_cancelled()
+                || self
+                    .refuse_observation
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                || self.policy.lock().unwrap().host_info.route != *route
+            {
+                return Err(ContractError::Denied);
+            }
+            Ok(())
+        })
+    }
+}
+
+fn ordinary_policy(fixture: &Fixture) -> crate::ordinary_auth::OrdinaryPolicy {
+    use crate::ordinary_auth::*;
+    OrdinaryPolicy {
+        host_info: OrdinaryHostInfo {
+            version: ORDINARY_VERSION,
+            route: OrdinaryRoute {
+                tunnel_id: "owned-runtime".into(),
+                cluster: "usw3".into(),
+                endpoint_id: format!("{}-relay", fixture.policy.host.host),
+                port: 47461,
+                host: fixture.policy.host.clone(),
+            },
+            installation: festerm_host_protocol::HostId::new(),
+            principal: fixture.policy.principal.clone(),
+            policy_epoch: fixture.policy.grant_epoch,
+        },
+        session: fixture.policy.clone(),
+        denied_keys: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn ordinary_encrypted_handshake_observes_each_connection_without_admin_keys() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    use std::sync::atomic::Ordering::SeqCst;
+    let fixture = Fixture::new();
+    let policy = ordinary_policy(&fixture);
+    let source = Arc::new(OrdinaryFixturePolicy {
+        policy: std::sync::Mutex::new(policy.clone()),
+        observations: 0.into(),
+        refuse_observation: false.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let runtime = Arc::new(HostRuntime::new(sessions, source.clone()));
+    for role in [StreamRole::Control, StreamRole::Terminal] {
+        let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            fixture.ssh_key.clone(),
+            policy.host_info.route.clone(),
+        )
+        .await;
+        let host = runtime.clone();
+        let server = tokio::spawn(async move {
+            host.authenticate_any(
+                stream,
+                Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap()),
+                tokio::time::Instant::now() + AUTH_DEADLINE,
+                CancellationToken::new(),
+            )
+            .await
+        });
+        let route = policy.host_info.route.clone();
+        let expected = route.clone();
+        let result = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            role,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[31; 32]).prove(stream, &expected, challenge, role)
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.2, policy.host_info);
+        let (_, authority, guard, signed_role) = server.await.unwrap().unwrap();
+        assert_eq!(authority.kind(), host_control::AuthorityKind::Ordinary);
+        assert_eq!(signed_role, Some(role));
+        let request = Envelope::new(
+            policy.session.host.host.clone(),
+            OperationId::new(),
+            Request::List { cursor: None },
+        );
+        assert!(authority
+            .authorize(
+                host_control::PolicyView::Ordinary(&policy),
+                &request,
+                Epoch::new(1).unwrap(),
+                None
+            )
+            .is_ok());
+        drop(guard);
+        assert!(authority
+            .authorize(
+                host_control::PolicyView::Ordinary(&policy),
+                &request,
+                Epoch::new(1).unwrap(),
+                None
+            )
+            .is_err());
+        ssh.abort();
+    }
+    assert_eq!(source.observations.load(SeqCst), 2);
+}
+
+#[tokio::test]
+async fn ordinary_encrypted_handshake_refuses_observer_deny_key_and_changed_epoch() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    use std::sync::atomic::Ordering::SeqCst;
+    for failure in [
+        "observer",
+        "denied-key",
+        "changed-epoch",
+        "wrong-route",
+        "wrong-role",
+        "wrong-nonce",
+        "expired",
+    ] {
+        let fixture = Fixture::new();
+        let mut policy = ordinary_policy(&fixture);
+        if failure == "denied-key" {
+            policy
+                .denied_keys
+                .push(OrdinaryDeviceKey::from_seed(&[31; 32]).public_key());
+        }
+        let source = Arc::new(OrdinaryFixturePolicy {
+            policy: std::sync::Mutex::new(policy.clone()),
+            observations: 0.into(),
+            refuse_observation: (failure == "observer").into(),
+        });
+        let sessions =
+            SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+        let runtime = Arc::new(HostRuntime::new(sessions, source.clone()));
+        let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            fixture.ssh_key.clone(),
+            policy.host_info.route.clone(),
+        )
+        .await;
+        let host = runtime.clone();
+        let server = tokio::spawn(async move {
+            host.authenticate_any(
+                stream,
+                Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap()),
+                tokio::time::Instant::now()
+                    + if failure == "expired" {
+                        Duration::from_millis(50)
+                    } else {
+                        AUTH_DEADLINE
+                    },
+                CancellationToken::new(),
+            )
+            .await
+        });
+        let mut route = policy.host_info.route.clone();
+        if failure == "wrong-route" {
+            route.tunnel_id = "different".into();
+        }
+        let expected = route.clone();
+        let changed = source.clone();
+        let result = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                let mut signed = challenge.clone();
+                if failure == "wrong-nonce" {
+                    signed.nonce = "00".repeat(32);
+                }
+                let proof = OrdinaryDeviceKey::from_seed(&[31; 32]).prove(
+                    stream,
+                    &expected,
+                    &signed,
+                    if failure == "wrong-role" {
+                        StreamRole::Terminal
+                    } else {
+                        StreamRole::Control
+                    },
+                )?;
+                if failure == "changed-epoch" {
+                    let mut current = changed.policy.lock().unwrap();
+                    current.host_info.policy_epoch = Epoch::new(2).unwrap();
+                    current.session.grant_epoch = Epoch::new(2).unwrap();
+                }
+                if failure == "expired" {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Ok(proof)
+            },
+            || Ok(()),
+        )
+        .await;
+        assert!(result.is_err(), "{failure}");
+        assert!(
+            !matches!(&result, Err(Error::HostPolicyRefreshRequired)),
+            "proof or observer refusal must not prescribe host reconfiguration: {failure}"
+        );
+        if failure == "changed-epoch" {
+            assert!(
+                matches!(&result, Err(Error::Contract(ContractError::Denied))),
+                "{failure}"
+            );
+        }
+        assert!(server.await.unwrap().is_err(), "{failure}");
+        assert_eq!(source.observations.load(SeqCst), 1);
+        ssh.abort();
+    }
+}
+
+#[tokio::test]
+async fn ordinary_runtime_inventory_excludes_private_profiles_without_admin_verifier() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    let fixture = Fixture::new();
+    let mut policy = ordinary_policy(&fixture);
+    policy.session.capabilities.profiles = true;
+    policy.session.capabilities.ensure_profile = true;
+    let source = Arc::new(OrdinaryFixturePolicy {
+        policy: std::sync::Mutex::new(policy.clone()),
+        observations: 0.into(),
+        refuse_observation: false.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let shared = festerm_host_protocol::LogicalSessionId::new();
+    sessions
+        .set_profile(
+            shared.clone(),
+            &OperationId::new().to_string(),
+            "Shared",
+            Default::default(),
+            true,
+        )
+        .unwrap();
+    let private = festerm_host_protocol::LogicalSessionId::new();
+    sessions
+        .set_profile(
+            private.clone(),
+            &OperationId::new().to_string(),
+            "Private",
+            Default::default(),
+            false,
+        )
+        .unwrap();
+    let runtime = Arc::new(HostRuntime::new(sessions, source.clone()));
+    let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+        fixture.ssh_key.clone(),
+        policy.host_info.route.clone(),
+    )
+    .await;
+    let server =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let route = policy.host_info.route.clone();
+    let expected = route.clone();
+    let (client, permit, info) = authenticate_ordinary_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        route,
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            OrdinaryDeviceKey::from_seed(&[31; 32]).prove(
+                stream,
+                &expected,
+                challenge,
+                StreamRole::Control,
+            )
+        },
+        || Ok(()),
+    )
+    .await
+    .unwrap();
+    let binding = Binding::new(
+        info.route.host.host,
+        "github:runtime-test".into(),
+        "ordinary-runtime-test".into(),
+    )
+    .unwrap();
+    let mut client = ControlClient::on_authenticated_stream(client, binding, permit);
+    let inventory = crate::host_client::inventory_authenticated(
+        &mut client,
+        OperationId::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(inventory.capabilities.inventory && inventory.capabilities.profiles);
+    assert!(
+        !inventory.capabilities.creation_allowed
+            && !inventory.capabilities.create
+            && !inventory.capabilities.explicit_end
+    );
+    assert_eq!(inventory.profiles.len(), 1);
+    assert_eq!(inventory.profiles[0].logical, shared);
+    let issued = client.issue_operation().unwrap();
+    let refused = client
+        .request_issued(
+            &issued,
+            Request::EnsureProfile {
+                logical: private,
+                revision: Epoch::new(1).unwrap(),
+                attachment: festerm_host_protocol::AttachmentId::new(),
+            },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        refused.body,
+        Response::Refused {
+            reason: festerm_host_protocol::Refusal::Stale
+        }
+    ));
+    source.policy.lock().unwrap().session.remote_access = false;
+    assert!(client.handshake(&CancellationToken::new()).await.is_err());
+    drop(client);
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+}
+
+#[tokio::test]
+async fn ordinary_client_legacy_challenge_requires_host_update_without_owner_fallback() {
+    let fixture = Fixture::new();
+    let route = ordinary_policy(&fixture).host_info.route;
+    let (client, stream, ssh) = fixture.pair().await;
+    let runtime = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let result = authenticate_ordinary_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        route,
+        StreamRole::Control,
+        CancellationToken::new(),
+        |_, _| panic!("legacy challenge must not trigger a proof"),
+        || Ok(()),
+    )
+    .await;
+    assert!(matches!(result, Err(Error::HostUpdateRequired)));
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+}
+
+#[tokio::test]
+async fn ordinary_client_cancelled_publication_does_not_adopt_accepted_host_info() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    for refuse_at in [1, 3] {
+        let fixture = Fixture::new();
+        let policy = ordinary_policy(&fixture);
+        let source = Arc::new(OrdinaryFixturePolicy {
+            policy: std::sync::Mutex::new(policy.clone()),
+            observations: 0.into(),
+            refuse_observation: false.into(),
+        });
+        let sessions =
+            SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+        let runtime = Arc::new(HostRuntime::new(sessions, source));
+        let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            fixture.ssh_key.clone(),
+            policy.host_info.route.clone(),
+        )
+        .await;
+        let host = runtime.clone();
+        let server = tokio::spawn(async move {
+            host.authenticate_any(
+                stream,
+                Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap()),
+                tokio::time::Instant::now() + AUTH_DEADLINE,
+                CancellationToken::new(),
+            )
+            .await
+        });
+        let route = policy.host_info.route;
+        let expected = route.clone();
+        let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = checks.clone();
+        let result = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[31; 32]).prove(
+                    stream,
+                    &expected,
+                    challenge,
+                    StreamRole::Control,
+                )
+            },
+            move || {
+                if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == refuse_at {
+                    Err(ContractError::Denied)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(checks.load(std::sync::atomic::Ordering::SeqCst), refuse_at);
+        let accepted = server.await.unwrap();
+        assert_eq!(accepted.is_ok(), refuse_at == 3);
+        drop(accepted);
+        ssh.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_ordinary_generic_durable_create_attach_detach_reconnect_and_private_denial() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    use festerm_host_protocol::{AttachmentId, EnsureDisposition, Refusal, Target};
+    use festerm_sessiond::private_storage as storage;
+
+    async fn exact_inventory(
+        control: &mut ControlClient<ClientConnection>,
+        target: &Target,
+    ) -> crate::host_client::Inventory {
+        let operation = OperationId::new();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match crate::host_client::inventory_authenticated(
+                    control,
+                    operation.clone(),
+                    &CancellationToken::new(),
+                )
+                .await
+                {
+                    Err(Error::Refused(Refusal::Busy)) => {}
+                    Ok(inventory) => {
+                        assert!(
+                            inventory.profiles.is_empty(),
+                            "generic create invented a profile"
+                        );
+                        if inventory.sessions.is_empty() && inventory.unknown == [target.clone()] {
+                            // Native observation contention is uncertainty about
+                            // this committed generation, never absence.
+                        } else {
+                            assert!(inventory.unknown.is_empty(), "foreign/extra unknown target");
+                            assert_eq!(inventory.sessions.len(), 1, "unexpected healthy inventory");
+                            assert_eq!(inventory.sessions[0].target, *target);
+                            return inventory;
+                        }
+                    }
+                    Err(error) => panic!("ordinary inventory failed: {error:?}"),
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("exact ordinary inventory remained contended")
+    }
+
+    async fn stream(
+        runtime: Arc<HostRuntime<OrdinaryFixturePolicy>>,
+        auth: &Fixture,
+        route: crate::ordinary_auth::OrdinaryRoute,
+        role: StreamRole,
+    ) -> (
+        ClientConnection,
+        ConnectionPermit,
+        tokio::task::JoinHandle<Result<(), Error>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (client, host, ssh) =
+            crate::relay_host::tests::admitted_ordinary_pair(auth.ssh_key.clone(), route.clone())
+                .await;
+        let server =
+            tokio::spawn(async move { runtime.serve_stream(host, CancellationToken::new()).await });
+        let expected = route.clone();
+        let (client, permit, _) = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            role,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[31; 32]).prove(stream, &expected, challenge, role)
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+        (client, permit, server, ssh)
+    }
+    let auth = Fixture::new();
+    let mut native = crate::host_control::tests::native_routes::NativeFixture::new_in(
+        true,
+        &std::env::current_dir().unwrap(),
+    );
+    let mut policy = ordinary_policy(&auth);
+    policy.session.capabilities = Capabilities {
+        inventory: true,
+        profiles: true,
+        ensure: true,
+        ensure_profile: true,
+        create: true,
+        attach: true,
+        detach: true,
+        creation_allowed: true,
+        ..Capabilities::default()
+    };
+    native.policy = policy.session.clone();
+    let source = Arc::new(OrdinaryFixturePolicy {
+        policy: std::sync::Mutex::new(policy.clone()),
+        observations: 0.into(),
+        refuse_observation: false.into(),
+    });
+    let runtime = Arc::new(HostRuntime::new(native.control(), source.clone()));
+    let route = policy.host_info.route.clone();
+    let binding = Binding::new(
+        route.host.host.clone(),
+        "github:runtime-test".into(),
+        "ordinary-native-fixture".into(),
+    )
+    .unwrap();
+    let (client, permit, server, ssh) =
+        stream(runtime.clone(), &auth, route.clone(), StreamRole::Control).await;
+    let mut control = ControlClient::on_authenticated_stream(client, binding.clone(), permit);
+    let caps = control.handshake(&CancellationToken::new()).await.unwrap();
+    assert!(
+        caps.create
+            && caps.attach
+            && caps.creation_allowed
+            && !caps.temporary
+            && !caps.explicit_end
+    );
+    let creation = native.creation();
+    let issued = control.issue_operation().unwrap();
+    let result = issued_request(
+        &mut control,
+        &issued,
+        Request::Create {
+            creation: creation.clone(),
+        },
+    )
+    .await;
+    let Response::Ensured {
+        session,
+        disposition: EnsureDisposition::Created,
+        ..
+    } = result
+    else {
+        panic!("ordinary create: {result:?}")
+    };
+    let target = session.target;
+    let observed = festerm_sessiond::list_running_sessions_in(&native.root).unwrap();
+    let endpoint = &observed[0].session.endpoint;
+    eprintln!(
+        "owned ordinary fixture socket_bytes={} root_bytes={}",
+        endpoint.len(),
+        native.root.as_os_str().as_encoded_bytes().len()
+    );
+    // Exercise the actual ordinary wire path while the exact native generation
+    // lease is held. A committed session may be unknown instead of healthy;
+    // this must not be mistaken for its absence or trigger another Create.
+    let directory = storage::private_directory(&native.root, false).unwrap();
+    let lease_lock = storage::open_private_file(
+        &directory,
+        std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+        false,
+    )
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact generation lease failed: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("exact generation lease remained busy");
+    let contended = crate::host_client::inventory_authenticated(
+        &mut control,
+        OperationId::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(contended.sessions.is_empty());
+    assert_eq!(contended.unknown.as_slice(), std::slice::from_ref(&target));
+    assert!(contended.profiles.is_empty());
+    drop(lease_lock);
+    let inventory = exact_inventory(&mut control, &target).await;
+    assert!(inventory.unknown.is_empty());
+    assert_eq!(observed.len(), 1);
+    // OFF preserves exact Running reuse and attachment, but denies every new
+    // creation. This fixture changes the protected policy in place to isolate
+    // admission rules; production settings changes additionally revoke epochs.
+    {
+        let mut current = source.policy.lock().unwrap();
+        current.session.capabilities.creation_allowed = false;
+        current.session.capabilities.create = false;
+    }
+    let reuse = control.issue_operation().unwrap();
+    assert!(
+        matches!(issued_request(&mut control,&reuse,Request::Ensure{creation:creation.clone()}).await,Response::Ensured{session,..}if session.target==target)
+    );
+    let new_operation = control.issue_operation().unwrap();
+    assert!(matches!(
+        issued_request(
+            &mut control,
+            &new_operation,
+            Request::Ensure {
+                creation: native.creation()
+            }
+        )
+        .await,
+        Response::Refused {
+            reason: Refusal::Denied
+        }
+    ));
+    for _ in 0..2 {
+        let operation = OperationId::new();
+        let attachment = AttachmentId::new();
+        // The daemon's nonblocking lease poll can briefly contend admission.
+        // As in NativeScenario::pending, repeat only a drained Busy refusal,
+        // retaining this exact target and action; never repeat creation.
+        let (mut pending, terminal_server, terminal_ssh) =
+            tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    let (client, permit, terminal_server, terminal_ssh) =
+                        stream(runtime.clone(), &auth, route.clone(), StreamRole::Terminal).await;
+                    match crate::host_terminal::establish(
+                        client,
+                        permit,
+                        binding.clone(),
+                        operation.clone(),
+                        target.clone(),
+                        attachment.clone(),
+                        false,
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    {
+                        Ok(pending) => return (pending, terminal_server, terminal_ssh),
+                        Err(Error::Refused(Refusal::Busy)) => {
+                            assert!(matches!(
+                                terminal_server.await.unwrap(),
+                                Err(Error::Refused(Refusal::Busy))
+                            ));
+                            terminal_ssh.abort();
+                            let _ = terminal_ssh.await;
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        Err(error) => {
+                            panic!("ordinary native terminal admission failed: {error:?}")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("same-target ordinary terminal admission remained busy");
+        assert!(pending.take_snapshot().is_some());
+        let live = pending.adopt(&CancellationToken::new()).await.unwrap();
+        assert_eq!(live.binding().target, target);
+        live.detach(&CancellationToken::new()).await.unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(8), terminal_server)
+            .await
+            .unwrap()
+            .unwrap();
+        terminal_ssh.abort();
+    }
+    let private = festerm_host_protocol::LogicalSessionId::new();
+    native
+        .control()
+        .set_profile(
+            private.clone(),
+            &OperationId::new().to_string(),
+            "Private",
+            Default::default(),
+            false,
+        )
+        .unwrap();
+    let operation = control.issue_operation().unwrap();
+    assert!(matches!(
+        issued_request(
+            &mut control,
+            &operation,
+            Request::EnsureProfile {
+                logical: private.clone(),
+                revision: Epoch::new(1).unwrap(),
+                attachment: AttachmentId::new()
+            }
+        )
+        .await,
+        Response::Refused {
+            reason: Refusal::Stale
+        }
+    ));
+    let (client, permit, private_server, private_ssh) =
+        stream(runtime.clone(), &auth, route, StreamRole::Terminal).await;
+    assert!(crate::host_terminal::establish(
+        client,
+        permit,
+        binding,
+        OperationId::new(),
+        Target {
+            logical: private,
+            generation: target.generation
+        },
+        AttachmentId::new(),
+        false,
+        &CancellationToken::new()
+    )
+    .await
+    .is_err());
+    let _ = tokio::time::timeout(Duration::from_secs(8), private_server)
+        .await
+        .unwrap()
+        .unwrap();
+    private_ssh.abort();
+    let ended = control
+        .request(
+            OperationId::new(),
+            Request::ExplicitEnd {
+                target: target.clone(),
+            },
+            &CancellationToken::new(),
+        )
+        .await;
+    assert!(ended.is_err() || matches!(ended.unwrap().body, Response::Refused { .. }));
+    // Denied administrative control may also close the ordinary stream. Keep
+    // the original independent native observer for this no-End-effects oracle.
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match native.control().inventory(&policy.session.principal, |_| {
+                Ok::<_, festerm_sessiond::host_control::ControlError>(())
+            }) {
+                Err(festerm_sessiond::host_control::ControlError::Busy) => {}
+                Ok(inventory)
+                    if inventory.sessions.is_empty()
+                        && inventory.unknown.len() == 1
+                        && inventory.unknown[0].target == target => {}
+                Ok(inventory) => {
+                    assert!(inventory.unknown.is_empty(), "foreign/extra unknown target");
+                    assert_eq!(inventory.sessions.len(), 1, "unexpected final inventory");
+                    assert_eq!(inventory.sessions[0].summary.target, target);
+                    break;
+                }
+                Err(error) => panic!("final native inventory failed: {error:?}"),
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("exact final native inventory remained contended");
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&native.root)
+            .unwrap()
+            .len(),
+        1
+    );
+    drop(control);
+    let _ = tokio::time::timeout(Duration::from_secs(8), server)
+        .await
+        .unwrap()
+        .unwrap();
+    ssh.abort();
+    // NativeFixture drops only its own daemon via its local privileged cleanup.
+}
+
+struct StaleReadyPolicy {
+    inner: Arc<OrdinaryFixturePolicy>,
+    stale: std::sync::atomic::AtomicBool,
+}
+impl ProtectedPolicySource for StaleReadyPolicy {
+    type Guard = OrdinaryFixtureGuard;
+    fn current_policy(&self) -> Result<Self::Guard, ContractError> {
+        self.inner.current_policy()
+    }
+    fn current_policy_for(
+        &self,
+        kind: host_control::AuthorityKind,
+    ) -> Result<Self::Guard, ContractError> {
+        if self.stale.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(ContractError::Stale)
+        } else {
+            self.inner.current_policy_for(kind)
+        }
+    }
+    fn observe_ordinary<'a>(
+        &'a self,
+        route: &'a crate::ordinary_auth::OrdinaryRoute,
+        cancel: &'a CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ContractError>> + Send + 'a>>
+    {
+        self.inner.observe_ordinary(route, cancel)
+    }
+}
+
+#[tokio::test]
+async fn ordinary_stale_readiness_refuses_typed_then_fresh_preparation_admits_only_non_denied_key()
+{
+    use crate::host_control::AuthorizationSource;
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    let fixture = Fixture::new();
+    let mut policy = ordinary_policy(&fixture);
+    let source = Arc::new(StaleReadyPolicy {
+        inner: Arc::new(OrdinaryFixturePolicy {
+            policy: std::sync::Mutex::new(policy.clone()),
+            observations: 0.into(),
+            refuse_observation: false.into(),
+        }),
+        stale: false.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let runtime = Arc::new(HostRuntime::new(sessions, source.clone()));
+    let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+        fixture.ssh_key.clone(),
+        policy.host_info.route.clone(),
+    )
+    .await;
+    let host = runtime.clone();
+    let server = tokio::spawn(async move {
+        host.authenticate_any(
+            stream,
+            Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap()),
+            tokio::time::Instant::now() + AUTH_DEADLINE,
+            CancellationToken::new(),
+        )
+        .await
+    });
+    let route = policy.host_info.route.clone();
+    let expected = route.clone();
+    let (_client, _permit, _) = authenticate_ordinary_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        route,
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            OrdinaryDeviceKey::from_seed(&[31; 32]).prove(
+                stream,
+                &expected,
+                challenge,
+                StreamRole::Control,
+            )
+        },
+        || Ok(()),
+    )
+    .await
+    .unwrap();
+    let (_stream, old_authority, _guard, _) = server.await.unwrap().unwrap();
+    source
+        .stale
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(source
+        .with_ordinary(&mut |current| old_authority
+            .authorize(
+                host_control::PolicyView::Ordinary(current),
+                &Envelope::new(
+                    current.session.host.host.clone(),
+                    OperationId::new(),
+                    Request::Capabilities {}
+                ),
+                Epoch::new(1).unwrap(),
+                None
+            )
+            .map(|_| ()))
+        .is_err());
+    let (client, stream, old_ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+        fixture.ssh_key.clone(),
+        policy.host_info.route.clone(),
+    )
+    .await;
+    let host = runtime.clone();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let result = authenticate_ordinary_client_using_guard(
+        client,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        policy.host_info.route.clone(),
+        StreamRole::Control,
+        CancellationToken::new(),
+        |_, _| panic!("stale readiness must refuse before proof"),
+        || Ok(()),
+    )
+    .await;
+    assert!(matches!(result, Err(Error::HostPolicyRefreshRequired)));
+    assert!(server.await.unwrap().is_err());
+    old_ssh.abort();
+    // Model a newly native-anchor-validated preparation after explicit Enable.
+    // This fixture does not authenticate cloud or exercise a native vault.
+    policy.host_info.policy_epoch = Epoch::new(2).unwrap();
+    policy.session.grant_epoch = Epoch::new(2).unwrap();
+    policy
+        .denied_keys
+        .push(OrdinaryDeviceKey::from_seed(&[31; 32]).public_key());
+    assert!(old_authority
+        .authorize(
+            host_control::PolicyView::Ordinary(&policy),
+            &Envelope::new(
+                policy.session.host.host.clone(),
+                OperationId::new(),
+                Request::Capabilities {}
+            ),
+            Epoch::new(1).unwrap(),
+            None
+        )
+        .is_err());
+    let fresh = Arc::new(OrdinaryFixturePolicy {
+        policy: std::sync::Mutex::new(policy.clone()),
+        observations: 0.into(),
+        refuse_observation: false.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    let fresh = Arc::new(HostRuntime::new(sessions, fresh));
+    for seed in [31, 32] {
+        let (client, stream, new_ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            fixture.ssh_key.clone(),
+            policy.host_info.route.clone(),
+        )
+        .await;
+        let host = fresh.clone();
+        let server = tokio::spawn(async move {
+            host.authenticate_any(
+                stream,
+                Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap()),
+                tokio::time::Instant::now() + AUTH_DEADLINE,
+                CancellationToken::new(),
+            )
+            .await
+        });
+        let route = policy.host_info.route.clone();
+        let expected = route.clone();
+        let result = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[seed; 32]).prove(
+                    stream,
+                    &expected,
+                    challenge,
+                    StreamRole::Control,
+                )
+            },
+            || Ok(()),
+        )
+        .await;
+        assert_eq!(result.is_ok(), seed == 32);
+        assert_eq!(server.await.unwrap().is_ok(), seed == 32);
+        new_ssh.abort();
+    }
+    ssh.abort();
 }

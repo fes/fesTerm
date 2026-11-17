@@ -1,6 +1,28 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[test]
+fn desktop_remote_access_hostname_seed_fits_friendly_name_contract() {
+    for hostname in [
+        "Build-Mac.local".to_owned(),
+        "界".repeat(40),
+        "lab\nserver".into(),
+    ] {
+        let friendly_name = host_name_label(std::ffi::OsStr::new(&hostname));
+        Draft {
+            friendly_name,
+            ..Draft::default()
+        }
+        .settings()
+        .validate()
+        .unwrap();
+    }
+    assert_eq!(
+        host_name_label(std::ffi::OsStr::new("Build-Mac.local")),
+        "Build-Mac.local"
+    );
+}
+
 struct Fake<F>(F);
 
 impl<F> Backend for Fake<F>
@@ -349,6 +371,8 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
             return Ok(Report {
                 scope: Scope::Absent,
                 owner_approved: true,
+                diagnostic: Some(setup_diagnostic()),
+                failure: Some(Failure::CloudUncertain),
                 owner_binding: Some("late binding must not be published".into()),
                 ..Report::default()
             });
@@ -357,6 +381,8 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
         assert!(request.cancel_fence);
         Ok(Report {
             scope: Scope::Absent,
+            failure: Some(Failure::Reconciliation),
+            diagnostic: Some(setup_diagnostic()),
             ..Report::default()
         })
     }));
@@ -378,7 +404,68 @@ fn desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant
     drain(&mut controller, &context);
     assert!(!controller.view.owner_approved);
     assert!(controller.view.owner_binding.is_none());
+    assert!(controller.view.diagnostic.is_none());
     assert_eq!(controller.view.scope, Scope::Absent);
+}
+
+#[test]
+fn desktop_remote_access_releases_admission_before_publishing_completion() {
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (finish_tx, finish_rx) = mpsc::sync_channel(1);
+    let finish_rx = Mutex::new(finish_rx);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_calls = calls.clone();
+    let backend = Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        if observed_calls.fetch_add(1, Ordering::AcqRel) == 0 {
+            entered_tx.send(()).unwrap();
+            finish_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+        Ok(Report {
+            scope: Scope::Absent,
+            ..Report::default()
+        })
+    }));
+    let mut controller = fixture(backend.clone());
+    let mut other = Controller::new(controller.root.clone(), backend, controller.slots.clone());
+    let context = egui::Context::default();
+    let (published_tx, published_rx) = mpsc::sync_channel(1);
+    let (retire_tx, retire_rx) = mpsc::sync_channel(1);
+    let retire_rx = Mutex::new(retire_rx);
+    let first_repaint = std::sync::atomic::AtomicBool::new(true);
+    // Pause in the real repaint callback after the result has been published,
+    // without adding a production hook or relying on scheduler timing.
+    context.set_request_repaint_callback(move |_| {
+        if first_repaint.swap(false, Ordering::AcqRel) {
+            published_tx.send(()).unwrap();
+            retire_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+    });
+    controller.action(Action::Refresh, &context);
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    other.action(Action::Refresh, &context);
+    assert_eq!(other.view.failure, Some(Failure::Busy));
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    finish_tx.send(()).unwrap();
+    published_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    controller.poll(&context);
+    assert!(!controller.view.busy);
+    controller.action(Action::Refresh, &context);
+    let admitted = controller.pending.is_some() && controller.view.failure.is_none();
+    retire_tx.send(()).unwrap();
+    drain(&mut controller, &context);
+    assert!(
+        admitted,
+        "published completion retained the previous global permit"
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 2);
 }
 
 #[test]
@@ -508,8 +595,14 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         controller.view.scope = Scope::Absent;
         controller.view.access_requested = Some(true);
         controller.view.draft.allow_creation = initially_enabled;
+        controller.view.draft.ordinary_access = if initially_enabled {
+            OrdinaryAccess::ProviderOwner
+        } else {
+            OrdinaryAccess::OwnerOnly
+        };
         controller.view.draft.startup_at_sign_in = initially_enabled;
         for label in [
+            "Allow connections through my GitHub account",
             "Allow remote clients to create shell sessions",
             "Start at my sign-in (only where the native policy is qualified)",
         ] {
@@ -530,6 +623,14 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         assert_eq!(settings.len(), 1);
         assert_eq!(settings[0].allow_creation, !initially_enabled);
         assert_eq!(
+            settings[0].ordinary_access,
+            if initially_enabled {
+                OrdinaryAccess::OwnerOnly
+            } else {
+                OrdinaryAccess::ProviderOwner
+            }
+        );
+        assert_eq!(
             settings[0].startup,
             if initially_enabled {
                 Startup::Manual
@@ -540,6 +641,77 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         assert!(controller.view.sharing.is_none());
         assert!(!controller.view.owner_approved);
     }
+}
+
+#[test]
+fn desktop_remote_access_refresh_preserves_existing_ordinary_policy_without_enabling() {
+    assert_eq!(
+        Draft::default().ordinary_access,
+        OrdinaryAccess::ProviderOwner
+    );
+    for policy in [OrdinaryAccess::OwnerOnly, OrdinaryAccess::ProviderOwner] {
+        for edited in [false, true] {
+            let Scope::Present(mut snapshot) = provisioned_scope() else {
+                unreachable!();
+            };
+            Arc::make_mut(&mut snapshot).settings.ordinary_access = policy;
+            let expected = Scope::Present(snapshot);
+            let report_scope = expected.clone();
+            let mut controller = fixture(Arc::new(Fake(
+                move |request: Request, _: &CancellationToken| {
+                    assert_eq!(request.operation, Operation::Refresh);
+                    Ok(Report {
+                        scope: report_scope.clone(),
+                        ..Report::default()
+                    })
+                },
+            )));
+            let context = egui::Context::default();
+            if edited {
+                let mut draft = controller.view.draft.clone();
+                draft.ordinary_access = OrdinaryAccess::OwnerOnly;
+                controller.action(Action::Edit(draft), &context);
+            }
+            controller.action(Action::Refresh, &context);
+            drain(&mut controller, &context);
+            assert_eq!(controller.view.scope, expected);
+            assert_eq!(
+                controller.view.draft.ordinary_access,
+                if edited {
+                    OrdinaryAccess::OwnerOnly
+                } else {
+                    policy
+                }
+            );
+            assert!(controller.view.review.is_none());
+            assert!(!controller.view.owner_approved);
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_normal_enable_consent_explains_shell_privileges_and_no_pairing() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 2000.0))
+        .build_ui_state(
+            |ui, view: &mut View| {
+                assert!(show(ui, view, &[]).is_none());
+            },
+            View {
+                scope: Scope::Absent,
+                access_requested: Some(true),
+                review: Some(Operation::Enable),
+                ..View::default()
+            },
+        );
+    harness.run();
+    harness.get_by_label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+    harness.get_by_label("Enable and start listening now. Starting automatically at OS sign-in remains a separate preference.");
+    harness.get_by_label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+    assert!(harness
+        .query_by_label("Owner public key · 64 hex characters")
+        .is_none());
 }
 
 #[test]
@@ -1273,4 +1445,436 @@ fn desktop_remote_access_bundle_progress_cannot_displace_sign_in_or_publish_afte
     assert_eq!(controller.view.bundle_status, BundleStatus::Cancelled);
     assert!(controller.view.device_code.is_none());
     assert!(!controller.view.owner_approved);
+}
+
+#[test]
+fn desktop_remote_access_sign_in_delivery_controls_do_not_replace_pending_work() {
+    let context = egui::Context::default();
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("delivery controls cannot start host work")
+    })));
+    controller.view.busy = true;
+    controller.view.device_code = Some(gallery_device_code());
+    controller.view.failure = Some(Failure::SignIn);
+    let generation = controller.generation;
+    for action in [Action::CopySignInCode, Action::OpenSignInBrowser] {
+        controller.action(action, &context);
+        assert_eq!(controller.generation, generation);
+        assert!(controller.pending.is_none());
+        assert!(controller.fence.is_none());
+        assert_eq!(controller.view.failure, Some(Failure::SignIn));
+        assert!(controller.view.device_code.is_some());
+    }
+    controller.view.device_code = None;
+    controller.action(Action::CopySignInCode, &context);
+    assert!(controller.view.device_code.is_none());
+    assert!(controller.pending.is_none());
+}
+
+#[test]
+fn desktop_remote_access_summary_does_not_claim_pending_or_unobserved_access_is_on() {
+    let mut view = View::default();
+    assert_eq!(view.access_summary(), "Not observed");
+    view.scope = Scope::Absent;
+    assert_eq!(view.access_summary(), "Off");
+    let Scope::Present(mut snapshot) = provisioned_scope() else {
+        panic!("fixture")
+    };
+    for (phase, label) in [
+        (Phase::EnableRequested, "Setup pending"),
+        (Phase::Provisioned, "Configured"),
+        (Phase::Reconciling, "Recovery pending"),
+        (Phase::StopRequested, "Disabling"),
+        (Phase::CleanupPending, "Cleanup pending"),
+        (Phase::Disabled, "Off"),
+        (Phase::Removed, "Off"),
+    ] {
+        Arc::make_mut(&mut snapshot).phase = phase;
+        view.scope = Scope::Present(snapshot.clone());
+        assert_eq!(view.access_summary(), label);
+    }
+}
+
+#[test]
+fn desktop_remote_access_recovery_buttons_remain_readable_at_native_small_window_widths() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for width in [500.0, 900.0] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(width, 1800.0))
+            .build_ui_state(
+                |ui, view: &mut View| {
+                    show(ui, view, &[]);
+                },
+                View {
+                    scope: Scope::Absent,
+                    ..View::default()
+                },
+            );
+        harness.run();
+        harness.get_by_label("Advanced / Recovery").click();
+        harness.run();
+        for label in [
+            "Refresh local status",
+            "Observe native process…",
+            "Review native owner context…",
+            "Review interrupted setup recovery…",
+            "Review Start…",
+            "Review Disable…",
+            "Review Uninstall / retry cleanup…",
+        ] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.width() > 90.0 && rect.height() < 60.0,
+                "{label} collapsed at width {width}: {rect:?}"
+            );
+        }
+    }
+}
+
+fn setup_diagnostic() -> HostSetupDiagnostic {
+    use festerm_host_setup::diagnostics::{Category, Recovery, Stage};
+    HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::Response,
+        recovery: Recovery::Reconcile,
+    }
+}
+
+#[test]
+fn desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh() {
+    let expected = setup_diagnostic();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            Ok(Report {
+                scope: Scope::Absent,
+                failure: (request.operation == Operation::Enable)
+                    .then_some(Failure::CloudUncertain),
+                // A success must clear even a malformed backend's old diagnostic.
+                diagnostic: Some(expected),
+                ..Report::default()
+            })
+        },
+    )));
+    let context = egui::Context::default();
+    controller.view.scope = Scope::Absent;
+    controller.start(Operation::Enable, false, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.diagnostic, Some(expected));
+    controller.action(Action::Review(Operation::Reconcile), &context);
+    assert_eq!(controller.view.diagnostic, Some(expected));
+    let mut draft = controller.view.draft.clone();
+    draft.friendly_name = "Changed consent".into();
+    controller.action(Action::Edit(draft), &context);
+    assert!(controller.view.diagnostic.is_none());
+    controller.view.diagnostic = Some(expected);
+    controller.action(Action::Refresh, &context);
+    assert!(controller.view.diagnostic.is_none());
+    drain(&mut controller, &context);
+    assert!(controller.view.diagnostic.is_none());
+    assert!(controller.view.failure.is_none());
+}
+
+#[test]
+fn desktop_remote_access_diagnostics_render_static_details_without_readiness_claim() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let expected = setup_diagnostic();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(340.0, 600.0))
+        .build_ui_state(
+            |ui, state: &mut Option<HostSetupDiagnostic>| diagnostics::show(ui, *state),
+            Some(expected),
+        );
+    harness.run();
+    harness.get_by_label("Last setup operation");
+    harness.get_by_label("HTTP status: 400");
+    harness.get_by_label(&format!("Stage: {}", expected.stage.label()));
+    harness.get_by_label(&format!("Category: {}", expected.category.label()));
+    harness.get_by_label(expected.recovery.guidance());
+    harness.get_by_label("Operation result only. Current endpoint readiness is not verified.");
+    *harness.state_mut() = Some(HostSetupDiagnostic {
+        http_status: None,
+        ..expected
+    });
+    harness.run();
+    harness.get_by_label("Last setup operation");
+    assert!(harness.query_by_label("HTTP status: 400").is_none());
+    *harness.state_mut() = None;
+    harness.run();
+    assert!(harness.query_by_label("Last setup operation").is_none());
+    assert!(harness.query_by_label("HTTP status: 400").is_none());
+}
+
+#[test]
+fn desktop_remote_access_untyped_cloud_failures_never_invent_transport_metadata() {
+    for report_failure in [false, true] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            if report_failure {
+                Ok(Report {
+                    scope: Scope::Absent,
+                    failure: Some(Failure::CloudUncertain),
+                    ..Report::default()
+                })
+            } else {
+                Err(Failure::CloudUncertain)
+            }
+        })));
+        let context = egui::Context::default();
+        controller.start(Operation::Refresh, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(Failure::CloudUncertain));
+        assert!(controller.view.diagnostic.is_none());
+    }
+}
+
+#[test]
+fn desktop_remote_access_diagnostics_refuse_invalidated_scope_reports() {
+    for failure in [
+        Failure::Cancelled,
+        Failure::ScopeChanged,
+        Failure::SessionChanged,
+    ] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            Ok(Report {
+                scope: Scope::Absent,
+                failure: Some(failure),
+                diagnostic: Some(setup_diagnostic()),
+                ..Report::default()
+            })
+        })));
+        let context = egui::Context::default();
+        controller.start(Operation::Refresh, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(failure));
+        assert!(controller.view.diagnostic.is_none());
+    }
+}
+
+#[test]
+fn desktop_remote_access_normal_status_shows_recorded_state_and_checked_process_action() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_host_setup::controller::RunState;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1200.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    last_run: Some(RunState::Listening),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    harness.get_by_label("Remote access is enabled. Last reported: listening.");
+    harness.get_by_label("Recorded status, not a current connection test.");
+    assert!(harness
+        .query_by_label("Host configured. Connection status not checked.")
+        .is_none());
+    harness.get_by_label("Check host process…").click();
+    harness.run();
+    assert!(matches!(
+        harness.state().1,
+        Some(Action::Review(Operation::ObserveNative))
+    ));
+    for (state, label) in [
+        (
+            Some(RunState::Starting),
+            "Remote access is enabled. Last reported: starting.",
+        ),
+        (
+            Some(RunState::Stopped),
+            "Remote access is enabled. Last reported: stopped.",
+        ),
+        (
+            Some(RunState::Failed),
+            "Remote access is enabled. Last reported: failed.",
+        ),
+        (
+            None,
+            "Remote access is enabled. No current host report is available.",
+        ),
+    ] {
+        harness.state_mut().0.last_run = state;
+        harness.run();
+        harness.get_by_label(label);
+    }
+    let Scope::Present(snapshot) = &mut harness.state_mut().0.scope else {
+        panic!("fixture installation missing")
+    };
+    Arc::make_mut(snapshot).phase = Phase::Disabled;
+    harness.run();
+    assert!(harness.query_by_label("Check host process…").is_none());
+    assert!(harness
+        .query_by_label("Remote access is enabled. No current host report is available.")
+        .is_none());
+}
+
+#[test]
+fn desktop_remote_access_refresh_replaces_recorded_state_and_clears_previous_process_observation() {
+    use festerm_host_setup::controller::RunState;
+    let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_fail = fail.clone();
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        if worker_fail.load(Ordering::Acquire) {
+            return Err(Failure::ScopeChanged);
+        }
+        Ok(Report {
+            scope: provisioned_scope(),
+            last_run: Some(RunState::Stopped),
+            ..Report::default()
+        })
+    })));
+    controller.view.last_run = Some(RunState::Listening);
+    controller.view.process = Some("Running".into());
+    let context = egui::Context::default();
+    controller.action(Action::Refresh, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.last_run, Some(RunState::Stopped));
+    assert!(controller.view.process.is_none());
+    fail.store(true, Ordering::Release);
+    controller.view.last_run = Some(RunState::Listening);
+    controller.view.process = Some("Running".into());
+    controller.action(Action::Refresh, &context);
+    drain(&mut controller, &context);
+    assert!(controller.view.last_run.is_none());
+    assert!(controller.view.process.is_none());
+    assert_eq!(controller.view.failure, Some(Failure::ScopeChanged));
+}
+
+#[test]
+fn desktop_remote_access_enable_confirmation_uses_task_copy_and_retains_disclosure() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for ordinary_access in [OrdinaryAccess::ProviderOwner, OrdinaryAccess::OwnerOnly] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1600.0))
+            .build_ui_state(
+                |ui, state: &mut (View, Option<Action>)| {
+                    if let Some(action) = show(ui, &state.0, &[]) {
+                        state.1 = Some(action);
+                    }
+                },
+                (
+                    View {
+                        scope: Scope::Absent,
+                        access_requested: Some(true),
+                        review: Some(Operation::Enable),
+                        accounts: vec![HostAccount {
+                            account_id: 42,
+                            login: "lab-owner".into(),
+                        }],
+                        draft: Draft {
+                            friendly_name: "Study computer".into(),
+                            account: "42".into(),
+                            ordinary_access,
+                            allow_creation: false,
+                            startup_at_sign_in: false,
+                            ..Draft::default()
+                        },
+                        ..View::default()
+                    },
+                    None,
+                ),
+            );
+        harness.get_by_label("Enable remote access?");
+        harness.get_by_label("Host: Study computer");
+        harness.get_by_label("GitHub account: @lab-owner");
+        harness.get_by_label("Create additional shells: Off");
+        harness.get_by_label("Start automatically at sign-in: Off");
+        harness.get_by_label("You may be asked to sign in. Setup can create a Dev Tunnel. No shell sessions are created or shared by enabling access.");
+        assert!(harness
+            .query_by_label("Confirm Enable for the exact observed installation and epoch?")
+            .is_none());
+        assert!(harness.query_by_label("Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry.").is_none());
+        let label = if ordinary_access == OrdinaryAccess::ProviderOwner {
+            harness.get_by_label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+            harness.get_by_label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+            "Enable and start"
+        } else {
+            harness.get_by_label("Account-based connections are disabled. Only separately paired owner devices can connect.");
+            "Enable"
+        };
+        harness.get_by_label(label).click();
+        harness.run();
+        assert!(matches!(harness.state().1, Some(Action::Confirm)));
+        assert_eq!(harness.state().0.review, Some(Operation::Enable));
+        assert_eq!(harness.state().0.draft.account, "42");
+        assert_eq!(harness.state().0.draft.ordinary_access, ordinary_access);
+        assert!(!harness.state().0.draft.allow_creation);
+    }
+}
+
+#[test]
+fn desktop_remote_access_process_confirmation_is_plain_and_keeps_observation_intent() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1600.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    review: Some(Operation::ObserveNative),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    let original_scope = harness.state().0.scope.clone();
+    harness.get_by_label("Check host process?");
+    harness
+        .get_by_label("Check whether the host process is running. This does not start or stop it.");
+    harness
+        .get_by_label("A running process does not guarantee that a remote connection will work.");
+    assert!(harness
+        .query_by_label("Confirm ObserveNative for the exact observed installation and epoch?")
+        .is_none());
+    harness.get_by_label("Check process").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Confirm)));
+    assert_eq!(harness.state().0.review, Some(Operation::ObserveNative));
+    assert_eq!(harness.state().0.scope, original_scope);
+}
+
+#[test]
+fn desktop_remote_access_confirmation_keeps_bundle_mechanics_in_advanced() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1800.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    review: Some(Operation::Enable),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    let scope = harness.state().0.scope.clone();
+    harness.get_by_label("Advanced / Recovery").click();
+    harness.run();
+    harness.get_by_label("Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry.");
+    assert!(
+        harness.state().1.is_none(),
+        "opening details never confirms work"
+    );
+    harness.get_by_label("Not now").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Dismiss)));
+    assert_eq!(harness.state().0.scope, scope);
 }

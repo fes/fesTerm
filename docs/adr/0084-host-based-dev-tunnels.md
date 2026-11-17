@@ -6,6 +6,39 @@
 - **Extends:** ADRs 0025, 0038, 0057, 0061, 0066, 0067, 0070 and 0071.
 - **Scope:** Owner-requested staged implementation and Copilot handoff; stage-1 contract primitives exist, not platform or whole-ADR acceptance.
 
+The normal account-based trust and discovery workflow is being superseded by
+[ADR 0086](0086-provider-authorized-ordinary-remoting.md): provider-authorized
+ordinary remoting, automatic host/shared inventory, and explicit protected-policy
+migration. Its design received independent architectural review; implementation
+and native qualification remain open.
+The manual fingerprint/OwnerBinding/owner-key path below remains advanced owner
+authorization, not the required normal workflow; existing installations gain no
+new authority merely by upgrading.
+
+## Workflow repair validation impact
+
+The Desktop/iOS workflow repair covers GUI `HOST-01`–`HOST-04`: explicitly scoped
+discovery (including new editors), future-only recipe retargeting, one ordinary
+profile-catalog opt-in, mobile shared-profile Ensure/attachment, and GUI owner
+approval with native device-code delivery. These UI changes do not transfer
+protected trust, retarget an issued action, change daemon ownership or grant
+execution through public metadata. iOS HOST packaging is explicit in development
+builds and selected by TestFlight. The bounded opt-in
+[service-client lab campaign](../dev-tunnel-workflow-lab.md) has separate
+creation-off/on phases and blocked prerequisites; GUI/native service, physical
+iOS and whole-ADR acceptance remain open. See the
+[validation registry](../manual-validation.md#host-based-dev-tunnel-ui-redesign-evidence).
+
+The approved client presentation separates account discovery, host controls and
+individual sessions. Desktop uses adjacent host/session panes; mobile uses a
+host-detail view. Stable identity removes duplicate shared-recipe/session rows.
+Saving a local profile is an exact-session metadata action; optional saving after
+named durable creation waits for the confirmed target and retains the original
+operation on uncertainty. Existing creation, authorization and generation gates
+are unchanged. See the canonical
+[browser workflow](../gui-design.md#account-host-and-session-browser). Native
+layout, keyboard and live-service qualification remain distinct from UI tests.
+
 ## Context
 
 The current bridge exposes one exact persistent daemon generation. Standalone
@@ -272,6 +305,16 @@ a concise explanation rather than a misleading working create control.
 Refresh is explicit and bounded; no periodic launcher polling. Network workers
 never run on the GUI frame thread. Cancellation/account switches fence results.
 
+Desktop authentication recovery is an explicit inline **Sign in again** action
+for typed expired/account-changed discovery or host-resolution failures. It uses
+the existing central account reauthentication command after validating an
+ephemeral original-account/credential and request/generation/active-tab witness.
+Changed, removed or replaced accounts and stale screens cannot retarget it;
+other failures do not offer the action. No recovery witness is persisted or
+logged, and successful sign-in does not automatically discover or connect.
+CPU tests exercise these dispatch fences; native OAuth/vault completion remains
+separate validation.
+
 Saved session profiles remain one-click connect. Host shortcuts open its picker.
 Shared account identity can be reused, but endpoint-specific scoped credentials
 and immutable live launch bindings retain their existing isolation. Do not add a
@@ -290,8 +333,11 @@ The host advertises enabled catalog entries even when no daemon generation is
 running. A profile-scoped grant permits only the registered recipe to be
 created on an explicit remote Connect; it does not depend on the independent
 host-wide permission for arbitrary ad-hoc shell creation. The client sends the
-stable profile identity, never an executable or recipe. The host resolves and
-revalidates the protected recipe, then uses the existing atomic sessiond
+stable profile identity, never an executable or recipe. Client operation issuance
+accepts the independent profile capability and protected issuance epoch even
+when generic Ensure/Create are not advertised; it does not grant those generic
+operations. The host resolves and revalidates the protected recipe, then uses
+the existing atomic sessiond
 Ensure journal. Saving, enabling the host, service restart and inventory never
 start a shell.
 
@@ -431,7 +477,9 @@ and `uninstall` subcommands. Internal daemon/bridge/worker binaries may remain
 separate where required for ownership and platform behavior.
 
 Setup guides account sign-in (device URL/code usable on another device), friendly
-name, creation permission and startup choice. It installs a host with zero shells.
+name, creation permission and startup choice. Desktop Enable seeds the editable
+friendly name from the current machine's OS hostname, bounded to the metadata
+field's 80-byte limit. It installs a host with zero shells.
 Completion directs the client to Find hosts; JSON import remains legacy/advanced,
 not necessary for normal setup. If creation is denied, explicit local creation
 and sharing commands must be available.
@@ -580,7 +628,8 @@ Capture host/principal/logical ID/generation/operation epochs at admission.
 Revalidate before publishing results or opening daemon IPC. List operations must
 not leak private-session names or existence. Host resolution is not authorization.
 
-Preserve or tighten current frame/snapshot/queue/deadline limits. Multi-session
+Preserve or tighten current live-frame/queue/deadline limits; initial recovery
+snapshots use the separately reviewed transaction budget below. Multi-session
 support requires additional aggregate limits on clients, sessions, pending
 creates, control operations and bytes; per-session limits alone are insufficient.
 Specify concrete constants in the protocol implementation review. Fair scheduling
@@ -589,6 +638,40 @@ boundedly; no unbounded task/thread creation. Installation, policy and journal
 guards are never held over network I/O. A separate bounded cloud-operation
 serialization lease may span its network operation without blocking revocation
 or becoming current installation/policy authority.
+
+Initial HOST recovery snapshots are a separate transaction from live queued
+bytes. A native probe recovered a valid styled 119×16 screen with no retained
+history or queued input/replies whose existing JSON codec produced 568,056 bytes;
+the former 512 KiB live-byte ceiling rejected it. HOST now uses the existing
+legacy codec's 8 MiB serialized snapshot ceiling with **one** in-flight snapshot
+transaction per shared `Budgets` domain (independently constructed budgets are
+not a process-wide quota). Live queues remain 512 KiB/client and 2 MiB
+aggregate; SyncScrollback remains 512 KiB, chunks 64 KiB, and deadlines unchanged.
+Snapshot saturation fails immediately with Busy rather than waiting in a queue;
+this offers no FIFO fairness or automatic retry.
+
+The slot is acquired before native attachment/receive allocation and follows
+actual blocking native-reader work, recovered terminal, encoded frame and client
+pending frontend adoption. Cancellation cannot free it while late work or a
+queued model retains recovery memory. Native reader wire length/bincode decode
+and actual retained history charges are bounded to 8 MiB before capacity
+restoration. HOST's declared history policy may retain the existing 64 MiB
+default: that declaration does not allocate 64 MiB; only validated stored
+capacities are restored. Larger declarations fail without truncation. Legacy
+local/native limits and legacy bridge declaration behavior are unchanged.
+All snapshot owners release before the live attachment continues, allowing a
+second recovery while the first terminal remains live. A pre-SNAPSHOT native
+recovery, encoding, semantic or size failure returns Incompatible; a write that
+has already begun closes on error without appending a reply to a partial frame.
+
+One admitted transaction is **not** an 8 MiB process-memory ceiling. Native
+encoded input, decoded terminal/capacities, JSON output capacity, and the codec's
+semantic validation terminal can overlap; the client likewise temporarily owns
+a frame and decoded model. The slot bounds concurrency of these representations,
+while each codec/validated capacity bound limits its own representation. The
+native wire buffer is retired before capacity restoration, the blocking reader
+retains the slot until its buffers are gone, and encoded buffers drop before the
+last permit. No terminal history is truncated to satisfy a live queue budget.
 
 Version mismatch and unsupported capabilities produce clear refusal. Changed
 generation retires pending input, file reads, observation, selection and recovery
@@ -805,6 +888,11 @@ boot-start, temporary-lease or upgrade behavior. No live credentials or service
 changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
+
+The optional [native terminal capability collector](../native-terminal-capability-probe.md)
+supports HOST-02/03 matched-grid Copilot validation with actual POSIX terminal
+replies. Controlled-PTY collector tests do not qualify native capability parity,
+Windows console collection or paired visual acceptance.
 
 The November 2026 client redesign refines HOST-01--04 and TUNNEL-07: explicit
 per-account discovery, central account presentation, once-per-sign-in truthful
@@ -2298,3 +2386,251 @@ Planned tests must be replaced by actual registered test functions as slices lan
 Run the repository traceability checker and relevant focused tests per slice,
 then required workspace/package checks for release. Automated fixtures do not
 substitute for native service and physical-device evidence.
+
+### Validation impact: reviewed Windows EOC CA compatibility
+
+`HOST-05`/`HOST-06` publisher admission accepts exactly three reviewed, ordered
+Microsoft CA chains: AOC CA 03, EOC CA 03 or EOC CA 04, each followed by the same
+pinned PCA 2021 and Root 2020. The EOC intermediates' DER bytes were independently
+retrieved from Microsoft's HTTPS PKI repository and matched the observed native
+host-chain DER fingerprints. CA 04 also matches Microsoft's published Third Party CPS fingerprint.
+The [public source and exact pins](../host-release-artifacts.md#windows-native-publisher-policy)
+remain compiled authority, never candidate or configuration metadata.
+
+All three chains retain identical subject/profile/EKU, native signature, RFC3161
+timestamp and fresh-revocation requirements. Deterministic tests cover all three
+accepted chains, every certificate-byte mutation, other approved intermediates
+in either parent position, all nonidentity chain orders, and truncated or
+extended rejection. This compatibility change adds no publisher
+override, certificate-store import, fallback or service/runtime authority.
+Native pure package qualification remains separate from GUI installation,
+cloud resource, owner approval and session lifecycle acceptance; existing
+HOST classifications and GUI action edges are unchanged.
+
+
+### Validation impact: service-supported HOST port protocol
+
+New protected HOST create intents pin the service-supported `auto` protocol;
+receipt and host-token qualification must match that exact intent. Missing
+legacy fields retain `tcp` and cannot silently acquire today's request body.
+An explicit Reconcile may retire an unsubmitted, unbound legacy intent only
+after native-account-authenticated exact-resource absence, with the original
+bytes durably archived and the old ticket fenced across crashes. Submitted or
+uncertain originals remain retained. A later reviewed Enable is required.
+
+Focused protocol, crash/recovery and exact-snapshot tests cover these fences.
+The installed signed host runtime needs the same implementation; GUI changes
+and portable tests alone do not qualify HOSTSETUP-01 or cross-platform sessions.
+
+### Validation impact: private owner access and setup diagnostics
+
+The provider rejects individual-user access entries. New HOST reservations use
+its private creator-only default and pin that choice in the protected create
+intent. Receipt qualification explicitly requests access controls and rejects
+nonempty or unknown ACL projections on the tunnel or its port. It does not add
+anonymous or organization access. Existing bound legacy receipts retain their
+original policy; unsubmitted, unbound legacy intents require explicit Reconcile,
+authenticated exact absence, durable archival and ticket fencing before a later
+Enable can create a new intent.
+
+GUI `HOST-04`/`HOST-05` and `DIAG-*` retain typed setup-stage, HTTP-status,
+category and recovery metadata through the existing operation and ownership
+fences. Presentation uses static text, excludes raw responses and credentials,
+and does not imply readiness. Focused cloud, protocol and controller regressions
+cover these boundaries. The [lab campaign](../dev-tunnel-workflow-lab.md) now
+includes desktop and iOS/Android clients against all three desktop servers with
+creation disabled/enabled. Fresh matching signed helpers, native service/UI
+verification and physical-mobile evidence remain separate acceptance gates.
+
+### Validation impact: foreground native owner prompts
+
+Desktop `HOST-01`/`HOST-02` allow human-paced native vault prompts within a
+300-second Prepare/Load bound, or a 330-second Inventory bound. Synchronous
+credential loading precedes the separate unchanged 30-second network resolution
+timeout. Cancellation and deadline expiry reject late results while retaining
+admission until the native worker returns; neither authorizes a connection.
+A blocked-worker regression covers completion beyond the old deadlines, absolute
+expiry and permit retention. Native Allow/deny/unlock interaction and narrow-modal
+error readability remain manual checks in the existing validation procedure.
+This is frontend scheduling/presentation only; helper policy is unchanged.
+The shared HOST client also allows a 300-second native owner-key prompt before
+its separate 15-second relay connection budget. Cancellation retains admission
+until the blocking native key read returns; stale results cannot authorize use.
+
+### Native client proof snapshot and local freshness
+
+The selected-host client reads the exact native owner reference once per control
+or terminal connection, under the admitted 300-second native-key budget. The
+record domain and complete approved installation/host/account/principal binding
+are validated before extracting a single-use signing snapshot. Its expected
+public key is derived from that read, as in the previous first-read/reopen path;
+a locally replaced key is not automatically enrolled or trusted by the host.
+The crate-private snapshot has no Clone, serialization, Debug or signing-key
+accessor. It retains a zeroizing seed only for this attempt and has a fixed
+30-second monotonic proof-authority expiry starting at successful extraction.
+It is neither a reusable signer nor a configuration or global cache.
+
+Vault prompting completes before relay connection and the unchanged 15-second
+wire authentication deadline. The snapshot is consumed on the actual pinned SSH
+channel, preserving challenge/domain/channel/host/principal/fingerprint/public-key
+checks. Cancellation and expiry are checked before signing and again before proof
+publication; no await separates the final signing check from the signature.
+Separate control and terminal connections require separate native snapshots.
+Cancelled or detached blocking work retains its admission charge until it drains.
+Expiry bounds proof authority, not real-time RAM erasure under a stalled thread;
+seed and temporary signing material are zeroized when their owning scopes drop.
+
+This explicitly changes local deletion/replacement timing: an already loaded
+snapshot can finish this one proof within its original 30-second window even if
+its local vault entry is subsequently deleted or replaced. A later attempt reads
+the vault again; missing or changed bindings fail, and a replacement public key
+still requires host enrollment. Account/request invalidation cancels the existing
+worker token rather than retargeting its snapshot. Host-side revocation remains
+fresh at challenge issuance, proof verification and each protected operation; its policy and
+15-second deadline are unchanged. Existing public native and explicit headless
+proof APIs retain their original reread semantics. No protocol or server
+compatibility change is introduced.
+
+Validation impact: GUI `HOST-01`/`HOST-02` and owner-authentication regressions
+cover one-read proofs, bounded local deletion/replacement semantics, foreign
+channels/identities, expired or cancelled queued work and denied proof publication.
+Existing fresh-policy revocation and admission tests remain required. Actual
+native prompt completion, same-user account invalidation and cross-platform
+terminal adoption remain manual/native acceptance gates.
+
+### Validation impact: saved profile catalog policy leases
+
+`HOST-01` catalog projection holds its initial exclusive owner-policy guard only
+through collecting enabled saved profiles. It releases that guard before acquiring
+fresh publication authorization, while retaining the same session journal
+transaction across both checks. The publication guard remains held through return;
+changed or denied current policy still refuses the entire catalog. This prevents
+the host from contending with its own initial policy lease without adding retries,
+timeouts, cached authorization or access to private profiles.
+
+A real filesystem-exclusive-guard regression covers both successful fresh
+publication and policy denial at that boundary, including journal lock retention
+and unchanged bytes. The authenticated SSH inventory regression now traverses
+Capabilities, List and ListProfiles with an enabled shared and disabled private
+profile. Actual native Busy-stage attribution and a fresh matching signed server
+remain required before claiming the VM inventory workflow passes.
+
+### Validation impact: initial native startup admission contention
+
+`HOST-04`/`HOST-05` retain parent native-manager Start serialization. A child can
+be scheduled before that parent releases its service-operation lease. Initial
+runtime admission therefore retries only `WouldBlock` within one fixed two-second
+monotonic window, using cancellation-aware waits of at most 25 milliseconds.
+Every attempt reloads the entire original protected snapshot and reruns signed
+stage/current-owner admission; changed epoch, settings or binding is refused.
+Failed attempts retain no stage or policy authority. Other native, publisher,
+permission and consent errors return immediately with their original meaning.
+
+This retries child admission, never native manager Start, cloud provisioning,
+owner approval or relay connection. The original runtime lease and parent
+serialization remain held by their existing owners. Cancellation during the wait
+keeps the existing stopped outcome without relay publication; persistent
+contention retains its original Busy failure. The two seconds bound retry waits,
+not preemption of an already executing synchronous vault/publisher check. Native
+qualification can update protected high-water/cache state, so this is not a
+read-only operation or a rollback/permission-repair mechanism.
+
+Real service-file-lock fixtures cover release/resume, the production reopening
+gate, exact permanent-Busy deadline, cancellation, full-snapshot changes and
+fresh policy reduction. Other errors are proven single-attempt. Matching signed
+runtime/native-manager Start and actual relay readiness remain manual/native
+gates; the controlled Linux failure is preserved until that candidate is tested.
+The three fixtures that enter the real native service context run on Linux and
+macOS. Windows retains the shared admission/lease tests; its production context
+must still reject elevated or service accounts before that lease gate. The Unix
+fixtures do not claim ordinary-user Windows native startup qualification.
+
+### Validation impact: stopped creation-policy changes
+
+Changing generic creation remains an explicit Disable, reviewed Enable, then
+separate Start workflow. Enable may complete the creation flag in an existing
+stopped native registration only after the lifecycle durably records the reviewed
+target and authenticated cloud binding. The service-operation and exclusive
+runtime leases cover native stopped observation and completion. Full lifecycle,
+anchored owner-policy and previous registration comparisons precede one atomic
+receipt replacement under a single lifecycle lease. Cancellation or a changed
+owner revision, key, binding, epoch or registration refuses completion.
+
+Only `allow_creation` may differ. Friendly name, startup, installation, identity,
+enrollment, native definition, executable path/digest and all other receipt fields
+stay unchanged. The selected signed current release and the independently
+reauthenticated registered release must identify the same complete bundle.
+Settings may verify it in another cache directory; that never changes the
+registered executable or provenance path. Different releases still require the
+strictly newer stopped binary-update operation, whose rules are unchanged.
+No manager registration/reload/Start, cloud mutation, owner approval, catalog or
+persistent daemon operation is part of this receipt projection.
+
+Lifecycle settings are the durable intent; no second configuration journal is
+needed for this single-file projection. Interruption before replacement leaves
+the old settings mismatch and Start/reopen refuse it. Explicit Enable can retry
+the same Provisioned scope only after authenticated presence and the same bound
+account are checked; it cannot allocate another resource. Interruption after
+atomic replacement leaves the complete new receipt. Repeating the explicit
+completion is idempotent. A pending/uncertain cloud operation retains its existing
+Reconcile requirement. Enabling global creation does not grant it to any client:
+separate owner permissions and fresh runtime policy still apply.
+
+The `native_service_stopped_creation_projection_*` fixtures cover both
+directions, exact receipt/definition preservation, alternate identical cache
+location, interrupted completion, runtime exclusion and final policy/scope races.
+The replacement-history fixture additionally preserves a completed strictly
+newer update journal and its native resource through projection and retry.
+These use real protected-file leases and synthetic signed bundles/native manager
+responses on Unix; they do not qualify installed native services, native-vault
+prompts or ordinary-user Windows execution. HOSTSETUP-01 / HOST-04 / HOST-05 still
+require matching signed helpers and native OFF→ON→OFF acceptance preserving real
+durable shells and catalog entries.
+
+### Validation impact: first viewport during HOST activation
+
+DT-02 / MOB-06 retain the existing attachment and resize contracts. A bounded
+latest-size slot accepts resize while Starting; activation queues it before
+notifier installation, presentation and Running. Input still refuses Starting.
+Cancellation/failure discards the slot; an exhausted activation queue fails the
+attachment without publishing Running. Bound framed-stream/controller fixtures
+cover these boundaries, including immediate fresh input after activation. Native
+initial PTY geometry and Copilot visual parity remain separate unperformed checks
+for this candidate; retained old daemon compatibility must also be exercised.
+
+### Validation impact: mobile discovery header alignment
+
+HOST-01/02/03 and MOB-06 retain their existing action and authorization paths.
+The `Find & Connect` header and profile-edit header balance space around the
+title so its center matches the full content width. The existing phone/tablet
+layout regression checks that center, non-overlap and the 44-point Done target;
+native text scaling and touch usability remain separate manual checks.
+
+### Normal confirmation copy
+
+Enable and process-observation confirmations use plain task labels and account/
+permission summaries. Internal operation/installation/epoch and exact-bundle
+acquisition details remain Advanced diagnostics. This is presentation only:
+existing typed review/Confirm/Dismiss, full draft/snapshot/owner revision, native
+publisher checks and CAS are unchanged. Focused rendered-copy/action-route
+regressions and existing stale-review tests are the automated validation; native
+Settings captures remain separately required under HOST-01 / HOST-04.
+
+### Mobile closed-connection copy
+
+Normal viewer guidance is concise and neutral about cause and remote session
+state. Finite attachment/unknown-generation/original-action mechanics remain in
+the existing terminal-menu diagnostics; the real framed-EOF viewer regression
+still verifies them without leaving the terminal. This presentation-only change
+does not change Review host, original-operation receipts, privacy cancellation,
+input gating, retry/creation/replay or session authority. Native background and
+explicit same-session reconnect are separate validation, not copy-test claims.
+
+Synchronous mobile HOST input/first-viewport admission failures retain the finite
+Full/Closed/TooLarge category (or invalid dimensions) before the existing stop.
+Closed retains an available prior finite HOST lifecycle cause, otherwise unknown.
+No input payload, lengths or queue-capacity values enter diagnostics. In-memory
+HOST/stub regressions cover category preservation, capture before cancellation
+and refused continuation. Queue limits, cancellation, admission and no-replay
+behavior are unchanged; native saturation cause/long-input acceptance remain
+separate evidence.

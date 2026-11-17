@@ -41,8 +41,13 @@ Repository configuration:
 
 The workflow keeps Azure tenant, subscription, client, endpoint, account, and
 profile identifiers as environment variables because they are identifiers,
-not credentials. No Entra client secret exists. The federated credential is
-restricted to `repo:fes/fesTerm:environment:release`.
+not credentials. No Entra client secret exists. The federated credential must
+match this repository's current OIDC subject for the `release` environment.
+GitHub's repository OIDC configuration can use immutable repository/owner IDs;
+check the live configuration rather than assuming the older name-only subject.
+The GitHub environment/subject APIs do not expose Azure's configured federated
+credential, which needs its own read-only comparison. Candidate signing retains
+the existing environment-scoped federation and does not broaden it to PR jobs.
 
 ## Apple Developer ID and notarization
 
@@ -83,14 +88,61 @@ payload.
 ## Release controls
 
 Production publication is triggered only by a `vMAJOR.MINOR.PATCH` tag whose
-version matches the workspace. Manual dispatch builds the same signed
-artifacts but does not publish.
+version matches the workspace. Normal manual dispatch builds the native signed
+packages and helpers without publishing. The default-false
+`signed_helpers_candidate` input additionally authenticates standalone helper
+metadata using the existing updater root and retains complete helper bundles
+for exact-source native validation. It cannot be combined with `resume_publish`.
+This mode skips desktop package jobs and their Windows ARM64 application-build
+feeder; validation and all six native helper build/signing targets still run.
+
+The `authenticate-helpers` job is shared by publication and this explicit
+candidate mode. It uses `environment: release` with `contents: read`, consumes
+only helper artifacts from the same workflow run, and keeps the existing Apple
+signing/notarization and Windows OIDC/Authenticode producer checks. Manifest
+preparation/builds and verification run without signing credentials; only the
+manifest-signing step receives the updater private key/password. The public key
+must equal `packaging/updater.pub`, and the existing independent verifier checks
+both helper families on all six targets. Publication downloads this already
+signed metadata and verifies it again; it does not sign it a second time.
+
+For a candidate, the selected dispatch commit, checked-out source and workflow
+commit must all equal `GITHUB_SHA`. A provenance receipt records that SHA,
+workflow reference, run ID/attempt, exact package version, and the length/SHA-256
+of every archive, checksum, manifest and signature. Candidate artifacts have a
+seven-day retention period and access follows repository Actions permissions.
+They contain no credentials. No tag, GitHub Release, public asset or updater
+manifest is created, and the package version is not changed. The production
+acquisition URL and trust roots remain unchanged; a lab operator can use the
+explicit authenticated offline bundle path after native qualification.
+
+Publish/review the exact candidate source and its focused test results before
+requesting one opt-in dispatch. The existing protected `release` environment
+approval is still required before signing jobs receive credentials. Check its
+live reviewer and deployment-branch rules and the OIDC configuration first;
+GitHub allowing the branch does not independently verify Azure federation.
+This source change does not dispatch CI or approve a signing run. The intended
+operator invocation after that separate authorization is:
+
+```sh
+gh workflow run release.yml --ref <reviewed-ref> -f version=<workspace-version> -f signed_helpers_candidate=true -f resume_publish=false
+```
+
+The `candidate-signed-helpers-RUN-ATTEMPT-SHA` Actions artifact contains both
+families plus `candidate-helper-provenance.json`. Compare its receipt and run
+metadata with the reviewed SHA/authorized attempt, then perform updater-root
+verification and each platform's native publisher qualification before use.
+A candidate signing run proves artifact provenance; native host setup, owner
+approval, runtime behavior and VM workflow acceptance remain separate checks.
 
 Preparing a release bumps `Cargo.toml`, `Cargo.lock`, the three
 `packaging/*.toml` manifests, and — because the Windows helper resource is
 named for its release — the `festerm-sessiond-<release>.exe` `src`/`target`
-pair inside `packaging/windows.toml`. `scripts/check_packaging.py` fails the
-build when any of them disagrees with the workspace version.
+pair inside `packaging/windows.toml`. Keep Android
+`app/festerm-android/AndroidManifest.xml` `versionName` aligned too; Play
+`versionCode` remains the separately selected unique upload value.
+`scripts/check_packaging.py` checks desktop version metadata, and the Play bundle
+builder rejects an Android version name that differs from the workspace.
 
 Desktop packages and mobile builds include `packaging/THIRD_PARTY_NOTICES.txt`.
 The report retains dependency and bundled-font license texts, plus the Android

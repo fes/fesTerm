@@ -53,6 +53,35 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
 
+# Dedicated collector dispatch precedes aggregate output and other suites.
+if ($env:FESTERM_RUN_TERMINAL_CAPABILITY_PROBE -eq '1') {
+    if ($MarkdownScrollingOnly -or $WindowsPublisherOnly -or $ProvisionPsRpRunner -or
+        -not $env:FESTERM_TERMINAL_CAPABILITY_CASE -or
+        -not $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH -or
+        ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)) {
+        exit 2 # Windows native console collection remains a separate gate.
+    }
+    $probeStart = [Diagnostics.ProcessStartInfo]::new()
+    $probeStart.FileName = (Get-Command python3 -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
+    $probeStart.UseShellExecute = $false
+    $probeStart.RedirectStandardInput = $false
+    $probeStart.RedirectStandardOutput = $false
+    $probeStart.RedirectStandardError = $false
+    foreach ($argument in @("$PSScriptRoot/check_dev_tunnel_workflow.py",
+        '--terminal-capability-probe', '--case', $env:FESTERM_TERMINAL_CAPABILITY_CASE,
+        '--result', $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH)) {
+        $probeStart.ArgumentList.Add($argument)
+    }
+    $probeProcess = [Diagnostics.Process]::Start($probeStart)
+    try {
+        $probeProcess.WaitForExit()
+        exit $probeProcess.ExitCode
+    } finally {
+        $probeProcess.Dispose()
+    }
+}
+
 function Write-OptionalResultLocation {
     param([string] $Path)
     Write-Host ("Optional validation result: {0}" -f [IO.Path]::GetFileName($Path))
@@ -170,6 +199,37 @@ Write-OptionalResult 'status=running'
 Write-OptionalResult "`nsuite=private-session-sharing-native status=skipped reason=unix-fixture-only-not-windows-acceptance"
 Write-OptionalResult "`nsuite=owned-migration-native status=skipped reason=unix-fixture-only-not-windows-acceptance"
 try {
+
+if ($env:FESTERM_RUN_DEV_TUNNEL_LAB -eq '1') {
+    Invoke-NativeCommand { python "$PSScriptRoot\check_dev_tunnel_workflow.py" --run }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=dev-tunnel-workflow status=pass scope=real-service-host-client gui=unrun"
+    } else {
+        $campaignStatus = if ($LASTEXITCODE -eq 2) { 'blocked' } else { 'fail' }
+        Write-OptionalResult "`nsuite=dev-tunnel-workflow status=$campaignStatus"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=dev-tunnel-workflow status=skipped reason=explicit-controlled-account-opt-in-required"
+}
+
+if ($env:OS -ne 'Windows_NT') {
+    Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=skipped reason=windows-required"
+} elseif ($env:FESTERM_RUN_WINDOWS_STDOUT_FEASIBILITY -eq '1') {
+    Get-Command cargo -CommandType Application -ErrorAction Stop | Out-Null
+    Invoke-NativeCommand {
+        cargo test --locked -p festerm-windows-security --test windows_stdout_probe `
+            windows_stdout_positive_partial_write_feasibility -- --exact --ignored --nocapture --test-threads=1
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=pass production_stdout=unqualified"
+    } else {
+        Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=fail production_stdout=unqualified"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=windows-stdout-positive-partial-feasibility status=skipped reason=explicit-opt-in"
+}
 
 if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {
     try {

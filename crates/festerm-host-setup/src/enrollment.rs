@@ -25,6 +25,18 @@ const ANCHOR_MAGIC: &[u8] = b"fesTerm owner policy anchor v2\0";
 const LIMIT: usize = 16 * 1024;
 const MAX_HISTORICAL_KEYS: usize = 64;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AnchorRead {
+    Foreground,
+    CurrentNoninteractive,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    LocalNoninteractive,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OwnerStorage {
@@ -275,6 +287,23 @@ pub(crate) struct PrivateSessionPolicy {
     pub(crate) installation: Snapshot,
 }
 
+/// Fresh selected-store snapshot with its installation lease retained. This
+/// contains no enrolled-owner verifier and permits a zero-admin-key HOST.
+pub struct CurrentEnrollmentSnapshot {
+    _lease: protected_state::Lease,
+    installation: Snapshot,
+    enrollment: EnrollmentSnapshot,
+}
+
+impl CurrentEnrollmentSnapshot {
+    pub fn installation(&self) -> &Snapshot {
+        &self.installation
+    }
+    pub fn enrollment(&self) -> &EnrollmentSnapshot {
+        &self.enrollment
+    }
+}
+
 impl CurrentOwnerPolicy {
     pub fn verifier(&self) -> &OwnerVerifier {
         &self.verifier
@@ -312,8 +341,8 @@ impl CurrentOwnerPolicySource {
 
 #[cfg(feature = "host-runtime")]
 impl festerm_tunnel_bridge::host_control::PolicyGuard for CurrentOwnerPolicy {
-    fn verifier(&self) -> &OwnerVerifier {
-        CurrentOwnerPolicy::verifier(self)
+    fn view(&self) -> festerm_tunnel_bridge::host_control::PolicyView<'_> {
+        festerm_tunnel_bridge::host_control::PolicyView::Owner(CurrentOwnerPolicy::verifier(self))
     }
 }
 
@@ -378,6 +407,28 @@ impl Store {
 
 impl OwnerEnrollment<'_> {
     pub(crate) fn private_session_policy(&self, state: &Path) -> io::Result<PrivateSessionPolicy> {
+        self.session_policy_using(state, AnchorRead::Foreground)
+    }
+
+    /// OS-local use only: exact native anchor and identity, no UI or writes.
+    /// Earlier lifecycle high-water cannot supply ordinary/owner authority.
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn local_session_policy_noninteractive(
+        &self,
+        state: &Path,
+    ) -> io::Result<PrivateSessionPolicy> {
+        self.session_policy_using(state, AnchorRead::LocalNoninteractive)
+    }
+
+    fn session_policy_using(
+        &self,
+        state: &Path,
+        read: AnchorRead,
+    ) -> io::Result<PrivateSessionPolicy> {
         self.installation
             .with_owned_lease(|directory, installation, lease| {
                 if self.storage != OwnerStorage::NativeVault
@@ -401,7 +452,7 @@ impl OwnerEnrollment<'_> {
                 if !festerm_windows_security::same_file_identity(directory, &selected)? {
                     return Err(refused("owner.private_sharing_state_replaced"));
                 }
-                let (_, enrollment) = self.read(directory, installation)?;
+                let (_, enrollment) = self.read_selected(directory, installation, read)?;
                 Ok(PrivateSessionPolicy {
                     _lease: lease,
                     enrollment,
@@ -644,12 +695,23 @@ impl OwnerEnrollment<'_> {
         directory: &File,
         installation: &Snapshot,
     ) -> io::Result<(SecretReference, EnrollmentSnapshot)> {
+        self.read_selected(directory, installation, AnchorRead::Foreground)
+    }
+
+    fn read_selected(
+        &self,
+        directory: &File,
+        installation: &Snapshot,
+        read: AnchorRead,
+    ) -> io::Result<(SecretReference, EnrollmentSnapshot)> {
         let reference = self.reference(directory, ANCHOR)?;
         let bytes = storage::read_private(directory, Path::new(RECORD), LIMIT)?;
-        let protected = self
-            .vault
-            .get(&reference)
-            .map_err(|error| self.storage_error(error))?;
+        let protected = if read != AnchorRead::Foreground {
+            self.vault.get_noninteractive(&reference)
+        } else {
+            self.vault.get(&reference)
+        }
+        .map_err(|error| self.storage_error(error))?;
         let anchor = protected.with_bytes(PolicyAnchor::decode)?;
         if anchor.digest != <[u8; 32]>::from(Sha256::digest(bytes.as_slice())) {
             return Err(refused(
@@ -665,7 +727,19 @@ impl OwnerEnrollment<'_> {
         if record.revision != anchor.revision {
             return Err(refused("owner.anchor_revision_mismatch"));
         }
-        if record.installation_epoch < installation.epoch {
+        let advances_high_water = match read {
+            AnchorRead::Foreground | AnchorRead::CurrentNoninteractive => true,
+            #[cfg(all(
+                feature = "cloud",
+                feature = "host-runtime",
+                feature = "native-services"
+            ))]
+            AnchorRead::LocalNoninteractive => false,
+        };
+        if record.installation_epoch < installation.epoch && advances_high_water {
+            if read == AnchorRead::CurrentNoninteractive {
+                return Err(refused("owner.lifecycle_readiness_refresh_required"));
+            }
             // Persist each observed lifecycle high-water before issuing authority.
             record.installation_epoch = installation.epoch;
             record.revision = Epoch::new(
@@ -683,6 +757,57 @@ impl OwnerEnrollment<'_> {
     pub fn snapshot(&self) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
             self.read(directory, installation).map(|(_, record)| record)
+        })
+    }
+
+    /// No prompts, fallback or high-water writes. The native anchor is read on
+    /// every use while the same installation lease fences policy writers.
+    pub fn current_snapshot_noninteractive(&self) -> io::Result<CurrentEnrollmentSnapshot> {
+        self.with_current_snapshot_noninteractive(|_, installation, enrollment, lease| {
+            Ok(CurrentEnrollmentSnapshot {
+                _lease: lease,
+                installation: installation.clone(),
+                enrollment: enrollment.clone(),
+            })
+        })
+    }
+
+    pub(crate) fn with_current_snapshot_noninteractive<T>(
+        &self,
+        action: impl FnOnce(
+            &File,
+            &Snapshot,
+            &EnrollmentSnapshot,
+            protected_state::Lease,
+        ) -> io::Result<T>,
+    ) -> io::Result<T> {
+        self.installation
+            .with_owned_lease(|directory, installation, lease| {
+                let (_, record) =
+                    self.read_selected(directory, installation, AnchorRead::CurrentNoninteractive)?;
+                action(directory, installation, &record, lease)
+            })
+    }
+
+    // The caller's native operation lease serializes the service receipt. Read
+    // its owner witness and replace that receipt under this ONE lifecycle lease;
+    // acquiring current_policy and then reopening the store would self-deadlock.
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn with_current_snapshot<T>(
+        &self,
+        expected: &Snapshot,
+        owner: &EnrollmentSnapshot,
+        action: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
+    ) -> io::Result<T> {
+        self.installation.with_locked(|directory, current| {
+            if current != expected || self.read(directory, current)?.1 != *owner {
+                return Err(refused("owner.service_configuration_scope_changed"));
+            }
+            action(directory, current)
         })
     }
 
@@ -1029,6 +1154,8 @@ pub(crate) mod tests {
     pub(crate) struct Vault {
         memory: MemorySecretStore,
         pub(crate) locked: AtomicBool,
+        pub(crate) interactive_reads: std::sync::atomic::AtomicUsize,
+        pub(crate) noninteractive_reads: std::sync::atomic::AtomicUsize,
     }
     struct SharedVault(Arc<Vault>);
     impl SecretStore for SharedVault {
@@ -1056,10 +1183,21 @@ pub(crate) mod tests {
             self.0.memory.put(value)
         }
         fn get(&self, reference: &SecretReference) -> Result<SecretBytes, SecretStoreError> {
+            self.0.interactive_reads.fetch_add(1, Ordering::SeqCst);
             if self.0.locked.load(Ordering::Acquire) {
                 return Err(SecretStoreError::LockedOrUnavailable);
             }
             self.0.memory.get(reference)
+        }
+        fn get_noninteractive(
+            &self,
+            reference: &SecretReference,
+        ) -> Result<SecretBytes, SecretStoreError> {
+            self.0.noninteractive_reads.fetch_add(1, Ordering::SeqCst);
+            if self.0.locked.load(Ordering::Acquire) {
+                return Err(SecretStoreError::LockedOrUnavailable);
+            }
+            self.0.memory.get_noninteractive(reference)
         }
         fn update(
             &self,
@@ -1098,6 +1236,7 @@ pub(crate) mod tests {
             &root.path().join("installation"),
             origin,
             Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "owner fixture".into(),
                 allow_creation: false,
                 startup: Startup::Manual,
@@ -1124,6 +1263,8 @@ pub(crate) mod tests {
         let vault = Arc::new(Vault {
             memory: MemorySecretStore::new(),
             locked: AtomicBool::new(false),
+            interactive_reads: 0.into(),
+            noninteractive_reads: 0.into(),
         });
         (root, store, vault)
     }
@@ -1958,8 +2099,8 @@ pub(crate) mod tests {
             )
             .unwrap();
         let guard = current(&source).unwrap();
-        let epoch = PolicyGuard::verifier(&guard).policy().host_epoch;
-        assert!(PolicyGuard::verifier(&guard).policy().remote_access);
+        let epoch = PolicyGuard::view(&guard).session().host_epoch;
+        assert!(PolicyGuard::view(&guard).session().remote_access);
         assert!(matches!(current(&source), Err(ContractError::Busy)));
         assert!(store
             .revoke()
@@ -1967,8 +2108,8 @@ pub(crate) mod tests {
         drop(guard);
         store.revoke().unwrap();
         let guard = current(&source).unwrap();
-        assert!(!PolicyGuard::verifier(&guard).policy().remote_access);
-        assert!(PolicyGuard::verifier(&guard).policy().host_epoch.get() > epoch.get());
+        assert!(!PolicyGuard::view(&guard).session().remote_access);
+        assert!(PolicyGuard::view(&guard).session().host_epoch.get() > epoch.get());
     }
 
     #[test]
@@ -2043,6 +2184,7 @@ pub(crate) mod tests {
             &root.path().join("desktop"),
             Origin::Desktop,
             Settings {
+                ordinary_access: Default::default(),
                 friendly_name: "desktop".into(),
                 allow_creation: false,
                 startup: Startup::Manual,

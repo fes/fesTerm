@@ -12,6 +12,17 @@ service qualification remains open under
 [#429](https://github.com/fes/fesTerm/issues/429);
 advanced scoped-token activation remains available.
 
+The host-based Desktop/iOS/Android workflow requires automatic account-scoped
+host discovery, authorized inventory on host expansion and durable session
+creation under the host's global policy. Normal connections must not require
+fingerprint entry, JSON or per-device manual pairing; the active correction is
+specified in [ADR 0086](docs/adr/0086-provider-authorized-ordinary-remoting.md).
+iOS development builds
+select `--host-clients`; TestFlight selects that client graph. The
+[opt-in VM lab campaign](docs/dev-tunnel-workflow-lab.md) targets a dedicated
+controlled account and a private native test fixture; a missing fixture blocks the
+campaign and does not count as end-to-end acceptance.
+
 The host also offers an explicitly enabled
 [rooted filesystem protocol](docs/dev-tunnel-files-protocol.md) for enumeration
 and streaming transfers. Desktop/iOS file-manager integration is separate work;
@@ -44,21 +55,16 @@ Experimental desktop Profiles also manages public host/session recipe metadata
 offline (add/edit/copy/delete and reviewed JSON import/export). A separate
 **Review and connect…** action enters foreground protected owner approval;
 saving/importing metadata never grants execution approval.
-The portable `host_client` executor now composes selected-host inventory and
-existing-session attachment using protected native-vault context, actual
-role-specific SSH owner proof and frontend-confirmed snapshot adoption.
-The shared Session adapter and typed desktop installation preserve frontend
-ownership, activation and account-credential fencing. Desktop foreground review
-can prepare/load an exact private native-key receipt, show its public key for
-separate host-local approval, explicitly resolve one HOST endpoint and choose an
-authorized existing session. A separate exact-launch confirmation enables
-advertised, host-authorized Create or atomic resume-or-create; uncertain results
-retain the original issued action for explicit in-process retry. It never
-silently enrolls a key, falls back to a legacy bridge or infers creation
-authority from inventory. Foreground mobile execution and local Settings/Remote
-Access now have source implementations; their installation, actual-vault,
-provider/device and GUI acceptance remain open. Desktop durable client-action
-reconciliation also remains open; this is not stage-6 completion.
+The portable `host_client` executor provides inventory, durable creation and
+existing-session attachment with native-vault credentials, bounded transport,
+frontend-owned terminal adoption and account fencing. Its original manually
+paired owner path is advanced administration and does not qualify normal
+account-based remoting. The ordinary provider-authorized server/client and UI
+integration has focused regression and controlled native-helper coverage; all
+24 normal native matrix cases and
+matched-grid Copilot initial-screen comparisons remain unaccepted. Explicit
+creation keeps its issued action after an uncertain result, with no replacement
+create, automatic enrollment or legacy fallback. This is not stage-6 completion.
 The opt-in mobile client has a protected native-vault original-action checkpoint:
 explicit cold-start review keeps the same UUID/issuance/body, never auto-retries,
 and only exact Ended automatically retires settled originals. Separate default-No

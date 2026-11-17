@@ -135,6 +135,7 @@ const HOST_STATES: &[&str] = &[
     "hosts-unknown",
     "hosts-approval-unavailable",
     "hosts-new",
+    "hosts-save-session",
     "hosts-profile",
     "hosts-owner",
     "hosts-receipt",
@@ -699,6 +700,28 @@ fn capture_host_client_ui_gallery() {
 }
 
 #[cfg(all(feature = "host-clients", unix))]
+#[test]
+#[ignore = "headless PNG review only; no native or service acceptance"]
+fn capture_host_workflow_ui_review() {
+    capture_gallery(
+        &[
+            "hosts-found",
+            "hosts-sessions",
+            "hosts-new",
+            "hosts-save-session",
+        ],
+        &[("phone", 390.0, 844.0, 0.0)],
+    );
+}
+
+#[cfg(all(feature = "host-clients", unix))]
+#[test]
+#[ignore = "one actual host-detail widget review; no native acceptance"]
+fn capture_host_detail_ui_review() {
+    capture_gallery(&["hosts-sessions"], &[("phone", 390.0, 844.0, 0.0)]);
+}
+
+#[cfg(all(feature = "host-clients", unix))]
 fn prepare_host_gallery(
     harness: &mut Harness<'_, MobileApp>,
     state: &str,
@@ -711,7 +734,7 @@ fn prepare_host_gallery(
     if matches!(state, "hosts-owner" | "hosts-receipt") {
         harness
             .get_by_label(if state == "hosts-owner" {
-                "First connection · advanced"
+                "Connect this device"
             } else {
                 "Owner public key"
             })
@@ -761,9 +784,20 @@ fn scroll_host_gallery_to(
     width: f32,
     height: f32,
 ) {
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{By, Queryable};
 
-    let top = harness.get_by_label(label).rect().top();
+    let top = if label == "Independent host fingerprint" {
+        harness
+            .get(
+                By::new()
+                    .label(label)
+                    .role(egui::accesskit::Role::TextInput),
+            )
+            .rect()
+            .top()
+    } else {
+        harness.get_by_label(label).rect().top()
+    };
     harness.event(egui::Event::PointerMoved(egui::pos2(
         width * 0.5,
         height * 0.5,
@@ -780,7 +814,7 @@ fn scroll_host_gallery_to(
 #[cfg(all(feature = "host-clients", unix))]
 #[test]
 fn gallery_host_review_states_render_current_widgets_without_dispatch() {
-    use egui_kittest::kittest::{NodeT, Queryable};
+    use egui_kittest::kittest::{By, NodeT, Queryable};
 
     for (width, height) in [(390.0, 844.0), (834.0, 1194.0)] {
         for &state in HOST_STATES {
@@ -798,10 +832,16 @@ fn gallery_host_review_states_render_current_widgets_without_dispatch() {
             prepare_host_gallery(&mut harness, state, width, height);
             match state {
                 "hosts-owner" => {
-                    harness.get_by_label("Independent host fingerprint");
+                    harness.get(
+                        By::new()
+                            .label("Independent host fingerprint")
+                            .role(egui::accesskit::Role::TextInput),
+                    );
                 }
                 "hosts-receipt" => {
-                    harness.get_by_label("Approve this key on the host");
+                    harness.get_by_label(
+                        "I verified the fingerprint and approved this key on this host",
+                    );
                 }
                 "hosts-unknown" => {
                     harness.get_by_label("Some session states are unknown.");

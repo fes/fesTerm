@@ -94,13 +94,43 @@ missing-file restoration, 4→5 replacement, private Manual launchd paths,
 typed durable refusal/failure, lease ownership and fail-closed CLI entries.
 They do **not** qualify native restart or independent shell survival.
 
+A separate source regression reproduces lifecycle-lock contention before managed
+runtime entry: the CLI's `Store::open` and recovery-registration preflight can
+return typed Busy before a Starting record exists. Managed verbs now share one
+fixed two-second, cancellable wait budget after typed Busy in these bootstrap
+reads. Each phase always attempts its first read; successful or non-Busy results
+are preserved even after the deadline, and exhausted contention returns its
+original Busy error. Each retry reopens current state, and registration checks
+reject full snapshot changes once captured. A held service-operation lease alone does not block this
+preflight. The existing later initial-admission budget remains a separate two
+seconds for service-lease contention and current bundle/owner checks. Neither
+budget retries a native manager Start, completed runtime invocation or history
+write. Reservation, first runtime persistence and final bookkeeping remain
+outside bootstrap retry and can still fail on contention; no broad runtime
+retry is implied.
+
+The deterministic lifecycle-lease failure and corrected source checks do not
+identify the cause of the preserved Linux signed-0.17.3 second-Start failure
+(runtime history remained at stopped epoch 7 after creation-policy reenable).
+That native failure remains unresolved as an observed event, with no new native
+Start or signed-helper qualification attributed to this source candidate.
+Existing epoch, origin, registration, owner, vault and platform restrictions
+remain required, including ordinary-user native Windows admission.
+
 On each separately authorized ordinary-user platform with genuine current
 signed helpers, test Manual and UserSignIn, Desktop and Headless:
 
 1. A fresh registration uses version 4 / managed argv; retained versions 2/3
    and their missing definitions do not silently acquire restart authority.
    An older helper must reject the new policy, not reinterpret it.
-2. Observe one HOST and a separately owned persistent sessiond/shell. Induce
+2. During explicit native Start, exercise a child scheduled while its parent
+   still owns the service-operation lease. Only initial child admission may wait
+   up to two seconds for contention, with fresh original-snapshot/current-owner
+   checks each time; there must be one manager Start and no relay before success.
+   Permanent Busy, cancellation, changed settings/binding/epoch and owner reduction
+   must refuse or stop without using cached authority. This retry window does not
+   preempt a synchronous native publisher/vault call. Observe one HOST and a
+   separately owned persistent sessiond/shell. Induce
    failure of **only that HOST**, then observe native recovery bounds and
    fresh bundle/native-owner/account/receipt/scoped-token admission, unchanged
    host identity and daemon PID/generation, and no frontend/input replay.
@@ -315,6 +345,64 @@ usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## ADR 0084 mobile HOST execution
+
+After ordinary browser sign-in or an idle lock/suspend/account change, open
+Find & connect before issuing any HOST action: no cancelled-work error should
+appear. Existing diagnostics remain visible, while protected approval and
+inventory are cleared. Repeat with an active discovery job and an active
+control worker: both must still cancel and report cancellation without replay.
+Deterministic tests cover these distinctions; native lifecycle acceptance
+remains separate.
+
+In HOSTSETUP-01 Settings, verify enabled access shows only the current installation
+and epoch’s last reported starting/listening/stopped/failed state, labelled as
+recorded status rather than a current connection test. Use **Check host process…**
+through its existing review and confirm the observed process state appears. Refresh
+must discard an older process observation, and disabled access must not display an
+enabled status from obsolete runtime history.
+
+Within HOST-03 / MOB-06 / TUNNEL-11, attach the retained styled 119×16 native
+screen whose JSON exceeds 512 KiB; verify full recovered content, styles and modes
+before activation, with no replacement shell or history truncation. Keep the first
+terminal live while attaching a second authorized terminal. Capacity saturation
+must return Busy; incompatible/oversized recovery must return Incompatible before
+SNAPSHOT. Cancellation during recovery/adoption must retain admission until actual
+work/buffers finish. Portable budget/codec tests cover these bounds; this does not
+claim the newly built signed/native route has passed until separately observed.
+
+HOST-03 / MOB-06 / TUNNEL-11 attachment failure: keep the viewer open after a
+controlled connection failure. Check the short plain Connection closed guidance
+and paused input. Open the existing terminal menu to read finite
+stage/category/I/O-kind and unknown/original-action diagnostics without navigating
+Back. Review host remains the only recovery action; no replacement creation or
+replay occurs. A generic failure must not invent an app-background cause. After
+normal background/foreground, verify the same concise guidance and unchanged
+explicit reviewed recovery; a successful reconnect is separate native evidence. Exercise relay/authentication, snapshot/activation and
+live-stream failures without exposing raw transport text, headers or credentials.
+For a successful shared-profile connection, verify its advertised name labels the
+tab while the exact target/generation and creation-OFF policy remain unchanged.
+Framed portable failure tests do not complete Simulator/device/native acceptance.
+For synchronous HOST input/first-viewport refusal, read the existing diagnostics
+before reviewing/reconnecting: confirm input versus viewport-resize and the finite
+`full`/`closed`/`too-large` category. Closed shows an available prior finite HOST
+cause or unknown; invalid dimensions are distinguished. No command text, secret,
+input length or queue capacity should appear. Refusal must still retire the
+attachment and reject continuation without replay; earlier accepted input may
+have executed. Portable tests exercise these categories and cancellation, not
+the actual native queue-saturation cause or successful long-command delivery.
+
+
+Within existing HOST-03 / MOB-06 / TUNNEL-11, discover an owned host and verify
+its friendly description (or name/locator fallback), then open **Connect this
+device**. Focus and edit the fingerprint using normal hardware and software
+keyboard routes; paste multiline host connection details and verify exact target
+field and line preservation. Switch account/host/recipe while an edit is pending:
+old native input must not populate the new review. Editing either verification
+field must clear consent and inventory, require independent verification again,
+and issue no HOST operation. Exercise the same native input route for local
+profile/session names. CPU field-document/consent regressions do not qualify
+native keyboard, clipboard, owner approval or terminal I/O; record actual iOS
+Simulator/device and Android emulator/device results separately.
 
 The opt-in shared `host-clients` application now executes selected HOST inventory,
 exact attachment and explicitly confirmed Create/Ensure through the bounded
@@ -732,6 +820,52 @@ separately owned HOST-03–05 slice, not implemented or claimed by this incremen
 
 ## Host-based Dev Tunnel UI redesign evidence
 
+For the approved account → host → sessions browser, capture Desktop wide and
+narrow layouts and iOS/Android host list/detail navigation. Verify consistent
+padding, separated controls and one existing-session Connect row when the same
+logical session is also advertised by a shared recipe. Same-name sessions with
+different identities must stay distinct. Refresh hosts acts on the selected
+account; Refresh sessions and New host shell act on the selected host.
+Save as profile belongs to an exact session; a saved shortcut is labelled locally
+and does not rename or alter the remote shell. Exercise the new-shell form with
+and without optional local saving, failed saves, cancelled creation, uncertain
+creation and explicit original-action recovery. No shortcut may precede confirmed
+creation, and retries must not create a replacement. Creation OFF preserves
+authorized existing-session connection but cannot start an absent/stopped shared
+shell. These current-source native/layout checks remain open until exercised;
+synthetic screenshots and portable tests do not establish cloud/vault acceptance.
+
+The follow-up workflow repair removes automatic new-profile discovery, keeps
+create-if-missing explicit and editable, consolidates ordinary local sharing on
+the protected profile catalog, and renders shared profiles on mobile. Public
+metadata may be deliberately retargeted for future connections; protected
+receipts, live attachments and already-issued operations retain their original
+binding. Host-side GUI approval remains separate from discovery and sign-in.
+The iOS builders expose an explicit `--host-clients` mode and TestFlight selects
+the HOST client graph; build receipts are not device execution evidence.
+
+Within the existing HOST-01 / HOST-04 Settings scenario, review normal Enable
+and Check host process at native narrow and normal window widths. Confirm task
+headings/buttons and selected account, friendly host name, creation/startup and
+signed-component disclosures are legible. Keep account-based shell/file/command
+access warnings. Normal review must not show operation enums, installation epochs
+or release-fetch instructions; those remain reachable in Advanced / Recovery.
+Not now must dismiss without work; Confirm must retain the originally reviewed
+operation and fail closed after changed scope/settings. A process check must not
+start/stop the host or claim a working endpoint. Fresh native screenshots and
+usability review remain pending for this copy change; prior source/ec87 captures
+are historical evidence of the finding, not validation of the candidate.
+
+The opt-in `dev-tunnel-workflow` VM adapter mode exercises real GitHub and Dev
+Tunnels service/client integration for the controlled `fes-festerm1` account.
+See [the operator procedure](dev-tunnel-workflow-lab.md). Missing native sign-in,
+protected owner receipt, isolated fixture or host approval is **blocked**, not
+passed. Creation-off/on phases use stable owned logical IDs and exact detach;
+there is no account signup, password login, global cleanup or anonymous access.
+The password record remains local-only outside the repository. Native GUI
+setup/approval, clipboard/browser delivery, host-disable behavior and physical
+iOS acceptance remain separate checks; this runner cannot qualify them.
+
 The November 2026 desktop/iOS redesign requires synthetic normal/error captures
 for accounts, sign-in, host settings, eligible local sharing, discovery,
 authorized sessions, named durable creation and profile connection. Capture
@@ -754,11 +888,14 @@ Synthetic evidence includes seven Desktop wide/narrow/off/requested surface
 captures and twelve phone/tablet host discovery/session/create/profile captures.
 The host-enabled mobile library passes 259 tests and compiles for the iOS
 Simulator target; neither result is a real-service or native-runtime acceptance.
-The independent two-model Desktop review prompted same-draft profile selection,
-clearer pending-host intent, minimum local control heights and quieter recovery.
-Corrected captures passed the bounded Desktop/mobile UI re-review: the mobile
-header, centered tablet column, painted disclosures and visible creation action
-resolve the initial layout findings. Source and regression checks also require
+Synthetic captures and earlier UI reviews provide partial layout evidence, not
+current native visual acceptance. Require the normal title `Find & Connect` to
+center across the whole content width, with balanced space opposite Done, on
+phone and tablet. The geometry regression covers both normal and profile-edit
+titles, non-overlap and the 44-point Done target. Native header alignment, text
+scaling, truncation, touch targets, the centered tablet column, disclosures and
+creation-action visibility still require visual and usability checks.
+Source and regression checks also require
 explicit review of imported custom launch/lifetime settings before creation and
 preserve logical-resume policy when renaming a profile with inventory loaded.
 Account-status presentation is source-reviewed, not visually qualified.
@@ -767,6 +904,86 @@ clipboard/browser delivery and physical-device evidence is still required.
 Inherited app-wide primary-action text contrast (3.92:1) and subtle control
 boundary contrast remain design-system debt; changing shared theme tokens and
 their unrelated baselines is outside this dark-theme-preserving workflow slice.
+
+## Normal account-based remoting correction (ADR 0086)
+
+The required normal path is GitHub sign-in, automatic host listing, then host
+expansion to authorized sessions/profiles and permitted creation actions. No
+manual fingerprint, OwnerBinding JSON, verification checkbox or per-device host
+approval belongs in that path. Explicit advanced owner administration remains a
+separate workflow. The manual path exercised in the earlier lab campaign is
+historical diagnostic evidence, not normal-workflow acceptance.
+
+Automatic directory and denied-by-default route/proof primitives have portable
+regressions. Ordinary server/client and host-expansion integration have focused
+tests, controlled native-helper coverage, workspace compilation and strict lint
+checks. Fresh three-platform CI and native acceptance remain open. Qualify fresh
+Desktop/iOS/Android clients against
+all three server OSs with creation OFF and ON, private targets excluded from both
+inventory and direct operations, exact existing-session reuse, and paired native
+screenshots. Keep fresh matched-grid Copilot initial-screen checks under DT-02.
+Legacy installations retain OwnerOnly until an explicit reviewed migration while
+disabled; verify that the existing daemon/shell/catalog survive. Test fresh
+ProviderOwner installations with no administrative owner keys. Sign-out, bound
+credential replacement and privacy lock cancel affected connections without
+terminating durable shells; choosing another stored account for new discovery
+must not retarget independently bound live tabs. Neither UI tests nor a valid
+signature alone establishes ordinary authority or native acceptance.
+
+In Desktop Enable review, verify the account-connection choice and the notice
+that a shared shell runs with the host user's OS permissions. Refreshing an
+existing OwnerOnly installation must keep that mode, and editing either access
+or creation policy must invalidate the review. With creation ON, explicitly
+create a generic durable shell as well as ensuring a shared profile; with
+creation OFF, both generic creation and ensuring a stopped shared profile must
+refuse, while the current running shared generation remains attachable. No
+temporary-session or End authority follows from normal account access. Preserve
+the original action after an uncertain creation result.
+Verify fresh ProviderOwner Enable starts the listener through the shared native
+Start path with zero administrative keys, without opening Advanced recovery.
+This must not enable automatic OS sign-in startup. Cancellation or a changed
+scope must refuse/retain uncertainty without silently issuing a new setup.
+
+Connect the same opted-in local profile on the server and remotely. Both must
+identify the same logical session and exact daemon generation; local Connect
+must not create a sibling in the legacy session-name namespace. An explicit
+local Connect may start its catalog shell while remote creation is OFF, without
+starting the HOST listener. Workspace restoration may only reuse an already
+running generation and must not prompt for credentials or update policy merely
+to restore a tab. After unsharing or editing a disabled profile, local Connect
+must retain that namespace and the current recipe without re-enabling remote
+access. Missing, corrupt or foreign catalog state must refuse rather than
+silently starting a fallback shell. Verify genuine legacy profiles separately.
+Changing a running profile's launch command must report a recipe conflict and
+preserve that generation; applying the new command requires an explicit restart.
+
+For Desktop ordinary connections, qualify native lock/suspend cutoff both
+during bootstrap and after terminal attachment, without waiting for a UI frame.
+The session monitor reuses the existing platform privacy boundary (Linux logind,
+macOS notifications, Windows shared monitor); recording's additional Linux
+capture restrictions remain separate. After unlocking, an explicit new host
+selection must obtain a fresh privacy context while old connections stay
+cancelled. Monitor installation failure blocks the connection with an actionable
+message. Portable cancellation tests do not qualify native event delivery.
+
+After an advanced administrative owner-policy revision, confirm old ordinary
+channels revoke and new attempts request a host policy refresh. The host's
+diagnostic must identify the required Disable → Enable without credentials or
+provider response content. That reviewed lifecycle refresh must preserve durable
+sessions and allow a still-authorized, non-denied client to reconnect. Repeat for
+an expired ready provider identity. This initial explicit-refresh limitation is
+separate from ordinary account sign-in and requires no manual client pairing.
+
+For the macOS server, use the preserved default Application Support HOST root,
+not a shortened test override. Qualify generic creation, shared attach, detach,
+reconnect and daemon survival through ADR 0087's overflow socket location. Record
+the actual socket path byte length, exact generation and original durable roots.
+Confirm a valid older endpoint still works, a foreign `/s` cannot become native
+generation evidence, and updated helpers reject replaced/nonempty socket
+directories without removing unrelated entries. After exact owned shutdown,
+confirm only that socket and its empty child directory are removed. Source
+fixtures and the successful short-root control do not qualify this default-path
+case or older-binary native correlation.
 
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 
@@ -777,6 +994,19 @@ adapter that panics on access verifies that mobile recipe commands do not
 touch credentials. Explicit browser request tests cover cancellation, account
 switches, supersession and obsolete browser instances. These are logic/state
 tests, not native UI or real-service evidence.
+
+Typed expired/account-changed HOST discovery or resolution failures offer an inline
+**Sign in again** action through the existing account reauthentication command.
+CPU regressions cover the original account and credential witness, current
+request/generation/tab, replacement/removal/switch refusal and cancellation.
+Opening the normal host browser with a saved account now starts one directory
+read automatically; successful sign-in resumes it only for the open foreground
+browser. Errors wait for explicit Refresh, while local profile editing/saving
+remains offline and painting never launches a browser or inventories every host.
+Manual/native validation remains required: expire an owned test account, use the
+inline action, complete normal GitHub consent and observe automatic host listing;
+verify one retained account and unchanged profiles. A switched account, replaced
+credential, changed editor or closed tab must not retarget a pending action.
 
 Recovery regressions load mixed valid/invalid/duplicate/overflow recipes,
 check skipped-entry reporting/quarantine and retain valid entries after an
@@ -831,6 +1061,34 @@ native credentials, installed service or UI snapshots were changed by this
 foundation.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
+
+DT-02's fresh Copilot visual comparison is active across the existing 24-case
+Desktop/iOS/Android lab matrix, with mobile terminal interaction also covered
+by MOB-06. Each case needs a fresh local reference and actual Dev Tunnels run at
+matched terminal grid size, recorded logical/physical pixel geometry and scale,
+pinned CLI version/initial state/cwd/theme/font, selected terminal/locale
+environment and actual bounded query replies without duplicates. Preserve screenshots on both
+server and client. The [lab procedure](dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case)
+separates CPU resize ordering regressions from native PTY and visual acceptance.
+The owner requires only the initial Copilot screen, including the unauthenticated
+welcome/sign-in screen; neither controlled account has Copilot enabled. Copilot
+sign-in, plan activation and model requests are outside this check. Dev Tunnels
+authentication and actual terminal capability observations remain required.
+These native comparisons remain unqualified; existing shell I/O or recovered
+screens do not establish a fresh Copilot result. Mobile must flush its pending
+viewport before input or explicitly report input not sent and disconnect on
+persistent resize refusal, preserving the existing no-replay policy.
+
+DT-02 also checks the first attached viewport without requiring a second window
+resize: the actual PTY grid must match the client before the fresh program starts.
+Portable bound framed-stream regressions now hold HOST activation after snapshot
+adoption, retain only the latest Starting resize, and require it on the wire before
+Running permits fresh input. Early input remains refused without replay; cancelled,
+failed and stopped attachments discard the size, and exhausted activation budgets
+fail closed. These automated results do not qualify the native fix: the recorded
+Mac-to-retained-Linux attachment initially showed 119×16 over an 80×24 PTY, while
+a subsequent ordinary zoom produced a matching 128×18 grid. Repeat that initial
+attachment and paired visual check with the candidate on supported clients.
 
 DT-08 also requires signed native qualification of ADR 0085: start with legacy
 inherited product/runtime permissions and an attached session; verify no ACL or
@@ -1209,7 +1467,7 @@ terminate unrelated shells. Keep all failed attempts as failed evidence.
 | ID | Scenario | Evidence class | Prerequisite / current result |
 | --- | --- | --- | --- |
 | DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests, independent source review, the private GitHub/Windows scoped-token fixture and native macOS/Pi credential-store refresh/reload passed. Expired/revoked credentials, other native stores and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
-| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Partial: controlled Windows recovery adoption and executed PowerShell input/output passed. Broader shell/TUI, resize, backpressure and physical-input/rendering/accessibility judgments remain open. |
+| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. In every one of the 24 Desktop/iOS/Android campaign cases, compare fresh actual Copilot against the server-local fesTerm shell at the same terminal columns/rows, with recorded pixel geometry, pinned CLI/initial-state/theme/font/scale and actual PTY environment/query replies; retain paired server/client screenshots. | Real-service functional + native visual/usability | Partial: controlled Windows recovery adoption and executed PowerShell input/output passed. Client CPU regressions separately cover first viewport before input, resize backpressure and latest-size replacement; mobile sustained refusal explicitly reports input not sent and disconnects without replay. Fresh native Copilot parity, actual PTY/query observations and broader shell/TUI/physical-input/rendering/accessibility judgments remain open. Follow [the paired comparison procedure](dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case); build/replay/controller tests cannot complete it. |
 | DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Partial: explicit client detach/reopen preserved the Windows shell's state and recovered prior output; changed host pins/generations refused. Manually restarting a stopped Windows host after relay loss restored iOS discovery and attachment with the same tunnel, host fingerprint and daemon generation. Native macOS/Pi reconnect after desktop exit and saved-identity refresh passed without another GitHub sign-in. Automatic bridge recovery on new signed helpers and broader native lifecycle evidence remain open. |
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
 | DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Partial: deterministic Windows worker tests cover delayed transient retry, clean stop, permanent refusal, cancellation and bounded attempt cleanup. Manual Windows worker restart restored iOS discovery/attachment without changing the existing shell or host identity; automatic recovery after a real relay drop on new signed helpers remains pending. DT-01/03 prerequisites and observed established-stream revocation behavior remain open. Explicit installer `--upgrade`/`-Upgrade` has deterministic journal/definition/installer tests; signed native upgrade on each platform remains pending. No daemon hot-upgrade or reboot-survival claim. |
@@ -1661,7 +1919,7 @@ provider in-place editing are not claimed.
 | IDs | Automated/emulator evidence | Remaining native/usability prerequisites |
 | --- | --- | --- |
 | MOB-01, MOB-04 | ARM64 and x86_64 development APK cross-builds; shared renderer/layout/gesture tests. Android 35 ARM64 Pixel 7 emulator renders the actual app with measured system-bar and keyboard insets, in portrait, landscape and a tablet-sized display override. A target-36 build on an Android 16 ARM64 Pixel 6 emulator rendered Profiles in portrait with Gboard and in landscape without it; the native instrumentation smoke passed. An APK generated from a test-signed release AAB launched its offline terminal on the same emulator. | Physical phone/tablet, multi-window, GPU vendors, touch selection/pinch, font scale and TalkBack. A phone emulator with display overrides is not tablet-hardware evidence. With Gboard open after rotating to landscape, the focused profile search field is hidden ([#673](https://github.com/fes/fesTerm/issues/673)); the target-35 baseline behaves the same. Compare captures with the iOS mobile design, treating Android system keyboard/bars as intentional differences. |
-| MOB-02 | JNI instrumentation checks Unicode selection/commit, composition replacement, code-point deletion, masked secure context, stale acknowledgments, and stale field/hidden-connection refusal. Actual Gboard typing saved the SSH profile's username; hardware text input and native Return also worked. On a live loopback shell, Gboard typed and submitted `ls`; the accessory keyboard toggle hid/showed Gboard; Hold symbols and Shell row typed commands with the system IME hidden, and the Shell row emitted `_` and `-` correctly. | Complex multilingual IMEs, hardware modifiers, selection/trackpad, FieldCustom source/draft keyboard on-device, system-aware custom-keyboard haptic behavior, sound preferences and prolonged fast typing on physical devices. |
+| MOB-02 | The ordinary hardware/IME single-ingress regression compiles in PlatformSmoke but is not yet run natively. JNI instrumentation checks Unicode selection/commit, composition replacement, code-point deletion, masked secure context, stale acknowledgments, and stale field/hidden-connection refusal. Actual Gboard typing saved the SSH profile's username; hardware text input and native Return also worked. On a live loopback shell, Gboard typed and submitted `ls`; the accessory keyboard toggle hid/showed Gboard; Hold symbols and Shell row typed commands with the system IME hidden, and the Shell row emitted `_` and `-` correctly. | Requalify exact mixed hardware/IME command order, long/repeated text, deletion/navigation, Ctrl/Alt/Shift and system/dead-key delegation, secure fields, stale focus/lock/mode transitions and the connection-unavailable/restart fallback gap after the active-owned single-ingress correction; compilation does not establish these results. Complex multilingual IMEs, hardware modifiers, selection/trackpad, FieldCustom source/draft keyboard on-device, system-aware custom-keyboard haptic behavior, sound preferences and prolonged fast typing on physical devices. |
 | MOB-03 | Native lifecycle adapter, shared suspension/recovery regressions and secure-window flag instrumentation. Emulator background/resume preserved the open document. App lock was enabled with a synthetic screen PIN; cold launch showed the system credential prompt, cancel left the app locked, retry followed by device-passcode authentication unlocked it, and device-lock plus “Immediately” app-switch policies relocked it. Home retired the old prompt and relaunch produced one fresh prompt. Turning protection off required authentication; cancelling preserved protection, and PIN authentication disabled it. The synthetic credential was cleared afterward. | Physical biometrics, physical-device credential cancellation/failure, grace expiry, process-death and repeated lifecycle races, app-switcher privacy snapshots and rotation during authentication. The protected authentication screenshot was intentionally black, not a rendering failure. |
 | MOB-05, MOB-06 | Shared SSH/SFTP/tunnel regression suites; Android Keystore encrypt/read/update/delete and ciphertext-tamper tests. A profile and device-local Ed25519 key were created through the Android UI, survived restart, authenticated to an isolated OpenSSH peer after fingerprint review, and completed a shell `printf` round trip. SFTP listed the owned fixture directory and downloaded Markdown byte-for-byte. The GitHub device-code request completed over Android TLS without account authorization. | Native SFTP upload/conflict/cancel, real-service Dev Tunnel account authorization/discovery/relay/recovery, offline/revoked credentials, hardware-backed key invalidation and physical-device lifecycle qualification. Device-code initiation does not qualify authenticated tunnel connections; packaged verifier/Kotlin class checks alone are not TLS service evidence. |
 | MOB-07 | Shared bounded dictation/review/cancellation tests; Android 12+ on-device-only service adapter, with no network fallback. On the emulator, denying RECORD_AUDIO produced the Failed panel (“Dictation unavailable”), stated that on-device speech was unavailable/interrupted and that no cloud fallback was used, and did not crash. | A physical device with a downloaded local speech model, airplane-mode speech, permission grant, Stop/final-result timeout, interruption/lock/background and actual reviewed insertion. The denied-permission path does not qualify audio capture; the on-device recognizer and level meter were not exercised. The final “Edit text manually” control was clipped by the keyboard in the Failed panel. A host probe with Android-like safe-area insets reproduced the shared fixed-height panel overflow, but not the terminal-background overlap seen on-device; the latter remains unresolved. |
@@ -1701,6 +1959,68 @@ remains blocked on this gate and a hosting go/no-go decision.
 | MOB-04 | iPhone/iPad portrait, landscape and Split View; pinch from rest and from a held arrow gesture; pinch at minimum/maximum text size | Only terminal text scales within 8–32 points; native keyboard/accessory controls remain stable; grid resizes coherently without losing the viewed content. Check precision/jitter with real fingers and immediate reversal at limits. Arrow helper/repeats stop when the second finger takes over; no mouse reports or text are emitted. Either finger lifting, a third contact, blur, rotation/keyboard geometry change and backgrounding cancel; remaining fingers cannot restart input until all lift. An already-started ordinary drag retains ownership; toolbar-origin touches do not pinch. Memory warning preserves text size; Reset fixture restores default. Portable arbitration/layout/bounds tests pass; native feel, visual stability and history anchoring remain manual pending. |
 | MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
 | MOB-06 | Opt-in live-SSH build on iPhone/iPad Simulator and provisioned hardware; connect to an owned SSH fixture, review unknown/changed host keys, authenticate/retry/cancel, type Return/Delete/Esc/Tab/Ctrl-C/arrows, resize, run a remote TUI, disconnect/reconnect and suspend/resume | Native/live-service and Termius interaction comparison remain pending. Verify clear live/offline labeling and no terminal input while editing connection/auth fields. Unknown host needs approval before password; a changed in-memory pin has no low-friction accept. Test exact-once input and terminal replies, coalesced remote resize, bounded output under load, refusal notice without automatic command replay, cleared passwords/prompts after cancel/suspend and no stale-session output after replacement. Verify the terminal header holds horizontally scrolling session chips between Back and More (no title/subtitle or status row), each with a green/amber/red connection dot and a ring around the dot when a background tab has new output that clears on switching to it, the active chip scrolled into view, `All N` and `+` pinned, Files and the status text under More, a distinct header divider and inset terminal; for Dev Tunnels verify the chip shows the friendly profile name, never the raw tunnel ID; confirm the full-width recovery banner appears only when disconnected or taken over. Long-press a background chip: the Close confirmation appears without switching tabs, Cancel keeps it and Close session ends only that tab. In Sessions, swipe a row left, confirm vertical scrolling still works, tap the row to hide Close, then swipe again and tap Close. Headless regressions cover output/replies while Files/README is selected and one event budget across layout retries; a native-handle regression covers immediate cancellation and sensitive-state clearing without a UI frame, including after fixture reset. Verify these on actual suspension callbacks and under native load. Plain SSH Connect after suspension is a fresh shell, not a restoration promise. Dev Tunnels retain active/parked attachments and use an 8-second foreground host check before enabling input; Face ID/privacy must independently conceal content and block input until unlocked. Physical iPhone/iPad lock/unlock, enrolled Face ID, app-switcher snapshots, disabled recovery, unavailable host with live relay, expired authentication, changed identity, shell exit and takeover checks remain unperformed for #496; host tests do not establish native behavior. Paste/native selection handles remain #425 follow-up. Portable regressions and feature compilation/linking do not establish SSH/device usability. |
+
+For Android keyboard input within existing `MOB-02`/`MOB-06`, verify exactly
+one keyboard after hardware/ADB input, IME restart and custom→system→custom/form
+switching. Hidden/custom modes must exclude the window as an IME target; system
+modes must restore it without changing secure-window or lifecycle behavior.
+Type single-call public `clear`, `python3` and repeated/long text and verify exact
+order before executing it; also exercise deletion, modifiers, dead-key/Unicode
+composition and actual field ownership changes. `PlatformSmoke` window flags and
+synthetic Java/JNI ownership checks are partial evidence, not qualification of
+actual NDK/IME ingress ordering. These native acceptance checks remain open for
+the window-policy correction until exercised on the candidate build.
+
+For mobile GitHub device sign-in (`MOB-03`/`MOB-06`), the source regression
+requires the native copy call to finish before browser handoff. It does not
+prove the code remains on the native clipboard or reaches Safari/Chrome.
+Verify fresh automatic handoff and explicit Copy again with the shown current
+code; retain only private captures and length/format/equality results, never
+codes, raw clipboard text or hashes of these short codes. Do not submit stale
+or mismatched text. A copied notice alone does not qualify this native check.
+
+For `TUNNEL-07`/`TUNNEL-11`, `HOST-01` and `MOB-06`, retain the first native
+GitHub failure separately from any explicit recovery. On a newly built client,
+collect only the fixed request stage, typed cause and optional HTTP status from
+the existing warning logger: distinguish device-token polling from github-account
+verification. Send timeout/connect/request/other, HTTP-status refusal and bounded
+body failures are distinct; no error strings, URLs, response bodies, tokens or
+credentials enter this record. Existing tracing delivery remains primary where
+configured; the ordinary logger is a fallback when no tracing dispatcher was
+installed. Browser approval is not proof of token receipt, account verification
+or native credential commit. Both earlier Android Network outcomes remain
+unattributed; these source tests do not identify their cause or replace a new
+APK and native stage capture. Timeouts, polling, cancellation and retry behavior
+are unchanged.
+
+For the foreground-aware mobile sign-in candidate, the controlled Android b9
+flow remained pending without a new connection error in foreground; moving the
+same flow to background reproduced device-token/send-connect while the owned
+UID's effective policy changed to APP_BACKGROUND blocking. This establishes that
+specific reproduction, not the cause of every earlier Network failure. A fresh
+client must keep the same challenge while Safari/Chrome is foreground, issue no
+new token polls until native resume, and then complete account verification and
+credential commit. Verify Cancel, app lock and matching-account sign-out while
+paused prevent later credential persistence; expired challenges stay expired.
+Block a fake credential write and verify the native privacy callback still returns
+and invalidates HOST work. Cancellation cannot retract native credential IO that
+already started; no transactional vault guarantee is added. A queued profile-store
+wait must recheck cancellation before starting any new write; a write already in
+flight must discard its successful completion after cancellation, so no stale
+Done result resumes a connection. Complete a flow without consuming its result,
+then lock: the getter must return Cancelled. Lock after a device-code worker
+becomes ready but before UI adoption: neither clipboard nor browser effects may
+run. Ordinary browser background must preserve the same flow. Repeated
+resume must not duplicate a poll. A request already in flight is never replayed;
+if background races it and it fails, retain the failure and recover explicitly.
+The deterministic tests do not qualify the new mobile artifacts or weaken any
+HOST approval/privacy gate. Exercise the actual AppLock monitor, including with
+App lock disabled: ordinary browser resign/background must pause sign-in instead
+of cancelling it, while HOST/export/recording privacy invalidation still runs.
+Device lock, engaged content protection and Lock now must cancel; permission-alert
+return must resume admission even when renderer suspension was deferred. The c933
+native browser-return Cancelled failure is preserved separately; new reason-aware
+artifacts require native retest.
 
 P0 unlock recovery and the outstanding physical `MOB-09` acceptance are tracked
 in [#620](https://github.com/fes/fesTerm/issues/620). Compilation and synthetic
@@ -2092,6 +2412,13 @@ and verify stopped recording can settle retained entries without reviving
 cleared ones.
 
 ### Keyboard baseline and candidate evidence
+
+The existing routed-character allocation regression runs on a single main
+thread, with a known-allocation positive control, exact zero-allocation checks
+for 4,096 ASCII and emoji events, and Cargo/nextest discovery/filter validation.
+Its process-wide counter no longer shares the measurement with libtest
+scheduling. This is an automated CPU allocation check; the earlier CI count remains
+unattributed, and native keyboard/latency acceptance below remains separate.
 
 The following-input ordering fix adds ready-callback + Enter/text, unresolved
 request + same-batch input, bounded overflow, transport failure, recovery,
@@ -4094,17 +4421,26 @@ do not establish independent provenance or native usability.
 Linux CI explicitly runs the unfiltered-only native fault-injection test;
 ordinary filtered-container runs check inconclusive handling, not the holes.
 
-The Windows inherited-stdout probe is a bounded feasibility experiment, not
-AUTO-03 or AUTO-04 acceptance. On native Windows run
+The Windows inherited-stdout runtime contract test and separate positive-partial
+feasibility experiment are not AUTO-03 or AUTO-04 acceptance. On native Windows run
 `cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
 Its control-parser tests also run on other platforms with
 `cargo test --locked -p festerm-windows-security --test windows_stdout_probe_control`.
 The helper is job-contained and the controller drains observed test-harness
 output before attempting the initial pipe mode change; a refusal remains a
-failure even if a later diagnostic retry succeeds. It requires an actual
-positive partial write, an observed one-byte backpressure condition, and
-physical byte accounting; neither a zero write nor drained occupancy proves a
-partial write. A prior native run failed on initial error 231 and observed no
+failure even if a later diagnostic retry succeeds. The mandatory test requires
+an observed one-byte backpressure condition, exact physical accounting of every
+returned write count, bounded cleanup, restored modes and clean control EOF.
+It accepts documented zero, full or short counts without claiming a positive
+partial was observed. The separate strict experiment still requires an actual
+positive partial; neither a zero write nor drained occupancy proves one. Run it
+explicitly with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe windows_stdout_positive_partial_write_feasibility -- --exact --ignored --nocapture --test-threads=1`.
+It is also registered in the optional PowerShell aggregate under
+`FESTERM_RUN_OPTIONAL_VALIDATION=1` and `FESTERM_RUN_WINDOWS_STDOUT_FEASIBILITY=1`;
+the POSIX aggregate records the Windows prerequisite. Production stdout remains
+disabled/unqualified regardless of either result. A prior native run failed on
+initial error 231 and observed no
 positive partial. The revised
 [native run](https://github.com/fes/fesTerm/actions/runs/42516446589) succeeded
 in the initial mode change after draining 16 startup bytes, but also failed to
@@ -4303,6 +4639,12 @@ CAS across path replacement, closed pending clients and ordered adoption of more
 than 64 small output chunks. The native fixture waits for its real child's READY
 output before obtaining the asserted recovery snapshot; no assertion, timeout or
 native acceptance requirement is weakened.
+The instance-scoped client-worker regression
+`concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption`
+pauses after the worker samples blocked adoption, then acknowledges the frontend
+snapshot and queues a nondefault resize followed by input. It requires exact wire
+order: adoption, resize, input. This automates the command-ordering race; it does
+not replace native attachment or terminal visual acceptance.
 The integrated-main regressions
 `host_reservation_requires_its_exact_native_launch_journal` and
 `second_client_replaces_first_client_and_first_receives_stolen_notice` cover
@@ -4500,6 +4842,11 @@ verification must discard late bytes and retain worker admission until exit,
 not claim CPU preemption. Edited/stale account/settings/epoch/policy confirmation
 requires explicit new review. Bundle status must not displace a foreground
 sign-in code; no automatic sign-in or browser is introduced.
+
+On a fresh desktop Enable draft, verify the editable host name defaults to the
+machine's OS hostname rather than a fixed label (within the 80-byte metadata
+limit). Check Windows, macOS and Linux; reopening configured hosts must retain
+their saved name, and explicit draft edits must survive status refreshes.
 
 Automated coverage includes the original 17 desktop model/native-adapter/render
 guards plus nine automatic-Setup cases, all six explicit protected desktop CAS/
@@ -4705,12 +5052,29 @@ development wrapper, not installed or production services:
    Confirm the exact account and pinned HOST endpoint; reject legacy ports,
    ambiguity, stale identity and changed host pins. Denial, revocation, timeout,
    Busy and unknown targets must not become empty inventory or creation authority.
+   With no competing operation, confirm enabled saved profiles appear and private
+   profiles remain excluded; the host must not contend with its own policy guard.
+   A policy reduction before catalog publication must refuse the catalog.
 5. Attach an allowed existing generation and verify the installed frontend receives
    recovery before activation/input. Respect exact-generation and logical resume
    restrictions; it must not substitute existing attachment for AlwaysCreate.
    Exercise account credential
-   replacement, editor/recipe replacement, cancellation, 15-second vault and
-   45-second resolver deadlines, and late completion while admission stays charged.
+   replacement, editor/recipe replacement and cancellation. Allow normal native
+   vault prompts beyond 45 seconds: Prepare/Load have a 300-second foreground
+   bound; Inventory has 330 seconds including its separate 30-second service
+   resolution timeout. Verify expiry rejects late completion while admission
+   stays charged until the native call returns. The subsequent HOST transport
+   owner-key read also allows 300 seconds for native approval, independently of
+   the 15-second relay connection bound and existing proof/control deadlines.
+   Check normal approval, cancellation and late-key refusal at this phase too.
+   Check expanded timeout Details
+   wraps inside the modal at narrow widths. Each following control or terminal
+   connection may separately prompt for its owner key within 300 seconds. After
+   that read, one proof has at most 30 seconds of authority; relay and wire
+   authentication retain their individual 15-second bounds. Cancel/account removal
+   must prevent proof publication. Local deletion/replacement after extraction
+   affects subsequent reads, while this one bounded snapshot may finish; host
+   revocation must still reject the proof using fresh policy.
    Detach requires its correlated receipt; loss never replays input.
 6. Separately approve the exact displayed launch arguments, working directory
    and lifetime. Verify visible create/ensure, creation and temporary permissions
@@ -4884,6 +5248,12 @@ review/three gates and a separate one-run owner authorization. See
 [the fixed inputs, evidence and operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
+The compiled policy accepts only the two explicitly reviewed AOC CA 03 or
+EOC CA 03 chains under the same pinned PCA/root, with all subject, profile,
+timestamp and fresh-revocation checks retained. The EOC CA 03 DER pin was
+independently verified against Microsoft's public PKI download; this adds no
+automatic CA discovery or generic OS-trusted-publisher fallback. See the
+[exact approved chains](host-release-artifacts.md#windows-native-publisher-policy).
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
 implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25
 preflight tests with no skips (including both real PowerShell 0/37 fixtures)
@@ -4959,10 +5329,28 @@ consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
 
+**HOSTSETUP-01 public placement:** The 2026-11-14 Linux VM run reached native
+GitHub authorization, then failed before submitting cloud creation. A read-only
+probe confirmed the stored controlled identity and GitHub account, authenticated
+placement denial (401/403), and a valid anonymous response from the same public
+recommendations endpoint; the protected journal remained unchanged. The HOST
+client now mirrors Microsoft's SDK with one anonymous retry of this placement
+GET only. Regression fixtures cover both denial statuses, cancellation, response
+failures and continued authenticated refusal for resource operations. Repeating
+native setup and the cross-platform campaign on the corrected candidate remains
+required; this diagnosis does not qualify hosting or GUI acceptance.
+
 **HOSTSETUP-01 desktop-local Settings increment:** Automated headless rendering
 and application-command fixtures cover inert drafts/default-private shells,
 explicit review, edited-consent invalidation, bounded cross-window Busy,
 cancel/late-result suppression and native-only/foreign/corrupt state refusal.
+A deterministic completion-publication regression holds the real repaint
+callback after a finished backend call: other windows remain refused while
+backend work is active, then an immediate follow-up operation is admitted after
+completion publication. The worker drops its operation context and global permit
+before publishing the result. This proves that ordering race, not the cause of
+the earlier native Start Busy message; native Refresh and process observation
+remain separate evidence, and no failed native action is automatically retried.
 Real protected lifecycle/policy/controller fixtures cover atomic
 snapshot/settings/epoch consent, scoped native owner approval and no-shell setup.
 The actual native-helper binary refuses a Desktop-origin installation through
@@ -5107,3 +5495,66 @@ verify the previous selection remains. Reauthorize the same user without a
 duplicate entry. Sign out one account and verify the other remains available
 and the removed account's profiles never silently use the remaining identity.
 These native/service checks remain pending.
+
+
+Native Dev Tunnels workflow campaign follow-up (HOSTSETUP-01 / GUI:HOST-04):
+Linux native screenshots exposed pending setup presented as On, unrelated host
+failures on private profile drafts, and recovery buttons collapsing into narrow
+text columns. Settings now reports the recorded phase (Configured still makes
+no endpoint-readiness claim), private drafts with no sharing opt-in suppress the
+unrelated error, and recovery actions use separate rows. Focused model/layout
+regressions cover pending/unobserved phases and 500/900-point widths. Re-capture
+both native sides with the final signed candidate before accepting the workflow;
+these source corrections do not establish remote shell, catalog or NxN passes.
+
+The native campaign matrix also includes iOS and Android clients against each
+Windows, macOS and Linux server, with generic shell creation off and on: 12
+mobile cases alongside 12 desktop cases. For MOB-06 / TUNNEL-11, execute the
+actual `host-clients` mobile build, record native credential storage, advertised
+and private profile behavior, real terminal I/O, creation permission, durable
+background/foreground reconnect and screenshots on both sides. Record hardware
+versus Simulator/emulator explicitly; portable tests and packaging receipts do
+not complete these cases or physical-device acceptance. See
+[the campaign matrix](dev-tunnel-workflow-lab.md#desktop-and-mobile-matrix).
+
+For iOS HOST-02 / MOB-06 index storage, preserve the existing profile directory
+and test-account credentials beneath the OS-managed sandbox. After normal
+GitHub sign-in and automatic host listing, expand a host and verify native key
+preparation reaches the server. An older server may return the typed update
+requirement; it must not require manual pairing or OS permission repair. Record
+that the Foundation-selected app root matches the existing profile directory,
+that its fixed receipt child is private, and that re-opening retains the same
+key. A changed root, symlink, writable root, permissive ACL or missing ready key
+must refuse without creating a replacement. Label Simulator and physical-device
+evidence separately; controlled filesystem fixtures do not complete this gate.
+
+HOSTSETUP-01 / DIAG-01 also requires a native capture of the typed last-setup
+diagnostic in About and Remote access: stage, actual HTTP status when available,
+fixed error category and recovery guidance. Check a provider refusal, native
+store failure and cancellation/account/epoch replacement; old diagnostics must
+not appear under a new operation or imply endpoint readiness. No raw provider
+body, credentials or arbitrary native error strings may appear. Portable
+regressions cover delivery fences and rendering; native pane and new signed
+owner-default provisioning acceptance remain pending.
+
+HOSTSETUP-01 / HOST-04 / HOST-05: with a shared persistent shell and private
+profile present, disable access normally, review Enable with only generic
+creation changed OFF→ON, then explicitly Start. Repeat ON→OFF. Keep the exact
+registered signed executable, native definition, host identity, owner enrollment,
+catalog logical IDs/revisions and shell PID/generation. A different Settings
+verification cache for the identical release must not retarget the registration.
+Interrupt before and after receipt completion, then retry explicit Enable on the
+same authenticated Provisioned scope; verify no duplicate cloud host or implicit
+Start. Changed owner policy, binding, startup, friendly name, binary or unknown
+native/runtime state must refuse. The portable stopped-projection fixtures do
+not complete this native acceptance gate or grant generic creation to clients.
+
+For DT-05 / MOB-06 and HOST-02/03 Copilot visual qualification, the optional
+[native capability collector](native-terminal-capability-probe.md) records the
+actual foreground POSIX terminal's fixed DA1/DA2/DSR and palette/default-color
+replies, grid and allowlisted environment. Run it separately in each controlled
+local and remote shell before a fresh Copilot initial screen. Its controlled-PTY
+tests validate collection, privacy and restoration only; they do not establish
+client/server capability parity or native visual acceptance. Windows console
+collection, matched-grid paired screenshots and all native comparisons remain
+required. The optional aggregate runners expose a dedicated explicit probe mode.

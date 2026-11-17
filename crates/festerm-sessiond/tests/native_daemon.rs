@@ -18,7 +18,7 @@ const STOLEN_NOTICE: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn native_start_reports_socket_depth_without_starting_a_shell() {
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
@@ -57,6 +57,74 @@ fn native_start_reports_socket_depth_without_starting_a_shell() {
         !marker.exists(),
         "an invalid endpoint must not start a shell"
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_start_with_long_runtime_uses_cache_socket_and_cleans_generation() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let base = short_runtime_root("long-runtime");
+    let _base_cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: base.clone(),
+        names: Vec::new(),
+    };
+    let runtime = base.join("x".repeat(120));
+    fs::create_dir(&runtime).unwrap();
+    let name = "owned-long-runtime";
+    let cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.into(),
+    };
+    launch_session_with(
+        &executable,
+        &runtime,
+        name,
+        Path::new("/bin/sh"),
+        &["-c", "printf 'LONG_ROOT_READY\\n'; IFS= read -r value; printf 'LONG_ROOT_EXEC:%s\\n' \"$value\"; exec /bin/cat"],
+    );
+    let registry = runtime.join("festerm/sessiond");
+    let inventory = || list_unattached_sessions_in(&registry).unwrap();
+    bounded_poll(|| inventory().len() == 1, "long-root discovery");
+    let selected = inventory().remove(0);
+    let generation = format!("{}-{}", selected.pid, selected.created_at_unix_ms);
+    let original = registry.join(format!("{generation}.sock"));
+    assert!(std::os::unix::net::SocketAddr::from_pathname(&original).is_err());
+    let endpoint = Path::new(&selected.endpoint);
+    assert_eq!(endpoint.file_name().unwrap(), "s");
+    assert_eq!(
+        endpoint,
+        festerm_sessiond::unix_endpoint::generation_path(&registry, &generation).unwrap()
+    );
+    assert!(endpoint.exists());
+    assert!(registry.join(format!("lease-{generation}")).is_file());
+    assert!(!original.exists());
+    let socket_directory = endpoint.parent().unwrap().to_path_buf();
+    let session = PersistentSession::resume_discovered_in(
+        &selected,
+        &registry,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    bounded_poll(
+        || session.lifecycle() == SessionLifecycle::Running,
+        "long-root attachment",
+    );
+    session.acknowledge_recovery_adoption();
+    read_session_until(&session, "LONG_ROOT_READY");
+    session.try_send_input(b"public-fixture\n").unwrap();
+    read_session_until(&session, "LONG_ROOT_EXEC:public-fixture");
+    drop(session);
+    kill_for_cleanup(&executable, &runtime, name).unwrap();
+    bounded_poll(|| !socket_directory.exists(), "long-root socket cleanup");
+    assert!(!registry.join(format!("lease-{generation}")).exists());
+    assert!(inventory().is_empty());
+    drop(cleanup);
+    assert!(!runtime.exists());
 }
 
 #[cfg(windows)]

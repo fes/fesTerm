@@ -23,6 +23,8 @@ pub mod observation;
 #[cfg(feature = "client")]
 pub mod observation_client;
 pub mod observation_protocol;
+#[cfg(feature = "host-routing")]
+pub mod ordinary_auth;
 #[cfg(feature = "owner-auth")]
 pub mod owner_auth;
 #[cfg(feature = "relay")]

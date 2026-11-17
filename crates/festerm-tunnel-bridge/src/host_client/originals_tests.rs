@@ -176,7 +176,7 @@ async fn lost_creation(fixture: &Fixture, intent: Arc<CreationIntent>) -> Envelo
             &CancellationToken::new()
         )
         .await,
-        Err(Failure::Control(Error::Offline))
+        Err(Failure::Control(Error::Offline | Error::Io(_)))
     ));
     server.await.unwrap()
 }
@@ -311,9 +311,18 @@ async fn protected_original_missing_corrupt_or_scope_changed_never_reinitializes
                     .unwrap();
             }
             2 => fixture.corrupt(|blob| blob.domain.push('!')),
-            3 => fixture.corrupt(|blob| blob.owner.account = "github:changed".into()),
-            4 => fixture
-                .corrupt(|blob| blob.owner.principal = festerm_host_protocol::PrincipalId::new()),
+            3 => fixture.corrupt(|blob| match &mut blob.owner {
+                client_context::Issuer::EnrolledOwner(owner) => {
+                    owner.account = "github:changed".into()
+                }
+                _ => panic!("legacy fixture"),
+            }),
+            4 => fixture.corrupt(|blob| match &mut blob.owner {
+                client_context::Issuer::EnrolledOwner(owner) => {
+                    owner.principal = festerm_host_protocol::PrincipalId::new()
+                }
+                _ => panic!("legacy fixture"),
+            }),
             5 => {
                 fixture.corrupt(|blob| blob.key = SecretReference::generate().to_persisted_string())
             }

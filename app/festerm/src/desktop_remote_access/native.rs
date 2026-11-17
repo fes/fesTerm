@@ -181,11 +181,30 @@ fn report(store: Option<&Store>) -> Result<Report, Failure> {
     } else {
         None
     };
+    let last_run = if snapshot.phase == Phase::Provisioned {
+        current_run_state(&snapshot, controller::last_run(store).map_err(failure)?)
+    } else {
+        None
+    };
     Ok(Report {
+        last_run,
         scope: Scope::Present(snapshot.into()),
         cleanup,
         ..Report::default()
     })
+}
+
+fn current_run_state(
+    snapshot: &Snapshot,
+    record: Option<controller::RunRecord>,
+) -> Option<controller::RunState> {
+    record
+        .filter(|record| {
+            snapshot.phase == Phase::Provisioned
+                && record.installation == snapshot.installation
+                && record.epoch == snapshot.epoch
+        })
+        .map(|record| record.state)
 }
 
 fn public_owner(
@@ -223,14 +242,41 @@ fn cancellation_scope(store: &Store, request: &Request) -> Result<Snapshot, Fail
     Ok(current)
 }
 
+// Local reobservation can discover a replacement while a cloud call drains.
+// Bind diagnostic metadata to the epoch this worker actually owned, including
+// a first Enable whose original expected scope was Absent.
+fn scoped_diagnostic(
+    diagnostic: Option<HostSetupDiagnostic>,
+    request: &Request,
+    scope: &Scope,
+) -> Option<HostSetupDiagnostic> {
+    let diagnostic = diagnostic?;
+    let owned = request.owned.lock().ok()?;
+    let owned = owned.as_ref()?;
+    match scope {
+        Scope::Present(current)
+            if current.installation == owned.installation
+                && current.origin == owned.origin
+                && current.epoch == owned.epoch =>
+        {
+            Some(diagnostic)
+        }
+        _ => None,
+    }
+}
+
 fn run_async<T>(
     runtime: &tokio::runtime::Runtime,
     cancel: &CancellationToken,
+    diagnostic: &mut Option<HostSetupDiagnostic>,
     future: impl std::future::Future<Output = io::Result<T>>,
 ) -> Result<T, Failure> {
     runtime.block_on(async {
         match tokio::time::timeout(std::time::Duration::from_secs(300), future).await {
-            Ok(result) => result.map_err(failure),
+            Ok(result) => result.map_err(|error| {
+                *diagnostic = festerm_host_setup::diagnostics::from_io_error(&error);
+                failure(error)
+            }),
             Err(_) => {
                 cancel.cancel();
                 Err(Failure::Cancelled)
@@ -308,6 +354,7 @@ impl Native {
             }
             *request.owned.lock().map_err(|_| Failure::ScopeChanged)? = Some(scope);
         }
+        let mut diagnostic = None;
         let result = (|| {
             if cancel.is_cancelled() {
                 return Err(Failure::Cancelled);
@@ -329,7 +376,14 @@ impl Native {
             if request.operation == Operation::Enable {
                 enable_scope(&request, cancel)?;
             }
-            self.perform(&store, &request, cancel, progress, stage.as_ref())
+            self.perform(
+                &store,
+                &request,
+                cancel,
+                progress,
+                stage.as_ref(),
+                &mut diagnostic,
+            )
         })();
         if cancel.is_cancelled() && request.operation.needs_cancel_fence() {
             // A blocked native call may outlive cancellation. Fence once it
@@ -353,6 +407,7 @@ impl Native {
                 // Reobserve local protected partial progress without another
                 // credential/network/native operation or a success assertion.
                 let mut observed = report(Some(&store))?;
+                observed.diagnostic = scoped_diagnostic(diagnostic, &request, &observed.scope);
                 observed.failure = Some(error);
                 Ok(observed)
             }
@@ -365,6 +420,7 @@ impl Native {
         cancel: &CancellationToken,
         progress: SyncSender<Progress>,
         stage: Option<&TrustedStage>,
+        diagnostic: &mut Option<HostSetupDiagnostic>,
     ) -> Result<Report, Failure> {
         match request.operation {
             Operation::Share(_) => Err(Failure::InvalidDraft),
@@ -408,6 +464,7 @@ impl Native {
                 run_async(
                     &runtime,
                     cancel,
+                    diagnostic,
                     CloudHostAdapter::new(store).reconcile(cancel),
                 )?;
                 report(Some(store))
@@ -436,6 +493,7 @@ impl Native {
                 let setup = run_async(
                     &runtime,
                     cancel,
+                    diagnostic,
                     controller::setup_if_current(
                         store,
                         &request.root,
@@ -476,7 +534,24 @@ impl Native {
                 {
                     return Err(Failure::ScopeChanged);
                 }
-                result.process = Some(format!("{:?}", setup.native_registration.process));
+                let process = if snapshot.settings.ordinary_access == OrdinaryAccess::ProviderOwner
+                {
+                    if cancel.is_cancelled() {
+                        return Err(Failure::Cancelled);
+                    }
+                    // Normal Enable is consent to listen now. The independent
+                    // sign-in startup preference controls future OS logins.
+                    let services = Services::current_user(store, &request.root).map_err(failure)?;
+                    let stage = services.reopen_stage(snapshot.epoch).map_err(failure)?;
+                    let observation = services.start(&stage, snapshot.epoch).map_err(failure)?;
+                    if store.snapshot().map_err(failure)? != **snapshot {
+                        return Err(Failure::ScopeChanged);
+                    }
+                    observation.process
+                } else {
+                    setup.native_registration.process
+                };
+                result.process = Some(format!("{process:?}"));
                 public_owner(&mut result, setup.owner_approval_prerequisite)?;
                 Ok(result)
             }
@@ -524,8 +599,8 @@ impl Native {
                 let owners = store.owner_enrollment().map_err(failure)?;
                 let owner = owners.snapshot().map_err(failure)?;
                 if owner.storage != OwnerStorage::NativeVault
-                    || !owner.remote_access
-                    || !owner.keys.iter().any(|key| !key.revoked)
+                    || expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly
+                        && (!owner.remote_access || !owner.keys.iter().any(|key| !key.revoked))
                 {
                     return Err(Failure::OwnerApproval);
                 }
@@ -556,6 +631,7 @@ impl Native {
                 let outcome = run_async(
                     &runtime,
                     cancel,
+                    diagnostic,
                     controller::uninstall_if_current(store, &request.root, expected, cancel),
                 )?;
                 let mut result = report(Some(store))?;

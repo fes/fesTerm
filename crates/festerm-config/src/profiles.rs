@@ -818,6 +818,12 @@ pub struct LocalTunnelHosting {
     installation: String,
     consent: String,
     enabled: bool,
+    #[serde(default, skip_serializing_if = "catalog_routing_is_false")]
+    catalog: bool,
+}
+
+fn catalog_routing_is_false(value: &bool) -> bool {
+    !value
 }
 
 impl LocalTunnelHosting {
@@ -830,6 +836,7 @@ impl LocalTunnelHosting {
             installation: installation.into(),
             consent: consent.into(),
             enabled,
+            catalog: false,
         };
         hosting.validate()?;
         Ok(hosting)
@@ -845,6 +852,27 @@ impl LocalTunnelHosting {
 
     pub const fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Selects the computer-level catalog route, without granting authority.
+    pub fn for_catalog(
+        logical: impl Into<String>,
+        consent: impl Into<String>,
+        enabled: bool,
+    ) -> Result<Self, ConfigError> {
+        let mut hosting = Self::new(logical, consent, enabled)?;
+        hosting.catalog = true;
+        Ok(hosting)
+    }
+
+    pub const fn is_catalog(&self) -> bool {
+        self.catalog
+    }
+
+    pub fn with_enabled(&self, enabled: bool) -> Self {
+        let mut hosting = self.clone();
+        hosting.enabled = enabled;
+        hosting
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -1999,6 +2027,45 @@ mod tests {
     use festerm_ssh::{PersistenceProvider, PersistentSessionName, SessionStrategy};
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn local_catalog_routing_marker_preserves_legacy_and_cannot_change_identity() {
+        let legacy =
+            LocalTunnelHosting::new(CREDENTIAL_REFERENCE, CREDENTIAL_REFERENCE, true).unwrap();
+        let encoded = toml::to_string(&legacy).unwrap();
+        assert!(!encoded.contains("catalog"));
+        let loaded: LocalTunnelHosting = toml::from_str(&encoded).unwrap();
+        assert!(!loaded.is_catalog());
+        let catalog =
+            LocalTunnelHosting::for_catalog(loaded.installation(), loaded.consent(), true).unwrap();
+        let disabled = catalog.with_enabled(false);
+        assert!(disabled.is_catalog() && !disabled.enabled());
+        assert_eq!(disabled.installation(), loaded.installation());
+        assert_eq!(disabled.consent(), loaded.consent());
+        let encoded = toml::to_string(&disabled).unwrap();
+        assert!(encoded.contains("catalog = true"));
+        assert_eq!(
+            toml::from_str::<LocalTunnelHosting>(&encoded).unwrap(),
+            disabled
+        );
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldReader {
+            installation: String,
+            consent: String,
+            enabled: bool,
+        }
+        let old: OldReader = toml::from_str(&toml::to_string(&legacy).unwrap()).unwrap();
+        assert_eq!(
+            (old.installation, old.consent, old.enabled),
+            (
+                CREDENTIAL_REFERENCE.into(),
+                CREDENTIAL_REFERENCE.into(),
+                true
+            )
+        );
+        assert!(toml::from_str::<OldReader>(&encoded).is_err());
+    }
 
     #[test]
     fn local_tunnel_hosting_is_explicit_and_requires_native_persistence() {

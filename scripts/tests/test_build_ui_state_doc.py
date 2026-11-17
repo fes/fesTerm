@@ -95,19 +95,23 @@ class BuildUiStateDocTest(unittest.TestCase):
     def test_default_gallery_also_builds_and_checks_audited_route_map(self) -> None:
         digest = self._write_image("dialog.png")
         manifest = self._write_manifest([self._scenario("dialog", "dialogs", digest)])
+        second_digest = self._write_image("second.png")
+        second = self._write_manifest([self._scenario("second", "dialogs", second_digest)], name="additional.json")
         narrative = self._write_narrative("<!-- section: dialogs title: Dialogs -->\n")
         catalog = self.root / "routes.json"
         catalog.write_text(json.dumps({"schema_version": 1, "groups": [{
-            "ids": ["dialog"], "route": "More > Dialog", "exit": "Cancel",
+            "ids": ["dialog", "second"], "route": "More > Dialog", "exit": "Cancel",
             "production_symbols": ["app::show_dialog"], "gui_ids": ["VIS-01"],
         }]}))
         routes = self.root / "route-map.md"
         arguments = ["--narrative", str(narrative), "--output", str(self.root / "ui.md")]
-        with patch.object(builder, "DEFAULT_MANIFESTS", [manifest]), \
+        with patch.object(builder, "DEFAULT_MANIFESTS", [manifest, second]), \
                 patch.object(builder, "DEFAULT_ROUTE_CATALOGS", [catalog]), \
                 patch.object(builder, "DEFAULT_ROUTES_OUTPUT", routes):
             self.assertEqual(builder.main(arguments), 0)
             self.assertIn("Cancel", routes.read_text())
+            self.assertIn("second", routes.read_text())
+            self.assertIn("2 captures", (self.root / "ui.md").read_text())
             self.assertTrue(all(
                 line == line.rstrip()
                 for line in (self.root / "ui.md").read_text().splitlines()
@@ -124,6 +128,8 @@ class BuildUiStateDocTest(unittest.TestCase):
             "completed_utc": "2026-11-13T04:00:00+00:00",
             "source_tree_sha256": "a" * 64, "source_revision": "b" * 40,
             "source_dirty": True, "system": "Darwin", "machine": "arm64",
+            "producer": {"binary_sha256": "c" * 64, "build_source_revision": "d" * 40,
+                         "build_source_dirty": True, "widget_source_revision": "b" * 40},
         }
         manifest.write_text(json.dumps(document))
         scenarios = builder.load_manifest(manifest)
@@ -132,6 +138,9 @@ class BuildUiStateDocTest(unittest.TestCase):
         self.assertIn("2026-11-13T04:00:00+00:00", result)
         self.assertIn("dirty sources: `True`", result)
         self.assertIn("a" * 64, result)
+        self.assertIn("c" * 64, result)
+        self.assertIn("build HEAD `" + "d" * 40 + "`", result)
+        self.assertIn("capture HEAD is not the binary's build HEAD", result)
         self.assertTrue(all(line == line.rstrip() for line in result.splitlines()))
 
     def test_builds_document_grouped_by_narrative_section_order(self) -> None:

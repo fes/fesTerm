@@ -26,6 +26,37 @@ fn ordinary_test() {}
                 {"bounded_bridge_recovery", "ordinary_test"},
             )
 
+    def test_declared_custom_harness_indexes_its_matching_named_function(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "crates" / "probe"
+            (package / "tests").mkdir(parents=True)
+            (package / "Cargo.toml").write_text(
+                '[[test]]\nname = "allocation"\nharness = false\n', encoding="utf-8"
+            )
+            (package / "tests" / "allocation.rs").write_text(
+                'const TEST_NAME: &str = "zero_allocations";\n'
+                'fn main() { zero_allocations(); }\nfn zero_allocations() {}\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(trace.rust_test_functions(root), {"zero_allocations"})
+
+    def test_custom_harness_requires_exact_target_and_matching_function(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            (package / "tests").mkdir()
+            source = 'const TEST_NAME: &str = "zero_allocations";\nfn main() {}\n'
+            path = package / "tests" / "allocation.rs"
+            for manifest, body in (
+                ('', source + 'fn zero_allocations() {}\n'),
+                ('[[test]]\nname = "other"\nharness = false\n', source + 'fn zero_allocations() {}\n'),
+                ('[[test]]\nname = "allocation"\nharness = true\n', source + 'fn zero_allocations() {}\n'),
+                ('[[test]]\nname = "allocation"\nharness = false\n', source + 'fn different_name() {}\n'),
+            ):
+                with self.subTest(manifest=manifest, body=body):
+                    (package / "Cargo.toml").write_text(manifest, encoding="utf-8")
+                    self.assertEqual(trace.custom_rust_test_functions(path, body), set())
+
     def test_github_anchor_handles_punctuation_and_spacing(self):
         self.assertEqual(
             trace.github_anchor("Closing sessions and quitting"),

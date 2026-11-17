@@ -46,6 +46,203 @@ public final class PlatformSmoke extends Instrumentation {
         if (failure.get() != null) throw new AssertionError(failure.get());
     }
 
+    private static void keyboardImeOwnership(FestermActivity activity) {
+        int ime = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        int secure = WindowManager.LayoutParams.FLAG_SECURE;
+        activity.keyboardMode(0);
+        require((activity.getWindow().getAttributes().flags & ime) != 0,
+            "initial/equal Hidden mode excludes system IME target");
+        activity.privacy(true, false, true);
+        for (int mode : new int[]{2, 1, 4, 3, 0, 3, 2, 4, 1, 0}) {
+            activity.keyboardMode(mode);
+            int flags = activity.getWindow().getAttributes().flags;
+            boolean customOrHidden = mode == 0 || mode == 2 || mode == 4;
+            require(((flags & ime) != 0) == customOrHidden,
+                "window IME target matches keyboard mode " + mode);
+            require((flags & secure) != 0, "keyboard mode retains secure window policy");
+            activity.keyboardMode(mode);
+            require(activity.getWindow().getAttributes().flags == flags,
+                "equal keyboard mode preserves window flags");
+        }
+        activity.privacy(false, false, false);
+    }
+
+    /** Guards used by deferred IME requests; visibility still needs native UI evidence. */
+    private static void systemImeShowGuard(FestermActivity activity, View input) throws Exception {
+        Method canShow = input.getClass().getDeclaredMethod("canShowSystemIme", int.class, long.class);
+        canShow.setAccessible(true);
+        activity.fieldDocument(2300, "", 0, 0, false, false);
+        activity.keyboardMode(3);
+        require(input.hasFocus() && input.hasWindowFocus(), "system editor owns focused window");
+        require((Boolean) canShow.invoke(input, 3, 2300L), "current field can request system IME");
+        require(!(Boolean) canShow.invoke(input, 1, 2300L), "different captured mode refuses");
+        activity.fieldDocument(2301, "", 0, 0, false, false);
+        require(!(Boolean) canShow.invoke(input, 3, 2300L), "retired field cannot show system IME");
+        require((Boolean) canShow.invoke(input, 3, 2301L), "replacement field owns its own request");
+        activity.privacy(true, true, true);
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "privacy cover cancels system IME intent");
+        activity.privacy(false, true, false);
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "covered view cannot request system IME");
+        activity.privacy(false, false, false);
+        for (String name : new String[]{"ready", "resumed", "destroyed"}) {
+            Field lifecycle = FestermActivity.class.getDeclaredField(name);
+            lifecycle.setAccessible(true);
+            boolean original = lifecycle.getBoolean(activity);
+            try {
+                lifecycle.setBoolean(activity, name.equals("destroyed"));
+                require(!(Boolean) canShow.invoke(input, 3, 2301L),
+                    "deferred system IME refuses lifecycle cut " + name);
+            } finally { lifecycle.setBoolean(activity, original); }
+        }
+        input.clearFocus();
+        require(!(Boolean) canShow.invoke(input, 3, 2301L), "lost editor focus refuses system IME");
+        input.requestFocus();
+        for (int mode : new int[]{0, 2, 4}) {
+            activity.keyboardMode(mode);
+            require(!(Boolean) canShow.invoke(input, 3, 2301L),
+                "retired system request refuses hidden/custom mode " + mode);
+            require(!(Boolean) canShow.invoke(input, mode, 2301L),
+                "hidden/custom owner never requests system IME " + mode);
+        }
+        activity.keyboardMode(1);
+        require((Boolean) canShow.invoke(input, 1, 0L), "native terminal mode may show system IME");
+        activity.keyboardMode(0);
+    }
+
+    /** Real Java/IME/JNI path; sequence counts detect duplicate or missing emissions. */
+    private static void orderedPlainKeys(FestermActivity activity, View input) throws Exception {
+        Field sequence = input.getClass().getDeclaredField("sequence");
+        sequence.setAccessible(true);
+        Method route = input.getClass().getDeclaredMethod("dispatchPlainKey", KeyEvent.class);
+        route.setAccessible(true);
+        activity.fieldDocument(1233, "", 0, 0, false, false);
+        activity.keyboardMode(3);
+        InputConnection connection = input.onCreateInputConnection(new EditorInfo());
+        require(input.hasFocus() && input.hasWindowFocus(), "owned native input focus");
+        long before = sequence.getLong(input);
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C)),
+            "hardware c uses native input queue");
+        require(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_L)),
+            "IME key l shares native input queue");
+        require(connection.commitText("e", 1), "IME commit e shares native input queue");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)),
+            "hardware a uses native input queue");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_R)),
+            "hardware r uses native input queue");
+        require(sequence.getLong(input) == before + 5, "five ordered edits, exactly once each");
+        require("clear".contentEquals(connection.getTextBeforeCursor(20, 0)), "mixed ingress retains clear order");
+        for (int code : new int[]{KeyEvent.KEYCODE_C, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_R}) {
+            require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code)), "consumed hardware key up");
+        }
+        require(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_L)), "consumed IME key up");
+        require(sequence.getLong(input) == before + 5, "key releases never emit duplicate text");
+        require(!((Boolean) route.invoke(input, new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_C))),
+            "unowned release is delegated");
+        for (int meta : new int[]{KeyEvent.META_CTRL_ON, KeyEvent.META_ALT_ON, KeyEvent.META_SHIFT_ON}) {
+            KeyEvent chord = new KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0, meta);
+            require(!((Boolean) route.invoke(input, chord)), "modified chord retains NativeActivity path");
+        }
+        for (int code : new int[]{KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_POWER}) {
+            require(!((Boolean) route.invoke(input, new KeyEvent(KeyEvent.ACTION_DOWN, code))),
+                "system key retains NativeActivity path");
+        }
+        KeyEvent dead = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_APOSTROPHE) {
+            @Override public int getUnicodeChar() { return KeyCharacterMap.COMBINING_ACCENT | 0x301; }
+        };
+        require(!((Boolean) route.invoke(input, dead)), "dead accent retains NativeActivity composition path");
+        require(!((Boolean) route.invoke(input, new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_E))),
+            "accent following character stays on same native composition path");
+        require(sequence.getLong(input) == before + 5, "delegation emits no unmodified text");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)), "hardware delete");
+        require("clea".contentEquals(connection.getTextBeforeCursor(20, 0)), "hardware delete updates field context");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL)), "delete key up");
+        activity.fieldDocument(1236, "••", 2, 2, true, false);
+        InputConnection secure = input.onCreateInputConnection(new EditorInfo());
+        long secureBefore = sequence.getLong(input);
+        require(!connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X)), "retired field key refused");
+        require(sequence.getLong(input) == secureBefore, "retired connection emits nothing");
+        require(!((Boolean) route.invoke(input, new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_R))),
+            "field transition clears consumed releases");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X)), "secure hardware text");
+        require("•••".contentEquals(secure.getTextBeforeCursor(20, 0)), "secure hardware context stays masked");
+        require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_X)), "secure release");
+        activity.keyboardMode(2);
+        InputConnection terminal = input.onCreateInputConnection(new EditorInfo());
+        long terminalBefore = sequence.getLong(input);
+        for (int code : new int[]{KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_ENTER}) {
+            require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code)), "terminal edit/navigation key");
+            require(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code)), "terminal release");
+        }
+        require(sequence.getLong(input) == terminalBefore + 2, "terminal keys emit once");
+        activity.privacy(true, true, false);
+        long coveredBefore = sequence.getLong(input);
+        require(!terminal.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X)),
+            "covered input connection refuses key instead of delegating");
+        require(sequence.getLong(input) == coveredBefore, "covered input emits nothing");
+        activity.privacy(false, false, false);
+        activity.keyboardMode(0);
+        require(!terminal.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X)), "hidden connection refuses key");
+        require(!((Boolean) route.invoke(input, new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_X))),
+            "hidden mode clears consumed releases");
+        activity.keyboardMode(2);
+        require(!terminal.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X)),
+            "mode roundtrip cannot reactivate retired connection");
+        activity.keyboardMode(0);
+    }
+
+    /** Synthetic Java/JNI ownership transition, not uninterrupted Rust form ownership. */
+    private void postedAccentOwnershipTransition(FestermActivity activity, View input) throws Exception {
+        Field sequence = input.getClass().getDeclaredField("sequence");
+        Field ingress = input.getClass().getDeclaredField("connectionComposition");
+        Field nativeState = input.getClass().getDeclaredField("nativeComposition");
+        sequence.setAccessible(true); ingress.setAccessible(true); nativeState.setAccessible(true);
+        AtomicReference<InputConnection> original = new AtomicReference<>();
+        onMain(() -> {
+            try {
+                activity.keyboardMode(0);
+                activity.fieldDocument(1237, "", 0, 0, false, false);
+                activity.keyboardMode(3);
+                InputConnection connection = input.onCreateInputConnection(new EditorInfo());
+                original.set(connection);
+                long before = sequence.getLong(input);
+                KeyEvent dead = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_APOSTROPHE) {
+                    @Override public int getUnicodeChar() { return KeyCharacterMap.COMBINING_ACCENT | 0x301; }
+                };
+                // BaseInputConnection posts these events but returns false.
+                connection.sendKeyEvent(dead);
+                connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_E));
+                require(sequence.getLong(input) == before,
+                    "same connection emits no JNI plain text before posted work runs");
+                require(ingress.getBoolean(input), "ingress fence survives same UI turn");
+            } catch (Exception error) { throw new AssertionError(error); }
+        });
+        // Drain real posted Activity work. Rust/IMM may legitimately retire this
+        // synthetic owner; no claim that field1237 remains a current GUI form.
+        waitForIdleSync();
+        onMain(() -> {
+            try {
+                activity.keyboardMode(0);
+                activity.fieldDocument(1238, "", 0, 0, false, false);
+                activity.keyboardMode(3);
+                InputConnection fresh = input.onCreateInputConnection(new EditorInfo());
+                require(fresh != null && fresh != original.get(), "deliberately fresh fixture owner");
+                require(!ingress.getBoolean(input) && !nativeState.getBoolean(input),
+                    "ownership transition clears both finite composition fences");
+                long before = sequence.getLong(input);
+                require(!original.get().sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_G)),
+                    "original synthetic owner cannot reactivate after ownership transition");
+                require(sequence.getLong(input) == before, "retired synthetic owner emits no JNI input");
+                require(fresh.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_G)),
+                    "fresh fixture owner accepts plain key");
+                require(sequence.getLong(input) == before + 1, "fresh plain key emits exactly once");
+                require(fresh.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_G)),
+                    "fresh plain key release consumed");
+                require(sequence.getLong(input) == before + 1, "fresh release emits nothing");
+                activity.keyboardMode(0);
+            } catch (Exception error) { throw new AssertionError(error); }
+        });
+    }
+
     private static void requireColor(Bitmap frame, int x, int y, int red, int green, int blue, String label) {
         int color = frame.getPixel(x, y);
         require(Math.abs(Color.red(color) - red) < 70
@@ -540,7 +737,15 @@ public final class PlatformSmoke extends Instrumentation {
             Field inputField = FestermActivity.class.getDeclaredField("input");
             inputField.setAccessible(true);
             View input = (View) inputField.get(activity);
+            onMain(() -> keyboardImeOwnership(activity));
             onMain(() -> {
+                try { systemImeShowGuard(activity, input); }
+                catch (Exception error) { throw new AssertionError(error); }
+            });
+            postedAccentOwnershipTransition(activity, input);
+            onMain(() -> {
+                try { orderedPlainKeys(activity, input); }
+                catch (Exception error) { throw new AssertionError(error); }
                 activity.fieldDocument(1234, "a😀b", 2, 2, false, false);
                 activity.keyboardMode(3);
                 InputConnection connection = input.onCreateInputConnection(new EditorInfo());

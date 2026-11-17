@@ -39,11 +39,12 @@ def run(*args: str, **kwargs):
 
 
 def check_dependencies(
-    target: str, package: str = "festerm-mobile", live_ssh: bool = False, client_only: bool = False
+    target: str, package: str = "festerm-mobile", live_ssh: bool = False, client_only: bool = False,
+    host_clients: bool = False,
 ) -> None:
     result = run(
         "cargo", "tree", "--locked", "-p", package, "--target", target,
-        *(["--features", "live-ssh"] if live_ssh else []),
+        *(["--features", "host-clients"] if host_clients else ["--features", "live-ssh"] if live_ssh else []),
         # The bridge's default `relay` feature is the desktop host; mobile uses only `client`.
         *(["--no-default-features", "--features", "client"] if client_only else []),
         "--edges", "normal,build", "--prefix", "none", "--format", "{p} {f}",
@@ -119,7 +120,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="install and launch on a booted Simulator")
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
-    parser.add_argument("--live-ssh", action="store_true", help="include the opt-in live SSH connection UI")
+    parser.add_argument("--live-ssh", action="store_true", help="include the legacy live SSH/tunnel connection UI")
+    parser.add_argument("--host-clients", action="store_true", help="include host-oriented Dev Tunnels and live SSH client workflows")
     parser.add_argument("--native-document-smoke", action="store_true",
                         help="run document I/O qualification against a fresh app-owned Simulator fixture")
     parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH/Dev Tunnels graphs for both iOS targets only; works on Linux")
@@ -136,7 +138,9 @@ def main() -> int:
             check_dependencies(target, "festerm-tunnel-client")
             check_dependencies(target, "festerm-tunnel-bridge", False, True)
             check_dependencies(target, "festerm-mobile-tunnels")
-            if args.live_ssh:
+            if args.host_clients:
+                check_dependencies(target, host_clients=True)
+            elif args.live_ssh:
                 check_dependencies(target, "festerm-mobile", True)
         print("iOS mobile/SSH/SFTP normal/build dependency boundaries passed")
         return 0
@@ -145,7 +149,7 @@ def main() -> int:
     target = "aarch64-apple-ios-sim" if platform.machine() == "arm64" else "x86_64-apple-ios"
     sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
     run("rustup", "target", "add", target)
-    check_dependencies(target, live_ssh=args.live_ssh)
+    check_dependencies(target, live_ssh=args.live_ssh, host_clients=args.host_clients)
     # The Simulator reads Keychain access groups from an entitlements section
     # linked into the executable (an entitlement in an ad-hoc signature stops the
     # app launching); without it every Keychain call fails with -34018.
@@ -158,21 +162,29 @@ def main() -> int:
     env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=MINIMUM_IOS,
                CARGO_ENCODED_RUSTFLAGS="\x1f".join(rustflags))
     features = []
-    if args.live_ssh:
+    if args.host_clients:
+        features.append("host-clients")
+    elif args.live_ssh:
         features.append("live-ssh")
     if args.native_document_smoke:
         features.append("native-document-smoke")
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", target,
         *(["--features", ",".join(features)] if features else []),
         "--target-dir", str(ROOT / "target"), env=env)
-    output = "ios-spike-live" if args.live_ssh else "ios-spike"
+    output = "ios-spike-hosts" if args.host_clients else "ios-spike-live" if args.live_ssh else "ios-spike"
     bundle = ROOT / "target" / output / "fesTermSpike.app"
     bundle.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "target" / target / "debug" / "festerm-mobile", bundle / "festerm-mobile")
     with (bundle / "Info.plist").open("wb") as stream:
-        plistlib.dump(bundle_info(args.live_ssh), stream)
+        plistlib.dump(bundle_info(args.live_ssh or args.host_clients), stream)
     run("codesign", "--force", "--sign", "-", str(bundle))
     run("codesign", "--verify", "--strict", str(bundle))
+    (bundle.parent / "build-receipt.json").write_text(json.dumps({
+        "prototype_mode": "host-clients" if args.host_clients else "live-ssh" if args.live_ssh else "offline-fixture",
+        "cargo_features": features,
+        "target": target,
+        "native_validation": "not-run",
+    }, indent=2) + "\n")
     # Preserve executable permissions when downloaded from Actions artifacts.
     shutil.make_archive(str(bundle.parent / "fesTermSpike-simulator"), "gztar",
                         root_dir=bundle.parent, base_dir=bundle.name)

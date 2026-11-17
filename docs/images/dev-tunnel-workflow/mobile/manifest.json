@@ -1,0 +1,217 @@
+{
+  "capture_method": "egui_kittest headless wgpu; actual MobileApp widgets",
+  "fixture": "repository-owned offline shell screens, terminal chrome, editors, synthetic hold/drag, retired-session and trust/auth prompts; no SSH worker",
+  "host_os": "macos",
+  "images": [
+    {
+      "image": "phone-hosts-before-discovery.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "a1abc8f21338c81c2a9eb4904176744a6771f1734e7c7c52ac4781695064ec63",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-before-discovery",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-found.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "a4c7e48c779537089136fc69045bdcbab9c8dc4915a40734fb8f230219c8fbf0",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-found",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-sessions.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "1fb6b9e8b7925a45ca1c968445b734d741bba1a8f8cf76be71d7c929ffe4aad4",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-sessions",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-unavailable.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "ab35ae34735670c6b92c4636f3a68dd4d3ba231ddc3d98225bdc4fe37e7aefbd",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-unavailable",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-new.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "31bd76e9e457d6081c307543184f51e845e529c7c9ae2ddce6ef87d87305aa44",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-new",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "phone-hosts-profile.png",
+      "logical_size": [
+        390.0,
+        844.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        390,
+        844
+      ],
+      "sha256": "2261451a502cf6e2f2ee01bb3384a2d517c85f340df761c33ad1cd64f87588b9",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-profile",
+      "viewport_class": "phone"
+    },
+    {
+      "image": "tablet-hosts-before-discovery.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "ba6a0506cdbc57f2cbaf1c6e198dbbdc9fccf399008ae777605e4767a4f1126e",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-before-discovery",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-found.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "153277b05bddacb18f1d3fc37d15fed414950d558028e367ad76e1ef657b2e6b",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-found",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-sessions.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "6df4480983c7b18b804abd080ff41871b5f84c8727df845bb319cf80c0af27c3",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-sessions",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-unavailable.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "01301e7072aace0dadbed827edc54d69e10c3b5fdf33b3ee6d4a4faad35f70dd",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-unavailable",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-new.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "8b82f158ab058ba1bc36ea75cfe04f74ae303b9444344e8df4c96710f5664e0a",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-new",
+      "viewport_class": "tablet"
+    },
+    {
+      "image": "tablet-hosts-profile.png",
+      "logical_size": [
+        834.0,
+        1194.0
+      ],
+      "native_keyboard_rendered": false,
+      "pixel_size": [
+        834,
+        1194
+      ],
+      "sha256": "fbca024a07c2260530c919005976db2043e24e5a1e88f3014f425e6eb94c6f06",
+      "simulated_keyboard_occlusion_fraction": 0.0,
+      "state": "hosts-profile",
+      "viewport_class": "tablet"
+    }
+  ],
+  "native_ios": false,
+  "native_validation": "not-run",
+  "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
+  "schema_version": 1,
+  "source_commit": "a2f6a19faca75a9fe3d9788080f8a5a4ee4bcd66",
+  "source_dirty": true,
+  "capture": {
+    "started_utc": "2026-11-14T17:05:34.315523+00:00",
+    "source_revision": "a2f6a19faca75a9fe3d9788080f8a5a4ee4bcd66",
+    "source_dirty": true,
+    "source_tree_sha256": "0c7a525b830949348889cd22c2655384226c9ca0718330af4dd5c21f835887ad",
+    "system": "Darwin",
+    "release": "27.2.0",
+    "machine": "arm64",
+    "scope": "Production egui widgets, headless wgpu; not native compositor or usability acceptance",
+    "isolation": "Repository-owned mobile fixtures and memory vaults in a private working directory; no native app, real account, provider or clipboard. No HOME override.",
+    "completed_utc": "2026-11-14T17:05:38.627223+00:00"
+  }
+}

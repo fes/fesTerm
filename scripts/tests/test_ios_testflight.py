@@ -16,6 +16,9 @@ ISSUER = "12345678-1234-1234-1234-123456789abc"
 
 
 class TestFlightTests(unittest.TestCase):
+    def test_distribution_build_includes_host_oriented_clients(self):
+        self.assertEqual(tf.FEATURES, "host-clients")
+
     def test_workspace_version_is_semver(self):
         self.assertRegex(tf.workspace_version(), r"^\d+\.\d+\.\d+$")
 

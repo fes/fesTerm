@@ -133,6 +133,7 @@ fn selected_host_worker_account_request_generation_and_lock_fence_late_results()
         let worker = Worker {
             scope: scope.clone(),
             cancel: CancellationToken::new(),
+            ordinary_guard: None,
             events,
         };
         sender
@@ -457,6 +458,12 @@ async fn selected_host_snapshot_adoption_fences_request_account_generation_and_c
             scope: original,
             terminal: recovered,
             acknowledge,
+            _snapshot_permit: Arc::new(
+                ConnectionPermit::reserve(&Budgets::default())
+                    .unwrap()
+                    .reserve_snapshot()
+                    .unwrap(),
+            ),
         };
         if change == 3 {
             drop(adopted);
@@ -478,6 +485,12 @@ async fn selected_host_snapshot_adoption_fences_request_account_generation_and_c
         scope: current.clone(),
         terminal: recovered,
         acknowledge,
+        _snapshot_permit: Arc::new(
+            ConnectionPermit::reserve(&Budgets::default())
+                .unwrap()
+                .reserve_snapshot()
+                .unwrap(),
+        ),
     };
     let mut presented = terminal();
     adoption.adopt_into(&current, &mut presented).unwrap();
@@ -486,4 +499,90 @@ async fn selected_host_snapshot_adoption_fences_request_account_generation_and_c
         .text()
         .contains("actually adopted"));
     adopted.await.unwrap();
+}
+
+#[tokio::test]
+async fn native_owner_key_prompt_budget_and_cancellation_keep_real_worker_charged() {
+    for outcome in ["success", "deadline", "cancel"] {
+        let budgets = Budgets::default();
+        let permit = ConnectionPermit::reserve(&budgets).unwrap();
+        let occupied: Vec<_> = (0..3)
+            .map(|_| ConnectionPermit::reserve(&budgets).unwrap())
+            .collect();
+        let cancel = CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let task = tokio::spawn(async move {
+            open_native_owner_key(permit, &worker_cancel, move || {
+                ready.send(()).unwrap();
+                blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok("native key")
+            })
+            .await
+        });
+        tokio::task::yield_now().await;
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(16)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            !task.is_finished(),
+            "normal vault interaction exceeds old 15s"
+        );
+        assert!(ConnectionPermit::reserve(&budgets).is_err());
+        if outcome == "deadline" {
+            tokio::time::advance(NATIVE_OWNER_KEY_BUDGET).await;
+        } else if outcome == "cancel" {
+            cancel.cancel();
+        }
+        tokio::time::resume();
+        if outcome == "success" {
+            release.send(()).unwrap();
+            let (key, permit) = task.await.unwrap().unwrap();
+            assert_eq!(key, "native key");
+            drop(permit);
+        } else {
+            let failure = task.await.unwrap().err().expect("no late native key grant");
+            assert!(
+                matches!(failure, Failure::Control(Error::Deadline)) && outcome == "deadline"
+                    || matches!(failure, Failure::Control(Error::Cancelled)) && outcome == "cancel"
+            );
+            // Dropping the awaiter cannot interrupt the native call or free its permit.
+            assert!(ConnectionPermit::reserve(&budgets).is_err());
+            release.send(()).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(permit) = ConnectionPermit::reserve(&budgets) {
+                    drop(permit);
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(occupied);
+    }
+}
+
+#[tokio::test]
+async fn cancelled_frontend_adoption_retains_snapshot_slot_until_queued_model_drops() {
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let (acknowledge, receiver) = tokio::sync::oneshot::channel();
+    let adoption = Adoption {
+        scope: scope(),
+        terminal: terminal(),
+        acknowledge,
+        _snapshot_permit: Arc::new(permit.reserve_snapshot().unwrap()),
+    };
+    drop(receiver); // worker timed out/cancelled; UI still owns its queued model.
+    assert!(matches!(
+        permit.reserve_snapshot(),
+        Err(ContractError::Busy)
+    ));
+    drop(adoption);
+    assert!(permit.reserve_snapshot().is_ok());
 }

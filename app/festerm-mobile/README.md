@@ -35,8 +35,30 @@ checkpoint or native-vault grant and cannot dispatch HOST work.
 
 ## Opt-in ADR 0084 HOST client
 
-`host-clients` adds **Profiles → Dev Tunnel hosts…**; it is not enabled by
-the default offline fixture or by `live-ssh`. Android forwards this same feature.
+`host-clients` adds **Profiles → Dev Tunnel hosts…**, shared-profile start/attach,
+and the host/session profile editor. TestFlight builds include this client workflow.
+Development Simulator and device builders select it explicitly with `--host-clients`;
+the default remains an offline fixture, while `--live-ssh` retains the legacy-only
+client build. Android forwards the same Cargo feature.
+
+```sh
+python3 scripts/build-ios-spike.py --host-clients --check-dependencies
+python3 scripts/build-ios-spike.py --host-clients --run
+```
+
+For an existing development provisioning profile, add `--host-clients` to both
+`build-ios-device.py --preflight-only` and the corresponding build invocation.
+The builders check the selected feature graph, retain network purpose strings,
+and record `host-clients` in the local build receipt. Signing and packaging do not
+establish native/runtime acceptance.
+
+Clients list authorized shared profiles and can connect/start them independently
+of permission for arbitrary new shells. Host selection, inventory refresh and
+creation require explicit user actions. Profile opening and Save remain local;
+choosing another saved host discards the previous host approval while retaining
+the unsaved name/session fields. New hosts use the protected host details from
+Desktop **Settings → Dev Tunnels → Remote access → Connect another device** and
+separate **Approve a client** consent on that host.
 The foreground application owns explicit account-scoped Find/refresh, selected
 HOST resolution, protected owner preparation/reopening, authorized inventory,
 exact-generation attachment and explicitly confirmed Create/Ensure. It uses
@@ -49,6 +71,13 @@ installation/account/principal prerequisite. Native owner-key preparation
 displays its public key for **separate host-local approval**; it does not enroll
 or trust service/imported metadata. A missing, locked or unsupported vault fails
 closed. No background sign-in/refresh is added.
+
+HOST fingerprint, connection details and profile/session editors use the shared
+mobile field document and native edit bridge, including multiline paste. The CPU
+regression checks focused field identity and targeted edits; native keyboard,
+clipboard and first-connect approval still require Simulator/device validation.
+Host rows and saved display hints prefer a bounded public description, then name,
+then locator; these labels do not establish host identity or approval.
 
 The actual installed mobile terminal adopts recovery before input/Running.
 Native lock/suspension cancels HOST work and transports directly, without

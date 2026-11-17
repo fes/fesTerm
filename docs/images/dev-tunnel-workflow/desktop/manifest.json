@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "dev-tunnel-host-settings-off",
+      "section": "dev-tunnels",
+      "title": "Host access off",
+      "caption": "Production hosting controls with an absent synthetic host. Identity and creation controls remain hidden.",
+      "image": "dev-tunnel-host-settings-off.png",
+      "width": 752,
+      "height": 516,
+      "tier": "headless",
+      "sha256": "96ff41d1fcd7d15d3fd3810e96f275af7840d07cd71f70ffd705b2841c0cad50"
+    },
+    {
+      "id": "dev-tunnel-host-settings-requested",
+      "section": "dev-tunnels",
+      "title": "Host access requested",
+      "caption": "Requested intent is not readiness. Synthetic account selection grants no host credentials or authority.",
+      "image": "dev-tunnel-host-settings-requested.png",
+      "width": 752,
+      "height": 516,
+      "tier": "headless",
+      "sha256": "bad1aeee08056f492b73009a12fa32856ee2ba6a6d34bbaf88eb84a8b668543c"
+    },
+    {
+      "id": "host-profile-picker-open",
+      "section": "experimental-surfaces",
+      "title": "New Dev Tunnel profile \u00b7 hosts grouped by account",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-profile-picker-open.png",
+      "width": 416,
+      "height": 387,
+      "tier": "headless",
+      "sha256": "bb338ff90c3422dcbd4a631758cdedbd0b653966f421da9537c33145eef430bb"
+    },
+    {
+      "id": "host-profile-session-existing",
+      "section": "experimental-surfaces",
+      "title": "New Dev Tunnel profile \u00b7 existing session selected",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-profile-session-existing.png",
+      "width": 416,
+      "height": 414,
+      "tier": "headless",
+      "sha256": "c5d94aa526155a31e2c139ade4e86cb5a86f08a7013f25b2e8eb1793d73a6899"
+    },
+    {
+      "id": "host-profile-session-locked",
+      "section": "experimental-surfaces",
+      "title": "Edit Dev Tunnel profile \u00b7 saved session kept",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-profile-session-locked.png",
+      "width": 416,
+      "height": 382,
+      "tier": "headless",
+      "sha256": "bd3c683dd71889f576da5f9981d8237dc95e41346af44efc0683b1106b126c02"
+    },
+    {
+      "id": "host-profile-session-new",
+      "section": "experimental-surfaces",
+      "title": "New Dev Tunnel profile \u00b7 new session named",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "host-profile-session-new.png",
+      "width": 416,
+      "height": 409,
+      "tier": "headless",
+      "sha256": "6606f035ae23dc7fdb95b8b5f177b6764ded83e851291b73797e049ef0091f9f"
+    },
+    {
+      "id": "remote-provisioned",
+      "section": "experimental-surfaces",
+      "title": "Remote access \u00b7 provisioned is not ready",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "remote-provisioned.png",
+      "width": 1100,
+      "height": 251,
+      "tier": "headless",
+      "sha256": "757d694a697f9070fa668a2a66ce588ffdef2a584c1ff51fb2df2988f08ff56b"
+    },
+    {
+      "id": "remote-review-owner",
+      "section": "experimental-surfaces",
+      "title": "Remote access \u00b7 exact owner-key approval",
+      "caption": "Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.",
+      "image": "remote-review-owner.png",
+      "width": 1100,
+      "height": 595,
+      "tier": "headless",
+      "sha256": "6a0e2b17df219d1246de8c29a4657b907759b518726c09af697921bca82335d5"
+    }
+  ],
+  "capture": {
+    "started_utc": "2026-11-14T17:05:33.413694+00:00",
+    "source_revision": "a2f6a19faca75a9fe3d9788080f8a5a4ee4bcd66",
+    "source_dirty": true,
+    "source_tree_sha256": "0c7a525b830949348889cd22c2655384226c9ca0718330af4dd5c21f835887ad",
+    "system": "Darwin",
+    "release": "27.2.0",
+    "machine": "arm64",
+    "scope": "Production egui widgets, headless wgpu; not native compositor or usability acceptance",
+    "isolation": "Fresh repository-owned HOME/XDG directories; synthetic fixtures, no personal profile/credentials/clipboard",
+    "completed_utc": "2026-11-14T17:05:36.699259+00:00"
+  }
+}

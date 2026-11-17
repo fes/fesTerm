@@ -100,3 +100,53 @@ Validation impact: `TUNNEL-11`, `MOB-06`; deterministic regressions
 `the_editor_lists_every_stored_account_and_shows_the_bound_login` and
 `signing_out_the_selected_account_clears_its_draft_and_it_cannot_be_saved`. Native GitHub approval
 with two accounts and Keychain persistence across relaunch remain manual.
+
+## Amendment: foreground admission for mobile device polling
+
+The mobile suspension owner also owns a UI-independent `SignInActivity`.
+Native suspension pauses admission of device-token polls immediately, without
+waiting for another UI frame; native resume releases the same pending flow.
+The code, worker, numeric-account binding and provider expiry remain unchanged.
+The existing identity expiry/cancellation selects bound a paused poll, so
+background time never extends the challenge. Repeated resume does not duplicate
+requests. Initial grants and requests already issued are not replayed; a request
+racing background may still fail and requires explicit recovery.
+
+App lock, matching-account sign-out, explicit Cancel and replacement sign-in
+invalidate the captured cancellation generation instead of merely pausing it.
+Capture occurs before worker creation. Cancellation is checked again after
+profile-store mutex admission immediately before the native secret write, and
+after persistence returns before publishing a successful flow result. `SignIn`
+retains that exact captured cancellation token: its state getter rejects a
+completed but unconsumed result after cancellation, and ready-result adoption
+checks it before clipboard/browser effects or a resumed connection. These are
+consumption checks, not an atomic native-UI transaction. The short generation lock never covers native
+credential IO, so privacy/HOST cancellation remains responsive if the vault stalls.
+An already-started native store call cannot be retracted by cancellation; this
+preserves the existing persistence boundary instead of promising a vault transaction. This gate confers no protected HOST authority and does not change
+attachment, privacy, HTTP retry or operating-system network policy.
+
+Validation impact: `TUNNEL-07`, `TUNNEL-11`, `MOB-03`, `MOB-06`; paused-clock
+admission, expiry, cancellation, stale-generation commit and in-flight no-replay
+regressions, plus the native-lifecycle handle regression without a UI frame.
+Android background-network policy reproduction motivates this change; source
+checks do not establish new APK/iOS native sign-in acceptance.
+
+### Native AppLock notification distinction
+
+The existing AppLock privacy callback runs on ordinary resign-active/background
+notifications even when App lock is disabled. Mobile sign-in therefore uses its
+additive reason-aware constructor: `Inactive` pauses token-poll admission;
+`Locked` cancels the captured flow. Physical `DeviceLocked` always reports
+`Locked`, including when app protection is disabled; unavailable policy content
+(including grace expiry) and Lock now also report `Locked`. The legacy zero-arg
+constructor keeps the same synchronous callback points and privacy generations.
+HOST approvals, recording and export still invalidate on every callback, for
+both reasons. Native resume restores sign-in foreground state even when a
+permission alert deferred renderer suspension. Actual AppLock-monitor fixtures
+cover this path; NativeLifecycle-only fixtures are insufficient.
+
+This is an additive distinction within the existing privacy owner, not a new
+lifecycle framework or a change to OS network policy. The Android c933 native
+retest exposed the disabled-AppLock callback cancellation; the corrected source
+still requires fresh mobile artifacts and native browser-return qualification.

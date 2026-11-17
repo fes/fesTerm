@@ -9,7 +9,7 @@ description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
 default = ["experimental-dev-tunnels", "local-host-settings"]
-experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser", "dep:gethostname"]
 # Local Settings alone composes host authority; portable recipes/fingerprints do not.
 local-host-settings = ["experimental-dev-tunnels", "festerm-host-setup/acquisition", "festerm-host-setup/cloud", "festerm-host-setup/native-services", "festerm-host-setup/host-runtime"]
 
@@ -20,6 +20,7 @@ cap-std = "4.0.3"
 directories = "6"
 fs2 = "0.4"
 getrandom = "0.3"
+gethostname = { version = "1.1.0", optional = true }
 eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }
@@ -92,6 +93,7 @@ festerm-windows-direct2d = { path = "../../crates/festerm-windows-direct2d" }
 winresource = "0.1"
 
 [dev-dependencies]
+festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", features = ["testing"] }
 festerm-ssh = { path = "../../crates/festerm-ssh", features = ["test-support"] }
 festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }
 festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }

@@ -130,6 +130,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> LiveTerminal<S> {
 }
 
 impl TerminalHandle {
+    // Diagnostic only: a rejected initial resize may observe Closed after the
+    // actor has already retained its finite transport cause. Queue semantics
+    // and the original send result remain unchanged.
+    pub(crate) fn failure_cause(&self, fallback: Error) -> Error {
+        if fallback != Error::Closed {
+            return fallback;
+        }
+        self.state
+            .failure
+            .lock()
+            .ok()
+            .and_then(|cause| *cause)
+            .unwrap_or(fallback)
+    }
+
     pub fn set_event_notifier(&self, notifier: Arc<dyn festerm_session::SessionEventNotifier>) {
         if let Ok(mut slot) = self.state.notifier.lock() {
             *slot = Some(notifier);

@@ -33,6 +33,8 @@ pub use headless_store::ExplicitHeadlessFileStore;
 mod channel;
 #[cfg(all(test, feature = "relay"))]
 pub(crate) use channel::fixture_key;
+#[cfg(feature = "host-routing")]
+pub(crate) use channel::NativeOwnerAttempt;
 #[cfg(feature = "client")]
 pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof};
 #[cfg(feature = "relay")]
@@ -88,7 +90,7 @@ impl Validate for PinnedHost {
 /// The selected GitHub account is provisioning metadata, not this proof's
 /// authority. Local enrollment explicitly maps approved keys to this owner.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OwnerPolicy {
+pub struct SessionPolicy {
     pub host: PinnedHost,
     pub principal: PrincipalId,
     pub host_epoch: Epoch,
@@ -96,6 +98,9 @@ pub struct OwnerPolicy {
     pub remote_access: bool,
     pub capabilities: Capabilities,
 }
+
+/// Legacy owner-policy name; policy facts themselves are not authentication.
+pub type OwnerPolicy = SessionPolicy;
 
 impl Validate for OwnerPolicy {
     fn validate(&self) -> Result<(), ContractError> {
@@ -435,9 +440,11 @@ pub struct VerifiedOwner {
 /// Retain on the exact authenticated stream, never in an operation task.
 /// Dropping it fences further admission even if pending work retains the
 /// verified owner. Serialize retirement with the manager's admission boundary.
-pub struct OwnerConnectionGuard {
+pub struct ConnectionGuard {
     active: Arc<AtomicBool>,
 }
+
+pub type OwnerConnectionGuard = ConnectionGuard;
 
 impl Drop for OwnerConnectionGuard {
     fn drop(&mut self) {
@@ -460,18 +467,86 @@ impl VerifiedOwner {
         operation_epoch: Epoch,
         session_grant: Option<&SessionGrant>,
     ) -> Result<AdmissionFence, ContractError> {
+        self.authorize_policy(&current.policy, request, operation_epoch, session_grant)
+    }
+
+    pub(crate) fn authorize_policy(
+        &self,
+        current: &SessionPolicy,
+        request: &Envelope<Request>,
+        operation_epoch: Epoch,
+        session_grant: Option<&SessionGrant>,
+    ) -> Result<AdmissionFence, ContractError> {
+        SessionScope {
+            host: self.challenge.host.clone(),
+            principal: self.challenge.principal.clone(),
+            connection: self.challenge.connection.clone(),
+            connection_epoch: self.challenge.connection_epoch,
+            host_epoch: self.challenge.host_epoch,
+            grant_epoch: self.challenge.grant_epoch,
+            active: self.active.clone(),
+        }
+        .authorize(current, request, operation_epoch, session_grant)
+    }
+}
+
+/// Immutable connection scope shared by independently authenticated authority kinds.
+pub(crate) struct SessionScope {
+    host: PinnedHost,
+    principal: PrincipalId,
+    connection: ConnectionId,
+    connection_epoch: Epoch,
+    host_epoch: Epoch,
+    grant_epoch: Epoch,
+    active: Arc<AtomicBool>,
+}
+impl SessionScope {
+    #[cfg(all(feature = "host-routing", feature = "relay"))]
+    pub(crate) fn ordinary(
+        policy: &SessionPolicy,
+    ) -> Result<(Self, ConnectionGuard), ContractError> {
+        // This is protected permission shape. The native backend supplies its
+        // actual issuance epoch under each operation reservation, before any
+        // Ensure/Create capability is advertised or admitted.
+        policy.host.validate()?;
+        policy.capabilities.validate_permissions()?;
+        let active = Arc::new(AtomicBool::new(true));
+        Ok((
+            Self {
+                host: policy.host.clone(),
+                principal: policy.principal.clone(),
+                connection: ConnectionId::new(),
+                connection_epoch: Epoch::new(1)?,
+                host_epoch: policy.host_epoch,
+                grant_epoch: policy.grant_epoch,
+                active: active.clone(),
+            },
+            ConnectionGuard { active },
+        ))
+    }
+    #[cfg(feature = "host-routing")]
+    pub(crate) fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+    pub(crate) fn authorize(
+        &self,
+        current: &SessionPolicy,
+        request: &Envelope<Request>,
+        operation_epoch: Epoch,
+        session_grant: Option<&SessionGrant>,
+    ) -> Result<AdmissionFence, ContractError> {
         request.validate()?;
         if !self.active.load(Ordering::Acquire)
-            || !current.policy.remote_access
-            || request.host != self.challenge.host.host
-            || self.challenge.host != current.policy.host
-            || self.challenge.principal != current.policy.principal
-            || self.challenge.host_epoch != current.policy.host_epoch
-            || self.challenge.grant_epoch != current.policy.grant_epoch
+            || !current.remote_access
+            || request.host != self.host.host
+            || self.host != current.host
+            || self.principal != current.principal
+            || self.host_epoch != current.host_epoch
+            || self.grant_epoch != current.grant_epoch
         {
             return Err(ContractError::Denied);
         }
-        let caps = current.policy.capabilities;
+        let caps = current.capabilities;
         let allowed = match &request.body {
             Request::Capabilities {} => true,
             Request::List { .. } | Request::Lookup { .. } => caps.inventory,
@@ -533,7 +608,7 @@ impl VerifiedOwner {
         }
         let (logical_state, logical_revision) = if let Some(logical) = &logical {
             let grant = session_grant.ok_or(ContractError::Denied)?;
-            if grant.owner != self.challenge.principal
+            if grant.owner != self.principal
                 || grant.logical != *logical
                 || !grant.remote_access
                 || matches!(grant.state, LogicalState::Revoked)
@@ -573,11 +648,11 @@ impl VerifiedOwner {
         };
         Ok(AdmissionFence {
             host: request.host.clone(),
-            principal: self.challenge.principal.clone(),
-            connection: self.challenge.connection.clone(),
-            connection_epoch: self.challenge.connection_epoch,
-            host_epoch: self.challenge.host_epoch,
-            grant_epoch: self.challenge.grant_epoch,
+            principal: self.principal.clone(),
+            connection: self.connection.clone(),
+            connection_epoch: self.connection_epoch,
+            host_epoch: self.host_epoch,
+            grant_epoch: self.grant_epoch,
             operation_epoch,
             operation: request.operation.clone(),
             intent: (&request.body).into(),
@@ -590,7 +665,7 @@ impl VerifiedOwner {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -600,7 +675,7 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
-fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
+pub(crate) fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
     if value.len() != N * 2
         || !value
             .bytes()

@@ -201,6 +201,7 @@ impl Lifecycle {
 #[cfg(feature = "live-ssh")]
 #[derive(Clone, Default)]
 pub struct SuspensionHandle {
+    sign_in: festerm_mobile_tunnels::SignInActivity,
     #[cfg(feature = "host-clients")]
     host: std::sync::Arc<host_clients::Privacy>,
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
@@ -298,12 +299,25 @@ impl SuspensionHandle {
         }
     }
 
+    #[cfg(test)]
     fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
+        let callback = self.content_lock_reason_callback();
+        move || callback(festerm_ios_lock::ContentLockReason::Locked)
+    }
+
+    fn content_lock_reason_callback(
+        &self,
+    ) -> impl Fn(festerm_ios_lock::ContentLockReason) + Send + Sync + 'static {
         let recording = self.recording.clone();
         let export = self.export.clone();
+        let sign_in = self.sign_in.clone();
         #[cfg(feature = "host-clients")]
         let host = self.host.clone();
-        move || {
+        move |reason| {
+            match reason {
+                festerm_ios_lock::ContentLockReason::Inactive => sign_in.set_foreground(false),
+                festerm_ios_lock::ContentLockReason::Locked => sign_in.cancel(),
+            }
             #[cfg(feature = "host-clients")]
             host.invalidate();
             Self::stop_shared_recording(&recording);
@@ -584,6 +598,7 @@ impl SuspensionHandle {
     }
 
     pub fn suspend(&self) {
+        self.sign_in.set_foreground(false);
         #[cfg(feature = "host-clients")]
         self.host.invalidate();
         self.stop_recording();
@@ -641,6 +656,8 @@ impl NativeLifecycle {
 
     /// Returns whether the renderer should also be resumed.
     pub fn resumed(&mut self) -> bool {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.sign_in.set_foreground(true);
         if std::mem::take(&mut self.deferred) {
             return false;
         }
@@ -1867,7 +1884,7 @@ impl MobileApp {
 
     fn diagnostics(&self) -> Vec<(String, String)> {
         let lifecycle = self.lifecycle.get();
-        vec![
+        let diagnostics = vec![
             ("Resumes".to_owned(), lifecycle.resumes.to_string()),
             ("Suspensions".to_owned(), lifecycle.suspensions.to_string()),
             (
@@ -1875,10 +1892,39 @@ impl MobileApp {
                 lifecycle.memory_warnings.to_string(),
             ),
             (
-                "Input bytes".to_owned(),
+                "Attempted input bytes".to_owned(),
                 self.sink.diagnostics.byte_count.to_string(),
             ),
-        ]
+        ];
+        #[cfg(all(feature = "live-ssh", feature = "host-clients"))]
+        let diagnostics = {
+            let mut diagnostics = diagnostics;
+            if let Some(detail) = self.host_connection_details() {
+                diagnostics.push(("HOST connection details".into(), detail));
+            }
+            diagnostics
+        };
+        diagnostics
+    }
+
+    #[cfg(all(feature = "live-ssh", feature = "host-clients"))]
+    fn host_connection_details(&self) -> Option<String> {
+        if !self.active_is_host() || self.live_view().is_some_and(|live| live.input_enabled) {
+            return None;
+        }
+        let failure = self
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .and_then(live_ssh::LiveSsh::host_error)
+            .map(str::to_owned);
+        let unknown = "Session state is unknown, not absent. Keep the original issued action.";
+        Some(failure.map_or_else(
+            || unknown.to_owned(),
+            |failure| format!("{failure}\n\n{unknown}"),
+        ))
     }
 
     /// Retains tunnel sessions for a foreground host check. Plain SSH still stops.
@@ -3542,12 +3588,12 @@ impl MobileApp {
         #[cfg(feature = "host-clients")]
         if self.active_is_host() {
             return model::ReconnectBanner {
-                detail: Some("Session state is unknown, not absent. Keep the original issued action.".into()),
-                status: status.into(),
+                detail: None,
+                status: "Input is paused.".into(),
                 reattach: None,
                 custom: Some(model::BannerText {
-                    title: "HOST connection closed".into(),
-                    body: "Review the original host and generation explicitly. No new shell, legacy fallback or input replay is automatic.".into(),
+                    title: "Connection closed".into(),
+                    body: "Review this host to reconnect to the same session.".into(),
                     action: "Review host",
                 }),
             };
@@ -3972,7 +4018,7 @@ mod tests {
             "Built-in keyboard",
             "Split",
             "Custom keyboard haptics",
-            "Set up a host",
+            "Legacy tunnel setup",
             "fesTerm",
             "Offline demo terminal",
         ];
@@ -3984,6 +4030,13 @@ mod tests {
             tops.windows(2).all(|pair| pair[0] < pair[1]),
             "{order:?} at {tops:?}"
         );
+        assert!(harness.query_by_label("Set up a host").is_none());
+        assert!(harness.query_by_label("Copy host installer…").is_none());
+        #[cfg(feature = "live-ssh")]
+        harness.get_by_label("Sign in with GitHub");
+        harness.get_by_label("Legacy tunnel setup").click();
+        harness.run();
+        harness.get_by_label("Copy host installer…");
     }
 
     #[test]

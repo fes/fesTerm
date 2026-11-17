@@ -135,6 +135,14 @@ impl SecretStore for ExplicitHeadlessFileStore {
             .map_err(map_error)?;
         Ok(SecretBytes::copy_from_slice(&bytes))
     }
+    fn get_noninteractive(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<SecretBytes, SecretStoreError> {
+        // This concrete, explicitly selected backend performs only protected
+        // file I/O. It is never chosen when a native backend refuses a read.
+        self.get(reference)
+    }
     fn update(
         &self,
         reference: &SecretReference,
