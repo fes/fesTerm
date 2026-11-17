@@ -346,6 +346,8 @@ fn verified_live(
     directory: &File,
     record: &SessionRecord,
 ) -> Result<bool, PersistentSessionError> {
+    #[cfg(not(unix))]
+    let _ = root;
     if record.pid == 0 || record.created_at_unix_ms == 0 {
         return Err(refused("invalid native generation"));
     }

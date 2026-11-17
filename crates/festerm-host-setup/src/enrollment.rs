@@ -29,6 +29,11 @@ const MAX_HISTORICAL_KEYS: usize = 64;
 enum AnchorRead {
     Foreground,
     CurrentNoninteractive,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
     LocalNoninteractive,
 }
 
@@ -407,6 +412,11 @@ impl OwnerEnrollment<'_> {
 
     /// OS-local use only: exact native anchor and identity, no UI or writes.
     /// Earlier lifecycle high-water cannot supply ordinary/owner authority.
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
     pub(crate) fn local_session_policy_noninteractive(
         &self,
         state: &Path,
@@ -717,8 +727,16 @@ impl OwnerEnrollment<'_> {
         if record.revision != anchor.revision {
             return Err(refused("owner.anchor_revision_mismatch"));
         }
-        if record.installation_epoch < installation.epoch && read != AnchorRead::LocalNoninteractive
-        {
+        let advances_high_water = match read {
+            AnchorRead::Foreground | AnchorRead::CurrentNoninteractive => true,
+            #[cfg(all(
+                feature = "cloud",
+                feature = "host-runtime",
+                feature = "native-services"
+            ))]
+            AnchorRead::LocalNoninteractive => false,
+        };
+        if record.installation_epoch < installation.epoch && advances_high_water {
             if read == AnchorRead::CurrentNoninteractive {
                 return Err(refused("owner.lifecycle_readiness_refresh_required"));
             }

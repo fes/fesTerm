@@ -4346,10 +4346,15 @@ fn session_socket_path(
     runtime_root: &Path,
     name: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(festerm_sessiond::unix_endpoint::generation_path(
-        runtime_root,
-        name,
-    )?)
+    festerm_sessiond::unix_endpoint::generation_path(runtime_root, name).map_err(|error| {
+        let original = runtime_root.join(format!("{name}.sock"));
+        format!(
+            "invalid Unix session socket {} ({} path bytes): {error}; use a shorter XDG_STATE_HOME",
+            original.display(),
+            original.as_os_str().as_encoded_bytes().len()
+        )
+        .into()
+    })
 }
 
 #[cfg(windows)]

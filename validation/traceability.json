@@ -6519,6 +6519,7 @@
         "headless_cleanup_status_is_read_only_unverified_receipt_context",
         "macos_long_generation_socket_computation_fits_without_creating_children",
         "macos_long_generation_main_lifecycle_binds_and_cleans_exact_socket",
+        "native_start_with_long_runtime_uses_cache_socket_and_cleans_generation",
         "empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement"
       ],
       "manual_scenarios": ["DT-05", "DT-08", "HOSTSETUP-01", "HOSTMIG-01"],
