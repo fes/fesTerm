@@ -76,6 +76,12 @@ fn storage_error(error: io::Error) -> ControlError {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy)]
 enum AttachFailureDiagnostic<'a> {
+    JournalAdmission(ControlError),
+    PolicyAdmission(ControlError),
+    DaemonLeaseAcquire(&'a io::Error),
+    DaemonLeaseRead(&'a io::Error),
+    TemporaryTransferRefusal,
+    PendingRefusal,
     ReservePublish(&'a io::Error),
     NativeConnect(&'a crate::PersistentSessionError),
     ConnectedPersistentRefusal,
@@ -90,9 +96,9 @@ enum AttachFailureDiagnostic<'a> {
 fn attach_failure_diagnostics_enabled(
     temporary: bool,
     takeover: bool,
-    previously_attached: bool,
+    _previously_attached: bool,
 ) -> bool {
-    temporary || (!takeover && previously_attached)
+    temporary || !takeover
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -112,6 +118,30 @@ impl AttachFailureDiagnostic<'_> {
         }
         let uncertain = ControlError::CommittedButNotPublished;
         let (step, error, control) = match self {
+            Self::JournalAdmission(control) => ("journal-admission", None, control),
+            Self::PolicyAdmission(control) => ("policy-admission", None, control),
+            Self::DaemonLeaseAcquire(error) => (
+                "daemon-lease-acquire",
+                Some(error),
+                if crate::lock_is_contended(error) {
+                    ControlError::Busy
+                } else {
+                    ControlError::Storage
+                },
+            ),
+            Self::DaemonLeaseRead(error) => (
+                "daemon-lease-read",
+                Some(error),
+                if crate::lock_is_contended(error) {
+                    ControlError::Busy
+                } else {
+                    ControlError::Storage
+                },
+            ),
+            Self::TemporaryTransferRefusal => {
+                ("temporary-transfer-refusal", None, ControlError::Busy)
+            }
+            Self::PendingRefusal => ("pending-refusal", None, ControlError::Busy),
             Self::ReservePublish(error) => ("reserve-publish", Some(error), uncertain),
             Self::UnwindAcquire(error) => ("unwind-acquire", Some(error), uncertain),
             Self::UnwindRead(error) => ("unwind-read", Some(error), uncertain),
@@ -145,6 +175,47 @@ mod attach_diagnostic_tests {
     use super::*;
 
     #[test]
+    fn first_persistent_attach_diagnostics_keep_boundary_without_private_error_text() {
+        assert!(attach_failure_diagnostics_enabled(false, false, false));
+        let error = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "SECRET /private/path account credential",
+        );
+        for (diagnostic, boundary) in [
+            (
+                AttachFailureDiagnostic::DaemonLeaseAcquire(&error),
+                "daemon-lease-acquire",
+            ),
+            (
+                AttachFailureDiagnostic::DaemonLeaseRead(&error),
+                "daemon-lease-read",
+            ),
+        ] {
+            assert_eq!(diagnostic.message(true).unwrap(), format!("host attach boundary={boundary} control=Storage io_kind=PermissionDenied raw_os=None"));
+        }
+        for (diagnostic, boundary) in [
+            (
+                AttachFailureDiagnostic::JournalAdmission(ControlError::Busy),
+                "journal-admission",
+            ),
+            (
+                AttachFailureDiagnostic::PolicyAdmission(ControlError::Busy),
+                "policy-admission",
+            ),
+            (
+                AttachFailureDiagnostic::TemporaryTransferRefusal,
+                "temporary-transfer-refusal",
+            ),
+            (AttachFailureDiagnostic::PendingRefusal, "pending-refusal"),
+        ] {
+            assert_eq!(
+                diagnostic.message(true).unwrap(),
+                format!("host attach boundary={boundary} control=Busy")
+            );
+        }
+    }
+
+    #[test]
     fn native_attachment_failure_diagnostics_include_temporary_takeover() {
         for temporary in [false, true] {
             for takeover in [false, true] {
@@ -154,7 +225,7 @@ mod attach_diagnostic_tests {
                         takeover,
                         previously_attached,
                     );
-                    assert_eq!(enabled, temporary || (!takeover && previously_attached));
+                    assert_eq!(enabled, temporary || !takeover);
                     assert_eq!(
                         AttachFailureDiagnostic::UnwindCommitted
                             .message(enabled)
@@ -467,10 +538,35 @@ pub struct ProfileEnsureRequest {
     pub attachment: AttachmentId,
 }
 
+/// Local-only exact catalog request. No wire/RPC operation carries this type.
+pub struct LocalProfileRequest<'a> {
+    pub logical: &'a LogicalSessionId,
+    pub consent: &'a str,
+    pub revision: Epoch,
+    pub recipe: &'a Recipe,
+    pub enabled: bool,
+    pub size: TerminalSize,
+    pub scrollback_limit_bytes: usize,
+}
+
+pub struct LocalProfileTarget {
+    pub summary: SessionSummary,
+    pub identity: NativeSessionIdentity,
+}
+
 #[derive(Clone, Copy)]
-struct EnsureOptions {
+struct LocalProfileOptions<'a> {
+    consent: &'a str,
+    enabled: bool,
+    size: TerminalSize,
+    scrollback_limit_bytes: usize,
+}
+
+#[derive(Clone, Copy)]
+struct EnsureOptions<'a> {
     create_only: bool,
     profile_revision: Option<Epoch>,
+    local: Option<LocalProfileOptions<'a>>,
 }
 
 /// Admission has started, but recovery adoption and lease transfer have NOT
@@ -628,8 +724,28 @@ impl Record {
             owner: self.owner.clone(),
             revision: self.epoch,
             remote_access: !self.revoked && self.profile_enabled,
-            state: self.state(),
+            state: if self.profile_enabled {
+                self.state()
+            } else {
+                LogicalState::Revoked
+            },
         }
+    }
+
+    // The old daemon schema already understands a revoked remote grant. The
+    // catalog retains the distinction between unsharing and permanent revoke.
+    fn known_publication_off(&self, lease: &DaemonLease) -> bool {
+        self.binding.is_none()
+            && self.lifetime == (Lifetime::Persistent {})
+            && self.profile_revision.is_some()
+            && !self.profile_enabled
+            && !self.revoked
+            && self.identity.is_some()
+            && lease.generation == self.generation
+            && self.lease_matches(lease)
+            && lease.remote_revoked
+            && lease.grant.revision == self.epoch
+            && same_grant(&lease.grant, &self.grant())
     }
 
     fn lease_matches(&self, lease: &DaemonLease) -> bool {
@@ -892,6 +1008,96 @@ mod end_confirmation_tests {
         );
     }
 
+    fn unpublished_fixture() -> (
+        storage::PrivateTestDirectory,
+        SessionControl,
+        PrincipalId,
+        Target,
+    ) {
+        let result = observed_fixture();
+        let (_, control, _, target) = &result;
+        let mut tx = control.transaction().unwrap();
+        tx.state.profiles.insert(
+            target.logical.clone(),
+            ProfileRecord {
+                consent: "11111111-1111-4111-8111-111111111111".into(),
+                revision: Epoch::new(1).unwrap(),
+                name: "Local".into(),
+                recipe: Recipe::default(),
+                enabled: false,
+            },
+        );
+        let record = tx.state.sessions.get_mut(&target.logical).unwrap();
+        record.profile_revision = Some(Epoch::new(1).unwrap());
+        record.profile_enabled = false;
+        let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.stopped = false;
+        lease.remote_revoked = true;
+        lease.grant = record.grant();
+        guard.replace(&mut lease).unwrap();
+        tx.save().unwrap();
+        drop(guard);
+        drop(tx);
+        result
+    }
+
+    #[test]
+    fn publication_reenable_only_clears_exact_known_off_grant() {
+        for mutation in 0..7 {
+            let (_root, control, owner, target) = unpublished_fixture();
+            if mutation == 1 {
+                control.revoke_local(&owner, &target.logical).unwrap();
+            }
+            if mutation == 3 {
+                let mut tx = control.transaction().unwrap();
+                tx.state.sessions.get_mut(&target.logical).unwrap().identity = None;
+                tx.save().unwrap();
+            }
+            if mutation == 4 {
+                let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+                let mut lease = guard.read().unwrap();
+                lease.native_pid = Some(std::process::id() + 1000);
+                guard.replace(&mut lease).unwrap();
+            }
+            if mutation == 5 {
+                let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+                let mut lease = guard.read().unwrap();
+                lease.stopped = true;
+                guard.replace(&mut lease).unwrap();
+            }
+            if mutation == 6 {
+                let mut tx = control.transaction().unwrap();
+                tx.state.sessions.get_mut(&target.logical).unwrap().phase = Phase::Ending;
+                tx.save().unwrap();
+            }
+            if mutation == 2 {
+                let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+                let mut lease = guard.read().unwrap();
+                lease.grant.revision = lease.grant.revision.next().unwrap();
+                guard.replace(&mut lease).unwrap();
+            }
+            let result = control.set_profile(
+                target.logical.clone(),
+                "11111111-1111-4111-8111-111111111111",
+                "Local",
+                Recipe::default(),
+                true,
+            );
+            match mutation {
+                0 => {
+                    result.unwrap();
+                }
+                1 => assert_eq!(result, Err(ControlError::Revoked)),
+                _ => assert_eq!(result, Err(ControlError::Unknown)),
+            }
+            let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+            let lease = guard.read().unwrap();
+            assert_eq!(lease.grant.remote_access, mutation == 0);
+            assert_eq!(lease.remote_revoked, mutation != 0);
+        }
+    }
+
     #[test]
     fn end_confirmation_refuses_foreign_revoked_replaced_unbound_retired_or_missing_records() {
         for field in 0..6 {
@@ -946,7 +1152,7 @@ mod end_confirmation_tests {
             Err(ControlError::Busy)
         );
         assert_eq!(
-            control.sync_grant_contended(&mut record.clone(), Instant::now()),
+            control.sync_grant_contended(&mut record.clone(), Instant::now(), None),
             Err(ControlError::Busy),
             "contention outlasting the bound is still reported"
         );
@@ -955,7 +1161,11 @@ mod end_confirmation_tests {
             drop(held);
         });
         assert_eq!(
-            control.sync_grant_contended(&mut record, Instant::now() + Duration::from_secs(5)),
+            control.sync_grant_contended(
+                &mut record,
+                Instant::now() + Duration::from_secs(5),
+                None
+            ),
             Ok(())
         );
         release.join().unwrap();
@@ -1296,7 +1506,7 @@ impl SessionControl {
         {
             return Err(ControlError::Busy);
         }
-        if lease.remote_revoked {
+        if lease.remote_revoked && !record.known_publication_off(&lease) {
             record.revoked = true;
             if lease.grant.revision.get() > record.epoch.get() {
                 record.epoch = lease.grant.revision;
@@ -1306,19 +1516,40 @@ impl SessionControl {
         drop(guard);
         let mut next = record.clone();
         self.reconcile_native(&mut next)?;
-        self.sync_grant(&mut next)?;
+        self.sync_profile_grant(&mut next, Some(record))?;
         *record = next;
         Ok(())
     }
 
     fn sync_grant(&self, record: &mut Record) -> Result<(), ControlError> {
+        self.sync_profile_grant(record, None)
+    }
+
+    fn sync_profile_grant(
+        &self,
+        record: &mut Record,
+        previous: Option<&Record>,
+    ) -> Result<(), ControlError> {
         let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
             .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
         }
-        if lease.remote_revoked {
+        if previous.is_some_and(|previous| !previous.profile_enabled && record.profile_enabled)
+            && lease.remote_revoked
+            && !previous.is_some_and(|previous| {
+                !lease.stopped
+                    && matches!(previous.phase, Phase::Running | Phase::Absent)
+                    && previous.known_publication_off(&lease)
+            })
+        {
+            return Err(ControlError::Unknown);
+        }
+        if lease.remote_revoked
+            && !record.known_publication_off(&lease)
+            && !previous.is_some_and(|previous| previous.known_publication_off(&lease))
+        {
             record.revoked = true;
         }
         if !record.profile_enabled {
@@ -1333,6 +1564,7 @@ impl SessionControl {
                     .map_err(|_| ControlError::Storage)?;
             }
             lease.grant = record.grant();
+            lease.remote_revoked = record.revoked || !record.profile_enabled;
             guard.replace(&mut lease).map_err(storage_error)?;
         } else if !record.profile_enabled {
             guard.replace(&mut lease).map_err(storage_error)?;
@@ -1346,10 +1578,11 @@ impl SessionControl {
         &self,
         record: &mut Record,
         deadline: Instant,
+        previous: Option<&Record>,
     ) -> Result<(), ControlError> {
         loop {
             let mut attempt = record.clone();
-            match self.sync_grant(&mut attempt) {
+            match self.sync_profile_grant(&mut attempt, previous) {
                 Ok(()) => {
                     *record = attempt;
                     return Ok(());
@@ -1632,14 +1865,18 @@ impl SessionControl {
             },
         );
         if let Some(record) = tx.state.sessions.get_mut(&logical) {
+            if enabled && record.revoked {
+                return Err(ControlError::Revoked);
+            }
             if record.profile_revision.is_none() {
                 return Err(ControlError::Storage);
             }
+            let previous = record.clone();
             let access_changed = record.profile_enabled != enabled;
             record.profile_revision = Some(revision);
             record.profile_enabled = enabled;
             if access_changed && !record.artifacts_retired {
-                self.sync_grant(record)?;
+                self.sync_profile_grant(record, Some(&previous))?;
             }
         }
         tx.save()?;
@@ -1672,18 +1909,21 @@ impl SessionControl {
     ) -> Result<Vec<ProfileSummary>, ControlError> {
         let tx = self.transaction()?;
         let mut scoped = scoped_issuance(tx.state.issuance_epoch, &mut admit);
-        let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
-        let profiles = tx
-            .state
-            .profiles
-            .iter()
-            .filter(|(_, profile)| profile.enabled)
-            .map(|(logical, profile)| ProfileSummary {
-                logical: logical.clone(),
-                revision: profile.revision,
-                name: profile.name.clone(),
-            })
-            .collect();
+        let profiles = {
+            // Native policy guards own an exclusive lease. Protect projection,
+            // then release this guard before fresh publication authorization.
+            let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
+            tx.state
+                .profiles
+                .iter()
+                .filter(|(_, profile)| profile.enabled)
+                .map(|(logical, profile)| ProfileSummary {
+                    logical: logical.clone(),
+                    revision: profile.revision,
+                    name: profile.name.clone(),
+                })
+                .collect()
+        };
         let _publication = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
         Ok(profiles)
     }
@@ -1706,6 +1946,7 @@ impl SessionControl {
             EnsureOptions {
                 create_only,
                 profile_revision: None,
+                local: None,
             },
             cancelled,
             admit,
@@ -1745,10 +1986,161 @@ impl SessionControl {
             EnsureOptions {
                 create_only: false,
                 profile_revision: Some(request.revision),
+                local: None,
             },
             cancelled,
             admit,
         )
+    }
+
+    /// Read current exact catalog state for an OS-local caller. Remote grant
+    /// reduction never redirects this caller into another session namespace.
+    pub fn local_profile_target<G>(
+        &self,
+        owner: &PrincipalId,
+        request: &LocalProfileRequest<'_>,
+        mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<Option<LocalProfileTarget>, ControlError> {
+        let mut tx = self.transaction()?;
+        let mut admit = scoped_issuance(tx.state.issuance_epoch, &mut admit);
+        let profile = tx
+            .state
+            .profiles
+            .get(request.logical)
+            .ok_or(ControlError::Stale)?;
+        if profile.consent != request.consent
+            || profile.revision != request.revision
+            || profile.recipe != *request.recipe
+            || profile.enabled != request.enabled
+        {
+            return Err(ControlError::Stale);
+        }
+        if let Some(record) = tx.state.sessions.get_mut(request.logical) {
+            if &record.owner != owner
+                || record.binding.is_some()
+                || record.profile_revision != Some(request.revision)
+            {
+                return Err(ControlError::Denied);
+            }
+            self.reconcile(record)?;
+        }
+        tx.save()?;
+        let record = tx.state.sessions.get(request.logical);
+        let _guard = Self::local_admission(record, owner, Effect::Lookup, &mut admit)?;
+        match record {
+            Some(record) if record.phase == Phase::Running => {
+                if record.recipe != *request.recipe {
+                    return Err(ControlError::RecipeConflict);
+                }
+                Ok(Some(LocalProfileTarget {
+                    summary: self.summary(record)?,
+                    identity: record.native().ok_or(ControlError::Unknown)?,
+                }))
+            }
+            None => Ok(None),
+            Some(record) if record.phase == Phase::Absent => Ok(None),
+            _ => Err(ControlError::Unknown),
+        }
+    }
+
+    /// Explicit OS-local creation/reuse only. This does not authorize a remote
+    /// caller and must never be selected by a wire operation or a peer flag.
+    pub fn ensure_local_profile<G>(
+        &self,
+        owner: &PrincipalId,
+        issued: &IssuedOperation,
+        request: LocalProfileRequest<'_>,
+        cancelled: &AtomicBool,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<EnsureResult, ControlError> {
+        let creation = {
+            let tx = self.transaction()?;
+            let profile = tx
+                .state
+                .profiles
+                .get(request.logical)
+                .ok_or(ControlError::Stale)?;
+            if profile.consent != request.consent
+                || profile.revision != request.revision
+                || profile.recipe != *request.recipe
+                || profile.enabled != request.enabled
+            {
+                return Err(ControlError::Stale);
+            }
+            Creation {
+                logical: request.logical.clone(),
+                attachment: AttachmentId::new(),
+                name: Some(profile.name.clone()),
+                recipe: profile.recipe.clone(),
+                lifetime: Lifetime::Persistent {},
+            }
+        };
+        self.ensure_inner(
+            owner,
+            issued,
+            &creation,
+            EnsureOptions {
+                create_only: false,
+                profile_revision: Some(request.revision),
+                local: Some(LocalProfileOptions {
+                    consent: request.consent,
+                    enabled: request.enabled,
+                    size: request.size,
+                    scrollback_limit_bytes: request.scrollback_limit_bytes,
+                }),
+            },
+            cancelled,
+            admit,
+        )
+    }
+
+    fn local_admission<G>(
+        record: Option<&Record>,
+        owner: &PrincipalId,
+        effect: Effect,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<NativeAdmission<G>, ControlError> {
+        if record.is_some_and(|record| {
+            &record.owner != owner || record.binding.is_some() || record.profile_revision.is_none()
+        }) {
+            return Err(ControlError::Denied);
+        }
+        let grant = record.map(|record| {
+            let mut grant = record.grant();
+            // Local state follows the native generation; remote revocation is
+            // never rewritten or converted into a new remote grant.
+            grant.remote_access = false;
+            grant.state = match record.phase {
+                Phase::Running => LogicalState::Running(record.generation),
+                Phase::Absent => LogicalState::Absent,
+                _ => LogicalState::Unknown,
+            };
+            grant
+        });
+        let guard = admit(&AdmissionState {
+            grant,
+            grant_epoch: record.map(|record| record.epoch),
+            effect,
+            issuance_epoch: None,
+        })?;
+        Ok(NativeAdmission {
+            _policy: guard,
+            _source: None,
+        })
+    }
+
+    fn ensure_admission<G>(
+        options: &EnsureOptions<'_>,
+        record: Option<&Record>,
+        owner: &PrincipalId,
+        effect: Effect,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<NativeAdmission<G>, ControlError> {
+        if options.local.is_some() {
+            Self::local_admission(record, owner, effect, admit)
+        } else {
+            Self::admission(record, owner, effect, admit)
+        }
     }
 
     fn ensure_inner<G>(
@@ -1756,11 +2148,11 @@ impl SessionControl {
         owner: &PrincipalId,
         issued: &IssuedOperation,
         creation: &Creation,
-        options: EnsureOptions,
+        options: EnsureOptions<'_>,
         cancelled: &AtomicBool,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<EnsureResult, ControlError> {
-        if self.helper.as_os_str().is_empty() {
+        if self.helper.as_os_str().is_empty() && options.local.is_none() {
             return Err(ControlError::Denied);
         }
         creation.validate().map_err(|_| ControlError::Invalid)?;
@@ -1769,7 +2161,10 @@ impl SessionControl {
         let logical = &creation.logical;
         match (options.profile_revision, tx.state.profiles.get(logical)) {
             (Some(expected), Some(profile))
-                if profile.enabled
+                if (profile.enabled || options.local.is_some())
+                    && options.local.is_none_or(|local| {
+                        profile.enabled == local.enabled && profile.consent == local.consent
+                    })
                     && profile.revision == expected
                     && profile.name.as_str() == creation.name.as_deref().unwrap_or_default()
                     && profile.recipe == creation.recipe
@@ -1780,7 +2175,7 @@ impl SessionControl {
         }
         if let Some(record) = tx.state.sessions.get(logical) {
             if record.profile_revision != options.profile_revision
-                || !record.profile_enabled
+                || (!record.profile_enabled && options.local.is_none())
                 || (options.profile_revision.is_none() && record.profile_revision.is_some())
             {
                 return Err(ControlError::Denied);
@@ -1794,7 +2189,8 @@ impl SessionControl {
         {
             return Err(ControlError::Denied);
         }
-        Self::admission(
+        Self::ensure_admission(
+            &options,
             tx.state.sessions.get(logical),
             owner,
             Effect::Resume,
@@ -1817,7 +2213,8 @@ impl SessionControl {
             self.reconcile(record)?;
             tx.save()?;
         }
-        Self::admission(
+        Self::ensure_admission(
+            &options,
             tx.state.sessions.get(logical),
             owner,
             Effect::Resume,
@@ -1838,14 +2235,16 @@ impl SessionControl {
             self.reconcile(record)?;
             tx.save()?;
             let record = &tx.state.sessions[logical];
-            let _publication = Self::admission(Some(record), owner, Effect::Resume, &mut admit)?;
+            let _publication =
+                Self::ensure_admission(&options, Some(record), owner, Effect::Resume, &mut admit)?;
             return self.result(record, previous.created, previous.recreated, cancelled);
         }
         if cancelled.load(Ordering::Acquire) {
             return Err(ControlError::Cancelled);
         }
         if tx.state.operations.len() >= MAX_IDEMPOTENCY_RECORDS {
-            let _admission = Self::admission(
+            let _admission = Self::ensure_admission(
+                &options,
                 tx.state.sessions.get(logical),
                 owner,
                 Effect::Resume,
@@ -1878,8 +2277,13 @@ impl SessionControl {
                     return Err(ControlError::Busy);
                 }
                 let generation = record.generation;
-                let _publication =
-                    Self::admission(Some(record), owner, Effect::Resume, &mut admit)?;
+                let _publication = Self::ensure_admission(
+                    &options,
+                    Some(record),
+                    owner,
+                    Effect::Resume,
+                    &mut admit,
+                )?;
                 tx.state.operations.insert(
                     operation.clone(),
                     Operation {
@@ -1906,7 +2310,8 @@ impl SessionControl {
                 })
                 .map(|record| record.logical.clone());
             if let Some(logical) = retired {
-                let _admission = Self::admission(None, owner, Effect::Create, &mut admit)?;
+                let _admission =
+                    Self::ensure_admission(&options, None, owner, Effect::Create, &mut admit)?;
                 self.retire_artifacts(&mut tx, &logical)?;
                 tx.state.sessions.remove(&logical);
                 tx.rotate_issuance()?;
@@ -1926,7 +2331,11 @@ impl SessionControl {
         {
             return Err(ControlError::Busy);
         }
-        let reservation = Self::admission(
+        if self.helper.as_os_str().is_empty() {
+            return Err(ControlError::Denied);
+        }
+        let reservation = Self::ensure_admission(
+            &options,
             tx.state.sessions.get(logical),
             owner,
             Effect::Create,
@@ -2007,7 +2416,7 @@ impl SessionControl {
             identity: None,
             artifacts_retired: false,
             profile_revision: options.profile_revision,
-            profile_enabled: true,
+            profile_enabled: options.local.is_none_or(|local| local.enabled),
         };
         tx.state.sessions.insert(logical.clone(), record);
         tx.state.last_generation = generation.get();
@@ -2041,7 +2450,7 @@ impl SessionControl {
             temporary,
             connected: false,
             stopped: false,
-            remote_revoked: false,
+            remote_revoked: !record.profile_enabled,
             pending: None,
             last_attachment: None,
             grant: record.grant(),
@@ -2055,8 +2464,10 @@ impl SessionControl {
         let request = detached::DetachedSessionRequest {
             name: &record.name,
             profile: &profile,
-            size: terminal_size(),
-            scrollback_limit_bytes: 4096,
+            size: options.local.map_or_else(terminal_size, |local| local.size),
+            scrollback_limit_bytes: options
+                .local
+                .map_or(4096, |local| local.scrollback_limit_bytes),
             launch_request: operation.as_str(),
         };
         let identity = detached::ensure_host_reserved(
@@ -2077,14 +2488,20 @@ impl SessionControl {
             endpoint: identity.endpoint,
         });
         record.phase = Phase::Running;
+        let previous = record.clone();
         record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
-        self.sync_grant_contended(record, Instant::now() + COMMITTED_LEASE_CONTENTION)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        self.sync_grant_contended(
+            record,
+            Instant::now() + COMMITTED_LEASE_CONTENTION,
+            Some(&previous),
+        )
+        .map_err(|_| ControlError::CommittedButNotPublished)?;
         tx.save()
             .map_err(|_| ControlError::CommittedButNotPublished)?;
         let record = &tx.state.sessions[logical];
-        let _publication = Self::admission(Some(record), owner, Effect::Resume, &mut admit)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        let _publication =
+            Self::ensure_admission(&options, Some(record), owner, Effect::Resume, &mut admit)
+                .map_err(|_| ControlError::CommittedButNotPublished)?;
         self.result(record, true, recreated, cancelled)
     }
 
@@ -2369,12 +2786,54 @@ impl SessionControl {
         notifier: Arc<dyn SessionEventNotifier>,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<PendingAttachment, ControlError> {
-        let mut tx = self.transaction()?;
+        self.attach_with_recovery_work(
+            owner,
+            target,
+            attachment,
+            takeover,
+            maximum_recovery_bytes,
+            notifier,
+            None,
+            admit,
+        )
+    }
+
+    /// Resource retention only, never authorization. Installed HOST callers
+    /// reserve their bounded recovery transaction before entering this method.
+    #[allow(clippy::too_many_arguments)]
+    pub fn attach_with_recovery_work<G>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        attachment: &AttachmentId,
+        takeover: bool,
+        maximum_recovery_bytes: u32,
+        notifier: Arc<dyn SessionEventNotifier>,
+        recovery_work: Option<Arc<dyn Send + Sync>>,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<PendingAttachment, ControlError> {
+        let mut tx = self.transaction().inspect_err(|_error| {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::JournalAdmission(*_error).report(true);
+        })?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
-        let (record, admission) = self.exact(&mut tx, owner, target, Effect::Attach, &mut admit)?;
-        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
-            .map_err(storage_error)?;
-        let mut lease = guard.read().map_err(storage_error)?;
+        let (record, admission) = self
+            .exact(&mut tx, owner, target, Effect::Attach, &mut admit)
+            .inspect_err(|_error| {
+                #[cfg(any(test, feature = "test-support"))]
+                AttachFailureDiagnostic::PolicyAdmission(*_error).report(true);
+            })?;
+        let guard =
+            LeaseGuard::acquire(record.root(&self.root), record.generation).map_err(|error| {
+                #[cfg(any(test, feature = "test-support"))]
+                AttachFailureDiagnostic::DaemonLeaseAcquire(&error).report(true);
+                storage_error(error)
+            })?;
+        let mut lease = guard.read().map_err(|error| {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::DaemonLeaseRead(&error).report(true);
+            storage_error(error)
+        })?;
         if lease.expired() {
             return Err(ControlError::Ended);
         }
@@ -2406,6 +2865,8 @@ impl SessionControl {
             .as_ref()
             .is_some_and(|lease| &lease.attachment != attachment);
         if transfer && !takeover {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::TemporaryTransferRefusal.report(diagnose);
             return Err(ControlError::Busy);
         }
         let ticket = Some(OperationId::new());
@@ -2415,6 +2876,8 @@ impl SessionControl {
             .as_ref()
             .is_some_and(|pending| pending.deadline_ms > now_ms())
         {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::PendingRefusal.report(diagnose);
             return Err(ControlError::Busy);
         }
         lease.pending = Some(PendingLeaseAttachment {
@@ -2455,13 +2918,14 @@ impl SessionControl {
         drop(guard);
         drop(admission);
         let connected = match &ticket {
-            Some(ticket) => PersistentSession::resume_host_reserved_in(
+            Some(ticket) => PersistentSession::resume_host_reserved_with_recovery_work(
                 &identity,
                 record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 ticket,
                 notifier,
+                recovery_work,
             ),
             None => PersistentSession::resume_remote_in(
                 &identity,
@@ -2707,7 +3171,7 @@ impl SessionControl {
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
         }
-        record.revoked |= lease.remote_revoked;
+        record.revoked |= lease.remote_revoked && !record.known_publication_off(&lease);
         record.phase = Phase::Ending;
         let epoch = if record.epoch.get() > lease.grant.revision.get() {
             record.epoch
@@ -2841,7 +3305,7 @@ impl SessionControl {
                         temporary,
                         connected: false,
                         stopped: true,
-                        remote_revoked: record.revoked,
+                        remote_revoked: record.revoked || !record.profile_enabled,
                         pending: None,
                         last_attachment: None,
                         grant: record.grant(),
@@ -2856,7 +3320,7 @@ impl SessionControl {
             if !record.lease_matches(&lease) {
                 return Err(ControlError::Unknown);
             }
-            if lease.remote_revoked && !record.revoked {
+            if lease.remote_revoked && !record.revoked && !record.known_publication_off(&lease) {
                 let record = tx
                     .state
                     .sessions
@@ -3038,7 +3502,7 @@ impl SessionControl {
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
         }
-        record.revoked |= lease.remote_revoked;
+        record.revoked |= lease.remote_revoked && !record.known_publication_off(&lease);
         record.phase = Phase::Ending;
         let epoch = if record.epoch.get() > lease.grant.revision.get() {
             record.epoch
@@ -3109,3 +3573,7 @@ fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
     }
     detached::normalize_spawn_profile(&profile).map_err(|_| ControlError::Invalid)
 }
+
+#[cfg(test)]
+#[path = "host_profile_admission_tests.rs"]
+mod profile_admission_tests;

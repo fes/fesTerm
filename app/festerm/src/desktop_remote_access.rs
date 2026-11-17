@@ -1,4 +1,6 @@
 //! Foreground desktop consent, never a recipe loader or a daemon authority.
+#[path = "desktop_remote_access/diagnostics.rs"]
+mod diagnostics;
 #[path = "desktop_remote_access/native.rs"]
 mod native;
 #[cfg(test)]
@@ -6,13 +8,15 @@ mod native;
 mod tests;
 #[path = "desktop_remote_access/view.rs"]
 mod view;
+pub(crate) use diagnostics::show as show_diagnostics;
 pub(crate) use view::show;
 pub(crate) use view::show_session_sharing;
 
 use eframe::egui;
 use festerm_host_setup::{
     cloud::CleanupContext,
-    lifecycle::{Phase, Settings, Snapshot, Startup},
+    diagnostics::HostSetupDiagnostic,
+    lifecycle::{OrdinaryAccess, Phase, Settings, Snapshot, Startup},
 };
 use std::{
     path::PathBuf,
@@ -28,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 pub struct Draft {
     pub friendly_name: String,
     pub allow_creation: bool,
+    pub ordinary_access: OrdinaryAccess,
     pub startup_at_sign_in: bool,
     pub account: String,
     pub manual_bundle: bool,
@@ -42,8 +47,9 @@ pub struct Draft {
 impl Default for Draft {
     fn default() -> Self {
         Self {
-            friendly_name: "This computer".into(),
+            friendly_name: host_name_label(&gethostname::gethostname()),
             allow_creation: false,
+            ordinary_access: OrdinaryAccess::ProviderOwner,
             startup_at_sign_in: false,
             account: String::new(),
             manual_bundle: false,
@@ -57,11 +63,22 @@ impl Default for Draft {
     }
 }
 
+fn host_name_label(host_name: &std::ffi::OsStr) -> String {
+    let mut name = host_name.to_string_lossy().trim().to_owned();
+    name.retain(|character| !character.is_control());
+    // The cloud-facing friendly-name field permits at most 80 UTF-8 bytes.
+    while name.len() > 80 {
+        name.pop();
+    }
+    name
+}
+
 impl Draft {
     fn settings(&self) -> Settings {
         Settings {
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
+            ordinary_access: self.ordinary_access,
             startup: if self.startup_at_sign_in {
                 Startup::UserSignIn
             } else {
@@ -168,6 +185,8 @@ impl Operation {
 pub enum Action {
     Edit(Draft),
     SignInAccount,
+    CopySignInCode,
+    OpenSignInBrowser,
     RequestAccess(bool),
     Refresh,
     Review(Operation),
@@ -224,9 +243,8 @@ impl Failure {
             Self::BundleNotPublished => "The signed host bundle for this build is not published.",
             Self::AcquisitionUnavailable => "Host component download failed. Retry explicitly.",
             Self::SignedBundle => "Host component verification failed. Nothing was installed.",
-            Self::CloudUncertain | Self::Reconciliation => {
-                "Cleanup is incomplete. Keep access off and review Recovery."
-            }
+            Self::CloudUncertain => "Host setup could not finish. Review Recovery before retrying.",
+            Self::Reconciliation => "Cleanup is incomplete. Keep access off and review Recovery.",
             Self::PrivateStorage => "Protected host storage is unavailable. Review Recovery.",
             Self::PlatformPrerequisite => {
                 "Host setup is not qualified for this startup policy or platform."
@@ -271,13 +289,19 @@ pub struct View {
     pub busy: bool,
     pub cancelling: bool,
     pub failure: Option<Failure>,
+    /// Last operation metadata only; never inferred from a generic local error.
+    pub diagnostic: Option<HostSetupDiagnostic>,
     pub process: Option<String>,
+    /// Protected current-epoch history; never a live endpoint observation.
+    pub last_run: Option<festerm_host_setup::controller::RunState>,
     pub owner_binding: Option<String>,
     pub owner_approved: bool,
     pub owner_revision: Option<u64>,
     pub cleanup: Option<CleanupContext>,
     pub cleanup_verified_for_manual_review: bool,
     pub device_code: Option<DeviceCode>,
+    pub device_copied: Option<bool>,
+    pub device_opened: Option<bool>,
     pub share_review: Option<ShareTarget>,
     pub sharing: Option<ShareStatus>,
     pub share_operation_input: String,
@@ -331,6 +355,22 @@ impl View {
         ))
     }
 
+    /// Recorded setup state, without implying a live endpoint observation.
+    pub fn access_summary(&self) -> &'static str {
+        match &self.scope {
+            Scope::Unobserved => "Not observed",
+            Scope::Absent => "Off",
+            Scope::Present(snapshot) => match snapshot.phase {
+                Phase::EnableRequested => "Setup pending",
+                Phase::Provisioned => "Configured",
+                Phase::Reconciling => "Recovery pending",
+                Phase::StopRequested => "Disabling",
+                Phase::CleanupPending => "Cleanup pending",
+                Phase::Disabled | Phase::Removed => "Off",
+            },
+        }
+    }
+
     pub fn access_status(&self) -> Option<bool> {
         match &self.scope {
             Scope::Unobserved => None,
@@ -349,6 +389,17 @@ impl View {
                 .as_ref()
                 .and_then(|binding| binding.account.strip_prefix("github:")),
             _ => None,
+        }
+    }
+
+    pub fn enabled_status(&self) -> &'static str {
+        use festerm_host_setup::controller::RunState;
+        match self.last_run {
+            Some(RunState::Starting) => "Remote access is enabled. Last reported: starting.",
+            Some(RunState::Listening) => "Remote access is enabled. Last reported: listening.",
+            Some(RunState::Stopped) => "Remote access is enabled. Last reported: stopped.",
+            Some(RunState::Failed) => "Remote access is enabled. Last reported: failed.",
+            None => "Remote access is enabled. No current host report is available.",
         }
     }
 
@@ -383,12 +434,14 @@ struct Request {
 struct Report {
     scope: Scope,
     process: Option<String>,
+    last_run: Option<festerm_host_setup::controller::RunState>,
     owner_binding: Option<String>,
     owner_approved: bool,
     owner_revision: Option<u64>,
     cleanup: Option<CleanupContext>,
     cleanup_verified_for_manual_review: bool,
     failure: Option<Failure>,
+    diagnostic: Option<HostSetupDiagnostic>,
     sharing: Option<ShareStatus>,
 }
 
@@ -467,6 +520,7 @@ pub(crate) struct Controller {
     share_epoch: Option<Arc<AtomicU64>>,
     share_review_epoch: Option<u64>,
     startup_observation_attempted: bool,
+    device_actions: super::tunnel_browser::DeviceActions,
 }
 
 impl Controller {
@@ -495,6 +549,7 @@ impl Controller {
             share_epoch: None,
             share_review_epoch: None,
             startup_observation_attempted: false,
+            device_actions: super::tunnel_browser::DeviceActions::default(),
         }
     }
 
@@ -552,6 +607,20 @@ impl Controller {
     }
 
     pub fn action(&mut self, action: Action, context: &egui::Context) {
+        if matches!(action, Action::CopySignInCode | Action::OpenSignInBrowser) {
+            if let Some(code) = &self.view.device_code {
+                let delivery = match action {
+                    Action::CopySignInCode => super::tunnel_browser::DeviceAction::Copy,
+                    _ => super::tunnel_browser::DeviceAction::OpenBrowser,
+                };
+                #[cfg(not(test))]
+                self.device_actions.handle(delivery, &code.0);
+                #[cfg(test)]
+                let _ = (delivery, code);
+                (self.view.device_copied, self.view.device_opened) = self.device_actions.delivery();
+            }
+            return;
+        }
         if matches!(action, Action::Cancel) {
             self.cancel(context);
             return;
@@ -563,7 +632,11 @@ impl Controller {
         self.view.failure = None;
         match action {
             Action::SignInAccount => self.view.failure = Some(Failure::SignIn),
+            Action::CopySignInCode | Action::OpenSignInBrowser => {
+                unreachable!("handled before worker admission")
+            }
             Action::RequestAccess(requested) => {
+                self.view.diagnostic = None;
                 self.view.access_requested = Some(requested);
                 self.view.share_review = None;
                 self.view.review = None;
@@ -597,6 +670,7 @@ impl Controller {
                     self.view.failure = Some(Failure::InvalidDraft);
                     return;
                 }
+                self.view.diagnostic = None;
                 self.view.draft = draft;
                 self.draft_edited = true;
                 self.view.review = None;
@@ -767,6 +841,7 @@ impl Controller {
     }
 
     fn start(&mut self, operation: Operation, fence: bool, context: &egui::Context) {
+        self.view.diagnostic = None;
         self.view.review = None;
         if !matches!(operation, Operation::Share(_)) {
             self.view.share_review = None;
@@ -820,8 +895,12 @@ impl Controller {
         match std::thread::Builder::new()
             .name("desktop-remote-access".into())
             .spawn(move || {
-                let _permit = permit;
                 let report = backend.execute(request, &worker_cancel, progress_sender);
+                // All native work and its context must drain before the UI can
+                // consume completion and admit the next operation.
+                drop(worker_cancel);
+                drop(backend);
+                drop(permit);
                 let _ = sender.send(report);
                 repaint.request_repaint();
             }) {
@@ -838,6 +917,7 @@ impl Controller {
     }
 
     fn cancel(&mut self, context: &egui::Context) {
+        self.view.diagnostic = None;
         if self.view.cancelling {
             return;
         }
@@ -851,6 +931,9 @@ impl Controller {
         self.generation = self.generation.wrapping_add(1);
         self.view.cancelling = true;
         self.view.device_code = None;
+        self.view.device_copied = None;
+        self.view.device_opened = None;
+        self.device_actions = super::tunnel_browser::DeviceActions::default();
         self.view.failure = Some(Failure::Cancelled);
         if pending.operation == Operation::Enable {
             self.view.bundle_status = BundleStatus::Cancelled;
@@ -869,8 +952,8 @@ impl Controller {
                 self.start(Operation::Share(ShareStep::Release), true, context);
             }
         }
-        // Admission remains held until the actual worker exits. A cancellation
-        // token or a UI deadline is not evidence that native work stopped.
+        // Admission remains held until the backend returns and its context
+        // drains. A cancellation token or UI deadline cannot release it.
     }
 
     pub fn poll(&mut self, context: &egui::Context) {
@@ -895,7 +978,22 @@ impl Controller {
             if pending.generation == self.generation {
                 while let Ok(progress) = pending.progress.try_recv() {
                     match progress {
-                        Progress::DeviceCode(code) => self.view.device_code = Some(code),
+                        Progress::DeviceCode(code) => {
+                            if self
+                                .view
+                                .device_code
+                                .as_ref()
+                                .is_none_or(|current| current.0.as_str() != code.0.as_str())
+                            {
+                                self.device_actions =
+                                    super::tunnel_browser::DeviceActions::default();
+                                #[cfg(not(test))]
+                                self.device_actions.initial(&code.0);
+                                (self.view.device_copied, self.view.device_opened) =
+                                    self.device_actions.delivery();
+                            }
+                            self.view.device_code = Some(code);
+                        }
                         Progress::Bundle(status) => self.view.bundle_status = status,
                     }
                 }
@@ -908,6 +1006,9 @@ impl Controller {
             if let Some(result) = result {
                 if pending.generation == self.generation {
                     self.view.device_code = None;
+                    self.view.device_copied = None;
+                    self.view.device_opened = None;
+                    self.device_actions = super::tunnel_browser::DeviceActions::default();
                     if pending.operation == Operation::Enable {
                         self.view.bundle_status = match &result {
                             Ok(report) if report.failure.is_none() => BundleStatus::Complete,
@@ -926,6 +1027,8 @@ impl Controller {
                                         snapshot.settings.friendly_name.clone();
                                     self.view.draft.allow_creation =
                                         snapshot.settings.allow_creation;
+                                    self.view.draft.ordinary_access =
+                                        snapshot.settings.ordinary_access;
                                     self.view.draft.startup_at_sign_in =
                                         snapshot.settings.startup == Startup::UserSignIn;
                                     if let Some(binding) = &snapshot.binding {
@@ -939,18 +1042,38 @@ impl Controller {
                             }
                             self.view.scope = report.scope;
                             self.view.process = report.process;
+                            self.view.last_run = report.last_run;
                             self.view.owner_binding = report.owner_binding;
                             self.view.owner_approved = report.owner_approved;
                             self.view.owner_revision = report.owner_revision;
                             self.view.cleanup = report.cleanup;
                             self.view.cleanup_verified_for_manual_review =
                                 report.cleanup_verified_for_manual_review;
+                            self.view.diagnostic = if !self.view.cancelling
+                                && report.failure.is_some()
+                                && !matches!(
+                                    report.failure,
+                                    Some(
+                                        Failure::Cancelled
+                                            | Failure::ScopeChanged
+                                            | Failure::SessionChanged
+                                    )
+                                ) {
+                                report.diagnostic
+                            } else {
+                                None
+                            };
                             self.view.failure = report.failure;
                             if let Some(sharing) = report.sharing {
                                 self.view.sharing = Some(sharing);
                             }
                         }
-                        Err(error) => self.view.failure = Some(error),
+                        Err(error) => {
+                            self.view.last_run = None;
+                            self.view.process = None;
+                            self.view.diagnostic = None;
+                            self.view.failure = Some(error);
+                        }
                     }
                 }
                 *slot = None;

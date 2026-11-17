@@ -21,9 +21,20 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
         self.assertIn(
             "$ccName = if (Test-Path -LiteralPath (Join-Path $llvmBinPath "
             "'clang-cl.exe')) { 'clang-cl' } else { 'clang' }", source)
-        self.assertEqual(source.count('Join-Path $llvmBinPath "$ccName.exe"'), 3)
+        self.assertEqual(source.count('Join-Path $llvmBinPath "$ccName.exe"'), 4)
         self.assertNotIn("Join-Path $llvmBinPath 'clang.exe'", source)
-        self.assertEqual(source.count("set CC=$ccName &&"), 3)
+        self.assertEqual(source.count("set CC=$ccName &&"), 4)
+
+    def test_host_campaign_uses_the_guarded_toolchain_and_rejects_blocked_results(self):
+        source = (ROOT / "scripts/vm-evidence-adapter/windows.ps1").read_text()
+        body = source.split("'dev-tunnel-workflow' {", 1)[1].split("{ $_ -in @('running-session-stress'", 1)[0]
+        self.assertIn('Join-Path $llvmBinPath "$ccName.exe"', body)
+        self.assertIn('call `"$vcvarsallPath`" $architecture >nul &&', body)
+        self.assertIn('set CC=$ccName && python', body)
+        self.assertIn('check_dev_tunnel_workflow.py', body)
+        self.assertIn('--run --result', body)
+        self.assertIn('if ($LASTEXITCODE -ne 0)', body)
+        self.assertIn('Require-PassStatus $resultPath', body)
 
     def test_optional_validation_selects_the_same_msvc_driver(self):
         source = (ROOT / "scripts/run-optional-validation.ps1").read_text()

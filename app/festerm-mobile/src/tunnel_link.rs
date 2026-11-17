@@ -108,11 +108,29 @@ impl SignInEffects {
         self.browser = Some(open());
     }
 
-    pub(super) fn initial(&mut self, code: &str, ctx: &egui::Context) {
-        self.initial_with(
-            || festerm_ios_window::set_clipboard_text(code),
+    fn initial_for(
+        &mut self,
+        sign_in: &SignIn,
+        copy: impl FnOnce() -> bool,
+        open: impl FnOnce() -> mpsc::Receiver<bool>,
+    ) -> Result<(), TunnelError> {
+        if let festerm_mobile_tunnels::SignInState::Failed(error) = sign_in.state() {
+            return Err(error);
+        }
+        self.initial_with(copy, open);
+        Ok(())
+    }
+
+    pub(super) fn initial(
+        &mut self,
+        sign_in: &SignIn,
+        ctx: &egui::Context,
+    ) -> Result<(), TunnelError> {
+        self.initial_for(
+            sign_in,
+            || festerm_ios_window::set_clipboard_text(&sign_in.prompt().user_code),
             || Self::open(ctx),
-        );
+        )
     }
 
     fn open(ctx: &egui::Context) -> mpsc::Receiver<bool> {
@@ -354,6 +372,30 @@ mod tests {
     }
 
     #[test]
+    fn sign_in_finishes_native_copy_before_browser_handoff() {
+        use std::cell::RefCell;
+        let calls = RefCell::new(Vec::new());
+        let clipboard = RefCell::new(String::from("stale fixture"));
+        let mut effects = SignInEffects::default();
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        effects.initial_with(
+            || {
+                *clipboard.borrow_mut() = "fresh fixture".into();
+                calls.borrow_mut().push("copy completed");
+                true
+            },
+            || {
+                assert_eq!(*clipboard.borrow(), "fresh fixture");
+                calls.borrow_mut().push("browser handoff");
+                receiver
+            },
+        );
+        assert_eq!(*calls.borrow(), ["copy completed", "browser handoff"]);
+        assert_eq!(effects.copied, Some(true));
+        assert_eq!(effects.opened, None, "browser dispatch is not completion");
+    }
+
+    #[test]
     fn canceled_sign_in_cannot_deliver_browser_result_to_its_replacement() {
         let mut original = SignInEffects::default();
         let (old_sender, old_receiver) = mpsc::sync_channel(1);
@@ -369,5 +411,20 @@ mod tests {
         sender.try_send(false).unwrap();
         replacement.poll();
         assert_eq!(replacement.opened, Some(false));
+    }
+    #[test]
+    fn cancelled_ready_sign_in_refuses_initial_clipboard_and_browser_effects() {
+        let activity = festerm_mobile_tunnels::SignInActivity::default();
+        let ready = festerm_mobile_tunnels::testing::pending_sign_in_fixture(activity.capture());
+        activity.cancel(); // Native content lock after worker completion, before adoption.
+        let mut effects = SignInEffects::default();
+        let result = effects.initial_for(
+            &ready,
+            || panic!("stale clipboard effect"),
+            || panic!("stale browser effect"),
+        );
+        assert_eq!(result, Err(TunnelError::Cancelled));
+        assert!(!effects.attempted);
+        assert!(effects.browser.is_none());
     }
 }

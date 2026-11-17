@@ -52,6 +52,30 @@ pub struct HostStream {
     _client: Arc<OwnedSemaphorePermit>,
     #[cfg(feature = "owner-auth")]
     owner_host: crate::owner_auth::PinnedHost,
+    #[cfg(feature = "host-routing")]
+    ordinary_route: Option<crate::ordinary_auth::OrdinaryRoute>,
+    #[cfg(feature = "host-routing")]
+    requested_authorization: RequestedAuthorization,
+}
+
+/// An SSH request selector, never provider or application authorization.
+#[cfg(feature = "host-routing")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RequestedAuthorization {
+    #[default]
+    EnrolledOwner,
+    OrdinaryV1,
+}
+
+#[cfg(feature = "host-routing")]
+impl HostStream {
+    pub(crate) fn requested_authorization(&self) -> RequestedAuthorization {
+        self.requested_authorization
+    }
+
+    pub(crate) fn ordinary_route(&self) -> Option<&crate::ordinary_auth::OrdinaryRoute> {
+        self.ordinary_route.as_ref()
+    }
 }
 #[cfg(feature = "owner-auth")]
 impl HostStream {
@@ -219,6 +243,24 @@ pub async fn host_with_identity(
     {
         return Err(stage_error("host.endpoint_key_mismatch"));
     }
+    #[cfg(feature = "host-routing")]
+    let ordinary_route = {
+        use festerm_host_protocol::Validate;
+        let route = crate::ordinary_auth::OrdinaryRoute {
+            tunnel_id: tunnel_id.into(),
+            cluster: cluster.into(),
+            endpoint_id: endpoint
+                .id
+                .clone()
+                .ok_or_else(|| stage_error("host.endpoint_id_missing"))?,
+            port,
+            host: owner_host.clone(),
+        };
+        route
+            .validate()
+            .map_err(|_| stage_error("host.endpoint_route_invalid"))?;
+        Some(route)
+    };
     let url = endpoint
         .tunnel_relay_tunnel_endpoint
         .host_relay_uri
@@ -260,6 +302,8 @@ pub async fn host_with_identity(
             port,
             #[cfg(feature = "owner-auth")]
             owner_host,
+            #[cfg(feature = "host-routing")]
+            ordinary_route,
         );
         supervise_outer(session, service, stopped.clone(), exit_sender).await
     });
@@ -280,6 +324,7 @@ async fn serve_clients<S>(
     stopped: CancellationToken,
     port: u16,
     #[cfg(feature = "owner-auth")] owner_host: crate::owner_auth::PinnedHost,
+    #[cfg(feature = "host-routing")] ordinary_route: Option<crate::ordinary_auth::OrdinaryRoute>,
 ) -> io::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -308,6 +353,10 @@ where
             authed: Some(authed),
             #[cfg(feature = "owner-auth")]
             owner_host: owner_host.clone(),
+            #[cfg(feature = "host-routing")]
+            ordinary_route: ordinary_route.clone(),
+            #[cfg(feature = "host-routing")]
+            requested_authorization: RequestedAuthorization::EnrolledOwner,
         };
         let server_config = server_config.clone();
         let stopped = stopped.clone();
@@ -523,11 +572,28 @@ struct Port {
     authed: Option<oneshot::Sender<()>>,
     #[cfg(feature = "owner-auth")]
     owner_host: crate::owner_auth::PinnedHost,
+    #[cfg(feature = "host-routing")]
+    ordinary_route: Option<crate::ordinary_auth::OrdinaryRoute>,
+    #[cfg(feature = "host-routing")]
+    requested_authorization: RequestedAuthorization,
 }
 impl server::Handler for Port {
     type Error = russh::Error;
-    async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
-        Ok(server::Auth::Accept)
+    async fn auth_none(&mut self, username: &str) -> Result<server::Auth, Self::Error> {
+        if username == "tunnel" {
+            #[cfg(feature = "host-routing")]
+            {
+                self.requested_authorization = RequestedAuthorization::EnrolledOwner;
+            }
+            return Ok(server::Auth::Accept);
+        }
+        #[cfg(feature = "host-routing")]
+        if username == crate::ordinary_auth::SSH_USERNAME {
+            self.requested_authorization = RequestedAuthorization::OrdinaryV1;
+            return Ok(server::Auth::Accept);
+        }
+        // An unknown version/typo must never select the legacy owner protocol.
+        Ok(server::Auth::reject())
     }
 
     async fn auth_succeeded(&mut self, _: &mut server::Session) -> Result<(), Self::Error> {
@@ -563,6 +629,10 @@ impl server::Handler for Port {
             _client: self.client.clone(),
             #[cfg(feature = "owner-auth")]
             owner_host: self.owner_host.clone(),
+            #[cfg(feature = "host-routing")]
+            ordinary_route: self.ordinary_route.clone(),
+            #[cfg(feature = "host-routing")]
+            requested_authorization: self.requested_authorization,
         });
         Ok(())
     }
@@ -713,6 +783,8 @@ pub(crate) mod tests {
             47461,
             #[cfg(feature = "owner-auth")]
             owner_host,
+            #[cfg(feature = "host-routing")]
+            None,
         )));
         let slots = Arc::new(Semaphore::new(RELAY_CLIENTS));
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -815,6 +887,8 @@ pub(crate) mod tests {
             47461,
             #[cfg(feature = "owner-auth")]
             owner_host,
+            #[cfg(feature = "host-routing")]
+            None,
         )));
         let slots = Arc::new(Semaphore::new(RELAY_CLIENTS));
         let (mut healthy, _) = peer(&incoming, &slots, pinned.clone()).await;
@@ -1282,6 +1356,10 @@ pub(crate) mod tests {
                     authed: None,
                     #[cfg(feature = "owner-auth")]
                     owner_host,
+                    #[cfg(feature = "host-routing")]
+                    ordinary_route: None,
+                    #[cfg(feature = "host-routing")]
+                    requested_authorization: RequestedAuthorization::EnrolledOwner,
                 },
             )
             .await
@@ -1434,6 +1512,10 @@ pub(crate) mod tests {
                     authed: None,
                     #[cfg(feature = "owner-auth")]
                     owner_host,
+                    #[cfg(feature = "host-routing")]
+                    ordinary_route: None,
+                    #[cfg(feature = "host-routing")]
+                    requested_authorization: RequestedAuthorization::EnrolledOwner,
                 },
             )
             .await;
@@ -1454,7 +1536,123 @@ pub(crate) mod tests {
         host: crate::owner_auth::PinnedHost,
     ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        owner_pair_on(key, host, client_io, server_io).await
+        owner_pair_on(key, host, client_io, server_io, "tunnel").await
+    }
+
+    #[cfg(feature = "host-routing")]
+    #[tokio::test]
+    async fn encrypted_auth_selector_rejects_unknown_versions_empty_and_typos_without_legacy_fallback(
+    ) {
+        for (username, expected) in [
+            ("tunnel", Some(RequestedAuthorization::EnrolledOwner)),
+            (
+                crate::ordinary_auth::SSH_USERNAME,
+                Some(RequestedAuthorization::OrdinaryV1),
+            ),
+            ("festerm-ordinary-v2", None),
+            ("", None),
+            ("festerm-ordnary-v1", None),
+            ("TUNNEL", None),
+        ] {
+            let host_key = key();
+            let pin = pin(&host_key);
+            let host = crate::owner_auth::PinnedHost {
+                host: Default::default(),
+                host_key_fingerprint: host_key
+                    .public_key()
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            };
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let (tx, mut streams) = mpsc::channel(CHANNELS_PER_CLIENT);
+            let (authed, mut auth_notice) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                let session = server::run_stream(
+                    Arc::new(server::Config {
+                        keys: vec![host_key],
+                        ..Default::default()
+                    }),
+                    server_io,
+                    Port {
+                        port: 47461,
+                        tx,
+                        slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+                        client: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
+                        authed: Some(authed),
+                        owner_host: host,
+                        ordinary_route: None,
+                        requested_authorization: RequestedAuthorization::EnrolledOwner,
+                    },
+                )
+                .await
+                .unwrap();
+                let _ = session.await;
+            });
+            let mut client =
+                client::connect_stream(Arc::new(client_config()), client_io, VerifiedHost(pin))
+                    .await
+                    .unwrap();
+            let result =
+                tokio::time::timeout(Duration::from_secs(3), client.authenticate_none(username))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                result.success(),
+                expected.is_some(),
+                "username {username:?}"
+            );
+            if let Some(expected) = expected {
+                tokio::time::timeout(Duration::from_secs(1), &mut auth_notice)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let _channel = client
+                    .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
+                    .await
+                    .unwrap();
+                let stream = tokio::time::timeout(Duration::from_secs(1), streams.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(stream.requested_authorization(), expected);
+            } else {
+                assert!(
+                    auth_notice.try_recv().is_err(),
+                    "no authentication publication"
+                );
+                assert!(streams.try_recv().is_err(), "no HostStream publication");
+            }
+            task.abort();
+        }
+    }
+
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn ordinary_pair(
+        key: russh::keys::PrivateKey,
+        host: crate::owner_auth::PinnedHost,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        owner_pair_on(
+            key,
+            host,
+            client_io,
+            server_io,
+            crate::ordinary_auth::SSH_USERNAME,
+        )
+        .await
+    }
+
+    /// Encrypted channel with an injected provider route for runtime fixtures.
+    /// This does not exercise provider authentication or cloud ACL validation.
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn admitted_ordinary_pair(
+        key: russh::keys::PrivateKey,
+        route: crate::ordinary_auth::OrdinaryRoute,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let (client, mut stream, task) = ordinary_pair(key, route.host.clone()).await;
+        stream.ordinary_route = Some(route);
+        (client, stream, task)
     }
 
     #[cfg(feature = "host-routing")]
@@ -1468,7 +1666,14 @@ pub(crate) mod tests {
         let address = listener.local_addr().unwrap();
         let (client_io, server_io) =
             tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
-        owner_pair_on(key, host, client_io.unwrap(), server_io.unwrap().0).await
+        owner_pair_on(
+            key,
+            host,
+            client_io.unwrap(),
+            server_io.unwrap().0,
+            "tunnel",
+        )
+        .await
     }
 
     #[cfg(feature = "owner-auth")]
@@ -1480,6 +1685,7 @@ pub(crate) mod tests {
         host: crate::owner_auth::PinnedHost,
         client_io: C,
         server_io: S,
+        username: &'static str,
     ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
         let expected = pin(&key);
         let config = Arc::new(server::Config {
@@ -1498,6 +1704,10 @@ pub(crate) mod tests {
                     client: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
                     authed: None,
                     owner_host: host,
+                    #[cfg(feature = "host-routing")]
+                    ordinary_route: None,
+                    #[cfg(feature = "host-routing")]
+                    requested_authorization: RequestedAuthorization::EnrolledOwner,
                 },
             )
             .await
@@ -1511,7 +1721,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        assert!(session.authenticate_none("tunnel").await.unwrap().success());
+        assert!(session.authenticate_none(username).await.unwrap().success());
         let stream = session
             .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
             .await

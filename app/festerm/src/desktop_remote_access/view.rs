@@ -18,16 +18,31 @@ pub(crate) fn show(
     if settings_toggle_row_enabled(
         ui,
         "Allow remote access to this computer",
-        "Lets a signed-in GitHub account reach shells on this computer. Nothing is enabled \
-         until you review Enable.",
+        "Share selected durable sessions through this host.",
         requested,
         !view.busy,
     ) {
         requested = !requested;
         action = Some(Action::RequestAccess(requested));
     }
-    if requested && !view.access_enabled() {
-        ui.label("Requested — not yet enabled.");
+    if requested
+        && !matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+    {
+        ui.label("Setup pending. Remote access is not enabled yet.");
+    }
+    if requested
+        && matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+    {
+        ui.label(view.enabled_status());
+        settings_note(ui, "Recorded status, not a current connection test.");
+        if let Some(process) = &view.process {
+            settings_note(ui, &format!("Last host process observation: {process}."));
+        }
+        ui.add_enabled_ui(!view.busy, |ui| {
+            if action_button(ui, ActionButtonRole::Secondary, "Check host process…").clicked() {
+                action = Some(Action::Review(Operation::ObserveNative));
+            }
+        });
     }
     if !requested && view.access_enabled() {
         ui.colored_label(
@@ -38,13 +53,34 @@ pub(crate) fn show(
     if let Some(failure) = view.failure {
         ui.colored_label(theme::STATUS_ERROR, failure.notice());
     }
+    diagnostics::show(ui, view.diagnostic);
     if let Some(code) = &view.device_code {
-        ui.label("Complete the explicit sign-in at https://github.com/login/device");
         ui.monospace(code.0.as_str());
-        settings_note(
-            ui,
-            "No browser opens automatically. Do not share this one-time code.",
-        );
+        match view.device_copied {
+            Some(true) => {
+                ui.label("Code copied. Paste it into GitHub.");
+            }
+            Some(false) => {
+                ui.colored_label(
+                    theme::STATUS_ERROR,
+                    "Could not copy code. Copy it here or try again.",
+                );
+            }
+            None => {
+                ui.label("Enter this code on GitHub.");
+            }
+        }
+        if view.device_opened == Some(false) {
+            ui.colored_label(theme::STATUS_ERROR, "Could not open browser. Try again.");
+        }
+        ui.horizontal(|ui| {
+            if action_button(ui, ActionButtonRole::Secondary, "Copy again").clicked() {
+                action = Some(Action::CopySignInCode);
+            }
+            if action_button(ui, ActionButtonRole::Secondary, "Open browser").clicked() {
+                action = Some(Action::OpenSignInBrowser);
+            }
+        });
     }
     let mut draft = view.draft.clone();
     ui.add_enabled_ui(!view.busy, |ui| {
@@ -76,13 +112,24 @@ pub(crate) fn show(
                 action = Some(Action::SignInAccount);
             }
             if bound.is_some() {
-                settings_note(ui, "This installation keeps its verified account. Disable and complete removal before choosing another account.");
+                settings_note(ui, "To change accounts, disable access and remove this host first.");
+            }
+            if settings_toggle_row_enabled(
+                ui,
+                "Allow connections through my GitHub account",
+                "Signed-in clients can discover this host and open shared sessions without device pairing.",
+                draft.ordinary_access == OrdinaryAccess::ProviderOwner,
+                true,
+            ) {
+                draft.ordinary_access = match draft.ordinary_access {
+                    OrdinaryAccess::OwnerOnly => OrdinaryAccess::ProviderOwner,
+                    OrdinaryAccess::ProviderOwner => OrdinaryAccess::OwnerOnly,
+                };
             }
             if settings_toggle_row_enabled(
                 ui,
                 "Allow remote clients to create shell sessions",
-                "Off by default. Otherwise remote clients only list, attach to, and detach \
-                 from existing shells.",
+                "Off by default. Existing shared sessions remain accessible.",
                 draft.allow_creation,
                 true,
             ) {
@@ -95,8 +142,15 @@ pub(crate) fn show(
                 if action_button(ui, ActionButtonRole::DangerOutline, "Review Disable to change host settings…").clicked() {
                     action = Some(Action::Review(Operation::Disable));
                 }
-            } else if action_button(ui, ActionButtonRole::Accent, "Review Enable…").clicked() {
-                action = Some(Action::Review(Operation::Enable));
+            } else {
+                let label = if draft.ordinary_access == OrdinaryAccess::ProviderOwner {
+                    "Review Enable and start…"
+                } else {
+                    "Review Enable…"
+                };
+                if action_button(ui, ActionButtonRole::Accent, label).clicked() {
+                    action = Some(Action::Review(Operation::Enable));
+                }
             }
         }
         ui.collapsing("Advanced / Recovery", |ui| {
@@ -120,6 +174,11 @@ pub(crate) fn show(
             festerm_host_setup::VERSION, std::env::consts::OS, std::env::consts::ARCH
         ));
         settings_note(ui, view.bundle_status.label());
+        settings_note(ui, if draft.manual_bundle {
+            "Explicit Advanced choice: verify the selected signed local bundle."
+        } else {
+            "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
+        });
         if let Scope::Present(snapshot) = &view.scope {
             ui.monospace(format!("Installation {} · epoch {} · {:?}",
                 snapshot.installation, snapshot.epoch, snapshot.phase));
@@ -137,7 +196,10 @@ pub(crate) fn show(
                 field(ui, "Archive · absolute path", &mut draft.archive);
             });
         });
-        ui.horizontal_wrapped(|ui| {
+        // Each recovery action gets its own row. At native DPI, a wrapped
+        // horizontal row can leave only a few pixels for the final button,
+        // turning its label into a column of single characters.
+        ui.vertical(|ui| {
             if action_button(ui, ActionButtonRole::Secondary, "Refresh local status").clicked() {
                 action = Some(Action::Refresh);
             }
@@ -159,26 +221,38 @@ pub(crate) fn show(
                 }
             }
         });
-        if let Some(binding) = &view.owner_binding {
-            ui.collapsing("Public owner binding for independent client review", |ui| {
-                ui.monospace(binding);
+        });
+        if matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned) {
+            ui.collapsing("Advanced · manually pair an owner device", |ui| {
+                settings_note(ui, "Optional administrative pairing. Normal account-based connections do not require these details or a separate device approval.");
+                if action_button(ui, ActionButtonRole::Secondary, "Get host approval details…").clicked() {
+                    action = Some(Action::Review(Operation::InspectOwner));
+                }
+                if let Some(binding) = &view.owner_binding {
+                    ui.horizontal_wrapped(|ui| {
+                        if action_button(ui, ActionButtonRole::Secondary, "Copy host details").clicked() {
+                            ui.ctx().copy_text(binding.clone());
+                        }
+                        if let Ok(owner) = serde_json::from_str::<festerm_tunnel_bridge::owner_auth::OwnerBinding>(binding) {
+                            if action_button(ui, ActionButtonRole::Secondary, "Copy host fingerprint").clicked() {
+                                ui.ctx().copy_text(owner.host.host_key_fingerprint);
+                            }
+                        }
+                    });
+                    ui.collapsing("Public owner binding for independent client review", |ui| {
+                        ui.monospace(binding);
+                    });
+                }
+                ui.strong("Approve a client");
+                settings_note(ui, "Get the host details first. Then copy the public key and fingerprint shown on the connecting device.");
+                field(ui, "Owner public key · 64 hex characters", &mut draft.owner_public_key);
+                field(ui, "Independently confirmed owner fingerprint", &mut draft.owner_fingerprint);
+                ui.checkbox(&mut draft.approve_creation, "Also approve creation for this owner key");
+                if action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
+                    action = Some(Action::Review(Operation::ApproveOwner));
+                }
             });
         }
-        ui.collapsing("Explicit owner-key approval · native vault only", |ui| {
-            settings_note(ui, "First review native owner context to pin its current policy revision. Changed or revoked policy requires a new review.");
-            field(ui, "Owner public key · 64 hex characters", &mut draft.owner_public_key);
-            field(
-                ui,
-                "Independently confirmed owner fingerprint",
-                &mut draft.owner_fingerprint,
-            );
-            ui.checkbox(&mut draft.approve_creation, "Also approve creation for this owner key");
-            settings_note(ui, "Inventory and existing attach/detach only unless separately approved. No explicit-end or temporary grant.");
-            if action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
-                action = Some(Action::Review(Operation::ApproveOwner));
-            }
-        });
-        });
         if matches!(view.scope, Scope::Unobserved)
             && action_button(ui, ActionButtonRole::Secondary, "Refresh local status").clicked()
         {
@@ -186,16 +260,53 @@ pub(crate) fn show(
         }
         if let Some(operation) = view.review {
             ui.group(|ui| {
-                ui.label(format!("Confirm {operation:?} for the exact observed installation and epoch?"));
+                let (title, confirm_label) = confirmation_labels(operation, &draft);
+                ui.strong(title);
+                if operation == Operation::Reconcile {
+                    settings_note(ui, "Recovery can retire an unsupported request only after verifying that its cloud host is absent. Review Enable again afterward.");
+                }
                 match operation {
                     Operation::Enable => {
-                        ui.label(format!("Name: {} · creation {} · startup {:?}", draft.friendly_name, draft.allow_creation, draft.settings().startup));
-                        ui.label(if draft.manual_bundle {
-                            "Explicit Advanced choice: verify the selected signed local bundle."
+                        ui.label(format!("Host: {}", draft.friendly_name));
+                        let account = view.accounts.iter()
+                            .find(|account| account.account_id.to_string() == draft.account)
+                            .map(|account| format!("GitHub account: @{}", account.login))
+                            .unwrap_or_else(|| {
+                                let id = view.bound_account().unwrap_or(draft.account.as_str());
+                                if id.is_empty() { "GitHub account: choose an account".into() }
+                                else { format!("GitHub account ID: {id}") }
+                            });
+                        ui.label(account);
+                        ui.label(if draft.allow_creation {
+                            "Create additional shells: On"
                         } else {
-                            "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
+                            "Create additional shells: Off"
                         });
-                        ui.label("Explicit foreground sign-in may create a cloud resource and register a signed native helper. No shells are created or shared; owner access requires separate approval.");
+                        ui.label(if draft.startup_at_sign_in {
+                            "Start automatically at sign-in: On"
+                        } else {
+                            "Start automatically at sign-in: Off"
+                        });
+                        ui.label(if draft.manual_bundle {
+                            "Use the signed host component selected in Advanced."
+                        } else {
+                            "Set up fesTerm's signed host component for your user on this computer."
+                        });
+                        ui.label("You may be asked to sign in. Setup can create a Dev Tunnel. No shell sessions are created or shared by enabling access.");
+                        match draft.ordinary_access {
+                            OrdinaryAccess::ProviderOwner => {
+                                ui.label("Enable and start listening now. Starting automatically at OS sign-in remains a separate preference.");
+                                ui.label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+                                ui.label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+                            }
+                            OrdinaryAccess::OwnerOnly => {
+                                ui.label("Account-based connections are disabled. Only separately paired owner devices can connect.");
+                            }
+                        }
+                    }
+                    Operation::ObserveNative => {
+                        ui.label("Check whether the host process is running. This does not start or stop it.");
+                        settings_note(ui, "A running process does not guarantee that a remote connection will work.");
                     }
                     Operation::ApproveOwner => {
                         ui.label("Approve this exact public key/fingerprint and selected permissions? Native vault errors never select file storage.");
@@ -220,7 +331,7 @@ pub(crate) fn show(
                     } else {
                         ActionButtonRole::Accent
                     };
-                    if action_button(ui, role, "Confirm explicitly").clicked() {
+                    if action_button(ui, role, confirm_label).clicked() {
                         action = Some(Action::Confirm);
                     }
                     if action_button(ui, ActionButtonRole::Secondary, "Not now").clicked() {
@@ -293,6 +404,13 @@ pub(crate) fn show_session_sharing(
         .sharing
         .clone()
         .filter(|sharing| Some(&sharing.target) == target);
+    // A private catalog preference does not suppress errors from an explicit
+    // exact-session operation. Keep them scoped to the matching review/status.
+    if scoped.share_review.is_some() || scoped.sharing.is_some() {
+        if let Some(failure) = scoped.failure {
+            ui.colored_label(theme::STATUS_ERROR, failure.notice());
+        }
+    }
     let mut action = None;
     ui.add_enabled_ui(!view.busy, |ui| action = sharing_review(ui, &scoped));
     action
@@ -423,4 +541,24 @@ fn cleanup(ui: &mut egui::Ui, view: &View) {
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     ui.label(label);
     ui.add(egui::TextEdit::singleline(value).char_limit(4096));
+}
+
+// Presentation labels only. The reviewed operation and protected backend scope
+// are carried unchanged by the existing Review/Confirm command path.
+fn confirmation_labels(operation: Operation, draft: &Draft) -> (&'static str, &'static str) {
+    match operation {
+        Operation::Enable if draft.ordinary_access == OrdinaryAccess::ProviderOwner => {
+            ("Enable remote access?", "Enable and start")
+        }
+        Operation::Enable => ("Enable remote access?", "Enable"),
+        Operation::ObserveNative => ("Check host process?", "Check process"),
+        Operation::Refresh => ("Refresh local status?", "Refresh status"),
+        Operation::InspectOwner => ("Review device access?", "Review access"),
+        Operation::Reconcile => ("Recover host setup?", "Recover setup"),
+        Operation::ApproveOwner => ("Approve this device?", "Approve device"),
+        Operation::Start => ("Start remote access?", "Start host"),
+        Operation::Disable => ("Disable remote access?", "Disable access"),
+        Operation::Uninstall => ("Remove this host?", "Remove host"),
+        Operation::Share(_) => ("Review session sharing?", "Continue"),
+    }
 }

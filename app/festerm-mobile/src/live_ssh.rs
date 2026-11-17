@@ -9,7 +9,7 @@ use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
     HostKeyPrompt, PasswordPrompt, Session, SessionEvent, SessionEventNotifier, SessionLifecycle,
-    SessionTryReceiveError, TerminalSize,
+    SessionSendError, SessionTryReceiveError, TerminalSize,
 };
 use festerm_ssh::{
     HostIdentity, HostKeyDecisionResolver, HostTrustDecision, PasswordDecisionResolver,
@@ -389,12 +389,59 @@ impl LiveSsh {
         self.stop(status);
     }
 
+    fn retain_host_admission_refusal(
+        &mut self,
+        operation: &'static str,
+        error: Option<&SessionSendError>,
+    ) {
+        #[cfg(feature = "host-clients")]
+        if let Some(host) = &self.host {
+            let category = match error {
+                Some(SessionSendError::Full { .. }) => "full",
+                Some(SessionSendError::Closed { .. }) => "closed",
+                Some(SessionSendError::TooLarge { .. }) => "too-large",
+                None => "invalid-dimensions",
+            };
+            // Capture before stop/cancel replaces the original lifecycle cause.
+            // HostSession constructs these messages from finite Failure diagnostics.
+            let cause = if matches!(error, Some(SessionSendError::Closed { .. })) {
+                match host.lifecycle() {
+                    SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error) => {
+                        format!(" Retained HOST cause: {}", error.message())
+                    }
+                    _ => " Retained HOST cause: unknown.".to_owned(),
+                }
+            } else {
+                String::new()
+            };
+            self.host_error = Some(format!(
+                "HOST {operation} admission refused; category: {category}. No automatic input replay.{cause}"
+            ));
+        }
+        #[cfg(not(feature = "host-clients"))]
+        let _ = (operation, error);
+    }
+
     pub(super) fn send(&mut self, bytes: &[u8]) {
         if !self.input_enabled() || bytes.is_empty() {
             return;
         }
         if let Some(session) = &self.session {
-            if session.try_send_input(bytes).is_err() {
+            if let Some((dimensions, _)) = self.pending_resize {
+                let result = session_size(dimensions)
+                    .map_err(|_| None)
+                    .and_then(|size| session.try_resize(size).map_err(Some));
+                if let Err(error) = result {
+                    self.retain_host_admission_refusal("viewport resize", error.as_ref());
+                    // There is no pending input queue on mobile. Preserve the
+                    // atomic refusal policy rather than send against stale geometry.
+                    self.stop_failed("Input not sent: viewport resize rejected; disconnected.");
+                    return;
+                }
+                self.pending_resize = None;
+            }
+            if let Err(error) = session.try_send_input(bytes) {
+                self.retain_host_admission_refusal("input", Some(&error));
                 // Never drop part of a command and then accept its continuation.
                 // The backend admission is atomic; make refusal explicit and
                 // retire this session rather than replay input on a new shell.
@@ -763,12 +810,22 @@ mod tests {
         directory
     }
 
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum ViewportCall {
+        Resize(TerminalSize),
+        ResizeRefused(TerminalSize),
+        Input(Vec<u8>),
+    }
+
     #[derive(Default)]
     pub(super) struct FakeSession {
         events: Mutex<VecDeque<SessionEvent>>,
         input: Mutex<Vec<Vec<u8>>>,
         resizes: Mutex<Vec<TerminalSize>>,
+        viewport_calls: Mutex<Vec<ViewportCall>>,
+        resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         rejected: bool,
+        input_error: Option<SessionSendError>,
         closed: bool,
         shutdowns: Mutex<usize>,
     }
@@ -787,16 +844,35 @@ mod tests {
             }
         }
         fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            if let Some(error) = &self.input_error {
+                return Err(error.clone());
+            }
             if self.rejected {
                 return Err(SessionSendError::Full {
                     operation: SessionOperation::Input,
                     capacity: 1,
                 });
             }
+            self.viewport_calls
+                .lock()
+                .unwrap()
+                .push(ViewportCall::Input(bytes.to_vec()));
             self.input.lock().unwrap().push(bytes.to_vec());
             Ok(())
         }
         fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+            let result = self
+                .resize_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()));
+            self.viewport_calls.lock().unwrap().push(if result.is_ok() {
+                ViewportCall::Resize(size)
+            } else {
+                ViewportCall::ResizeRefused(size)
+            });
+            result?;
             self.resizes.lock().unwrap().push(size);
             Ok(())
         }
@@ -925,12 +1001,12 @@ mod tests {
         use std::sync::atomic::Ordering;
 
         let suspension = crate::SuspensionHandle::default();
-        let lock = AppLock::new_with_content_lock_callback(
+        let lock = AppLock::new_with_content_lock_reason_callback(
             None,
             FakeLocker::new(Availability::Unavailable),
             Arc::new(ManualClock::new()),
             || {},
-            suspension.content_lock_callback(),
+            suspension.content_lock_reason_callback(),
         );
         let generation = lock.recording_privacy_generation().unwrap();
         let cancellation = suspension
@@ -1591,12 +1667,12 @@ mod tests {
             let suspension = SuspensionHandle::default();
             suspension.install_test_recording(recording.clone());
             let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
-            let lock = AppLock::new_with_content_lock_callback(
+            let lock = AppLock::new_with_content_lock_reason_callback(
                 None,
                 locker,
                 Arc::new(ManualClock::new()),
                 || {},
-                suspension.content_lock_callback(),
+                suspension.content_lock_reason_callback(),
             );
             let generation = lock.recording_privacy_generation().unwrap();
             if cut == "app" {
@@ -2269,6 +2345,240 @@ mod tests {
         assert_eq!(*session.shutdowns.lock().unwrap(), 1);
     }
 
+    #[cfg(feature = "host-clients")]
+    async fn host_admission_fixture() -> (
+        Arc<festerm_tunnel_bridge::host_client::HostSession>,
+        tokio::io::DuplexStream,
+    ) {
+        use festerm_host_protocol::{
+            Budgets, Capabilities, Envelope, GenerationId, HostId, LogicalSessionId, OperationId,
+            Request, Response, Target,
+        };
+        use festerm_tunnel_bridge::{
+            host_client::{self, Scope},
+            host_terminal, protocol,
+        };
+        use festerm_tunnel_client::host_control::{Binding, ConnectionPermit};
+        use tokio::io::AsyncWriteExt;
+        async fn frame(peer: &mut tokio::io::DuplexStream, kind: u8, payload: &[u8]) {
+            peer.write_u8(kind).await.unwrap();
+            peer.write_u32(payload.len() as u32).await.unwrap();
+            peer.write_all(payload).await.unwrap();
+        }
+        let scope = Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: Binding::new(HostId::new(), "github:7".into(), "fixture-endpoint".into())
+                .unwrap(),
+        };
+        let (stream, mut peer) = tokio::io::duplex(128 * 1024);
+        let host = host_client::testing::session_from_stream(
+            stream,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            scope,
+            Target {
+                logical: LogicalSessionId::new(),
+                generation: GenerationId::new(3).unwrap(),
+            },
+            Arc::new(Repaint(egui::Context::default())),
+        )
+        .unwrap();
+        let server = tokio::spawn(async move {
+            let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let hello: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            assert!(matches!(hello.body, Request::Capabilities {}));
+            let response = Envelope::new(
+                hello.host,
+                hello.operation,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        attach: true,
+                        detach: true,
+                        ..Default::default()
+                    },
+                },
+            );
+            frame(
+                &mut peer,
+                host_terminal::HOST_REPLY,
+                &festerm_host_protocol::encode(&response).unwrap(),
+            )
+            .await;
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let request: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            let Request::Attach {
+                target, attachment, ..
+            } = request.body
+            else {
+                panic!("attach");
+            };
+            let terminal = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+            let snapshot = protocol::encode_snapshot(&terminal.recovery_clone()).unwrap();
+            frame(&mut peer, protocol::SNAPSHOT, &snapshot).await;
+            let adopted = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(adopted.kind(), protocol::ADOPTED);
+            let response = Envelope::new(
+                request.host,
+                request.operation,
+                Response::Attached {
+                    target,
+                    attachment,
+                    lease: None,
+                },
+            );
+            frame(
+                &mut peer,
+                host_terminal::HOST_REPLY,
+                &festerm_host_protocol::encode(&response).unwrap(),
+            )
+            .await;
+            peer
+        });
+        let mut presented = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while host.lifecycle() != SessionLifecycle::Running {
+                host.adopt_into(&mut presented).unwrap();
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        (host, server.await.unwrap())
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_synchronous_admission_refusals_preserve_category_and_cancel_without_replay(
+    ) {
+        for resize in [false, true] {
+            let operation = if resize {
+                SessionOperation::Resize
+            } else {
+                SessionOperation::Input
+            };
+            for (category, error) in [
+                (
+                    "full",
+                    SessionSendError::Full {
+                        operation,
+                        capacity: usize::MAX,
+                    },
+                ),
+                ("closed", SessionSendError::Closed { operation }),
+                (
+                    "too-large",
+                    SessionSendError::TooLarge {
+                        operation,
+                        maximum: 1,
+                        actual: usize::MAX,
+                    },
+                ),
+            ] {
+                let (host, _peer) = host_admission_fixture().await;
+                let session = Arc::new(FakeSession {
+                    input_error: (!resize).then_some(error.clone()),
+                    ..Default::default()
+                });
+                if resize {
+                    session.resize_results.lock().unwrap().push_back(Err(error));
+                }
+                let mut live = connection(session.clone());
+                live.host = Some(host.clone());
+                if resize {
+                    live.resize(Dimensions::new(100, 32).unwrap());
+                }
+                live.send(b"private-command-marker");
+                let diagnostic = live.host_error().unwrap().to_owned();
+                let operation = if resize { "viewport resize" } else { "input" };
+                let cause = if category == "closed" {
+                    " Retained HOST cause: unknown."
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    diagnostic,
+                    format!(
+                        "HOST {operation} admission refused; category: {category}. No automatic input replay.{cause}"
+                    )
+                );
+                assert!(!diagnostic.contains("private-command-marker"));
+                assert!(!diagnostic.contains(&usize::MAX.to_string()));
+                assert!(!live.input_enabled());
+                assert!(live.session.is_none());
+                assert!(matches!(
+                    host.lifecycle(),
+                    SessionLifecycle::Disconnected(_)
+                ));
+                live.send(b"must-not-continue-or-replay");
+                assert!(session.input.lock().unwrap().is_empty());
+                assert_eq!(
+                    *session.shutdowns.lock().unwrap(),
+                    0,
+                    "HOST cancellation owns shutdown"
+                );
+                assert_eq!(live.host_error(), Some(diagnostic.as_str()));
+            }
+        }
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_closed_admission_captures_original_finite_cause_before_cancel() {
+        let (host, peer) = host_admission_fixture().await;
+        drop(peer);
+        let original = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let _ = host.try_recv_event();
+                if let SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error) =
+                    host.lifecycle()
+                {
+                    break error.message().to_owned();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let session = Arc::new(FakeSession {
+            input_error: Some(SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            }),
+            ..Default::default()
+        });
+        let mut live = connection(session.clone());
+        live.host = Some(host.clone());
+        // An already observed terminal failure gates ordinary send. Exercise
+        // the same capture-before-cancel helper without bypassing that guard.
+        live.retain_host_admission_refusal(
+            "input",
+            Some(&SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            }),
+        );
+        live.stop_failed("Input rejected; disconnected. Earlier accepted input may have executed.");
+        assert_eq!(live.host_error(), Some(format!("HOST input admission refused; category: closed. No automatic input replay. Retained HOST cause: {original}").as_str()));
+        assert!(!live
+            .host_error()
+            .unwrap()
+            .contains("private-command-marker"));
+        assert!(!live.input_enabled());
+        assert!(live.session.is_none());
+        assert!(session.input.lock().unwrap().is_empty());
+        assert!(matches!(
+            host.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        ));
+    }
+
     #[test]
     fn mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output() {
         let session = Arc::new(FakeSession::default());
@@ -2290,6 +2600,112 @@ mod tests {
         live.poll(&mut terminal(), &egui::Context::default());
         assert_eq!(session.events.lock().unwrap().len(), 1);
         assert!(session.input.lock().unwrap().is_empty());
+    }
+
+    // Command bytes exercise ordering only; this test does not launch Copilot or a PTY.
+    #[test]
+    fn mobile_first_viewport_precedes_immediate_input() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        let size = TerminalSize::new(100, 32).unwrap();
+        live.resize(Dimensions::new(100, 32).unwrap());
+        live.send(b"copilot\n");
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_backpressure_precedes_immediate_input() {
+        let session = Arc::new(FakeSession::default());
+        session
+            .resize_results
+            .lock()
+            .unwrap()
+            .push_back(Err(SessionSendError::Full {
+                operation: SessionOperation::Resize,
+                capacity: 1,
+            }));
+        let mut live = connection(session.clone());
+        let size = TerminalSize::new(100, 32).unwrap();
+        live.resize(Dimensions::new(100, 32).unwrap());
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        live.send(b"copilot\n");
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::ResizeRefused(size),
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_sustained_backpressure_refuses_input_without_replay() {
+        let session = Arc::new(FakeSession::default());
+        session
+            .resize_results
+            .lock()
+            .unwrap()
+            .extend((0..2).map(|_| {
+                Err(SessionSendError::Full {
+                    operation: SessionOperation::Resize,
+                    capacity: 1,
+                })
+            }));
+        let mut live = connection(session.clone());
+        live.resize(Dimensions::new(100, 32).unwrap());
+        if let Some((_, at)) = live.pending_resize.as_mut() {
+            *at = Instant::now() - Duration::from_millis(200);
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        live.send(b"copilot\n");
+        assert!(!live.input_enabled());
+        assert_eq!(
+            live.status,
+            "Input not sent: viewport resize rejected; disconnected."
+        );
+        assert!(session.input.lock().unwrap().is_empty());
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+        live.send(b"copilot\n");
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::ResizeRefused(TerminalSize::new(100, 32).unwrap()),
+                ViewportCall::ResizeRefused(TerminalSize::new(100, 32).unwrap()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_first_viewport_superseded_size_sends_only_latest_before_input() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        live.resize(Dimensions::new(100, 32).unwrap());
+        live.resize(Dimensions::new(120, 40).unwrap());
+        live.send(b"copilot\n");
+        assert_eq!(
+            *session.viewport_calls.lock().unwrap(),
+            vec![
+                ViewportCall::Resize(TerminalSize::new(120, 40).unwrap()),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+        assert!(live.pending_resize.is_none());
     }
 
     #[test]

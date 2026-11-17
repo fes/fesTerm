@@ -12,8 +12,8 @@ use tokio::io::duplex;
 pub(crate) struct Policy(pub(crate) Arc<tokio::sync::Mutex<OwnerVerifier>>);
 pub(crate) struct FixturePolicyGuard(tokio::sync::OwnedMutexGuard<OwnerVerifier>);
 impl PolicyGuard for FixturePolicyGuard {
-    fn verifier(&self) -> &OwnerVerifier {
-        &self.0
+    fn view(&self) -> PolicyView<'_> {
+        PolicyView::Owner(&self.0)
     }
 }
 impl ProtectedPolicySource for Policy {
@@ -824,19 +824,20 @@ pub(crate) mod native_routes {
 
     impl NativeFixture {
         pub(crate) fn new(creation_allowed: bool) -> Self {
+            // The runtime may supply a private short fixture directory when
+            // the checkout's ancestors fail the unchanged storage policy.
+            let parent = std::env::current_dir().unwrap();
+            Self::new_in(creation_allowed, &parent)
+        }
+
+        pub(crate) fn new_in(creation_allowed: bool, parent: &std::path::Path) -> Self {
             let helper = PathBuf::from(
                 std::env::var_os("FESTERM_HOST_TEST_HELPER")
                     .expect("set FESTERM_HOST_TEST_HELPER to the owned built sessiond helper"),
             );
             assert!(helper.is_absolute() && helper.is_file());
             assert!(helper.with_file_name("festerm-pty-test-child").is_file());
-            let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf();
-            let directory = private_storage::private_test_directory_in(&parent);
+            let directory = private_storage::private_test_directory_in(parent);
             let root = directory.path().to_path_buf();
             let mut policy = policy();
             policy.capabilities = Capabilities {
@@ -1767,7 +1768,45 @@ pub(crate) mod native_routes {
         assert_eq!(session.target.logical, creation.logical);
         let inventory_operation = OperationId::new();
         let inventory_deadline = Instant::now() + Duration::from_secs(8);
-        let inventory = loop {
+        // A nonblocking native observation can retain this exact generation as
+        // unknown, rather than returning top-level Busy or claiming absence.
+        // Force that production boundary before waiting for a healthy summary.
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+        let lease_name = format!("host-daemon-{}.lock", session.target.generation.get());
+        let generation_lease = private_storage::open_private_file(
+            &directory,
+            std::path::Path::new(&lease_name),
+            false,
+        )
+        .unwrap();
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&generation_lease) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "generation lease remained busy"
+                    );
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact generation lease failed: {error}"),
+            }
+        }
+        let contended = second
+            .request(
+                inventory_operation.clone(),
+                Request::List { cursor: None },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        let Response::Inventory { page } = contended.body else {
+            panic!("generation contention must retain an admitted unknown target")
+        };
+        assert!(page.sessions.is_empty());
+        assert_eq!(page.unknown, vec![session.target.clone()]);
+        drop(generation_lease);
+        let page = loop {
             let inventory = second
                 .request(
                     inventory_operation.clone(),
@@ -1776,21 +1815,39 @@ pub(crate) mod native_routes {
                 )
                 .await
                 .unwrap();
-            if matches!(
-                inventory.body,
+            match inventory.body {
                 Response::Refused {
-                    reason: Refusal::Busy
+                    reason: Refusal::Busy,
+                } => {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "inventory remained busy"
+                    );
                 }
-            ) && Instant::now() < inventory_deadline
-            {
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            } else {
-                break inventory;
+                Response::Inventory { page }
+                    if page.sessions.is_empty() && page.unknown == [session.target.clone()] =>
+                {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "inventory retained the exact unknown target beyond its bound"
+                    );
+                }
+                Response::Inventory { page } => {
+                    // Empty-without-unknown, foreign/extra targets and partial
+                    // healthy pages are failures, never reasons to poll again.
+                    assert!(
+                        page.unknown.is_empty(),
+                        "unexpected unknown inventory target"
+                    );
+                    assert_eq!(page.sessions.len(), 1);
+                    assert_eq!(page.sessions[0].target, session.target);
+                    break page;
+                }
+                _ => panic!("unexpected inventory response"),
             }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         };
-        let Response::Inventory { page } = inventory.body else {
-            panic!("inventory")
-        };
+        assert!(page.unknown.is_empty());
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].target, session.target);
         assert_eq!(

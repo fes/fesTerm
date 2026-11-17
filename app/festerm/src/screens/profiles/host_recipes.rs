@@ -142,7 +142,6 @@ impl crate::tabs::AppState {
         crate::screens::host_workspace::install_profile_picker_gallery(context, tab, scene);
         let mut draft = RecipeDraft {
             name: "Build shortcut".into(),
-            hosts_refreshed: true,
             ..Default::default()
         };
         match scene {
@@ -152,6 +151,7 @@ impl crate::tabs::AppState {
                 match scene {
                     "session-existing" => draft.bind_session(&host.sessions[0]),
                     "session-new" => {
+                        draft.behavior = ConnectionBehavior::ResumeOrCreate;
                         draft.session_name = "deploy-review".into();
                         draft.reconcile_session_name(&host.sessions);
                     }
@@ -231,7 +231,6 @@ struct RecipeDraft {
     lifetime: Lifetime,
     behavior: ConnectionBehavior,
     generation: String,
-    hosts_refreshed: bool,
 }
 
 impl Default for RecipeDraft {
@@ -249,9 +248,8 @@ impl Default for RecipeDraft {
             arguments: "[]".into(),
             cwd: String::new(),
             lifetime: Lifetime::Persistent {},
-            behavior: ConnectionBehavior::default(),
+            behavior: ConnectionBehavior::ChooseSession,
             generation: String::new(),
-            hosts_refreshed: false,
         }
     }
 }
@@ -276,7 +274,6 @@ impl RecipeDraft {
                 ConnectionBehavior::AttachOnly { generation } => generation.get().to_string(),
                 _ => String::new(),
             },
-            hosts_refreshed: true,
             original: Some(recipe),
         }
     }
@@ -291,6 +288,10 @@ impl RecipeDraft {
     }
 
     fn bind_host(&mut self, host: &crate::screens::host_workspace::HostSessions) {
+        if self.host_reference().as_ref() == Some(&host.reference) {
+            self.host_hint = Some(host.hint.clone());
+            return;
+        }
         self.host = host.reference.id.to_string();
         let AccountReference::Github { account_id } = host.reference.account;
         self.account = account_id.to_string();
@@ -298,7 +299,12 @@ impl RecipeDraft {
         self.logical = LogicalSessionId::new();
         self.generation.clear();
         self.lifetime = Lifetime::Persistent {};
-        self.reconcile_session_name(&host.sessions);
+        if matches!(self.behavior, ConnectionBehavior::ResumeOrCreate) {
+            self.reconcile_session_name(&host.sessions);
+        } else {
+            self.session_name.clear();
+            self.behavior = ConnectionBehavior::ChooseSession;
+        }
     }
 
     fn bind_session(&mut self, session: &crate::screens::host_workspace::SavedSessionChoice) {
@@ -309,14 +315,25 @@ impl RecipeDraft {
         self.behavior = ConnectionBehavior::ResumeOnly {};
     }
 
-    /// The typed name selects an existing session only when exactly one
-    /// listed session carries it; anything else is a new session that is
-    /// created on first connect.
+    /// Resolve only a uniquely listed authorized name. Typing never opts in to
+    /// creation, and renaming a bound session never changes that old session.
     fn reconcile_session_name(
         &mut self,
         sessions: &[crate::screens::host_workspace::SavedSessionChoice],
     ) {
+        let create = matches!(self.behavior, ConnectionBehavior::ResumeOrCreate);
         let name = self.session_name.trim();
+        if let Some(original) = self.original.as_ref().filter(|original| {
+            Some(&original.host) == self.host_reference().as_ref()
+                && original.session_name() == name
+        }) {
+            self.logical = original.logical_session.clone();
+            self.generation = match original.behavior {
+                ConnectionBehavior::AttachOnly { generation } => generation.get().to_string(),
+                _ => String::new(),
+            };
+            return;
+        }
         if sessions
             .iter()
             .any(|session| session.target.logical == self.logical && session.name == name)
@@ -327,19 +344,25 @@ impl RecipeDraft {
         if let (Some(session), None) = (matches.next(), matches.next()) {
             let session = session.clone();
             self.bind_session(&session);
+            if create {
+                self.behavior = ConnectionBehavior::ResumeOrCreate;
+            }
             return;
         }
-        if sessions
+        let changed_bound_name = sessions
             .iter()
             .any(|session| session.target.logical == self.logical)
-        {
+            || self.original.as_ref().is_some_and(|original| {
+                original.logical_session == self.logical && original.session_name() != name
+            });
+        if changed_bound_name {
             self.logical = LogicalSessionId::new();
             self.generation.clear();
             self.lifetime = Lifetime::Persistent {};
         }
-        self.behavior = ConnectionBehavior::ResumeOrCreate;
     }
 
+    #[cfg(test)]
     fn bound_session<'a>(
         &self,
         sessions: &'a [crate::screens::host_workspace::SavedSessionChoice],
@@ -358,12 +381,26 @@ impl RecipeDraft {
         } else {
             self.behavior.clone()
         };
+        if matches!(behavior, ConnectionBehavior::ChooseSession)
+            || (matches!(behavior, ConnectionBehavior::ResumeOnly {})
+                && self.generation.is_empty()
+                && !self.original.as_ref().is_some_and(|original| {
+                    original.logical_session == self.logical
+                        && Some(&original.host) == self.host_reference().as_ref()
+                }))
+        {
+            return Err(RecipeError::Invalid);
+        }
         let recipe = PublicRecipe {
             id: self.id.clone(),
             logical_session: self.logical.clone(),
             name: self.name.clone(),
             session_name: if self.original.as_ref().is_some_and(|original| {
-                original.session_name.is_none() && original.name == self.session_name
+                original.session_name.is_none()
+                    && original.name == self.session_name
+                    // Legacy implicit labels may exceed today's explicit-name limit.
+                    // Keep that compatibility without changing the logical target.
+                    && (self.name == original.name || original.name.len() > 128)
             }) {
                 None
             } else {
@@ -393,107 +430,17 @@ impl RecipeDraft {
     }
 }
 
-/// Editable dropdown: type a new session name, or pick an authorized session
-/// from the host's last listed inventory.
+/// Explicit creation policy: name a durable session, or select an existing
+/// authorized session from the host's last listed inventory.
 fn session_name_combo(
     ui: &mut Ui,
     tab: TabId,
     draft: &mut RecipeDraft,
     sessions: &[crate::screens::host_workspace::SavedSessionChoice],
-    host_selected: bool,
 ) {
-    let label = ui.label("Session name").id;
-    let button_width = 28.0;
-    let mut picked = None;
-    let text = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let text = ui
-                .add(
-                    egui::TextEdit::singleline(&mut draft.session_name)
-                        .min_size(egui::vec2(0.0, 24.0))
-                        .id_salt(("recipe_session_name", tab))
-                        .hint_text("Name a new session or choose one")
-                        .char_limit(MAX_PORTABLE_BYTES)
-                        .desired_width((ui.available_width() - button_width - 4.0).max(80.0)),
-                )
-                .labelled_by(label);
-            let toggle = ui
-                .add_enabled(
-                    host_selected,
-                    egui::Button::new("⏷").min_size(egui::vec2(button_width, 24.0)),
-                )
-                .on_hover_text("Existing sessions");
-            toggle.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Button,
-                    host_selected,
-                    "Existing sessions",
-                )
-            });
-            egui::Popup::menu(&toggle)
-                .width(text.rect.width() + button_width + 4.0)
-                .show(|ui| {
-                    if sessions.is_empty() {
-                        ui.label(
-                            egui::RichText::new("No sessions listed for this host yet.")
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    for session in sessions {
-                        ui.push_id(&session.target.logical, |ui| {
-                            if ui
-                                .selectable_label(
-                                    draft.logical == session.target.logical,
-                                    &session.name,
-                                )
-                                .clicked()
-                            {
-                                picked = Some(session.clone());
-                                ui.close();
-                            }
-                        });
-                    }
-                });
-            text
-        })
-        .inner;
-    if let Some(session) = picked {
-        draft.bind_session(&session);
-    } else if text.changed() {
-        draft.reconcile_session_name(sessions);
-    }
-    let name = draft.session_name.trim();
-    let bound = draft.bound_session(sessions).is_some();
-    let duplicates = sessions
-        .iter()
-        .filter(|session| session.name == name)
-        .count();
-    let status = if bound {
-        Some("Existing session".to_owned())
-    } else if duplicates > 1 {
-        Some(format!(
-            "Several sessions are named “{name}”. Choose one from the list."
-        ))
-    } else if !name.is_empty() {
-        Some("New session · created when you first connect".to_owned())
-    } else {
-        None
-    };
-    if let Some(status) = status {
-        ui.label(
-            egui::RichText::new(status)
-                .small()
-                .color(theme::TEXT_SECONDARY),
-        );
-    }
-    ui.add_space(4.0);
     let mut create = matches!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
     if ui
-        .add_enabled(
-            bound,
-            egui::Checkbox::new(&mut create, "Create session if missing"),
-        )
+        .checkbox(&mut create, "Create session if missing")
         .changed()
     {
         draft.behavior = if create {
@@ -501,6 +448,53 @@ fn session_name_combo(
         } else {
             ConnectionBehavior::ResumeOnly {}
         };
+        if create {
+            draft.lifetime = Lifetime::Persistent {};
+        }
+    }
+    if create {
+        let label = ui.label("Session name").id;
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut draft.session_name)
+                    .id_salt(("recipe_session_name", tab))
+                    .hint_text("Session name")
+                    .char_limit(128)
+                    .desired_width(f32::INFINITY),
+            )
+            .labelled_by(label)
+            .changed()
+        {
+            draft.reconcile_session_name(sessions);
+        }
+    } else {
+        let label = ui.label("Existing session").id;
+        let combo = egui::ComboBox::from_id_salt(("recipe_existing_session", tab))
+            .width(ui.available_width())
+            .selected_text(if draft.session_name.is_empty() {
+                "Select a session…"
+            } else {
+                &draft.session_name
+            })
+            .show_ui(ui, |ui| {
+                if sessions.is_empty() {
+                    ui.label("Select the host to list sessions.");
+                }
+                for session in sessions {
+                    ui.push_id(&session.target.logical, |ui| {
+                        if ui
+                            .selectable_label(
+                                draft.logical == session.target.logical,
+                                &session.name,
+                            )
+                            .clicked()
+                        {
+                            draft.bind_session(session);
+                        }
+                    });
+                }
+            });
+        combo.response.labelled_by(label);
     }
     ui.add_space(8.0);
 }
@@ -659,10 +653,6 @@ impl HostRecipesState {
                             .corner_radius(8.0).inner_margin(egui::Margin::same(16)), |ui| {
                         ui.set_width(ui.available_width().min(340.0));
                         field(ui, "Profile name", &mut draft.name);
-                        if draft.original.is_none() && !draft.hosts_refreshed {
-                            draft.hosts_refreshed = true;
-                            crate::screens::host_workspace::queue_profile_refresh(ui.ctx(), tab_id, configuration);
-                        }
                         let selected = draft.host_reference();
                         match crate::screens::host_workspace::show_profile_host_picker(
                             ui,
@@ -670,7 +660,7 @@ impl HostRecipesState {
                             configuration,
                             selected.as_ref(),
                             draft.host_hint.as_ref().map(|hint| hint.name.as_str()),
-                            draft.original.is_none(),
+                            true,
                         ) {
                             Some(crate::screens::host_workspace::ProfileHostPick::Bind(host)) => draft.bind_host(&host),
                             Some(crate::screens::host_workspace::ProfileHostPick::Command(next)) => *command = Some(*next),
@@ -683,21 +673,7 @@ impl HostRecipesState {
                                 .find(|host| host.reference == reference))
                             .map(|host| host.sessions)
                             .unwrap_or_default();
-                        if draft.original.is_some() {
-                            let mut create = matches!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
-                            if ui.checkbox(&mut create, "Create session if missing").changed() {
-                                draft.behavior = if create { ConnectionBehavior::ResumeOrCreate }
-                                    else { ConnectionBehavior::ResumeOnly {} };
-                            }
-                            ui.label("Session name");
-                            ui.add_enabled(false, egui::TextEdit::singleline(&mut draft.session_name)
-                                .min_size(egui::vec2(0.0, 24.0))
-                                .desired_width(f32::INFINITY));
-                            ui.small("The saved session identity is kept when editing.");
-                            ui.add_space(8.0);
-                        } else {
-                            session_name_combo(ui, tab_id, draft, &sessions, !draft.host.is_empty());
-                        }
+                        session_name_combo(ui, tab_id, draft, &sessions);
                         ui.collapsing("Advanced", |ui| {
                             ui.label(OFFLINE_NOTICE);
                             ui.add_enabled_ui(draft.original.is_none(), |ui| {
@@ -879,9 +855,6 @@ pub(crate) fn select_host_for_profile(
         let RecipePage::Edit(draft) = &mut editor.page else {
             return false;
         };
-        if draft.original.is_some() {
-            return false;
-        }
         let session = match &target {
             Some(target) => {
                 let Some(session) = host
@@ -895,13 +868,9 @@ pub(crate) fn select_host_for_profile(
             }
             None => None,
         };
-        draft.host = host.reference.id.to_string();
-        let AccountReference::Github { account_id } = host.reference.account;
-        draft.account = account_id.to_string();
-        draft.host_hint = Some(host.hint.clone());
-        match session {
-            Some(session) => draft.bind_session(session),
-            None => draft.bind_host(&host),
+        draft.bind_host(&host);
+        if let Some(session) = session {
+            draft.bind_session(session);
         }
         editor.feedback = None;
         data.insert_temp(profiles_state_id(tab), state);
@@ -1085,6 +1054,61 @@ mod tests {
         harness.get_by_label("Cancel").click();
         harness.run_ok();
         assert!(harness.state().command.is_none());
+    }
+
+    #[test]
+    fn new_profile_with_signed_in_accounts_does_not_discover_hosts_on_open() {
+        let account = festerm_config::DevTunnelAccount::new(
+            "account",
+            festerm_config::AccountProvider::Github,
+            42,
+            "developer",
+            festerm_secret_store::SecretReference::generate(),
+        )
+        .unwrap();
+        let configuration = festerm_config::Configuration::empty()
+            .with_account(account)
+            .unwrap()
+            .0;
+        let mut harness = harness(configuration.clone());
+        install(&harness, RecipePage::Edit(Box::default()));
+        harness.run_steps(4);
+        harness.get_by_label("Find hosts · @developer");
+        assert!(harness.state().command.is_none());
+        assert_eq!(harness.state().configuration, configuration);
+        assert!(harness.get_by_label("Save").accesskit_node().is_disabled());
+        assert!(!harness
+            .get_by_label("Create session if missing")
+            .accesskit_node()
+            .is_disabled());
+    }
+
+    #[test]
+    fn explicit_host_change_resets_target_without_reusing_the_old_hosts_session() {
+        use crate::screens::host_workspace::HostSessions;
+        let original = recipe();
+        let mut draft = RecipeDraft::from_recipe(original.clone());
+        let host = HostSessions {
+            reference: HostReference {
+                id: "00000000-0000-4000-8000-000000000099".parse().unwrap(),
+                account: original.host.account.clone(),
+            },
+            hint: festerm_config::host_recipes::HostHint {
+                name: "Other host".into(),
+                locator: "other.use".into(),
+            },
+            sessions: Vec::new(),
+        };
+        draft.bind_host(&host);
+        assert_eq!(draft.id, original.id);
+        assert_ne!(draft.logical, original.logical_session);
+        assert_eq!(draft.host_reference().as_ref(), Some(&host.reference));
+        let logical = draft.logical.clone();
+        draft.bind_host(&host);
+        assert_eq!(
+            draft.logical, logical,
+            "reselecting the same host preserves the target"
+        );
     }
 
     #[test]
@@ -1280,85 +1304,70 @@ mod tests {
     }
 
     #[test]
-    fn typed_session_name_selects_an_exact_unique_match_or_names_a_new_session() {
+    fn typed_session_name_preserves_explicit_creation_policy_and_unique_binding() {
         let sessions = listed_sessions();
-        let mut draft = RecipeDraft::default();
-        let fresh = draft.logical.clone();
-
+        let mut draft = RecipeDraft {
+            behavior: ConnectionBehavior::ResumeOrCreate,
+            ..Default::default()
+        };
         draft.session_name = " build ".into();
         draft.reconcile_session_name(&sessions);
         assert_eq!(draft.logical, sessions[0].target.logical);
-        assert_eq!(draft.generation, "3");
         assert_eq!(draft.session_name, "build");
-        assert_eq!(draft.behavior, ConnectionBehavior::ResumeOnly {});
-
+        assert_eq!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
         draft.session_name = "build-2".into();
         draft.reconcile_session_name(&sessions);
         assert_ne!(draft.logical, sessions[0].target.logical);
-        assert_ne!(
-            draft.logical, fresh,
-            "a new name never reuses a listed identity"
-        );
         assert!(draft.generation.is_empty());
         assert_eq!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
-
         draft.session_name = "shared".into();
         draft.reconcile_session_name(&sessions);
         assert!(
             draft.bound_session(&sessions).is_none(),
             "ambiguous names never auto-bind"
         );
-        assert_eq!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
-
         draft.bind_session(&sessions[2]);
+        assert_eq!(draft.behavior, ConnectionBehavior::ResumeOnly {});
         draft.reconcile_session_name(&sessions);
-        assert_eq!(
-            draft.logical, sessions[2].target.logical,
-            "an explicit choice stays bound"
-        );
+        assert_eq!(draft.logical, sessions[2].target.logical);
     }
 
     #[test]
-    fn session_name_dropdown_picks_existing_sessions_and_labels_new_ones() {
+    fn session_selection_and_create_if_missing_are_explicit_and_permission_independent() {
         use crate::screens::host_workspace::HostSessions;
         let selected = recipe();
         let sessions = listed_sessions();
         let mut harness = harness(festerm_config::Configuration::empty());
-        crate::screens::host_workspace::remember_host(
-            &harness.ctx,
-            HostSessions {
-                reference: selected.host.clone(),
-                hint: festerm_config::host_recipes::HostHint {
-                    name: "Build host".into(),
-                    locator: "fixture.use".into(),
-                },
-                sessions: sessions.clone(),
+        let host = HostSessions {
+            reference: selected.host.clone(),
+            hint: festerm_config::host_recipes::HostHint {
+                name: "Build host".into(),
+                locator: "fixture.use".into(),
             },
-        );
+            sessions: sessions.clone(),
+        };
+        crate::screens::host_workspace::remember_host(&harness.ctx, host.clone());
         let mut draft = RecipeDraft {
             name: "My shortcut".into(),
             ..Default::default()
         };
-        draft.bind_host(&crate::screens::host_workspace::remembered_hosts(&harness.ctx)[0]);
+        draft.bind_host(&host);
         install(&harness, RecipePage::Edit(Box::new(draft)));
         harness.run_ok();
-        assert!(harness
-            .get_by_label("Create session if missing")
-            .accesskit_node()
-            .is_disabled());
-
-        harness.get_by_label("Existing sessions").click();
-        harness.run_ok();
-        harness.get_by_label("build").click();
-        harness.run_ok();
-        harness.get_by_label("Existing session");
         assert!(!harness
             .get_by_label("Create session if missing")
             .accesskit_node()
             .is_disabled());
-        let draft = current_draft(&harness);
-        assert_eq!(draft.logical, sessions[0].target.logical);
-
+        assert!(harness
+            .query_by_role_and_label(egui::accesskit::Role::TextInput, "Session name")
+            .is_none());
+        harness.get_by_label("Existing session").click();
+        harness.run_ok();
+        harness.get_by_label("build").click();
+        harness.run_ok();
+        assert_eq!(current_draft(&harness).logical, sessions[0].target.logical);
+        harness.get_by_label("Create session if missing").click();
+        harness.run_ok();
         harness
             .get_by_role_and_label(egui::accesskit::Role::TextInput, "Session name")
             .focus();
@@ -1367,19 +1376,19 @@ mod tests {
             .get_by_role_and_label(egui::accesskit::Role::TextInput, "Session name")
             .type_text("-next");
         harness.run_ok();
-        harness.get_by_label("New session · created when you first connect");
-        assert!(harness
-            .get_by_label("Create session if missing")
-            .accesskit_node()
-            .is_disabled());
         let draft = current_draft(&harness);
         assert_eq!(draft.session_name, "build-next");
+        assert_ne!(draft.logical, sessions[0].target.logical);
         assert_eq!(draft.behavior, ConnectionBehavior::ResumeOrCreate);
+        assert!(
+            draft.command().is_ok(),
+            "saving does not require a creation capability observation"
+        );
         assert!(harness.state().command.is_none());
     }
 
     #[test]
-    fn editing_a_saved_profile_never_retargets_its_session() {
+    fn saved_profile_opens_offline_and_only_explicit_edits_retarget_its_session() {
         let original = recipe();
         let mut harness = harness(festerm_config::Configuration::empty());
         install(
@@ -1387,11 +1396,27 @@ mod tests {
             RecipePage::Edit(Box::new(RecipeDraft::from_recipe(original.clone()))),
         );
         harness.run_ok();
-        assert!(harness.query_by_label("Existing sessions").is_none());
-        assert!(harness.query_by_label("Refresh").is_none());
-        harness.get_by_label("The saved session identity is kept when editing.");
         assert!(harness.state().command.is_none());
         assert_eq!(current_draft(&harness).logical, original.logical_session);
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::TextInput, "Session name")
+            .focus();
+        harness.run_ok();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::TextInput, "Session name")
+            .type_text("-new");
+        harness.run_ok();
+        let changed = current_draft(&harness);
+        assert_ne!(changed.logical, original.logical_session);
+        assert_eq!(changed.host_reference().as_ref(), Some(&original.host));
+        assert!(harness.state().command.is_none());
+        let mut reverted = changed;
+        reverted.session_name = original.session_name().to_owned();
+        reverted.reconcile_session_name(&[]);
+        assert_eq!(
+            reverted.logical, original.logical_session,
+            "reverting the remote name retains the original saved identity without a network read"
+        );
     }
 
     fn current_draft(harness: &Harness<'_, State>) -> RecipeDraft {
@@ -1407,6 +1432,22 @@ mod tests {
             panic!("draft")
         };
         *draft
+    }
+
+    #[test]
+    fn renaming_local_profile_preserves_implicit_remote_name_and_logical_identity() {
+        let mut original = recipe();
+        original.name = "Remote build".into();
+        original.session_name = None;
+        let mut draft = RecipeDraft::from_recipe(original.clone());
+        draft.name = "My shortcut".into();
+        let MetadataCommand::Edit(edit) = draft.command().unwrap() else {
+            panic!("metadata edit")
+        };
+        assert_eq!(edit.name, "My shortcut");
+        assert_eq!(edit.session_name(), "Remote build");
+        assert_eq!(edit.logical_session, original.logical_session);
+        assert_eq!(edit.host, original.host);
     }
 
     #[test]

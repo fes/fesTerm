@@ -66,10 +66,12 @@ impl EndIntent {
         intent
     }
 
-    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
-        self.owner == context.approved
-            && self.reference == context.reference
-            && self.binding == context.binding
+    pub fn matches_context<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
+        context.into().as_enrolled_owner().is_some_and(|context| {
+            self.owner == context.approved
+                && self.reference == context.reference
+                && self.binding == context.binding
+        })
     }
 
     pub fn target(&self) -> &Target {

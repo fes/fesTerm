@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0403741c0dc4a46132a5131bb7a4c2287532a319425671853b11bc35993a05e7"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27b5cf556d8c524b84d34f1dea63e80e3e14facc894773163eb3a680828479fe"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,7 +13,7 @@ Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 Use for: When a backend or UI path needs the shared lifecycle, queue semantics, and reply ownership rules.
 
 - [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle from start through terminal exit or failure.
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Shared backend contract for input, resize, shutdown, and reply ownership.
+- [`Session`](../../crates/festerm-session/src/lib.rs) — Backend contract for input, resize, shutdown, and reply ownership.
 
 Evidence:
 - [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered through transitions.
@@ -21,7 +21,7 @@ Evidence:
 Caveats:
 - Events never mutate Terminal directly.
 - SessionLifecycle::Disconnected is not terminal.
-- Backend reply ownership is gated by Session::terminal_replies_owned_by_backend.
+- Backend reply ownership is gated by terminal_replies_owned_by_backend.
 
 ## Local PTY
 
@@ -42,7 +42,7 @@ Caveats:
 Use for: When a named, recoverable session must be resumed, reconnected, or mirrored for persistence.
 
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery sync.
-- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains terminal replies while ingesting bytes.
+- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains replies while ingesting bytes.
 
 Evidence:
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect policy, and explicit attach semantics.

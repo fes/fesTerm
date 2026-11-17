@@ -667,16 +667,17 @@ fn settings_screen(
                 }
             });
         }
-        if button(ui, ButtonKind::Primary, "Add GitHub account", true).clicked() {
+        let label = if data.tunnel_accounts.is_empty() {
+            "Sign in with GitHub"
+        } else {
+            "Add account"
+        };
+        if button(ui, ButtonKind::Primary, label, true).clicked() {
             actions.push(ShellAction::AddTunnelAccount);
         }
     });
-    card(ui, |ui| {
-        let mut row = RowSpec::new("Set up a host");
-        row.icon = Some(Icon::DevTunnel);
-        row.subtitle = Some("Review and copy the one-line installer");
-        row.trailing = Trailing::Chevron;
-        if list_row(ui, &row).clicked() {
+    ui.collapsing("Legacy tunnel setup", |ui| {
+        if button(ui, ButtonKind::Secondary, "Copy host installer…", true).clicked() {
             actions.push(ShellAction::OpenHostSetup);
         }
     });

@@ -43,3 +43,7 @@ harness = false
 [[bench]]
 name = "routed_input"
 harness = false
+
+[[test]]
+name = "routed_input_allocations"
+harness = false

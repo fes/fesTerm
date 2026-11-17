@@ -54,6 +54,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0086: Provider-Authorized Ordinary Remoting](0086-provider-authorized-ordinary-remoting.md) - architecturally reviewed direction; implementation and native qualification remain open for the automatic account/host/shared-session flow, sealed provider-connect capability, explicit opt-in migration and separate advanced owner authority
+- [ADR 0087: Short macOS Session Daemon Socket Addresses](0087-macos-sessiond-socket-addresses.md) - architecturally reviewed overflow-only socket address; durable roots and generation authority retained, default-path native qualification open
 - [ADR 0084: Host-Based Dev Tunnels, Remote Session Creation, and Unified Host Installation](0084-host-based-dev-tunnels.md) - owner-requested design; explicit discovery, local resume-or-create recipes, shared setup, headless distribution and staged acceptance
 
 - [ADR 0077: Synchronized Local Terminal Recording and MP4 Export](0077-synchronized-terminal-recording-and-mp4-export.md) - explicitly selected sessions share a timeline and produce separate local MP4s; platform and privacy qualification required

@@ -1,6 +1,7 @@
 """Portable checks of the iOS graph gate, without a Rust or Apple toolchain."""
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -72,6 +73,29 @@ class IosSshDependencyTests(unittest.TestCase):
             ("aarch64-apple-ios-sim", "festerm-tunnel-client"), ("aarch64-apple-ios-sim", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios-sim", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
+
+    def test_host_client_simulator_build_checks_and_records_the_selected_graph(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(build, "ROOT", Path(temporary)), \
+                patch.object(build.sys, "argv", ["build", "--host-clients"]), \
+                patch.object(build.platform, "system", return_value="Darwin"), \
+                patch.object(build.platform, "machine", return_value="arm64"), \
+                patch.object(build, "check_dependencies") as graph, \
+                patch.object(build.shutil, "copy2"), \
+                patch.object(build.shutil, "make_archive"), \
+                patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "/sdk")) as run:
+            self.assertEqual(build.main(), 0)
+            graph.assert_called_once_with("aarch64-apple-ios-sim", live_ssh=False, host_clients=True)
+            cargo = next(call.args for call in run.call_args_list if call.args[:2] == ("cargo", "build"))
+            self.assertEqual(cargo[cargo.index("--features") + 1], "host-clients")
+            receipt = json.loads((Path(temporary) / "target/ios-spike-hosts/build-receipt.json").read_text())
+            self.assertEqual(receipt["cargo_features"], ["host-clients"])
+            self.assertEqual(receipt["native_validation"], "not-run")
+
+    def test_host_client_graph_feature_is_forwarded_without_desktop_defaults(self):
+        with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "festerm-mobile v0.17.1")) as run:
+            build.check_dependencies("aarch64-apple-ios", host_clients=True)
+            self.assertEqual(run.call_args.args[run.call_args.args.index("--features") + 1], "host-clients")
 
     def test_live_feature_is_forwarded_to_cargo_graph_inspection(self):
         with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "festerm-mobile v0.11.1")) as run:

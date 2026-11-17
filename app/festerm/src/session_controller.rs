@@ -1234,6 +1234,17 @@ impl<S: Session> SessionController<S> {
     }
 
     pub fn flush_pending_writes(&mut self) {
+        if !self.pending_writes.writes.is_empty() {
+            self.force_flush_pending_resize();
+            if self.pending_resize.is_some() {
+                // Keep input in the existing bounded queue until its viewport
+                // request is accepted. A refused resize must not be overtaken.
+                self.pending_writes.last_flush_accepted = 0;
+                self.pending_writes.last_flush_dropped = 0;
+                self.last_input_delivery = "queued-backpressure";
+                return;
+            }
+        }
         let Some(session) = &self.session else {
             return;
         };
@@ -1305,6 +1316,8 @@ impl<S: Session> SessionController<S> {
             return;
         }
         if self.debounced_resize.map(|(staged, _)| staged) != Some(size) {
+            // The latest viewport replaces a refused older request.
+            self.pending_resize = None;
             self.debounced_resize = Some((size, Instant::now()));
         }
     }
@@ -1322,10 +1335,16 @@ impl<S: Session> SessionController<S> {
                 self.try_resize(size);
             }
         }
+        if self.pending_resize.is_none() && !self.pending_writes.writes.is_empty() {
+            self.flush_pending_writes();
+        }
     }
 
     /// Keep the deadline armed if egui's scheduled frame arrives before it.
     pub fn next_resize_repaint_delay(&self) -> Option<Duration> {
+        if self.pending_resize.is_some() {
+            return Some(TERMINAL_RESIZE_DEBOUNCE);
+        }
         self.debounced_resize
             .map(|(_, staged)| TERMINAL_RESIZE_DEBOUNCE.saturating_sub(staged.elapsed()))
     }
@@ -1337,7 +1356,8 @@ impl<S: Session> SessionController<S> {
     /// settled size can be forwarded to the PTY right away instead of
     /// waiting out an arbitrary timer.
     fn force_flush_pending_resize(&mut self) {
-        if let Some((size, _)) = self.debounced_resize.take() {
+        let latest = self.debounced_resize.take().map(|(size, _)| size);
+        if let Some(size) = latest.or(self.pending_resize.take()) {
             self.try_resize(size);
         }
     }
@@ -1628,7 +1648,6 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
             self.human_input_takeover();
         }
         self.input_event_human_noted = false;
-        self.force_flush_pending_resize();
         self.diagnostics.byte_count = self
             .diagnostics
             .byte_count
@@ -2039,11 +2058,20 @@ pub(crate) mod fake {
         sync::{Arc, Mutex, MutexGuard},
     };
 
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum ViewportCall {
+        Resize(TerminalSize),
+        ResizeRefused(TerminalSize),
+        Input(Vec<u8>),
+    }
+
     pub struct FakeSession {
         events: Mutex<VecDeque<SessionEvent>>,
         input_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         sent: Mutex<Vec<Vec<u8>>>,
         backend_owned_terminal: bool,
+        viewport_calls: Mutex<Vec<ViewportCall>>,
+        resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         events_closed: bool,
         automation_epoch: Arc<AutomationEpoch>,
     }
@@ -2064,6 +2092,8 @@ pub(crate) mod fake {
                 input_results: Mutex::new(input_results.into_iter().collect()),
                 sent: Mutex::new(Vec::new()),
                 backend_owned_terminal: false,
+                viewport_calls: Mutex::new(Vec::new()),
+                resize_results: Mutex::new(VecDeque::new()),
                 events_closed: false,
                 automation_epoch,
             }
@@ -2075,6 +2105,22 @@ pub(crate) mod fake {
 
         pub fn sent(&self) -> Vec<Vec<u8>> {
             self.sent.lock().expect("fake session sent lock").clone()
+        }
+
+        pub fn with_resize_results(
+            self,
+            results: impl IntoIterator<Item = Result<(), SessionSendError>>,
+        ) -> Self {
+            self.resize_results.lock().unwrap().extend(results);
+            self
+        }
+
+        pub fn accept_resizes(&self) {
+            self.resize_results.lock().unwrap().clear();
+        }
+
+        pub fn viewport_calls(&self) -> Vec<ViewportCall> {
+            self.viewport_calls.lock().unwrap().clone()
         }
 
         pub fn with_backend_owned_terminal(mut self) -> Self {
@@ -2117,6 +2163,10 @@ pub(crate) mod fake {
                 .pop_front()
                 .unwrap_or(Ok(()));
             if result.is_ok() {
+                self.viewport_calls
+                    .lock()
+                    .unwrap()
+                    .push(ViewportCall::Input(bytes.to_vec()));
                 self.sent
                     .lock()
                     .expect("fake session sent lock")
@@ -2125,8 +2175,19 @@ pub(crate) mod fake {
             result
         }
 
-        fn try_resize(&self, _size: TerminalSize) -> Result<(), SessionSendError> {
-            Ok(())
+        fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+            let result = self
+                .resize_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()));
+            self.viewport_calls.lock().unwrap().push(if result.is_ok() {
+                ViewportCall::Resize(size)
+            } else {
+                ViewportCall::ResizeRefused(size)
+            });
+            result
         }
 
         fn try_shutdown(&self) -> Result<(), SessionSendError> {
@@ -3167,6 +3228,86 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("9 pending input bytes"));
+    }
+
+    // Command bytes exercise ordering only; this test does not launch Copilot or a PTY.
+    #[test]
+    fn desktop_first_viewport_precedes_immediate_input() {
+        use fake::ViewportCall;
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+        let size = TerminalSize::new(100, 32).unwrap();
+        controller.record_terminal_resize(Dimensions::new(100, 32).unwrap());
+        controller.record_encoded_input(b"copilot\n");
+        assert_eq!(
+            controller.session.as_ref().unwrap().viewport_calls(),
+            vec![
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn desktop_first_viewport_backpressure_precedes_immediate_input() {
+        use fake::ViewportCall;
+        let session = FakeSession::new([]).with_resize_results([Err(SessionSendError::Full {
+            operation: festerm_session::SessionOperation::Resize,
+            capacity: 1,
+        })]);
+        let mut controller = SessionController::for_test(session);
+        let size = TerminalSize::new(100, 32).unwrap();
+        controller.record_terminal_resize(Dimensions::new(100, 32).unwrap());
+        controller.record_encoded_input(b"copilot\n");
+        controller.flush_pending_resize();
+        controller.flush_pending_writes();
+        assert_eq!(
+            controller.session.as_ref().unwrap().viewport_calls(),
+            vec![
+                ViewportCall::ResizeRefused(size),
+                ViewportCall::Resize(size),
+                ViewportCall::Input(b"copilot\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size() {
+        use fake::ViewportCall;
+        let session = FakeSession::new([]).with_resize_results((0..8).map(|_| {
+            Err(SessionSendError::Full {
+                operation: festerm_session::SessionOperation::Resize,
+                capacity: 1,
+            })
+        }));
+        let mut controller = SessionController::for_test(session);
+        controller.record_terminal_resize(Dimensions::new(100, 32).unwrap());
+        controller.record_encoded_input(b"cop");
+        controller.flush_pending_writes();
+        controller.record_encoded_input(b"ilot\n");
+        assert!(controller.session.as_ref().unwrap().sent().is_empty());
+        assert_eq!(controller.pending_writes.queued_writes(), 2);
+        assert_eq!(controller.pending_writes.queued_bytes(), 8);
+        assert!(controller.next_resize_repaint_delay().is_some());
+
+        controller.record_terminal_resize(Dimensions::new(120, 40).unwrap());
+        controller.session.as_ref().unwrap().accept_resizes();
+        // The existing per-frame flush must make progress without more typing.
+        controller.flush_pending_resize();
+        let calls = controller.session.as_ref().unwrap().viewport_calls();
+        let accepted: Vec<_> = calls
+            .into_iter()
+            .filter(|call| !matches!(call, ViewportCall::ResizeRefused(_)))
+            .collect();
+        assert_eq!(
+            accepted,
+            vec![
+                ViewportCall::Resize(TerminalSize::new(120, 40).unwrap()),
+                ViewportCall::Input(b"cop".to_vec()),
+                ViewportCall::Input(b"ilot\n".to_vec()),
+            ]
+        );
+        assert_eq!(controller.pending_writes.queued_writes(), 0);
+        assert!(controller.next_resize_repaint_delay().is_none());
     }
 
     /// Regression test: a freshly created session's very first resize (the
@@ -5113,5 +5254,240 @@ mod tests {
                 .args(["-L", socket.as_str(), "kill-server"])
                 .status();
         }
+    }
+    // Uses the existing bound stream fixture; no native/vault/provider authentication.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[tokio::test]
+    async fn desktop_host_first_viewport_survives_starting_without_replaying_early_input() {
+        host_starting_resize_fixture(false).await;
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[tokio::test]
+    async fn desktop_host_cached_resize_budget_failure_never_publishes_running_or_input() {
+        host_starting_resize_fixture(true).await;
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    async fn host_starting_resize_fixture(exhaust_resize_budget: bool) {
+        use festerm_host_protocol::{
+            Budgets, Capabilities, Envelope, GenerationId, HostId, LogicalSessionId, OperationId,
+            Request, Response, Target,
+        };
+        use festerm_tunnel_bridge::{
+            host_client::{self, Scope},
+            host_terminal, protocol,
+        };
+        use festerm_tunnel_client::host_control::{Binding, ConnectionPermit};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncWriteExt, DuplexStream};
+        struct Wake {
+            ready: tokio::sync::Notify,
+            count: AtomicUsize,
+        }
+        impl festerm_session::SessionEventNotifier for Wake {
+            fn notify(&self) {
+                self.count.fetch_add(1, Ordering::SeqCst);
+                self.ready.notify_one();
+            }
+        }
+        async fn frame(peer: &mut DuplexStream, kind: u8, bytes: &[u8]) {
+            peer.write_u8(kind).await.unwrap();
+            peer.write_u32(bytes.len() as u32).await.unwrap();
+            peer.write_all(bytes).await.unwrap();
+            peer.flush().await.unwrap();
+        }
+        async fn reply(peer: &mut DuplexStream, request: &Envelope<Request>, body: Response) {
+            let bytes = festerm_host_protocol::encode(&Envelope::new(
+                request.host.clone(),
+                request.operation.clone(),
+                body,
+            ))
+            .unwrap();
+            frame(peer, host_terminal::HOST_REPLY, &bytes).await;
+        }
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let binding = Binding::new(
+            HostId::new(),
+            "owned-account".into(),
+            "owned-endpoint".into(),
+        )
+        .unwrap();
+        let scope = Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: binding.clone(),
+        };
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(7).unwrap(),
+        };
+        let wake = Arc::new(Wake {
+            ready: tokio::sync::Notify::new(),
+            count: AtomicUsize::new(0),
+        });
+        let budgets = Budgets::default();
+        let session = host_client::testing::session_from_stream(
+            stream,
+            ConnectionPermit::reserve(&budgets).unwrap(),
+            scope,
+            target,
+            wake.clone(),
+        )
+        .unwrap();
+        let session =
+            Arc::try_unwrap(session).unwrap_or_else(|_| panic!("sole fixture session owner"));
+        let mut controller: SessionController<host_client::HostSession> =
+            SessionController::for_test(session);
+        let (activate, activation) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+            let hello = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let hello: Envelope<Request> = festerm_host_protocol::decode(hello.payload()).unwrap();
+            reply(
+                &mut peer,
+                &hello,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        attach: true,
+                        detach: true,
+                        ..Capabilities::default()
+                    },
+                },
+            )
+            .await;
+            let request = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            let request: Envelope<Request> =
+                festerm_host_protocol::decode(request.payload()).unwrap();
+            let Request::Attach {
+                target, attachment, ..
+            } = &request.body
+            else {
+                panic!("attach");
+            };
+            let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            let snapshot = protocol::encode_snapshot(&terminal.recovery_clone()).unwrap();
+            frame(&mut peer, protocol::SNAPSHOT, &snapshot).await;
+            let adopted = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(adopted.kind(), protocol::ADOPTED);
+            activation.await.unwrap(); // Actual host activation deliberately held after adoption.
+            reply(
+                &mut peer,
+                &request,
+                Response::Attached {
+                    target: target.clone(),
+                    attachment: attachment.clone(),
+                    lease: None,
+                },
+            )
+            .await;
+            if exhaust_resize_budget {
+                assert!(host_terminal::read_frame(&mut peer, &permit, true)
+                    .await
+                    .is_err());
+                return;
+            }
+            let resize = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(resize.kind(), protocol::RESIZE);
+            assert_eq!(resize.payload(), &[0, 119, 0, 16, 0, 0, 0, 0]);
+            frame(&mut peer, protocol::RESIZED, resize.payload()).await;
+            let input = host_terminal::read_frame(&mut peer, &permit, true)
+                .await
+                .unwrap();
+            assert_eq!(input.kind(), protocol::INPUT);
+            assert_eq!(input.payload(), b"fresh-only"); // No early input was retained or replayed.
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !controller.session().unwrap().has_pending_snapshot() {
+                wake.ready.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        assert!(controller
+            .session()
+            .unwrap()
+            .adopt_into(&mut terminal)
+            .unwrap());
+        assert_eq!(
+            controller.session().unwrap().lifecycle(),
+            SessionLifecycle::Starting
+        );
+        controller.record_terminal_resize(Dimensions::new(119, 16).unwrap());
+        assert!(controller.pending_resize.is_none()); // Accepted by the backend's bounded latest slot.
+        controller.record_encoded_input(b"must-not-replay");
+        assert!(controller.pending_writes.writes.is_empty());
+        assert_eq!(controller.session().unwrap().metrics().input_bytes, 0);
+        let _blocked_bytes = exhaust_resize_budget.then(|| {
+            budgets
+                .reserve(
+                    festerm_host_protocol::Resource::TerminalBytes,
+                    festerm_host_protocol::MAX_QUEUED_BYTES,
+                )
+                .unwrap()
+        });
+        let before = wake.count.load(Ordering::SeqCst);
+        activate.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let notified = wake.ready.notified();
+                if controller.session().unwrap().lifecycle() != SessionLifecycle::Starting
+                    && wake.count.load(Ordering::SeqCst) > before
+                {
+                    break;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(wake.count.load(Ordering::SeqCst) > before);
+        if exhaust_resize_budget {
+            assert!(matches!(
+                controller.session().unwrap().lifecycle(),
+                SessionLifecycle::Failed(_)
+            ));
+            assert!(matches!(
+                controller
+                    .session()
+                    .unwrap()
+                    .try_resize(TerminalSize::new(128, 18).unwrap()),
+                Err(SessionSendError::Closed {
+                    operation: festerm_session::SessionOperation::Resize
+                })
+            ));
+            assert!(matches!(
+                controller
+                    .session()
+                    .unwrap()
+                    .try_send_input(b"not-admitted"),
+                Err(SessionSendError::Closed {
+                    operation: festerm_session::SessionOperation::Input
+                })
+            ));
+            assert_eq!(controller.session().unwrap().metrics().resize_count, 0);
+            assert_eq!(controller.session().unwrap().metrics().input_bytes, 0);
+            server.await.unwrap();
+            controller.session().unwrap().cancel();
+            return;
+        }
+        assert_eq!(
+            controller.session().unwrap().lifecycle(),
+            SessionLifecycle::Running
+        );
+        controller.flush_pending_resize();
+        controller.flush_pending_writes();
+        controller.record_encoded_input(b"fresh-only");
+        server.await.unwrap();
+        controller.session().unwrap().cancel();
     }
 }

@@ -24,7 +24,10 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFESTS = [REPOSITORY_ROOT / "docs" / "images" / "ui-state" / "manifest.json"]
+DEFAULT_MANIFESTS = [
+    REPOSITORY_ROOT / "docs" / "images" / "ui-state" / "manifest.json",
+    REPOSITORY_ROOT / "docs" / "images" / "ui-state" / "host-workspace" / "manifest.json",
+]
 DEFAULT_NARRATIVE = REPOSITORY_ROOT / "docs" / "ui-state-narrative.md"
 DEFAULT_TITLE = "State of the UI"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "docs" / "state-of-the-ui.md"
@@ -273,6 +276,16 @@ def render(
                     f"**Source-tree SHA-256:** `{capture['source_tree_sha256']}`",
                     "",
                 ])
+                producer = capture.get("producer")
+                if producer:
+                    lines.extend([
+                        f"**Capture binary:** SHA-256 `{producer['binary_sha256']}`; "
+                        f"build HEAD `{producer['build_source_revision']}`; "
+                        f"dirty build sources: `{producer['build_source_dirty']}`.<br>",
+                        f"**Widget-source qualification:** exact recorded widget files match "
+                        f"`{producer['widget_source_revision']}`; capture HEAD is not the binary's build HEAD.",
+                        "",
+                    ])
 
     documented: set[str] = set()
     for section_id, section_title, body in sections:

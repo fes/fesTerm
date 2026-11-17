@@ -1,6 +1,7 @@
 //! Zero-shell HOST cloud resources. Account credentials are management authority,
 //! never the enrolled-owner proof used by the inner HOST protocol.
 
+use crate::diagnostics::{HostFailure, Operation};
 use crate::{http_client, identity::Identity, service::wipe_tokens, Error};
 use reqwest::{header, Method, Request};
 use serde::{Deserialize, Serialize};
@@ -8,9 +9,8 @@ use std::{future::Future, pin::Pin};
 use tokio_util::sync::CancellationToken;
 use tunnels::{
     contracts::{
-        ClusterRecommendationResponse, Tunnel, TunnelAccessControl, TunnelAccessControlEntry,
-        TunnelAccessControlEntryType, TunnelPort, PROD_DNS_NAME, PROVIDERS_GITHUB,
-        TUNNEL_PROTOCOL_TCP,
+        ClusterRecommendationResponse, Tunnel, TunnelAccessControl, TunnelAccessControlEntryType,
+        TunnelPort, PROD_DNS_NAME, PROVIDERS_GITHUB, TUNNEL_PROTOCOL_AUTO, TUNNEL_PROTOCOL_TCP,
     },
     management::Authorization,
 };
@@ -18,6 +18,43 @@ use zeroize::Zeroizing;
 
 pub const HOST_LABEL: &str = "festerm-host-v1";
 pub const HOST_PORT: u16 = 2222;
+
+/// Part of the immutable protected create intent, not an inner HOST transport
+/// or authorization setting. Missing legacy fields must never imply `auto`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum CreateProtocol {
+    #[serde(rename = "auto")]
+    Auto,
+    #[default]
+    #[serde(rename = "tcp")]
+    LegacyTcp,
+}
+
+impl CreateProtocol {
+    fn wire_value(self) -> &'static str {
+        match self {
+            Self::Auto => TUNNEL_PROTOCOL_AUTO,
+            Self::LegacyTcp => TUNNEL_PROTOCOL_TCP,
+        }
+    }
+}
+
+/// The cloud ACL policy is part of the immutable create request. Missing fields
+/// retain the old explicit-user policy; they never acquire a new request body.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum CreateAccess {
+    #[serde(rename = "owner_default")]
+    OwnerDefault,
+    #[default]
+    #[serde(rename = "github_users")]
+    LegacyGithubUsers,
+}
+
+impl CreateAccess {
+    fn is_legacy(&self) -> bool {
+        *self == Self::LegacyGithubUsers
+    }
+}
 
 /// Public metadata, not permission to create a resource. The setup controller
 /// durably reserves these exact values before submitting a request.
@@ -30,6 +67,10 @@ pub struct Resource {
     pub ownership_label: String,
     pub port: u16,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub create_protocol: CreateProtocol,
+    #[serde(default, skip_serializing_if = "CreateAccess::is_legacy")]
+    pub create_access: CreateAccess,
 }
 
 impl Resource {
@@ -153,7 +194,9 @@ impl Management {
         identity: &Identity,
         cancel: &CancellationToken,
     ) -> Result<String, Error> {
-        recommend(&self.0, identity, cancel).await
+        recommend(&self.0, identity, cancel)
+            .await
+            .map_err(|e| at(Operation::Placement, e, None))
     }
 
     pub fn prepare_create(
@@ -162,6 +205,7 @@ impl Management {
         description: &str,
     ) -> Result<PreparedCreate, Error> {
         prepare_create(identity, resource, description)
+            .map_err(|e| at(Operation::Creation, e, None))
     }
 
     pub async fn submit(
@@ -169,7 +213,16 @@ impl Management {
         prepared: PreparedCreate,
         cancel: &CancellationToken,
     ) -> Result<Receipt, CreateError> {
-        submit(&self.0, prepared, cancel).await
+        submit(&self.0, prepared, cancel)
+            .await
+            .map_err(|error| match error {
+                CreateError::NotSent(e) => CreateError::NotSent(at(Operation::Creation, e, None)),
+                CreateError::Rejected(e) => CreateError::Rejected(at(Operation::Creation, e, None)),
+                CreateError::Uncertain(e) => {
+                    CreateError::Uncertain(at(Operation::Creation, e, None))
+                }
+                CreateError::Conflict => CreateError::Conflict,
+            })
     }
 
     pub async fn observe(
@@ -178,7 +231,9 @@ impl Management {
         resource: &Resource,
         cancel: &CancellationToken,
     ) -> Result<Observation, Error> {
-        observe(&self.0, identity, resource, cancel).await
+        observe(&self.0, identity, resource, cancel)
+            .await
+            .map_err(|e| at(Operation::Observation, e, None))
     }
 
     /// Obtain only a short-lived host token for the exact pinned cloud receipt.
@@ -189,7 +244,9 @@ impl Management {
         exact: &Receipt,
         cancel: &CancellationToken,
     ) -> Result<Zeroizing<String>, Error> {
-        host_token(&self.0, identity, exact, cancel).await
+        host_token(&self.0, identity, exact, cancel)
+            .await
+            .map_err(|e| at(Operation::HostToken, e, None))
     }
 }
 
@@ -230,10 +287,15 @@ fn request(
     Ok(request)
 }
 
+fn at(operation: Operation, error: Error, status: Option<u16>) -> Error {
+    Error::HostRequest(HostFailure::from_original(operation, error, status))
+}
+
 async fn send(
     http: &impl Transport,
     request: Request,
     cancel: &CancellationToken,
+    operation: Operation,
 ) -> Result<Reply, Error> {
     tokio::select! {
         biased;
@@ -243,10 +305,11 @@ async fn send(
             if reply.bytes.len() > crate::RESPONSE_LIMIT { return Err(Error::Response); }
             match reply.status {
                 200..=299 | 404 => Ok(reply),
-                401 | 403 => Err(Error::Denied),
-                429 => Err(Error::RateLimited),
-                409 | 412 => Err(Error::IdentityChanged),
-                _ => Err(Error::Network),
+                400 => Err(Error::HostRequest(HostFailure::from_http(operation, reply.status, &reply.bytes))),
+                401 | 403 => Err(at(operation, Error::Denied, Some(reply.status))),
+                429 => Err(at(operation, Error::RateLimited, Some(reply.status))),
+                409 | 412 => Err(at(operation, Error::IdentityChanged, Some(reply.status))),
+                _ => Err(at(operation, Error::Network, Some(reply.status))),
             }
         }
     }
@@ -257,14 +320,29 @@ async fn recommend(
     identity: &Identity,
     cancel: &CancellationToken,
 ) -> Result<String, Error> {
-    let reply = send(
+    let reply = match send(
         http,
         request(identity, Method::GET, None, "/clusters/recommendations")?,
         cancel,
+        Operation::Placement,
     )
-    .await?;
+    .await
+    {
+        // Match the Microsoft SDK's placement-only retry: provider authorization
+        // can be rejected before this public endpoint reaches its controller.
+        Err(error) if error.original_error() == Error::Denied => {
+            let mut anonymous = request(identity, Method::GET, None, "/clusters/recommendations")?;
+            anonymous.headers_mut().remove(header::AUTHORIZATION);
+            send(http, anonymous, cancel, Operation::Placement).await?
+        }
+        result => result?,
+    };
     if reply.status != 200 {
-        return Err(Error::Response);
+        return Err(at(
+            Operation::Placement,
+            Error::Response,
+            Some(reply.status),
+        ));
     }
     let response: ClusterRecommendationResponse = crate::decode(&reply.bytes)?;
     response
@@ -291,7 +369,9 @@ fn resource_request(
     request
         .url_mut()
         .query_pairs_mut()
-        .append_pair("includePorts", "true");
+        .append_pair("includePorts", "true")
+        // An omitted ACL is meaningful only when the full ACL was requested.
+        .append_pair("includeAccessControl", "true");
     Ok(request)
 }
 
@@ -300,6 +380,13 @@ fn prepare_create(
     resource: &Resource,
     description: &str,
 ) -> Result<PreparedCreate, Error> {
+    // The service rejects the old TCP create protocol. Never reinterpret a
+    // legacy reservation (including an uncertain original) as a new auto body.
+    if resource.create_protocol != CreateProtocol::Auto
+        || resource.create_access != CreateAccess::OwnerDefault
+    {
+        return Err(Error::Response);
+    }
     if description.trim().is_empty()
         || description.len() > 80
         || description.chars().any(char::is_control)
@@ -321,22 +408,13 @@ fn prepare_create(
         cluster_id: Some(resource.cluster.clone()),
         description: Some(description.into()),
         labels: resource.labels.clone(),
-        access_control: Some(TunnelAccessControl {
-            entries: vec![TunnelAccessControlEntry {
-                kind: TunnelAccessControlEntryType::Users,
-                provider: Some(PROVIDERS_GITHUB.into()),
-                subjects: vec![resource.account_id.to_string()],
-                scopes: vec!["connect".into()],
-                is_inherited: false,
-                is_deny: false,
-                is_inverse: false,
-                organization: None,
-                expiration: None,
-            }],
-        }),
+        // Dev Tunnels are private to the creating identity by default. The
+        // provider currently rejects individual-user ACEs. Never replace that
+        // rejection with an anonymous, organization or broader access grant.
+        access_control: None,
         ports: vec![TunnelPort {
             port_number: resource.port,
-            protocol: Some(TUNNEL_PROTOCOL_TCP.into()),
+            protocol: Some(resource.create_protocol.wire_value().into()),
             labels: vec![HOST_LABEL.into()],
             ..Default::default()
         }],
@@ -379,11 +457,22 @@ async fn submit(
         return Err(CreateError::Uncertain(Error::Response));
     }
     match reply.status {
-        200..=299 => receipt(&reply.bytes, &resource).map_err(CreateError::Uncertain),
-        400 => Err(CreateError::Rejected(Error::Response)),
-        401 | 403 => Err(CreateError::Rejected(Error::Denied)),
+        200..=299 => receipt(&reply.bytes, &resource)
+            .map_err(|e| CreateError::Uncertain(at(Operation::Creation, e, Some(reply.status)))),
+        400 => Err(CreateError::Rejected(Error::HostRequest(
+            HostFailure::from_http(Operation::Creation, reply.status, &reply.bytes),
+        ))),
+        401 | 403 => Err(CreateError::Rejected(at(
+            Operation::Creation,
+            Error::Denied,
+            Some(reply.status),
+        ))),
         409 | 412 => Err(CreateError::Conflict),
-        _ => Err(CreateError::Uncertain(Error::Network)),
+        _ => Err(CreateError::Uncertain(at(
+            Operation::Creation,
+            Error::Network,
+            Some(reply.status),
+        ))),
     }
 }
 
@@ -394,11 +483,13 @@ async fn observe(
     cancel: &CancellationToken,
 ) -> Result<Observation, Error> {
     let request = resource_request(identity, Method::GET, resource)?;
-    let reply = send(http, request, cancel).await?;
+    let reply = send(http, request, cancel, Operation::Observation).await?;
     if reply.status == 404 {
         return Ok(Observation::Absent);
     }
-    receipt(&reply.bytes, resource).map(Observation::Present)
+    receipt(&reply.bytes, resource)
+        .map(Observation::Present)
+        .map_err(|e| at(Operation::Observation, e, Some(reply.status)))
 }
 
 async fn host_token(
@@ -412,14 +503,22 @@ async fn host_token(
         .url_mut()
         .query_pairs_mut()
         .append_pair("tokenScopes", "host");
-    let reply = send(http, request, cancel).await?;
+    let reply = send(http, request, cancel, Operation::HostToken).await?;
     if reply.status == 404 {
-        return Err(Error::TunnelNotFound);
+        return Err(at(Operation::HostToken, Error::TunnelNotFound, Some(404)));
     }
-    if receipt(&reply.bytes, &exact.resource)? != *exact {
-        return Err(Error::IdentityChanged);
+    if receipt(&reply.bytes, &exact.resource)
+        .map_err(|e| at(Operation::HostToken, e, Some(reply.status)))?
+        != *exact
+    {
+        return Err(at(
+            Operation::HostToken,
+            Error::IdentityChanged,
+            Some(reply.status),
+        ));
     }
-    let mut tunnel: Tunnel = crate::decode(&reply.bytes)?;
+    let mut tunnel: Tunnel =
+        crate::decode(&reply.bytes).map_err(|e| at(Operation::HostToken, e, Some(reply.status)))?;
     let token = tunnel
         .access_tokens
         .as_mut()
@@ -428,13 +527,51 @@ async fn host_token(
     wipe_tokens(&mut tunnel);
     token
         .filter(|token| crate::valid_token(token))
-        .ok_or(Error::Response)
+        .ok_or_else(|| at(Operation::HostToken, Error::Response, Some(reply.status)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyAclProjection {
+    entries: Vec<serde::de::IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct PrivateAclProjection {
+    #[serde(rename = "accessControl")]
+    acl: Option<EmptyAclProjection>,
+    #[serde(default)]
+    ports: Vec<PrivatePortProjection>,
+}
+
+#[derive(Deserialize)]
+struct PrivatePortProjection {
+    #[serde(rename = "accessControl")]
+    acl: Option<EmptyAclProjection>,
+}
+
+fn private_owner_acl(bytes: &[u8]) -> Result<(), Error> {
+    // Project only ACLs. Ignore token/URL fields without allocating or retaining
+    // their values, and refuse unknown ACL fields such as future role grants.
+    let projection: PrivateAclProjection = crate::decode(bytes)?;
+    if projection.acl.is_some_and(|acl| !acl.entries.is_empty())
+        || projection
+            .ports
+            .into_iter()
+            .any(|port| port.acl.is_some_and(|acl| !acl.entries.is_empty()))
+    {
+        return Err(Error::IdentityChanged);
+    }
+    Ok(())
 }
 
 fn receipt(bytes: &[u8], resource: &Resource) -> Result<Receipt, Error> {
+    if resource.create_access == CreateAccess::OwnerDefault {
+        private_owner_acl(bytes)?;
+    }
     let mut tunnel: Tunnel = crate::decode(bytes)?;
     wipe_tokens(&mut tunnel);
-    let same_acl = |acl: &TunnelAccessControl| {
+    let legacy_acl = |acl: &TunnelAccessControl| {
         !acl.entries.is_empty()
             && acl.entries.iter().all(|entry| {
                 matches!(entry.kind, TunnelAccessControlEntryType::Users)
@@ -446,18 +583,30 @@ fn receipt(bytes: &[u8], resource: &Resource) -> Result<Receipt, Error> {
                     && entry.expiration.is_none()
             })
     };
+    let same_acl = |acl: Option<&TunnelAccessControl>| match resource.create_access {
+        // resource_request always asks for the authoritative ACL projection.
+        // Reject every nonempty entry, including inherited or owner entries;
+        // accepting an entry requires an explicit separately reviewed policy.
+        CreateAccess::OwnerDefault => acl.is_none_or(|acl| acl.entries.is_empty()),
+        CreateAccess::LegacyGithubUsers => acl.is_some_and(legacy_acl),
+    };
     let labels = &resource.labels;
     if tunnel.tunnel_id.as_deref() != Some(&resource.tunnel_id)
         || tunnel.cluster_id.as_deref() != Some(&resource.cluster)
         || tunnel.labels.len() != 2
         || !labels.iter().all(|l| tunnel.labels.contains(l))
-        || !tunnel.access_control.as_ref().is_some_and(same_acl)
+        || !same_acl(tunnel.access_control.as_ref())
         || tunnel.ports.len() != 1
         || !tunnel.ports.iter().all(|port| {
             port.port_number == resource.port
-                && port.protocol.as_deref() == Some(TUNNEL_PROTOCOL_TCP)
+                && port.protocol.as_deref() == Some(resource.create_protocol.wire_value())
                 && port.labels == [HOST_LABEL]
-                && port.access_control.as_ref().is_none_or(same_acl)
+                && match resource.create_access {
+                    CreateAccess::OwnerDefault => same_acl(port.access_control.as_ref()),
+                    CreateAccess::LegacyGithubUsers => {
+                        port.access_control.as_ref().is_none_or(legacy_acl)
+                    }
+                }
                 && port
                     .tunnel_id
                     .as_ref()
@@ -505,6 +654,14 @@ mod tests {
             })
         }
     }
+    fn original_create_error(error: CreateError) -> CreateError {
+        match error {
+            CreateError::NotSent(e) => CreateError::NotSent(e.original_error()),
+            CreateError::Rejected(e) => CreateError::Rejected(e.original_error()),
+            CreateError::Uncertain(e) => CreateError::Uncertain(e.original_error()),
+            CreateError::Conflict => CreateError::Conflict,
+        }
+    }
     fn identity() -> Identity {
         identity_with_expiry(None)
     }
@@ -529,6 +686,8 @@ mod tests {
             account_id: 42,
             ownership_label: "festerm-owned-22222222222242228222222222222222".into(),
             port: HOST_PORT,
+            create_protocol: CreateProtocol::Auto,
+            create_access: CreateAccess::OwnerDefault,
             labels: vec![
                 HOST_LABEL.into(),
                 "festerm-owned-22222222222242228222222222222222".into(),
@@ -541,11 +700,342 @@ mod tests {
             "tunnelId": resource.tunnel_id, "clusterId": resource.cluster,
             "labels": [HOST_LABEL, resource.ownership_label],
             "created": "2026-11-09T00:00:00Z",
-            "accessControl": {"entries": [{
-                "type": "Users", "provider": "github", "subjects": ["42"], "scopes": ["connect"],
-            }]},
-            "ports": [{"portNumber": HOST_PORT, "protocol": "tcp", "labels": [HOST_LABEL]}],
+            "accessControl": {"entries": []},
+            "ports": [{"portNumber": HOST_PORT, "protocol": "auto", "labels": [HOST_LABEL]}],
         })
+    }
+
+    #[test]
+    fn host_cloud_owner_default_access_is_pinned_and_never_reinterprets_legacy() {
+        let current = resource();
+        let mut value = serde_json::to_value(&current).unwrap();
+        assert_eq!(value["create_access"], "owner_default");
+        value.as_object_mut().unwrap().remove("create_access");
+        let legacy: Resource = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(legacy.create_access, CreateAccess::LegacyGithubUsers);
+        assert!(serde_json::to_value(&legacy)
+            .unwrap()
+            .get("create_access")
+            .is_none());
+        assert!(prepare_create(&identity(), &legacy, "Fixture").is_err());
+        for mode in ["unknown", "anonymous", "OwnerDefault", ""] {
+            value["create_access"] = mode.into();
+            assert!(serde_json::from_value::<Resource>(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn host_cloud_owner_default_refuses_every_explicit_or_unknown_acl_grant() {
+        let current = resource();
+        for on_port in [false, true] {
+            for acl in [serde_json::Value::Null, serde_json::json!({"entries": []})] {
+                let mut body = response();
+                let target = if on_port {
+                    &mut body["ports"][0]
+                } else {
+                    &mut body
+                };
+                target["accessControl"] = acl;
+                assert!(receipt(&serde_json::to_vec(&body).unwrap(), &current).is_ok());
+                omit_acl(&mut body, on_port);
+                assert!(receipt(&serde_json::to_vec(&body).unwrap(), &current).is_ok());
+            }
+            for kind in ["Anonymous", "Organizations", "Users", "PublicKeys"] {
+                for inherited in [false, true] {
+                    let mut body = response();
+                    let target = if on_port {
+                        &mut body["ports"][0]
+                    } else {
+                        &mut body
+                    };
+                    target["accessControl"] = serde_json::json!({"entries": [{
+                        "type":kind, "provider":"github", "subjects":["42"],
+                        "scopes":["connect"], "isInherited":inherited
+                    }]});
+                    assert!(receipt(&serde_json::to_vec(&body).unwrap(), &current).is_err());
+                }
+            }
+            let mut body = response();
+            let target = if on_port {
+                &mut body["ports"][0]
+            } else {
+                &mut body
+            };
+            target["accessControl"] =
+                serde_json::json!({"entries": [], "roleAssignments": ["new-grant"]});
+            assert!(receipt(&serde_json::to_vec(&body).unwrap(), &current).is_err());
+        }
+    }
+
+    fn omit_acl(body: &mut serde_json::Value, on_port: bool) {
+        let target = if on_port { &mut body["ports"][0] } else { body };
+        target.as_object_mut().unwrap().remove("accessControl");
+    }
+
+    #[tokio::test]
+    async fn host_cloud_legacy_user_receipts_remain_exact_and_cannot_create_again() {
+        let mut legacy = resource();
+        legacy.create_access = CreateAccess::LegacyGithubUsers;
+        let mut body = response();
+        body["accessControl"] = serde_json::json!({"entries":[{
+            "type":"Users", "provider":"github", "subjects":["42"], "scopes":["connect"]
+        }]});
+        let exact = receipt(&serde_json::to_vec(&body).unwrap(), &legacy).unwrap();
+        assert!(prepare_create(&identity(), &legacy, "Fixture").is_err());
+        assert!(receipt(&serde_json::to_vec(&response()).unwrap(), &legacy).is_err());
+        body["accessTokens"] = serde_json::json!({"host":"PRIVATE_SCOPED_HOST"});
+        let http = Fake::new(vec![(200, body)]);
+        assert!(
+            host_token(&http, &identity(), &exact, &CancellationToken::new())
+                .await
+                .is_ok()
+        );
+        assert!(http.requests.lock().unwrap()[0]
+            .url()
+            .query_pairs()
+            .any(|(key, value)| key == "includeAccessControl" && value == "true"));
+    }
+
+    #[test]
+    fn host_cloud_create_protocol_is_pinned_and_missing_legacy_never_becomes_auto() {
+        let current = resource();
+        let mut encoded = serde_json::to_value(&current).unwrap();
+        assert_eq!(encoded["create_protocol"], "auto");
+        let auto: Resource = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(auto.create_protocol, CreateProtocol::Auto);
+        encoded.as_object_mut().unwrap().remove("create_protocol");
+        let legacy: Resource = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(legacy.create_protocol, CreateProtocol::LegacyTcp);
+        assert_eq!(legacy.create_protocol.wire_value(), "tcp");
+        assert!(matches!(
+            prepare_create(&identity(), &legacy, "Fixture"),
+            Err(Error::Response)
+        ));
+        for protocol in ["unknown", "https", "TCP", ""] {
+            encoded["create_protocol"] = serde_json::json!(protocol);
+            assert!(serde_json::from_value::<Resource>(encoded.clone()).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_cloud_receipt_and_host_token_require_the_pinned_protocol() {
+        let identity = identity();
+        let current = resource();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &current).unwrap();
+        for protocol in ["tcp", "http", "https", "unknown"] {
+            let mut body = response();
+            body["ports"][0]["protocol"] = protocol.into();
+            body["accessTokens"] = serde_json::json!({"host":"PRIVATE_SCOPED_HOST"});
+            assert_eq!(
+                receipt(&serde_json::to_vec(&body).unwrap(), &current),
+                Err(Error::IdentityChanged)
+            );
+            let http = Fake::new(vec![(200, body)]);
+            assert_eq!(
+                host_token(&http, &identity, &exact, &CancellationToken::new())
+                    .await
+                    .map_err(Error::original_error),
+                Err(Error::IdentityChanged)
+            );
+        }
+        let mut legacy = current.clone();
+        legacy.create_protocol = CreateProtocol::LegacyTcp;
+        let mut body = response();
+        body["ports"][0]["protocol"] = "tcp".into();
+        let old_receipt = receipt(&serde_json::to_vec(&body).unwrap(), &legacy).unwrap();
+        assert_ne!(old_receipt.resource, exact.resource);
+        assert_eq!(
+            receipt(&serde_json::to_vec(&response()).unwrap(), &legacy),
+            Err(Error::IdentityChanged)
+        );
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_retries_denied_authorization_once_anonymously() {
+        for denied in [401, 403] {
+            let http = Fake::new(vec![
+                (denied, serde_json::json!({})),
+                (
+                    200,
+                    serde_json::json!({"recommendedClusterId":"usw2","isFallback":false,"recommendations":[]}),
+                ),
+            ]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new())
+                    .await
+                    .unwrap(),
+                "usw2"
+            );
+            let requests = http.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].method(), Method::GET);
+            assert_eq!(requests[1].method(), Method::GET);
+            assert_eq!(requests[0].url(), requests[1].url());
+            assert_eq!(
+                requests[1].url().as_str(),
+                "https://global.rel.tunnels.api.visualstudio.com/clusters/recommendations?api-version=2023-09-27-preview"
+            );
+            assert!(requests[0].headers()[header::AUTHORIZATION].is_sensitive());
+            assert!(!requests[1].headers().contains_key(header::AUTHORIZATION));
+            let mut original_headers = requests[0].headers().clone();
+            original_headers.remove(header::AUTHORIZATION);
+            assert_eq!(&original_headers, requests[1].headers());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_does_not_retry_other_failures_or_repeat_anonymous_denial() {
+        for (status, expected) in [
+            (404, Error::Response),
+            (429, Error::RateLimited),
+            (500, Error::Network),
+            (409, Error::IdentityChanged),
+            (200, Error::Response),
+        ] {
+            let http = Fake::new(vec![(status, serde_json::json!({}))]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new())
+                    .await
+                    .map_err(Error::original_error),
+                Err(expected)
+            );
+            assert_eq!(http.requests.lock().unwrap().len(), 1);
+        }
+        for status in [401, 403] {
+            let http = Fake::new(vec![
+                (401, serde_json::json!({})),
+                (status, serde_json::json!({})),
+            ]);
+            assert_eq!(
+                recommend(&http, &identity(), &CancellationToken::new())
+                    .await
+                    .map_err(Error::original_error),
+                Err(Error::Denied)
+            );
+            assert_eq!(http.requests.lock().unwrap().len(), 2);
+        }
+        let http = Fake::new(vec![]);
+        assert_eq!(
+            recommend(
+                &http,
+                &identity_with_expiry(Some(1)),
+                &CancellationToken::new()
+            )
+            .await,
+            Err(Error::Expired)
+        );
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_placement_cancellation_prevents_anonymous_retry() {
+        struct CancelOnReply {
+            cancel: CancellationToken,
+            requests: Mutex<Vec<Request>>,
+        }
+        impl Transport for CancelOnReply {
+            fn send(&self, request: Request) -> ReplyFuture<'_> {
+                Box::pin(async move {
+                    self.requests.lock().unwrap().push(request);
+                    self.cancel.cancel();
+                    Ok(Reply {
+                        status: 401,
+                        bytes: Zeroizing::new(Vec::new()),
+                    })
+                })
+            }
+        }
+        let cancel = CancellationToken::new();
+        let http = CancelOnReply {
+            cancel: cancel.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            recommend(&http, &identity(), &cancel).await,
+            Err(Error::Cancelled)
+        );
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        let http = Fake::new(vec![]);
+        assert_eq!(
+            recommend(&http, &identity(), &cancel).await,
+            Err(Error::Cancelled)
+        );
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_diagnostics_preserve_status_stage_and_create_disposition_without_content() {
+        use crate::diagnostics::Category;
+        let body = serde_json::json!({"detail":
+            "Adding individual users to an access control entry is currently disabled. PRIVATE_TOKEN https://private.invalid/host"});
+        let http = Fake::new(vec![(400, body)]);
+        let prepared = prepare_create(&identity(), &resource(), "Fixture").unwrap();
+        let error = submit(&http, prepared, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        let CreateError::Rejected(Error::HostRequest(failure)) = error else {
+            panic!("definitive provider refusal must remain Rejected");
+        };
+        assert_eq!(failure.operation, Operation::Creation);
+        assert_eq!(failure.http_status, Some(400));
+        assert_eq!(failure.category, Category::UnsupportedUserAcl);
+        assert_eq!(failure.original_error(), Error::Response);
+        let display = format!("{failure:?} {failure}");
+        assert!(!display.contains("PRIVATE_TOKEN") && !display.contains("private.invalid"));
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+
+        let http = Fake::new(vec![(
+            503,
+            serde_json::json!({"detail":"PRIVATE_RESPONSE"}),
+        )]);
+        let Err(Error::HostRequest(failure)) =
+            observe(&http, &identity(), &resource(), &CancellationToken::new()).await
+        else {
+            panic!("HTTP failure must carry typed metadata");
+        };
+        assert_eq!(failure.operation, Operation::Observation);
+        assert_eq!(failure.http_status, Some(503));
+        assert_eq!(failure.original_error(), Error::Network);
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn host_cloud_resource_operations_never_retry_denied_authorization_anonymously() {
+        let identity = identity();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &resource()).unwrap();
+        let cancel = CancellationToken::new();
+        for status in [401, 403] {
+            for operation in 0..3 {
+                let http = Fake::new(vec![(status, serde_json::json!({}))]);
+                match operation {
+                    0 => {
+                        let prepared =
+                            prepare_create(&identity, &resource(), "Fixture host").unwrap();
+                        assert_eq!(
+                            submit(&http, prepared, &cancel)
+                                .await
+                                .map_err(original_create_error),
+                            Err(CreateError::Rejected(Error::Denied))
+                        );
+                    }
+                    1 => assert_eq!(
+                        observe(&http, &identity, &resource(), &cancel)
+                            .await
+                            .map_err(Error::original_error),
+                        Err(Error::Denied)
+                    ),
+                    _ => assert_eq!(
+                        host_token(&http, &identity, &exact, &cancel)
+                            .await
+                            .map_err(Error::original_error),
+                        Err(Error::Denied)
+                    ),
+                }
+                let requests = http.requests.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                assert!(requests[0].headers()[header::AUTHORIZATION].is_sensitive());
+            }
+        }
     }
 
     #[tokio::test]
@@ -596,7 +1086,9 @@ mod tests {
         }
         let http = Fake::new(vec![(404, serde_json::json!({}))]);
         assert!(matches!(
-            host_token(&http, &identity, &exact, &CancellationToken::new()).await,
+            host_token(&http, &identity, &exact, &CancellationToken::new())
+                .await
+                .map_err(Error::original_error),
             Err(Error::TunnelNotFound)
         ));
         let mut foreign = exact.clone();
@@ -644,7 +1136,10 @@ mod tests {
         assert_eq!(get_receipt.created, "2026-11-09T00:00:00.1234567Z");
         assert_ne!(get_receipt, put_receipt);
         let requests = http.requests.lock().unwrap();
-        assert_eq!(requests[0].url().as_str(), "https://global.rel.tunnels.api.visualstudio.com/clusters/recommendations?api-version=2023-09-27-preview");
+        assert_eq!(
+            requests[0].url().as_str(),
+            "https://global.rel.tunnels.api.visualstudio.com/clusters/recommendations?api-version=2023-09-27-preview"
+        );
         assert_eq!(requests[1].method(), Method::PUT);
         assert_eq!(
             requests[1].url().host_str(),
@@ -660,16 +1155,17 @@ mod tests {
                 && !request.url().as_str().contains("tokenScopes")));
         let body: serde_json::Value =
             serde_json::from_slice(requests[1].body().unwrap().as_bytes().unwrap()).unwrap();
-        assert_eq!(
-            body["accessControl"]["entries"][0]["subjects"],
-            serde_json::json!(["42"])
-        );
-        assert_eq!(
-            body["accessControl"]["entries"][0]["scopes"],
-            serde_json::json!(["connect"])
-        );
+        assert!(body.get("accessControl").is_none());
+        assert!(body["ports"][0].get("accessControl").is_none());
+        for request in &requests[1..] {
+            assert!(request
+                .url()
+                .query_pairs()
+                .any(|(key, value)| key == "includeAccessControl" && value == "true"));
+        }
         assert_eq!(body["ports"].as_array().unwrap().len(), 1);
         assert_eq!(body["ports"][0]["portNumber"], HOST_PORT);
+        assert_eq!(body["ports"][0]["protocol"], "auto");
         assert!(body.get("accessTokens").is_none());
         assert!(body.get("endpoints").is_none());
         assert!(body.get("name").is_none());
@@ -692,7 +1188,9 @@ mod tests {
                 "labels" => body[field] = serde_json::json!([HOST_LABEL, "someone-elses-label"]),
                 "clusterId" => body[field] = "euw1".into(),
                 "tunnelId" => body[field] = "some-other-tunnel".into(),
-                "accessControl" => body[field]["entries"][0]["type"] = "Anonymous".into(),
+                "accessControl" => {
+                    body[field] = serde_json::json!({"entries": [{"type":"Anonymous", "subjects":[], "scopes":["connect"]}]})
+                }
                 "ports" => body[field][0]["portNumber"] = 22.into(),
                 "created" => body
                     .as_object_mut()
@@ -795,7 +1293,12 @@ mod tests {
             let http = Fake::new(replies);
             let prepared = prepare_create(&identity(), &resource, "Fixture").unwrap();
             let cancel = CancellationToken::new();
-            assert_eq!(submit(&http, prepared, &cancel).await, Err(expected));
+            assert_eq!(
+                submit(&http, prepared, &cancel)
+                    .await
+                    .map_err(original_create_error),
+                Err(expected)
+            );
             if expected == CreateError::Conflict {
                 assert!(matches!(
                     observe(&http, &identity(), &resource, &cancel)

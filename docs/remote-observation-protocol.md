@@ -3,7 +3,34 @@
 This is the implementation contract for #584 and ADR 0070. It extends the
 host filesystem foundation in #585 without granting general browsing, writes,
 terminal output, terminal control, JavaScript, credentials or remote execution.
-The application-owned broker is the only MCP authority.
+The application-owned broker is the required MCP authority; the filesystem
+observation integration described below is not yet wired into that broker.
+
+## Current implementation status
+
+The legacy bridge implements the rooted observation protocol and a
+connection-owned `ObservationRequestor`. This does not establish an available
+Desktop, mobile or MCP file-watch workflow:
+
+- `transport::ClientSession` carries the provider alongside its terminal, but
+  Desktop `start_tunnel` currently retains only `files` and `session`, dropping
+  `observation` (`app/festerm/src/tunnel_reconnect.rs`).
+- The host-oriented workflow returns `HostSession` from
+  `ApprovedAttachment::start`; Desktop and mobile install that terminal without
+  an observation provider. HOST terminal frames explicitly confer no filesystem,
+  observation or MCP capabilities (`host_client.rs` and `host_terminal.rs` in
+  `crates/festerm-tunnel-bridge/src`).
+- The current MCP catalog in `crates/festerm-automation-mcp/src/schema.rs` exposes
+  terminal observation and controller operations, without filesystem observation
+  tools or a `files.observe` grant. Existing terminal observation is separate
+  from filesystem observation.
+
+Consequently, session/generation/root fencing below describes the implemented
+legacy protocol and the required future composition. It does not prove that a
+new HOST session can watch files, or that an MCP caller can obtain those events.
+Native end-to-end HOST/file-watch/MCP qualification remains unrun. Windows/Linux
+watch support is implemented at the protocol layer; macOS advertises
+`watch: false`.
 
 ## Host consent and lifetime
 
@@ -117,7 +144,7 @@ coarse kernel clock on Linux) cannot be distinguished; appends, truncation and
 replacement are always detected.
 Clients do not infer an append-only history after a gap: they rescan/reconcile.
 
-## Client and broker contract
+## Client library and planned broker contract
 
 Portable client types live in `festerm_tunnel_bridge::observation_client`.
 `ObservationRequestor` is a cloneable, bounded, connection-owned provider:
@@ -147,11 +174,13 @@ Portable client types live in `festerm_tunnel_bridge::observation_client`.
   Watch notices contain a decimal sequence and Created/Modified/Removed/Renamed,
   RescanRequired or Ended; correlation is `Correlation {value: String}`.
 
-The desktop Dev Tunnel adapter attaches the provider to the same exact
-`ClientSession` as its terminal; cancellation/displacement retires it. A
-metadata probe cannot keep a retired terminal transport alive. The application
-copies only capability metadata into native review and performs I/O off the UI
-thread. No terminal protocol frame carries observation content.
+The legacy transport constructs the provider on the same exact `ClientSession`
+as its terminal; cancellation/displacement retires it. A metadata probe cannot
+keep a retired terminal transport alive. The Desktop adapter does not yet retain
+this provider, and new HOST attachments do not supply it. Future application
+integration must retain the exact attachment-owned provider, copy only capability
+metadata into native review and perform I/O off the UI thread. No terminal
+protocol frame carries observation content.
 
 An independent observation expiry fence conservatively extracts bounded `exp`
 from the already service-validated scoped token. Missing/unusable expiry makes
@@ -159,19 +188,22 @@ observation unavailable, not the terminal. Monotonic deadline checks enforce
 expiry during availability/receive operations independently of timer scheduling.
 This host-token fence does not replace broker grant/caller expiry.
 
-MCP adds a separate `files.observe` native grant, bound to authenticated caller,
-exact enrolled tab/attachment, approved opaque root/provider incarnation,
+The planned MCP integration requires a separate `files.observe` native grant,
+bound to authenticated caller, exact enrolled tab/attachment, approved opaque
+root/provider incarnation,
 revocation epoch, deadline and quotas. No terminal.observe/control or JavaScript
-grant is required or implied. The native UI explains that event logs can contain
-prompts/tool arguments/responses and explicitly confirms the chosen roots.
-Every queued request and completion revalidates the binding before disclosure.
+grant is required or implied. The future native review must explain that event
+logs can contain prompts/tool arguments/responses and explicitly confirm the
+chosen roots.
+Every queued request and completion must revalidate the binding before disclosure.
 Closure, human revocation, lock, expiry, app/attachment replacement or caller
-disconnect discards pending content and ends subscriptions. Labels/cwd/PIDs or
+disconnect must discard pending content and end subscriptions. Labels/cwd/PIDs or
 correlation values alone never authorize or retarget.
 
-MCP tools provide capability negotiation, approved roots, stat/list/read,
-watch/next/close and correlation; metadata/bytes are delivered only to their
-authorized caller. Unsupported SSH or other backend combinations advertise
+Planned MCP tools must provide capability negotiation, approved roots,
+stat/list/read,
+watch/next/close and correlation; metadata/bytes must be delivered only to their
+authorized caller. Unsupported SSH or other backend combinations must advertise
 unavailable until their connection-owned, approved-root no-follow provider is
 qualified. SSH may advertise polling-only; no shell or new SFTP connection
 fallback is allowed.
@@ -197,12 +229,16 @@ No remote content enters application configuration, logs, ordinary caches,
 workspaces or status persistence. The external controller owns status derivation
 and privacy; host/broker implementation is not a Copilot log parser.
 
-Deterministic tests must prove strict negotiation, default-off independence,
+The full contract requires deterministic tests of strict negotiation, default-off
+independence,
 same-handle identities, large/empty offset reads, append/change/truncation and
 replacement refusal, root/link safety, event overflow/gaps/disconnect,
 generation/caller/root revocation and JavaScript-disabled MCP delivery.
 Native signed-host watch/policy migration, desktop approval/lock and external
 controller/physical-device usability remain explicit qualification gates.
-Windows native isolated identity/watch tests passed; Linux/macOS execution is
-not locally qualified. macOS native watch support remains a named implementation
-prerequisite; stat/list/offset-read remain available without watch support.
+Earlier Windows native isolated identity/watch results cover the protocol layer,
+not the missing application/MCP composition. This status review did not rerun
+those tests or qualify Linux/macOS execution. macOS native watch support remains
+a named implementation prerequisite; the protocol supports stat/list/offset-read
+without watches. Availability in the new HOST workflow still requires the
+provider and approval integration described above.

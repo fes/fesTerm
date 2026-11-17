@@ -18,7 +18,7 @@ const DOMAIN: &str = "fesTerm protected HOST client originals v1";
 struct Blob {
     domain: String,
     reference: String,
-    owner: OwnerBinding,
+    owner: client_context::Issuer,
     key: String,
     endpoint: String,
     actions: Vec<Stored>,
@@ -53,10 +53,11 @@ enum Body {
 /// Native calls belong on its existing bounded foreground/background worker.
 pub struct OriginalStore {
     index: ReceiptIndex,
-    owner: OwnerBinding,
+    owner: client_context::Issuer,
     key: SecretReference,
     endpoint: String,
     vault: Arc<dyn SecretStore>,
+    guard: Option<ordinary::OrdinaryAccountGuard>,
 }
 
 pub enum RecoveredIntent {
@@ -118,9 +119,10 @@ impl ForgottenOriginal {
         self.outcome
     }
 
-    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
+    pub fn matches_context<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
+        let context = context.into();
         self.store
-            .matches(&context.approved, &context.reference, &context.binding)
+            .matches_issuer(&context.issuer(), &context.reference(), context.binding())
     }
 }
 
@@ -129,9 +131,10 @@ impl ReviewedForget {
         &self.id
     }
 
-    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
+    pub fn matches_context<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
+        let context = context.into();
         self.store
-            .matches(&context.approved, &context.reference, &context.binding)
+            .matches_issuer(&context.issuer(), &context.reference(), context.binding())
     }
 
     pub fn logical(&self) -> Option<&LogicalSessionId> {
@@ -150,11 +153,12 @@ impl ReviewedForget {
             })
     }
 
-    pub fn forget(
+    pub fn forget<'a>(
         self,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
         cancel: &CancellationToken,
     ) -> Result<ForgottenOriginal, Failure> {
+        let context = context.into();
         if !self.matches_context(context) {
             return Err(Failure::BindingMismatch);
         }
@@ -224,13 +228,14 @@ fn failed(error: StorageError) -> Failure {
 }
 
 impl OriginalStore {
-    pub fn review_forget(
+    pub fn review_forget<'a>(
         self: &Arc<Self>,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
         id: OriginalId,
         cancel: &CancellationToken,
     ) -> Result<ReviewedForget, Failure> {
-        if !self.matches(&context.approved, &context.reference, &context.binding) {
+        let context = context.into();
+        if !self.matches_issuer(&context.issuer(), &context.reference(), context.binding()) {
             return Err(Failure::BindingMismatch);
         }
         if cancel.is_cancelled() {
@@ -253,19 +258,24 @@ impl OriginalStore {
         })
     }
 
-    pub fn recover(
+    pub fn recover<'a>(
         root: &Path,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
     ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
-        let vault = native_store().map_err(|error| Failure::OwnerKey(error.into()))?;
-        Self::recover_with(root, context, Arc::from(vault))
+        let context = context.into();
+        let vault = match context {
+            ClientContextRef::Ordinary(c) => c.vault(),
+            _ => Arc::from(native_store().map_err(|error| Failure::OwnerKey(error.into()))?),
+        };
+        Self::recover_with(root, context, vault)
     }
 
-    fn recover_with(
+    fn recover_with<'a>(
         root: &Path,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
         vault: Arc<dyn SecretStore>,
     ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        let context = context.into();
         Self::recover_index(
             ReceiptIndex::in_app_sandbox(root).map_err(failed)?,
             context,
@@ -276,28 +286,38 @@ impl OriginalStore {
     /// Explicit foreground recovery using the native-created application
     /// capability; subsequent accesses retain that same pinned namespace.
     #[cfg(unix)]
-    pub fn recover_in_native_app_sandbox(
+    pub fn recover_in_native_app_sandbox<'a>(
         root: Arc<festerm_secret_store::NativeAppPrivateRoot>,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
     ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
-        let vault = native_store().map_err(|error| Failure::OwnerKey(error.into()))?;
-        Self::recover_index(
-            ReceiptIndex::in_native_app_sandbox(root),
-            context,
-            Arc::from(vault),
-        )
+        let context = context.into();
+        let vault = match context {
+            ClientContextRef::Ordinary(c) => c.vault(),
+            _ => Arc::from(native_store().map_err(|error| Failure::OwnerKey(error.into()))?),
+        };
+        Self::recover_index(ReceiptIndex::in_native_app_sandbox(root), context, vault)
     }
 
-    fn recover_index(
+    fn recover_index<'a>(
         index: ReceiptIndex,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
         vault: Arc<dyn SecretStore>,
     ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        let context = context.into();
+        if let ClientContextRef::Ordinary(ordinary) = context {
+            if !index.same_storage(&ordinary.key_index().index) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
         let store = Arc::new(Self {
             index,
-            owner: context.approved.clone(),
-            key: context.reference.duplicate_for_transport(),
-            endpoint: context.binding.endpoint().into(),
+            owner: context.issuer(),
+            key: context.reference(),
+            endpoint: context.binding().endpoint().into(),
+            guard: match context {
+                ClientContextRef::Ordinary(c) => Some(c.account_guard()),
+                _ => None,
+            },
             vault,
         });
         let actions = store.access(true, |blob| Ok((blob.actions.clone(), false)))?;
@@ -323,9 +343,14 @@ impl OriginalStore {
                     issued,
                     confirmed,
                 )?)),
-                Body::End { operation, target } => RecoveredIntent::End(Arc::new(
-                    EndIntent::from_original(context, target, operation, handle),
-                )),
+                Body::End { operation, target } => {
+                    RecoveredIntent::End(Arc::new(EndIntent::from_original(
+                        context.as_enrolled_owner().ok_or(ContractError::Denied)?,
+                        target,
+                        operation,
+                        handle,
+                    )))
+                }
             };
             recovered.push(RecoveredOriginal {
                 review: action.review,
@@ -341,10 +366,23 @@ impl OriginalStore {
         key: &SecretReference,
         binding: &Binding,
     ) -> bool {
+        self.matches_issuer(
+            &client_context::Issuer::EnrolledOwner(owner.clone()),
+            key,
+            binding,
+        )
+    }
+
+    pub(super) fn matches_issuer(
+        &self,
+        owner: &client_context::Issuer,
+        key: &SecretReference,
+        binding: &Binding,
+    ) -> bool {
         self.owner == *owner
             && self.key == *key
-            && self.owner.host.host == *binding.host()
-            && self.owner.account == binding.account()
+            && self.owner.host() == binding.host()
+            && self.owner.account() == binding.account()
             && self.endpoint == binding.endpoint()
     }
 
@@ -361,116 +399,158 @@ impl OriginalStore {
         initialize: bool,
         action: impl FnOnce(&mut Blob) -> Result<(T, bool), StorageError>,
     ) -> Result<T, Failure> {
-        self.index
-            .with_originals(
-                self.vault.as_ref(),
-                &self.owner,
-                &self.key,
-                initialize,
-                |reference, newly_reserved, commit| {
-                    let mut blob = if newly_reserved {
-                        let blob = Blob {
-                            domain: DOMAIN.into(),
-                            reference: reference.to_persisted_string(),
-                            owner: self.owner.clone(),
-                            key: self.key.to_persisted_string(),
-                            endpoint: self.endpoint.clone(),
-                            actions: Vec::new(),
-                            last_update: None,
-                        };
-                        let bytes = Zeroizing::new(
-                            serde_json::to_vec(&blob).map_err(|_| StorageError::Storage)?,
-                        );
-                        self.vault
-                            .create_reserved(reference, &SecretBytes::copy_from_slice(&bytes))
-                            .map_err(payload_failure)?;
-                        blob
-                    } else {
-                        // A reserved/ready anchor never generates a missing payload.
-                        let bytes = self.vault.get(reference).map_err(payload_failure)?;
-                        if bytes.len() > MAX_SECRET_BYTES {
-                            return Err(StorageError::Storage);
-                        }
-                        bytes
-                            .with_bytes(|bytes| serde_json::from_slice::<Blob>(bytes))
-                            .map_err(|_| StorageError::Storage)?
-                    };
-                    if blob.domain != DOMAIN
-                        || blob.reference != reference.to_persisted_string()
-                        || blob.owner != self.owner
-                        || blob.key != self.key.to_persisted_string()
-                        || blob.endpoint != self.endpoint
-                        || blob.actions.len() > 32
-                    {
-                        return Err(StorageError::BindingMismatch);
-                    }
-                    for (index, original) in blob.actions.iter().enumerate() {
-                        if original.review.len() > 16 * 1024
-                            || blob.actions[..index]
-                                .iter()
-                                .any(|other| other.id == original.id)
+        let check = || -> Result<(), StorageError> {
+            if let Some(guard) = &self.guard {
+                guard.check().map_err(|_| StorageError::BindingMismatch)?;
+            }
+            Ok(())
+        };
+        check().map_err(failed)?;
+        let domain = match &self.owner {
+            client_context::Issuer::EnrolledOwner(_) => DOMAIN,
+            client_context::Issuer::Ordinary(_) => ordinary::ORIGINAL_PURPOSE,
+        };
+        let access = |reference: &SecretReference,
+                      newly_reserved: bool,
+                      commit: &mut dyn approvals::OriginalCommitter| {
+            check()?;
+            let mut blob = if newly_reserved {
+                let blob = Blob {
+                    domain: domain.into(),
+                    reference: reference.to_persisted_string(),
+                    owner: self.owner.clone(),
+                    key: self.key.to_persisted_string(),
+                    endpoint: self.endpoint.clone(),
+                    actions: Vec::new(),
+                    last_update: None,
+                };
+                let bytes =
+                    Zeroizing::new(serde_json::to_vec(&blob).map_err(|_| StorageError::Storage)?);
+                check()?;
+                self.vault
+                    .create_reserved(reference, &SecretBytes::copy_from_slice(&bytes))
+                    .map_err(payload_failure)?;
+                blob
+            } else {
+                // A reserved/ready anchor never generates a missing payload.
+                check()?;
+                let bytes = self.vault.get(reference).map_err(payload_failure)?;
+                check()?;
+                if bytes.len() > MAX_SECRET_BYTES {
+                    return Err(StorageError::Storage);
+                }
+                bytes
+                    .with_bytes(|bytes| serde_json::from_slice::<Blob>(bytes))
+                    .map_err(|_| StorageError::Storage)?
+            };
+            if blob.domain != domain
+                || blob.reference != reference.to_persisted_string()
+                || blob.owner != self.owner
+                || blob.key != self.key.to_persisted_string()
+                || blob.endpoint != self.endpoint
+                || blob.actions.len() > 32
+            {
+                return Err(StorageError::BindingMismatch);
+            }
+            for (index, original) in blob.actions.iter().enumerate() {
+                if original.review.len() > 16 * 1024
+                    || blob.actions[..index]
+                        .iter()
+                        .any(|other| other.id == original.id)
+                {
+                    return Err(StorageError::Storage);
+                }
+                match &original.body {
+                    Body::Creation {
+                        creation,
+                        ticket,
+                        confirmed,
+                        ..
+                    } => {
+                        creation.validate().map_err(|_| StorageError::Storage)?;
+                        if original.id != creation.attachment.to_string()
+                            || ticket.len() > festerm_host_protocol::CONTROL_FRAME_BYTES * 2
+                            || confirmed
+                                .as_ref()
+                                .is_some_and(|target| target.logical != creation.logical)
                         {
                             return Err(StorageError::Storage);
                         }
-                        match &original.body {
-                            Body::Creation {
-                                creation,
-                                ticket,
-                                confirmed,
-                                ..
-                            } => {
-                                creation.validate().map_err(|_| StorageError::Storage)?;
-                                if original.id != creation.attachment.to_string()
-                                    || ticket.len() > festerm_host_protocol::CONTROL_FRAME_BYTES * 2
-                                    || confirmed
-                                        .as_ref()
-                                        .is_some_and(|target| target.logical != creation.logical)
-                                {
-                                    return Err(StorageError::Storage);
-                                }
-                            }
-                            Body::End { operation, .. } if original.id != operation.to_string() => {
-                                return Err(StorageError::Storage);
-                            }
-                            Body::End { .. } => {}
-                        }
                     }
-                    let creations = blob
-                        .actions
-                        .iter()
-                        .filter(|action| matches!(action.body, Body::Creation { .. }))
-                        .count();
-                    if creations > 16 || blob.actions.len() - creations > 16 {
+                    Body::End { operation, .. } if original.id != operation.to_string() => {
                         return Err(StorageError::Storage);
                     }
-                    if let Some(pending) = commit.pending() {
-                        if blob.last_update.as_deref() != Some(pending) {
-                            return Err(StorageError::Incomplete);
-                        }
-                        // The native payload proves which exact pending update
-                        // committed; it is not inferred from filesystem absence.
-                        commit.mark(None)?;
-                    }
-                    let (result, changed) = action(&mut blob)?;
-                    if changed {
-                        let nonce = OperationId::new().to_string();
-                        blob.last_update = Some(nonce.clone());
-                        let bytes = Zeroizing::new(
-                            serde_json::to_vec(&blob).map_err(|_| StorageError::Storage)?,
-                        );
-                        if bytes.len() > MAX_SECRET_BYTES {
-                            return Err(StorageError::Storage);
-                        }
-                        commit.mark(Some(nonce))?;
-                        self.vault
-                            .update(reference, &SecretBytes::copy_from_slice(&bytes))
-                            .map_err(payload_failure)?;
-                        commit.mark(None)?;
-                    }
-                    Ok(result)
-                },
-            )
-            .map_err(failed)
+                    Body::End { .. } => {}
+                }
+            }
+            let creations = blob
+                .actions
+                .iter()
+                .filter(|action| matches!(action.body, Body::Creation { .. }))
+                .count();
+            if creations > 16 || blob.actions.len() - creations > 16 {
+                return Err(StorageError::Storage);
+            }
+            if let Some(pending) = commit.pending() {
+                if blob.last_update.as_deref() != Some(pending) {
+                    return Err(StorageError::Incomplete);
+                }
+                // The native payload proves which exact pending update
+                // committed; it is not inferred from filesystem absence.
+                commit.mark(None)?;
+            }
+            let (result, changed) = action(&mut blob)?;
+            if changed {
+                let nonce = OperationId::new().to_string();
+                blob.last_update = Some(nonce.clone());
+                let bytes =
+                    Zeroizing::new(serde_json::to_vec(&blob).map_err(|_| StorageError::Storage)?);
+                if bytes.len() > MAX_SECRET_BYTES {
+                    return Err(StorageError::Storage);
+                }
+                commit.mark(Some(nonce))?;
+                check()?;
+                self.vault
+                    .update(reference, &SecretBytes::copy_from_slice(&bytes))
+                    .map_err(payload_failure)?;
+                check()?;
+                commit.mark(None)?;
+            }
+            check()?;
+            Ok(result)
+        };
+        match &self.owner {
+            client_context::Issuer::EnrolledOwner(owner) => self.index.with_originals(
+                self.vault.as_ref(),
+                owner,
+                &self.key,
+                initialize,
+                |reference, newly_reserved, commit| access(reference, newly_reserved, commit),
+            ),
+            client_context::Issuer::Ordinary(owner) => {
+                if owner.ordinary_purpose != ordinary::ORIGINAL_PURPOSE {
+                    return Err(Failure::BindingMismatch);
+                }
+                let id = owner
+                    .account
+                    .strip_prefix("github:")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .ok_or(Failure::BindingMismatch)?;
+                let binding = ordinary::KeyBinding::new(id, owner.route.clone())?;
+                ordinary::OrdinaryKeyIndex {
+                    index: self.index.clone(),
+                }
+                .with_originals(
+                    self.vault.as_ref(),
+                    &binding,
+                    &self.key,
+                    initialize,
+                    self.guard.as_ref().ok_or(Failure::BindingMismatch)?,
+                    access,
+                )
+            }
+        }
+        .map_err(failed)
     }
 }
 
@@ -732,9 +812,9 @@ pub mod testing {
         Ok((receipt, resolved, store))
     }
 
-    pub fn reopen(
+    pub fn reopen<'a>(
         store: &OriginalStore,
-        context: &ApprovedContext,
+        context: impl Into<ClientContextRef<'a>>,
     ) -> Result<(Arc<OriginalStore>, Vec<RecoveredOriginal>), Failure> {
         OriginalStore::recover_index(store.index.clone(), context, store.vault.clone())
     }

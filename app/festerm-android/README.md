@@ -16,6 +16,7 @@ command-line tools. Set `JAVA_HOME` and `ANDROID_HOME`; put Java, `sdkmanager`,
 rustup target add aarch64-linux-android x86_64-linux-android
 sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 python3 scripts/build-android.py
+python3 scripts/build-android.py --host-clients
 python3 scripts/build-android.py --install --serial emulator-5580
 ```
 
@@ -24,6 +25,12 @@ Run commands from the repository root. The APK is
 source revision, dirty state, ABI, tool versions, signing mode and APK hash.
 `--abi x86_64` supports Intel emulators; `--offline` builds just the offline
 fixture. `--release` optimizes Rust but **still uses development signing**.
+`--host-clients` selects the shared host-oriented Dev Tunnels client, including
+live SSH, and writes `target/android/<abi>/host-clients/fesTerm.apk`. Its receipt
+records `prototype_mode`, selected `cargo_features` and whether Cargo defaults
+were enabled. This mode cannot be combined with `--offline`; the ordinary build
+continues to select the legacy live SSH client. Packaging is not native provider,
+Keystore, emulator or physical-device acceptance (`MOB-06`, ADR 0073).
 Both ABIs target Android 10/API 29 or later, target API 36, and use 16-KiB
 native alignment. The SDK-only packager needs neither Gradle nor cargo-apk.
 JVM TLS dependencies are version-pinned and checksum-verified, including
@@ -113,3 +120,28 @@ input queue, not the host view.
   (ADR 0083). Store listing, Data safety and native acceptance (`PLAY-01`)
   remain manual. The development keystore must never be committed or used as
   a release key; the signer refuses it.
+
+Hidden/custom keyboard modes (`0`, `2`, `4`) exclude the app window as a system
+IME target with `FLAG_ALT_FOCUSABLE_IM`; native/system modes (`1`, `3`) clear it
+before showing the system keyboard. Initial Hidden mode follows the same rule.
+Window focus, secure-window flags and existing input-owner guards are preserved;
+no OS keyboard preference or permission changes. A one-shot hide alone cannot
+prevent a later Gboard show over the custom keys.
+
+System-keyboard transitions request API 30+ IME insets control and one posted
+`showSoftInput` (also the API 29 path), guarded by the current mode/field, focus,
+foreground lifecycle and uncovered content. A focus gain may apply the current
+system-keyboard intent; equal-mode frames never retry it. Hidden/custom and
+privacy-covered transitions cancel pending insets visibility and hide the IME.
+Native switching and actual form usability still require emulator/device proof.
+
+Java-dispatched ordinary keys and IME commits share the guarded JNI queue;
+NativeActivity can handle actual keys before Activity dispatch. `PlatformSmoke`
+checks Java/JNI ownership, exactly-once emission, masking, stale/covered rejection
+and actual window-flag transitions. These checks do not establish actual ADB order.
+Native acceptance must verify single-call `clear`, `python3` and repeated/long
+public text, exactly one visible keyboard through custom/system/form switching
+and hardware input/restart, Unicode composition, modifiers and focus changes.
+Connection-null/restart ordering and uninterrupted actual-field composition remain
+native checks (ADR 0073, MOB-02/MOB-06); no all-ingress success is inferred from
+host compilation or window flags alone.

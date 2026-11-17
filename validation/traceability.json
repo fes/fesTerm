@@ -36,9 +36,15 @@
   "coverage": [
     {
       "id": "recording-settings",
-      "edges": ["REC-01"],
-      "requirements": ["docs/terminal-recording-design.md#recording-settings-naming-and-directory-layout"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-01"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#recording-settings-naming-and-directory-layout"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "recording_settings_ui_saves_a_valid_device_local_draft",
         "recording_is_opt_in_and_unlocks_settings_only_after_saving",
@@ -65,7 +71,9 @@
         "refuses_replaced_directory_without_writing_to_it",
         "refuses_a_busy_store_and_a_hard_linked_settings_file"
       ],
-      "manual_scenarios": ["TR-01"],
+      "manual_scenarios": [
+        "TR-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify desktop export-folder selection and device-local settings on macOS, Windows and Linux",
@@ -75,9 +83,16 @@
     },
     {
       "id": "recording-consent-and-selection",
-      "edges": ["REC-02"],
-      "requirements": ["docs/terminal-recording-design.md#user-workflow", "docs/terminal-recording-design.md#capture-model"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-02"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#user-workflow",
+        "docs/terminal-recording-design.md#capture-model"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "consent_identity_rejects_reconnected_or_replaced_sessions",
         "recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation",
@@ -93,7 +108,9 @@
         "recording_refuses_a_palette_that_does_not_match_the_visible_view",
         "color_emoji_and_block_cursor_can_reveal_equal_color_text"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify consent, cancellation, selection and indicators in native desktop and mobile applications"
@@ -101,9 +118,16 @@
     },
     {
       "id": "recording-shared-capture",
-      "edges": ["REC-03"],
-      "requirements": ["docs/terminal-recording-design.md#capture-model", "docs/terminal-recording-design.md#shared-timeline-and-separate-exports"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-03"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#capture-model",
+        "docs/terminal-recording-design.md#shared-timeline-and-separate-exports"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "synchronized_capture_spans_windows_and_excludes_local_input",
         "selected_streams_share_a_timeline_and_replay_applied_mutations",
@@ -119,7 +143,9 @@
         "event_channel_closing_after_clean_exit_does_not_fail_other_streams",
         "recording_captures_active_and_parked_output_then_stops_on_native_suspension"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify cross-window movement, inclusion and synchronized stop in native desktop and mobile applications"
@@ -127,9 +153,16 @@
     },
     {
       "id": "recording-privacy-and-integrity-stop",
-      "edges": ["REC-04"],
-      "requirements": ["docs/terminal-recording-design.md#recording-artifact-and-privacy", "docs/terminal-recording-design.md#resource-bounds-and-failure-behavior"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-04"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#recording-artifact-and-privacy",
+        "docs/terminal-recording-design.md#resource-bounds-and-failure-behavior"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "recording_start_refuses_a_privacy_cut_before_the_recorder_exists",
         "mobile_inactivity_and_locks_stop_recording_without_a_ui_frame",
@@ -156,7 +189,9 @@
         "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
         "a_new_ambiguous_graphical_session_revokes_existing_consent"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify the shared Windows privacy monitor and its synchronous revocation on native Windows",
@@ -165,9 +200,16 @@
     },
     {
       "id": "recording-export-and-recovery",
-      "edges": ["REC-05"],
-      "requirements": ["docs/terminal-recording-design.md#mp4-encoding-and-platform-qualification", "docs/terminal-recording-design.md#recording-artifact-and-privacy"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-05"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#mp4-encoding-and-platform-qualification",
+        "docs/terminal-recording-design.md#recording-artifact-and-privacy"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "streams_use_one_idle_transform_and_frame_schedule",
         "worker_publishes_all_streams_before_applying_retention",
@@ -195,7 +237,9 @@
         "recovered_prefix_is_labeled_and_never_deletes_the_original",
         "recovery_refuses_a_changed_tail_even_when_the_prefix_is_unchanged"
       ],
-      "manual_scenarios": ["TR-03"],
+      "manual_scenarios": [
+        "TR-03"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify appearance selection, verified metadata and prefix recovery in native UIs",
@@ -205,9 +249,25 @@
     },
     {
       "id": "desktop-split-pane-presentation",
-      "edges": ["PANE-01", "PANE-02", "PANE-03", "PANE-04", "PANE-05", "PANE-06", "PANE-07", "PANE-08", "PANE-09", "PANE-10"],
-      "requirements": ["docs/adr/0078-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],
-      "decisions": ["ADR-0078"],
+      "edges": [
+        "PANE-01",
+        "PANE-02",
+        "PANE-03",
+        "PANE-04",
+        "PANE-05",
+        "PANE-06",
+        "PANE-07",
+        "PANE-08",
+        "PANE-09",
+        "PANE-10"
+      ],
+      "requirements": [
+        "docs/adr/0078-desktop-split-pane-presentation.md#decision",
+        "docs/gui-design.md"
+      ],
+      "decisions": [
+        "ADR-0078"
+      ],
       "automated_tests": [
         "pane_tree_preserves_identity_and_collapses_without_orphans",
         "pane_tree_rejects_duplicate_capacity_depth_and_ratio",
@@ -264,7 +324,10 @@
         "pane_workspace_capture_keeps_legacy_and_new_view_ids_unique_across_windows",
         "pane_dividers_are_one_physical_pixel_at_every_scale"
       ],
-      "manual_scenarios": ["PN-01", "PN-02"],
+      "manual_scenarios": [
+        "PN-01",
+        "PN-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native visual/accessibility and live transport evidence remains PN-01/PN-02",
@@ -274,14 +337,21 @@
     },
     {
       "id": "installed-profile-dev-tunnel-hosting",
-      "edges": ["TUNNEL-15", "TUNNEL-16", "TUNNEL-17"],
+      "edges": [
+        "TUNNEL-15",
+        "TUNNEL-16",
+        "TUNNEL-17"
+      ],
       "requirements": [
         "docs/adr/0072-installed-profile-tunnel-hosting.md#decision",
         "docs/adr/0085-hosted-runtime-and-manual-session-migration.md#decision",
         "docs/gui-design.md#profile-editing",
         "docs/application-command-model.md"
       ],
-      "decisions": ["ADR-0072", "ADR-0085"],
+      "decisions": [
+        "ADR-0072",
+        "ADR-0085"
+      ],
       "automated_tests": [
         "hosting_initialization_keeps_legacy_permissions_and_session_files_unchanged",
         "hosting_initialization_keeps_inherited_windows_acls_and_legacy_registry",
@@ -354,7 +424,7 @@
         "uncertain_creation_remains_visible_without_a_transient_failure_code",
         "cloud_browser_removal_requires_a_qualified_reserved_candidate",
         "unknown_inventory_cannot_fall_back_to_unmanaged_cloud_deletion",
-        "shared_profile_checkbox_registers_without_per_profile_account_selection",
+        "disabled_host_profile_sharing_has_one_settings_recovery_link",
         "failed_local_host_save_retains_the_draft_and_ignores_stale_replies",
         "local_draft_preserves_ordered_argument_boundaries_when_only_renamed",
         "edited_profile_rename_updates_all_windows_and_usage_without_overwriting_another_profile",
@@ -367,7 +437,9 @@
         "management_delete_all_snapshot_revalidates_ownership_and_keeps_uncertain_creation",
         "private_directory_archive_refuses_open_children_and_existing_target"
       ],
-      "manual_scenarios": ["DT-08"],
+      "manual_scenarios": [
+        "DT-08"
+      ],
       "status": "partial",
       "prerequisites": [
         "Signed desktop provisioning, browser sign-in/account binding and native service/helper updates on Windows, macOS and Linux remain DT-08",
@@ -462,12 +534,16 @@
     },
     {
       "id": "automation-frozen-workflow-bindings",
-      "edges": ["AUT-01"],
+      "edges": [
+        "AUT-01"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#immutable-workflow-bundles"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
         "workflow_selection_is_available_only_when_javascript_is_enabled",
@@ -504,7 +580,9 @@
         "start_refuses_stale_snapshots_missing_targets_and_closed_privacy",
         "concurrent_workflow_approvals_require_a_safety_stop"
       ],
-      "manual_scenarios": ["AUTO-01"],
+      "manual_scenarios": [
+        "AUTO-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "The desktop beta Run review is the native approval of the exact snapshot, parameters, local terminal and scopes; iOS selection, persistent/remote targets, native usability and platform qualification remain open"
@@ -512,12 +590,16 @@
     },
     {
       "id": "automation-isolated-javascript-worker",
-      "edges": ["AUT-02"],
+      "edges": [
+        "AUT-02"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#javascript-execution-contract"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "identity_covers_manifest_schema_sources_and_dependencies",
         "native_adversarial_probes_and_cumulative_cpu_ceiling",
@@ -584,7 +666,10 @@
         "wait_settlement_admission_does_not_block_on_contention",
         "scrollback_text_keeps_the_newest_lines_and_bytes"
       ],
-      "manual_scenarios": ["AUTO-02", "AUTO-03"],
+      "manual_scenarios": [
+        "AUTO-02",
+        "AUTO-03"
+      ],
       "status": "partial",
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
@@ -594,12 +679,16 @@
     },
     {
       "id": "automation-default-off-preferences",
-      "edges": ["AUT-05"],
+      "edges": [
+        "AUT-05"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/configuration.md#interface-settings"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "automation_settings_are_independent_explicit_opt_ins",
         "automation_preferences_do_not_start_unqualified_or_javascript_adapters",
@@ -635,7 +724,9 @@
         "settings_automation_conflicts_stop_before_approval_or_unrelated_actions",
         "uncertain_automation_preferences_show_warning_and_safe_retry"
       ],
-      "manual_scenarios": ["AUTO-01"],
+      "manual_scenarios": [
+        "AUTO-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
@@ -644,12 +735,16 @@
     },
     {
       "id": "automation-pure-authority-kernel",
-      "edges": ["AUT-06"],
+      "edges": [
+        "AUT-06"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#authority-model"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "connection_and_wire_ids_never_grant_authority",
         "session_and_kernel_share_admission_and_poison",
@@ -712,7 +807,11 @@
         "removed_and_recreated_profiles_require_a_new_generation",
         "unsupported_profiles_and_durable_sessions_are_rejected"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04"
+      ],
       "status": "partial",
       "prerequisites": [
         "Control and worker integration require input ownership validation and platform confinement",
@@ -725,12 +824,16 @@
     },
     {
       "id": "automation-controller-enrollment-foundation",
-      "edges": ["AUT-08"],
+      "edges": [
+        "AUT-08"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#controller-enrollment-prerequisite"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "enrollment_registry_mutations_share_the_admission_boundary",
         "ordinary_legacy_metadata_and_principal_revocations_share_admission",
@@ -850,7 +953,12 @@
         "connection_enqueue_serializes_validation_with_revocation",
         "queued_controller_reply_closes_when_registration_is_invalidated"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04",
+        "AUTO-05"
+      ],
       "status": "partial",
       "prerequisites": [
         "The native current-window chooser and opt-in protocol adapter have synthetic tests only; private bootstrap, native authentication, privacy and controller qualification remain closed in production",
@@ -862,12 +970,16 @@
     },
     {
       "id": "automation-confirmed-presentation-seam",
-      "edges": ["AUT-09"],
+      "edges": [
+        "AUT-09"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#bounded-confirmed-presentation-seam"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "presentation_needs_a_separate_native_grant_for_the_exact_principal_and_target",
         "presentation_revocation_is_scoped_and_invalidates_pending_reviews",
@@ -956,7 +1068,12 @@
         "controller_catalog_requires_qualified_native_opt_in_and_resets_on_stop",
         "combined_catalog_does_not_expose_a_native_metadata_grant"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04",
+        "AUTO-05"
+      ],
       "status": "partial",
       "prerequisites": [
         "A native event source and admission ordering/freshness barrier must prove no missed activation transitions for each supported platform and viewport",
@@ -968,12 +1085,17 @@
     },
     {
       "id": "automation-local-mcp-observation",
-      "edges": ["AUT-07"],
+      "edges": [
+        "AUT-07"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#mcp-surface-and-connection-contract"
       ],
-      "decisions": ["ADR-0065", "ADR-0074"],
+      "decisions": [
+        "ADR-0065",
+        "ADR-0074"
+      ],
       "automated_tests": [
         "identity_proof_is_bound_to_a_fresh_versioned_challenge",
         "identity_proof_refuses_tampering_and_noncanonical_seeds",
@@ -1137,6 +1259,7 @@
         "windows_stdio_eof_revokes_while_stdout_is_blocked",
         "full_windows_pipe_retries_only_after_rechecking_revocation",
         "windows_stdout_inherited_pipe_nowait_probe",
+        "windows_stdout_positive_partial_write_feasibility",
         "windows_stdout_probe_reports_initial_mode_before_later_failure",
         "windows_stdout_probe_startup_drain_handles_empty_and_actual_bytes",
         "windows_stdout_probe_stalled_processes_are_supervised",
@@ -1170,7 +1293,11 @@
         "history_pagination_has_no_repeated_or_lost_text_and_reports_change_gaps",
         "flexible_direct_reads_require_native_approval_and_never_grant_effects"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04"
+      ],
       "status": "partial",
       "prerequisites": [
         "Private peer authentication, trusted human comparison and relay/disconnect liveness must be qualified before activation",
@@ -1190,7 +1317,10 @@
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
         "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
         "docs/adr/0071-explicit-managed-session-repair.md#decision",
-        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/gui-design.md#account-host-and-session-browser",
+        "docs/native-terminal-capability-probe.md"
       ],
       "decisions": [
         "ADR-0053",
@@ -1330,7 +1460,13 @@
         "remote_file_paths_refuse_foreign_namespaces_and_changed_capability_bindings",
         "mismatched_file_response_cannot_satisfy_another_request_or_become_terminal_output",
         "bridge_regular_file_reads_are_opt_in_bounded_and_admitted_once",
-        "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation"
+        "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation",
+        "desktop_first_viewport_precedes_immediate_input",
+        "desktop_host_first_viewport_survives_starting_without_replaying_early_input",
+        "desktop_host_cached_resize_budget_failure_never_publishes_running_or_input",
+        "selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop",
+        "desktop_first_viewport_backpressure_precedes_immediate_input",
+        "desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size"
       ],
       "manual_scenarios": [
         "DT-01",
@@ -1344,14 +1480,27 @@
         "Fresh required Windows x64 CI proof of the three legacy tunnel-setup fixtures after 9d521174; read-only capture improvements and macOS checks are not Windows qualification",
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
-        "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429"
+        "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429",
+        "DT-02 active native Copilot parity remains unqualified in all24 Desktop/iOS/Android campaign cases: pair fresh server-local fesTerm and actual Dev Tunnels Copilot runs at matched columns/rows, recording logical/physical pixel geometry, CLI version/hash, controlled cwd/initial state, theme/font/scale, selected TERM/TERM_PROGRAM/COLORTERM/locale and actual bounded DA/DSR/color/mode replies without duplicates; retain server/client screenshots. First-viewport/input, sustained resize Full and latest-size CPU regressions are separate controller evidence, not actual PTY ordering or native Copilot acceptance. Existing adapter payload/mode, protected creation policy, session identity and #681 prerequisites remain unchanged."
       ]
     },
     {
       "id": "native-dev-tunnels-identity-discovery",
-      "edges": ["TUNNEL-0[789]", "TUNNEL-1[01234]"],
-      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery", "docs/adr/0062-desktop-dev-tunnel-host-setup.md#decision", "docs/adr/0064-dev-tunnel-new-session-connect-once-form.md#decision", "docs/gui-design.md#profile-editing"],
-      "decisions": ["ADR-0053", "ADR-0062", "ADR-0064"],
+      "edges": [
+        "TUNNEL-0[789]",
+        "TUNNEL-1[01234]"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery",
+        "docs/adr/0062-desktop-dev-tunnel-host-setup.md#decision",
+        "docs/adr/0064-dev-tunnel-new-session-connect-once-form.md#decision",
+        "docs/gui-design.md#profile-editing"
+      ],
+      "decisions": [
+        "ADR-0053",
+        "ADR-0062",
+        "ADR-0064"
+      ],
       "automated_tests": [
         "native_device_flow_respects_interval_slowdown_and_private_identity_binding",
         "native_device_flow_and_refresh_accept_enterprise_managed_logins",
@@ -1360,6 +1509,9 @@
         "native_refresh_returns_a_new_pair_only_after_account_revalidation",
         "native_http_body_bound_and_cancel_refuse_without_raw_service_details",
         "native_http_requests_use_service_app_device_contracts_and_sensitive_account_headers",
+        "native_identity_diagnostic_classifies_only_typed_transport_flags_and_status",
+        "native_identity_diagnostic_fallback_preserves_stage_without_duplicate_delivery",
+        "native_identity_diagnostic_never_formats_private_request_error_details",
         "native_registration_selects_service_app_and_refuses_unqualified_overrides",
         "native_identity_binds_application_and_refuses_legacy_or_cross_app_refresh",
         "native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins",
@@ -1417,7 +1569,9 @@
         "bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission",
         "encrypted_transport_refuses_changed_host_key_before_authentication"
       ],
-      "manual_scenarios": ["DT-07"],
+      "manual_scenarios": [
+        "DT-07"
+      ],
       "status": "partial",
       "prerequisites": [
         "Clarify current service usage rights for standalone fesTerm before publication or broader qualification; owner-authorized bounded tests do not establish hosted-service permission",
@@ -1428,19 +1582,35 @@
     },
     {
       "id": "deferred-dev-tunnels-session-management",
-      "edges": ["TUNNEL-04"],
-      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#session-protocol-and-lifecycle"],
-      "decisions": ["ADR-0053"],
+      "edges": [
+        "TUNNEL-04"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#session-protocol-and-lifecycle"
+      ],
+      "decisions": [
+        "ADR-0053"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["DT-04"],
+      "manual_scenarios": [
+        "DT-04"
+      ],
       "status": "deferred",
-      "prerequisites": ["An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"]
+      "prerequisites": [
+        "An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"
+      ]
     },
     {
       "id": "native-powershell-ssh-subsystem",
-      "edges": ["PSRP-06"],
-      "requirements": ["docs/powershell-enterprise.md"],
-      "decisions": ["ADR-0082"],
+      "edges": [
+        "PSRP-06"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
       "automated_tests": [
         "raw_subsystem_uses_native_request_without_exec_or_pty",
         "raw_subsystem_rejects_invalid_names_and_server_refusal",
@@ -1461,7 +1631,10 @@
         "worker_stop_during_successful_ssh_start_handoff_invalidates_session",
         "worker_stop_after_startup_does_not_shutdown_ssh_session"
       ],
-      "manual_scenarios": ["CP-25", "CP-23"],
+      "manual_scenarios": [
+        "CP-25",
+        "CP-23"
+      ],
       "status": "partial",
       "prerequisites": [
         "authorized deployed OpenSSH PowerShell subsystem and approved authentication for each claimed remote platform",
@@ -1471,12 +1644,19 @@
     },
     {
       "id": "desktop-remote-and-enterprise-discovery",
-      "edges": ["RSD-03", "ENTRA-03"],
+      "edges": [
+        "RSD-03",
+        "ENTRA-03"
+      ],
       "requirements": [
         "docs/powershell-enterprise.md",
         "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],
-      "decisions": ["ADR-0014", "ADR-0038", "ADR-0082"],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0038",
+        "ADR-0082"
+      ],
       "automated_tests": [
         "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
         "unsupported_new_session_cards_are_hidden_at_narrow_and_wide_tab_sizes",
@@ -1486,7 +1666,10 @@
         "remote_picker_click_flow_requires_review_before_emitting_exact_target",
         "finished_worker_without_terminal_message_reports_failure"
       ],
-      "manual_scenarios": ["CP-24", "CP-21"],
+      "manual_scenarios": [
+        "CP-24",
+        "CP-21"
+      ],
       "status": "partial",
       "prerequisites": [
         "owner approval to expose remote-session and enterprise discovery in the GUI; entry points are deliberately hidden",
@@ -1497,12 +1680,18 @@
     },
     {
       "id": "remote-sessiond-ssh-backend",
-      "edges": ["RSD-01", "RSD-02"],
+      "edges": [
+        "RSD-01",
+        "RSD-02"
+      ],
       "requirements": [
         "docs/powershell-enterprise.md#remote-sessiond-over-ssh",
         "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],
-      "decisions": ["ADR-0038", "ADR-0082"],
+      "decisions": [
+        "ADR-0038",
+        "ADR-0082"
+      ],
       "automated_tests": [
         "remote_target_pins_generation_and_requires_explicit_takeover_command",
         "remote_inventory_refuses_unavailable_incompatible_or_invalid_generations",
@@ -1531,7 +1720,9 @@
         "remote_pending_adoption_refuses_competing_bridge_before_corrupt_payload_delivery",
         "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
       ],
-      "manual_scenarios": ["CP-24"],
+      "manual_scenarios": [
+        "CP-24"
+      ],
       "status": "partial",
       "prerequisites": [
         "cross-host macOS/Linux and Windows OpenSSH/named-pipe native qualification",
@@ -1939,6 +2130,7 @@
         "selected_registry_load_honors_cancellation_before_reading_or_waiting",
         "native_discovery_churn_reconnect_pins_generation_and_explicit_registry",
         "local_and_remote_attachments_alternate_on_one_session_in_either_order",
+        "concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption",
         "deliberate_takeover_alternates_between_remote_and_local_repeatedly",
         "admission_headers_stay_compatible_with_protocol_three_clients_and_daemons",
         "registry_records_from_before_attach_kinds_still_load_and_report_local",
@@ -3399,6 +3591,16 @@
         "ADR-0009"
       ],
       "automated_tests": [
+        "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
+        "desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement",
+        "desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh",
+        "desktop_remote_access_diagnostics_render_static_details_without_readiness_claim",
+        "desktop_remote_access_diagnostics_refuse_invalidated_scope_reports",
+        "metadata_retains_no_provider_content",
+        "metadata_preserves_all_original_semantics_and_uncertainty",
+        "attached_diagnostic_preserves_kind_display_and_nested_source_markers",
+        "diagnostic_debug_is_content_free_and_outermost_diagnostic_wins",
+        "bare_and_wrapped_client_failures_have_typed_stage_and_status",
         "headless_harness_drives_terminal_view_input_resize_and_diagnostics"
       ],
       "manual_scenarios": [
@@ -3406,6 +3608,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "About and Remote access display only typed last-setup stage, available HTTP status, fixed category and recovery guidance. Provider text, credentials, URLs and arbitrary native errors never enter the metadata. Original create uncertainty/cancellation/transient semantics remain intact. Owned installation/origin/epoch, current worker and cancel/draft/success fences reject stale diagnostics; no readiness claim. Native provider/store/cancel captures remain required.",
         "event emphasis and complete redacted Copy Details"
       ]
     },
@@ -3988,6 +4191,11 @@
         "ADR-0030"
       ],
       "automated_tests": [
+        "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
+        "desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement",
+        "desktop_remote_access_diagnostic_result_clears_on_changed_draft_and_successful_refresh",
+        "desktop_remote_access_diagnostics_render_static_details_without_readiness_claim",
+        "desktop_remote_access_diagnostics_refuse_invalidated_scope_reports",
         "image_memory_budget_default_is_512_mib_and_is_omitted_from_saved_settings",
         "image_memory_budget_values_round_trip_without_an_unbounded_escape",
         "image_budget_settings_dropdown_dispatches_the_typed_bounded_preference",
@@ -4049,6 +4257,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Dev Tunnels Remote access exposes the same content-free last-setup diagnostic as About. It is historical failure context, not endpoint readiness. Account/installation/epoch changes, cancellation, draft edits, new work and successful refresh clear or refuse stale results; native HOSTSETUP-01 captures remain required.",
         "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242"
       ]
     },
@@ -5146,13 +5355,19 @@
     },
     {
       "id": "ios-app-lock-recovery",
-      "edges": ["MOB-09"],
+      "edges": [
+        "MOB-09"
+      ],
       "requirements": [
         "docs/mobile-layout-design.md#recoverable-app-unlocking",
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#amendment-recoverable-foreground-authentication"
       ],
-      "decisions": ["ADR-0058", "ADR-0061", "ADR-0073"],
+      "decisions": [
+        "ADR-0058",
+        "ADR-0061",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "authentication_replies_and_cancellations_affect_only_their_request",
         "unknown_authentication_codes_fail_closed",
@@ -5173,7 +5388,10 @@
         "app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops",
         "lifecycle_resume_checks_transport_while_lock_keeps_content_hidden"
       ],
-      "manual_scenarios": ["MOB-09", "MOB-06"],
+      "manual_scenarios": [
+        "MOB-09",
+        "MOB-06"
+      ],
       "status": "partial",
       "prerequisites": [
         "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
@@ -5183,11 +5401,17 @@
     },
     {
       "id": "mobile-accessibility-tree",
-      "edges": ["MOB-10"],
+      "edges": [
+        "MOB-10"
+      ],
       "requirements": [
         "docs/adr/0075-mobile-accessibility-tree.md#decision"
       ],
-      "decisions": ["ADR-0075", "ADR-0073", "ADR-0058"],
+      "decisions": [
+        "ADR-0075",
+        "ADR-0073",
+        "ADR-0058"
+      ],
       "automated_tests": [
         "tree_generation_waits_for_a_platform_client_and_stops_on_deactivation",
         "platform_actions_reach_widgets_only_while_active_and_stay_bounded",
@@ -5196,7 +5420,9 @@
         "password_field_is_named_for_assistive_technology_without_exposing_the_secret",
         "terminal_rows_reach_accessibility_only_when_the_application_opts_in"
       ],
-      "manual_scenarios": ["MOB-10"],
+      "manual_scenarios": [
+        "MOB-10"
+      ],
       "status": "partial",
       "prerequisites": [
         "Shared Maestro flows (scripts/run-mobile-ui-flows.py; scripts/tests/test_mobile_ui_flows.py) pass on an iOS Simulator and an Android emulator; they are optional validation, not a merge gate",
@@ -5223,7 +5449,9 @@
         "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision",
         "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision",
-        "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision"
+        "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/native-terminal-capability-probe.md"
       ],
       "decisions": [
         "ADR-0073",
@@ -5239,6 +5467,22 @@
         "ADR-0063"
       ],
       "automated_tests": [
+        "sign_in_finishes_native_copy_before_browser_handoff",
+        "background_poll_waits_and_repeated_resume_uses_same_challenge_once",
+        "provider_expiry_remains_live_while_background_paused",
+        "user_cancel_and_privacy_cancel_refuse_paused_and_not_yet_started_flows",
+        "already_resumed_activity_captured_later_does_not_miss_resume",
+        "privacy_generation_rejects_stale_commit_and_allows_fresh_scope",
+        "queued_profile_store_admission_rechecks_cancellation_before_secret_write",
+        "completed_unconsumed_sign_in_rejects_privacy_or_user_cancel_but_not_background",
+        "cancelled_ready_sign_in_refuses_initial_clipboard_and_browser_effects",
+        "mobile_host_content_lock_never_waits_for_sign_in_credential_io",
+        "in_flight_poll_is_not_cancelled_or_replayed_on_background",
+        "device_sign_in_native_suspend_pauses_without_frame_and_resume_finishes_once",
+        "device_sign_in_app_lock_monitor_pauses_browser_background_without_cancelling",
+        "device_sign_in_app_lock_permission_alert_resumes_before_deferred_renderer_return",
+        "mobile_host_app_lock_monitor_preserves_background_sign_in_but_revokes_host_and_device_lock",
+        "reasoned_content_callback_preserves_legacy_notifications_and_distinguishes_lock",
         "overflow_rejects_the_whole_batch_and_reports_failure",
         "selection_starts_its_own_ordered_batch",
         "choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding",
@@ -5330,6 +5574,8 @@
         "mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies",
         "mobile_live_ssh_native_suspension_retires_without_a_ui_frame",
         "mobile_live_ssh_input_refusal_retires_session_without_replay",
+        "mobile_host_synchronous_admission_refusals_preserve_category_and_cancel_without_replay",
+        "mobile_host_closed_admission_captures_original_finite_cause_before_cancel",
         "mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output",
         "mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids",
         "mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take",
@@ -5413,7 +5659,11 @@
         "attach_requires_an_approved_unchanged_host",
         "takeover_follows_the_profile_and_displacement_is_never_silently_reattached",
         "a_pinned_session_name_that_the_host_does_not_serve_is_reported",
-        "mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon"
+        "mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon",
+        "mobile_first_viewport_precedes_immediate_input",
+        "mobile_first_viewport_backpressure_precedes_immediate_input",
+        "mobile_first_viewport_sustained_backpressure_refuses_input_without_replay",
+        "mobile_first_viewport_superseded_size_sends_only_latest_before_input"
       ],
       "manual_scenarios": [
         "MOB-01",
@@ -5421,25 +5671,39 @@
         "MOB-03",
         "MOB-04",
         "MOB-05",
-        "MOB-06"
+        "MOB-06",
+        "DT-02"
       ],
       "status": "partial",
       "prerequisites": [
         "ADR-0058 app lock is wired through ADR-0061; portable request/cancellation and pointer recovery are covered under MOB-09, but enrolled Face ID, explicit system passcode, resume-after-grace, compositor/snapshot timing and rapid physical-device switches remain unqualified",
+        "Android scripts/build-android.py --host-clients selects the existing shared mobile HOST client graph; scripts/tests/test_android_build.py covers explicit feature propagation, offline incompatibility and distinct APK output/receipt semantics. The 24-case desktop/mobile campaign includes iOS and Android clients against all three desktop servers with creation off/on; actual mobile discovery, native vault, terminal, permission and reconnect evidence remains MOB-06/TUNNEL-11, separate from packaging and Simulator/emulator qualification.",
         "Android ADR-0073 qualification is separate from iOS: see docs/manual-validation.md Android shared mobile port. Both development APK ABIs cross-build; isolated Android 35 ARM64 runtime evidence covers rendering/safe areas, portrait/landscape/tablet-sized viewports, native typing, profile/key persistence, owned OpenSSH shell I/O, byte-exact SFTP download, document background/resume and device-PIN cold unlock/authenticated disable. GitHub device-code initiation completed over Android TLS without account authorization. On an Android 16 ARM64 emulator, the target-36 development build passed native smoke and portrait/landscape checks, and a test-signed AAB-derived APK launched its offline terminal; the focused search field is hidden by the landscape keyboard on both target-35 and target-36 builds (#673). scripts/tests/test_android_build.py, test_android_play.py, test_android_bundle_signing.py and test_android_play_upload.py check dependency, bundle, isolated signing, notice and Play upload policy (ADR-0083); scripts/smoke-android.py checks native Keystore/tamper, clipboard, secure-window flags, document URI refusal, Unicode/composition/stale acknowledgment and field input, and JVM verifier packaging. Authenticated Dev Tunnel discovery/relay/recovery, physical phone/tablet, complex IMEs, extended lock/lifecycle races, speech and full visual/accessibility acceptance remain native gates; these checks do not establish store publication.",
         "PLAY-01 remains pending: complete the first Play Console upload and required store setup, then install an Internal testing build on a physical arm64 device, open live SSH, and verify an upgrade preserves profiles. A completed API edit or prepared bundle does not establish tester availability.",
-        "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
+        "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01\u201306",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
         "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support",
-        "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06"
+        "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06",
+        "DT-02/MOB-06 active native fresh Copilot parity remains unqualified for every iOS/Android case in the existing24-case matrix. Compare against fresh server-local fesTerm at matched terminal grid size with recorded pixel geometry, CLI/initial-state/cwd/theme/font/scale and actual selected environment/query replies plus paired server/client screenshots. Device type and keyboard/rotation geometry must be recorded. Shared mobile CPU tests prove controller ordering and explicit input-not-sent/disconnect without replay on persistent resize refusal; builds, replay and CPU captures do not qualify actual PTY or native Copilot visuals.",
+        "Android MOB-02 ordinary hardware/IME keys share the existing guarded Java/JNI input queue while an active input connection owns focus. PlatformSmoke mixed-order/exactly-once, secure/stale-field, matching-release and modified/system/dead-key delegation regression compiles but remains native-unrun. Requalify exact command order, long/repeated text, composition/navigation, hardware modifiers, focus/mode/privacy transitions and the preserved connection-unavailable/restart fallback gap; this does not qualify the native Dev Tunnels/Copilot matrix."
       ]
     },
     {
       "id": "ios-shared-documents",
-      "edges": ["MOB-08"],
-      "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
-      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058", "ADR-0073"],
+      "edges": [
+        "MOB-08"
+      ],
+      "requirements": [
+        "docs/mobile-layout-design.md#shared-ios-document-editor",
+        "docs/text-editor-design.md"
+      ],
+      "decisions": [
+        "ADR-0069",
+        "ADR-0034",
+        "ADR-0058",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "android_import_save_preserves_unicode_and_rejects_stale_content",
         "android_import_rejects_outside_authority_and_oversized_sources",
@@ -5507,10 +5771,12 @@
         "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet",
         "preview_tables_honor_left_center_and_right_column_alignment"
       ],
-      "manual_scenarios": ["MOB-08"],
+      "manual_scenarios": [
+        "MOB-08"
+      ],
       "status": "partial",
       "prerequisites": [
-        "Issue #570: shared/native I/O and registry-backed source surfaces provide shared undo/redo, guarded conflict decisions and dirty-close handling. Markdown adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. The P1–P4 follow-up moves Browse to Sessions, shares source/draft keyboard-region dictation, adds exact save-close receipts, compact icon controls and touch Preview Copy/Select All. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace and local copy/Save As remain subsequent slices.",
+        "Issue #570: shared/native I/O and registry-backed source surfaces provide shared undo/redo, guarded conflict decisions and dirty-close handling. Markdown adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. The P1\u2013P4 follow-up moves Browse to Sessions, shares source/draft keyboard-region dictation, adds exact save-close receipts, compact icon controls and touch Preview Copy/Select All. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace and local copy/Save As remain subsequent slices.",
         "Android ADR-0073 uses explicitly labelled private copies, not provider in-place writes. Native emulator evidence covers content-provider import with sanitized name/type, source-chooser cancellation, editing/saving without changing the provider original and saved-copy reopening after cold launch. JNI smoke rejects ungranted file URIs. Physical-device provider errors, storage exhaustion, dirty-close/focus/IME, accessibility and full visual acceptance remain separate from portable publication tests and emulator evidence; see docs/manual-validation.md Android shared mobile port.",
         "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
         "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
@@ -5518,9 +5784,16 @@
     },
     {
       "id": "ios-on-device-dictation",
-      "edges": ["MOB-07"],
-      "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
-      "decisions": ["ADR-0068", "ADR-0073"],
+      "edges": [
+        "MOB-07"
+      ],
+      "requirements": [
+        "docs/mobile-layout-design.md#on-device-dictation"
+      ],
+      "decisions": [
+        "ADR-0068",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "dictation_requires_review_and_single_line_bounded_text",
         "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",
@@ -5547,7 +5820,9 @@
         "tapping_live_transcript_stops_capture_and_opens_editing",
         "waveform_history_buckets_peaks_and_keeps_a_bounded_oldest_first_window"
       ],
-      "manual_scenarios": ["MOB-07"],
+      "manual_scenarios": [
+        "MOB-07"
+      ],
       "status": "partial",
       "prerequisites": [
         "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
@@ -5555,7 +5830,11 @@
     },
     {
       "id": "host-protocol-owner-contracts",
-      "edges": ["HOST-01", "HOST-02", "HOST-03"],
+      "edges": [
+        "HOST-01",
+        "HOST-02",
+        "HOST-03"
+      ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
         "docs/host-protocol.md",
@@ -5563,12 +5842,67 @@
         "docs/gui-design.md#profile-editing",
         "docs/application-command-model.md#required-properties",
         "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
-        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery"
+        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery",
+        "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
+        "docs/native-terminal-capability-probe.md",
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
-      "decisions": ["ADR-0084", "ADR-0054"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0054",
+        "ADR-0086",
+        "ADR-0087"
+      ],
       "automated_tests": [
-        "host_workspace_open_is_offline_and_stale_discovery_cannot_publish",
-        "host_workspace_discovery_is_explicit_with_accessible_targets_and_cancel_fencing",
+        "session_shortcut_binds_exact_host_logical_generation_without_launch_or_creation",
+        "optional_created_shortcut_is_original_bound_single_use_and_uses_confirmed_target",
+        "host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert",
+        "new_host_shell_discards_selected_recipe_launch_and_uses_persistent_host_default",
+        "narrow_host_browser_keeps_new_shell_actions_and_fields_inside_viewport",
+        "account_switch_keeps_directory_open_retires_old_authority_and_selects_new_account_host",
+        "saved_profile_account_switch_retires_profile_request_and_keeps_directory_open",
+        "mobile_host_session_shortcuts_bind_exact_host_logical_and_generation_without_launch",
+        "mobile_host_save_session_is_local_reviewed_exact_target_and_refuses_changed_account",
+        "mobile_host_session_rows_deduplicate_only_exact_logical_identity_and_gate_unknown_creation",
+        "mobile_host_new_shell_defaults_launch_and_retains_optional_save_only_on_exact_original",
+        "mobile_host_creation_and_save_forms_keep_44point_native_fields_and_12point_action_gaps",
+        "mobile_host_session_card_keeps_12point_action_row_gap_and_44point_details",
+        "mobile_host_back_from_busy_creation_cancels_worker_and_keeps_original_save_intent",
+        "snapshot_slot_is_shared_and_independent_of_live_and_control_capacity",
+        "snapshot_retains_client_admission_until_last_work_owner_drops",
+        "styled_native_grid_snapshot_exceeds_live_queue_and_roundtrips_losslessly",
+        "snapshot_prefix_refuses_oversize_before_body_and_releases_slot_on_partial_eof",
+        "snapshot_frame_slot_is_owned_by_frame_and_live_bytes_remain_independent",
+        "prepared_snapshot_retains_slot_until_frame_drops_and_refuses_incompatible_policy",
+        "native_recovery_terminal_failure_is_incompatible_before_snapshot",
+        "cancelled_frontend_adoption_retains_snapshot_slot_until_queued_model_drops",
+        "host_recovery_reader_caps_header_before_allocation_and_declared_history_before_restore",
+        "recovery_work_survives_frontend_drop_until_actual_blocked_reader_exits",
+        "recovery_work_is_released_on_transfer_before_live_session_ends",
+        "host_workspace_absent_request_rejects_stale_discovery",
+        "host_workspace_open_discovers_once_with_accessible_refresh_and_cancel_fencing",
+        "metadata_edit_explicitly_retargets_only_future_metadata_and_preserves_import_collision",
+        "discovered_host_reuses_only_unambiguous_same_account_exact_locator_identity",
+        "mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths",
+        "attachment_failure_detail_is_finite_preserves_cause_and_base_message",
+        "selected_host_real_eof_retains_attachment_phase_and_kind_through_session_error",
+        "closed_initial_resize_retains_real_actor_eof_without_reclassifying_send_refusal",
+        "mobile_host_viewer_shows_real_finite_attach_failure_without_leaving_terminal",
+        "mobile_host_synchronous_admission_refusals_preserve_category_and_cancel_without_replay",
+        "mobile_host_closed_admission_captures_original_finite_cause_before_cancel",
+        "mobile_host_shared_profile_title_uses_only_matching_advertised_metadata",
+        "mobile_host_pairing_fields_publish_native_documents_and_accept_targeted_input",
+        "mobile_host_pairing_scope_changes_with_account_host_and_recipe",
+        "mobile_host_native_pairing_edit_clears_consent_and_inventory",
+        "mobile_host_label_prefers_bounded_description_then_name_then_locator",
+        "mobile_host_shared_profile_operation_keeps_exact_revision_and_requires_capabilities",
+        "mobile_host_profile_can_explicitly_change_saved_host_without_network_or_losing_draft",
+        "mobile_host_profile_host_selection_cancel_preserves_original_target_and_draft",
+        "mobile_host_shared_profiles_are_visible_without_generic_creation_or_render_effects",
+        "profile_only_issuance_preserves_epoch_binding_and_refuses_generic_creation",
+        "profile_issuance_requires_capability_and_protected_epoch",
+        "renaming_local_profile_preserves_implicit_remote_name_and_logical_identity",
         "host_quick_create_requires_a_bounded_nonblank_name",
         "host_creation_uses_remote_session_name_not_local_profile_name",
         "host_profile_creation_can_be_disabled_without_inventing_a_generation",
@@ -5579,7 +5913,20 @@
         "mobile_host_profile_rename_with_inventory_preserves_logical_resume_policy",
         "mobile_host_saved_custom_launch_requires_explicit_review_before_creation",
         "mobile_host_quick_create_requires_name_and_preserves_original_intent_after_failure",
-        "mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_results",
+        "mobile_host_discovered_selection_starts_one_host_and_paint_keeps_discovery_rows",
+        "mobile_ordinary_host_expansion_runs_once_and_old_host_has_no_manual_fallback",
+        "mobile_ordinary_host_switch_cancels_pending_expansion_before_stale_publication",
+        "mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once",
+        "mobile_ordinary_durable_creation_obeys_global_policy_and_protects_original",
+        "ordinary_desktop_expansion_once_requires_update_without_manual_fallback",
+        "ordinary_desktop_inventory_adoption_and_durable_create_follow_global_policy",
+        "ordinary_desktop_privacy_callback_cancels_pending_without_frame_and_blocks_late_adoption",
+        "ordinary_desktop_timeout_cancels_request_without_owner_receipt_guidance",
+        "ordinary_desktop_privacy_unavailable_refuses_before_bootstrap",
+        "ordinary_account_lifetime_survives_chooser_and_cancels_before_session_installation",
+        "ordinary_desktop_attach_installs_common_session_without_owner_enrollment",
+        "mobile_ordinary_attach_installs_common_session_without_owner_enrollment",
+        "mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes",
         "protected_original_reopen_retains_exact_ticket_body_and_old_epoch_after_lost_reply",
         "protected_original_fresh_process_reopens_native_fixture_and_replays_identical_wire_once",
         "protected_original_reopen_vault_errors_remain_typed_not_host_denial",
@@ -5614,6 +5961,9 @@
         "mobile_host_end_registry_does_not_exhaust_after_seventeen_exact_ended_replies",
         "mobile_host_open_is_offline_and_lock_callback_cancels_without_another_frame",
         "mobile_host_suspend_fences_pending_work_and_never_arms_automatic_creation",
+        "mobile_host_idle_privacy_changes_preserve_diagnostics_without_cancellation_error",
+        "mobile_host_privacy_change_cancels_pending_and_control_work_with_diagnostic",
+        "mobile_host_test_worker_drop_cancels_its_in_memory_task",
         "mobile_host_private_generation_exhaustion_refuses_new_work",
         "mobile_host_private_generation_concurrent_invalidation_preserves_cancellation_and_saturates",
         "mobile_host_native_privacy_handle_is_shared_with_suspension_owner",
@@ -5649,7 +5999,7 @@
         "selected_host_desktop_creation_freezes_launch_and_distinguishes_new_logical_from_authoritative_ensure",
         "shared_profile_catalog_is_advertised_while_stopped_and_fences_old_revisions",
         "shared_profile_responses_require_matching_request_kinds_and_persistent_targets",
-        "shared_profile_checkbox_registers_without_per_profile_account_selection",
+        "disabled_host_profile_sharing_has_one_settings_recovery_link",
         "selected_host_desktop_creation_registry_retains_action_across_close_and_refuses_changed_recipe_or_credential",
         "selected_host_desktop_creation_registry_is_bounded_without_discarding_original_retry",
         "native_selected_host_creation_worker_adopts_isolated_frontends_and_original_ensure",
@@ -5673,6 +6023,8 @@
         "desktop_remote_access_sharing_native_stale_cancel_and_account_refuse_before_authority",
         "desktop_remote_access_sharing_native_errors_are_fieldless_and_fail_closed",
         "desktop_remote_access_composition_command_routes_without_metadata_grants",
+        "desktop_remote_access_summary_does_not_claim_pending_or_unobserved_access_is_on",
+        "desktop_remote_access_recovery_buttons_remain_readable_at_native_small_window_widths",
         "selected_host_receipt_review_requires_exact_account_host_and_independent_pin",
         "selected_host_receipt_prepare_and_reopen_use_only_exact_protected_index",
         "portable_receipt_interrupted_write_never_publishes_final",
@@ -5901,9 +6253,66 @@
         "local_observation_wait_refuses_every_non_busy_error_without_retry",
         "local_observation_wait_exhaustion_remains_busy_not_absence",
         "native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation",
-        "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned"
+        "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned",
+        "ordinary_proof_binds_real_ssh_channel_route_role_nonce_and_policy",
+        "ordinary_private_key_refuses_cross_connection_changed_route_and_missing_exporter",
+        "ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority",
+        "ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_change",
+        "ordinary_context_never_becomes_admin_and_refuses_temporary_creation",
+        "selected_host_sandbox_receipt_opens_policy_created_private_root",
+        "ios_native_root_retains_existing_namespace_below_os_managed_ancestor",
+        "ios_native_root_refuses_symlinks_permissive_children_and_revoked_roots",
+        "ios_native_root_only_normalizes_the_documented_var_alias",
+        "ios_native_root_refuses_actual_acl_grants_without_repair",
+        "ordinary_cancelled_account_refuses_ready_results_and_new_workers",
+        "ordinary_account_cancel_drains_live_worker_but_chooser_cancel_does_not_cancel_account",
+        "ordinary_test_context_cannot_open_real_transport_or_grant_remote_authority",
+        "ordinary_native_key_reopens_exact_account_route_and_uses_distinct_purpose",
+        "ordinary_ready_missing_key_never_generates_replacement",
+        "ordinary_native_cancel_before_and_after_write_never_publishes_key_or_replaces_seed",
+        "ordinary_native_cancel_during_read_suppresses_ready_snapshot",
+        "ordinary_request_cancel_during_native_write_preserves_account_and_reserved_seed",
+        "session_privacy_loss_cancels_before_wake_without_a_ui_frame",
+        "session_privacy_wait_refuses_late_ready_guard_after_cancellation",
+        "mobile_host_normal_open_discovers_saved_account_once_without_inventory_or_paint_retry",
+        "mobile_host_discovery_failure_waits_for_explicit_refresh_and_preserves_results",
+        "mobile_host_account_editor_event_cancels_old_discovery_and_lists_new_account_once",
+        "mobile_host_no_account_renders_primary_sign_in_without_starting_browser_or_discovery",
+        "mobile_host_profile_edit_and_save_remain_offline_with_saved_account",
+        "mobile_host_successful_sign_in_event_arms_open_dialog_discovery_only_in_foreground",
+        "mobile_host_privacy_cancels_automatic_discovery_without_restarting_on_resume",
+        "normal_host_browser_saved_account_lists_once_not_once_per_paint",
+        "normal_host_browser_sign_in_return_waits_for_foreground_and_lists_once",
+        "normal_host_browser_account_switch_clears_ready_hosts_and_rejects_late_result",
+        "normal_host_browser_failure_waits_for_explicit_refresh_without_automatic_retry",
+        "automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_account_or_screen_change",
+        "encrypted_auth_selector_rejects_unknown_versions_empty_and_typos_without_legacy_fallback",
+        "ordinary_projection_rechecks_native_anchor_after_unobserved_or_observed_policy_rollback",
+        "original_endpoint_and_full_digest_domain_are_preserved",
+        "macos_short_endpoint_real_bind_retains_original_lease_and_native_evidence",
+        "macos_short_endpoint_refuses_existing_symlink_nonempty_and_replaced_directory",
+        "macos_short_endpoint_refuses_unowned_socket_entry_and_never_creates_preflight_children",
+        "local_catalog_routing_marker_preserves_legacy_and_cannot_change_identity",
+        "local_catalog_route_precedes_legacy_and_refuses_missing_or_unknown_authority",
+        "catalog_save_keeps_logical_identity_when_unshared_and_updates_disabled_recipe",
+        "new_catalog_save_marks_only_routing_and_retains_legacy_save_behavior",
+        "catalog_profile_never_queues_legacy_cloud_host_start",
+        "local_restore_never_prompts_writes_or_resolves_helper_and_locked_store_refuses",
+        "local_catalog_remote_off_disabled_host_create_reuse_unshare_and_restore_same_generation",
+        "publication_reenable_only_clears_exact_known_off_grant",
+        "unpublished_persistent_generation_keeps_local_use_and_rejects_remote_admission",
+        "local_catalog_initially_unshared_remote_off_creates_only_explicit_local_generation"
       ],
-      "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
+      "manual_scenarios": [
+        "DT-05",
+        "DT-07",
+        "DT-08",
+        "CP-11",
+        "MOB-03",
+        "MOB-06",
+        "HOSTAUTH-01",
+        "DT-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native terminal heartbeat/intentional-detach maintenance and Detached receipt publication retry only typed Busy before effect eligibility within the existing15s admission budget, reacquiring exact generation and fresh protected policy. Successful mutation admission or invoked input/adoption/publication makes every later result final; no effect replay. Cancellation, revocation, storage/Unknown and other refusals are not retried. Unit guards and actual owned native SSH/PTY adoption/output/Detached/temporary-grace/policy tests remain required; pre-snapshot fixture Busy retries preserve target/ticket/request and never retry adoption, while fresh read-only List probes must resolve the complete exact target set without Unknown. No new capability or installed/native-vault/mobile/Windows qualification",
@@ -5921,7 +6330,6 @@
         "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard. The default headless binary consumes them only through explicit current-consent run; bridge/setup library features remain opt-in for other consumers. Independent combined-source review and native/first-connect qualification remain mandatory; no default desktop/mobile listener or implicit GUI permission",
         "Native vault/private-path/restart qualification and CLIENT first-connect full-binding independent-pin review/protected receipt/index/session chooser evidence remain deferred under HOSTAUTH-01; separate host-local public-key approval is implemented and does not complete that direction. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
         "Paired terminal framing, bounded actor/client queues and FIFO output turns are consumed by the explicit authenticated headless runtime, using actual signed SSH streams and shared native control/terminal state via Arc. Fixed protected enrollment and lifecycle/current-policy fixtures are integrated. Different-source-family exact-head review and native-vault/service/first-connect qualification remain required. Runnable source does not establish installed/native readiness",
-
         "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
         "Issue #681: reachable desktop Review and connect requires independent full-binding/pin review, a private native-key receipt and separate host-local approval before explicit HOST-only resolution/inventory/exact-target attachment. Launcher/render/save/import remain offline and grant no trust. The historical e49/#693 source union passed 132 library/14 ignores, all 14 separately selected native SSH/PTY cases, nine service and fourteen desktop cases on explicit private rustc 1.98.0. Later creation/lifecycle and protected mobile restart increments preserve original-issued requests through the current typed worker; source/toolchain boundaries are in milestone-progress.md. Mobile protected checkpoints precede effectful writes, use explicit current-context/consent reopen, preserve original UUID/epoch/body and retain uncertain originals; only exact terminal Ended settles records. Synthetic memory-vault subprocess/framed tests are not native-vault/physical restart acceptance. Android's earlier Unsupported reservation state is superseded by the separately tracked native-root/create-new boundary below; native runtime remains unqualified. Native-vault/development-wrapper GUI, physical mobile installation, desktop account-wide discovery/Settings and desktop durable reconciliation remain open; no implicit sign-in, retry, legacy fallback or replay",
         "Issue #681: explicit foreground launch/lifetime/behavior reconfirmation and protected owner/key/context fences have headless coverage; import/save/portable approval fields never grant execution consent. Qualify the same no-execution-before-approval/cancel flow on native desktop and physical mobile before acceptance",
@@ -5937,12 +6345,19 @@
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. Native fixtures use a real old-writer I/O barrier plus an unadopted takeover reservation for one precommit Busy refusal, preserving the full lease/journal and checking one exact writer-epoch advance only after adoption. A held generation lease proves precommit end Busy without PID/generation/issued effects; a separate durable-stop commit barrier precedes OutcomeUncertain publication. Committed-creation replay separately proves exact-lease Busy and unchanged full checkpoints before requiring the same operation/generation/original Created result within the existing deadline; other responses are printed failures. Unix owned fixture roots bind the maximum PID/HOST-generation socket identity and refuse existing-name adoption. The Linux920 CI replay reply remains unprinted/unknown, not identified by the controlled Busy proof. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
-        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred"
+        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred",
+        "DT-02 active fresh native Copilot visual comparison spans all24 Desktop/iOS/Android lab cases, separately from protocol/create/attach/survival evidence. Require matching local-reference/client grid, recorded pixel geometry, actual PTY terminal/locale environment and query replies without duplicates, pinned Copilot/initial-state/theme/font/scale and paired screenshots. Static server TERM policy is valid for fesTerm clients; missing creation metadata alone is not a reproduced defect and this requirement introduces no protocol fields or new authority. Owner accepts the initial unauthenticated Copilot screen; no entitlement, Copilot sign-in or model request is required. Native comparisons remain unqualified.",
+        "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
+        "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
+        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
     },
     {
       "id": "host-shared-lifecycle-headless-boundary",
-      "edges": ["HOST-04", "HOST-05"],
+      "edges": [
+        "HOST-04",
+        "HOST-05"
+      ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#3-host-settings-and-state",
         "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
@@ -5954,10 +6369,26 @@
         "docs/native-host-services.md#linux-current-login-fence",
         "docs/adr/0084-host-based-dev-tunnels.md#approved-native-host-process-recovery-730",
         "docs/native-host-services.md#native-host-process-recovery",
-        "docs/manual-validation.md#native-host-process-recovery-730"
+        "docs/manual-validation.md#native-host-process-recovery-730",
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
-      "decisions": ["ADR-0084"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0086",
+        "ADR-0087"
+      ],
       "automated_tests": [
+        "desktop_remote_access_enable_confirmation_uses_task_copy_and_retains_disclosure",
+        "desktop_remote_access_process_confirmation_is_plain_and_keeps_observation_intent",
+        "desktop_remote_access_confirmation_keeps_bundle_mechanics_in_advanced",
+        "host_cloud_owner_default_access_is_pinned_and_never_reinterprets_legacy",
+        "host_cloud_owner_default_refuses_every_explicit_or_unknown_acl_grant",
+        "host_cloud_legacy_user_receipts_remain_exact_and_cannot_create_again",
+        "host_cloud_legacy_acl_reservations_fail_closed_without_rewriting_originals",
+        "host_cloud_existing_user_acl_receipt_is_observed_without_replacement",
+        "host_cloud_diagnostics_preserve_status_stage_and_create_disposition_without_content",
+        "host_cloud_diagnostics_preserve_recovery_error_keys_and_semantic_markers",
         "host_process_recovery_each_attempt_reenters_real_admission_and_revocation_wins",
         "host_process_recovery_busy_attempt_never_adopts_another_runs_record_or_lease",
         "host_process_recovery_records_operational_failure_as_failure_not_product_success",
@@ -5975,6 +6406,7 @@
         "disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop",
         "host_journal_refuses_busy_corrupt_and_unprotected_state",
         "host_enable_requires_exact_foreground_settings_and_binds_the_ticket",
+        "desktop_remote_access_sign_in_delivery_controls_do_not_replace_pending_work",
         "host_desktop_consent_atomically_binds_settings_and_exact_snapshot",
         "host_desktop_consent_refuses_same_phase_epoch_and_same_epoch_metadata_drift",
         "host_desktop_consent_busy_and_foreign_scope_never_mutate",
@@ -5986,10 +6418,17 @@
         "desktop_remote_access_refresh_cannot_retarget_an_existing_confirmation",
         "desktop_remote_access_only_explicit_reviewed_action_reaches_bounded_worker",
         "desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings",
+        "desktop_remote_access_refresh_preserves_existing_ordinary_policy_without_enabling",
+        "desktop_remote_access_native_refresh_never_promotes_legacy_or_enrolls_a_device",
+        "desktop_remote_access_normal_enable_consent_explains_shell_privileges_and_no_pairing",
         "desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant",
         "desktop_remote_access_busy_never_edits_or_replaces_pending_consent",
+        "desktop_remote_access_releases_admission_before_publishing_completion",
         "desktop_remote_access_settings_render_is_inert_and_device_debug_is_redacted",
         "desktop_remote_access_running_process_and_history_never_become_ready",
+        "desktop_remote_access_runtime_history_requires_current_provisioned_epoch",
+        "desktop_remote_access_normal_status_shows_recorded_state_and_checked_process_action",
+        "desktop_remote_access_refresh_replaces_recorded_state_and_clears_previous_process_observation",
         "desktop_remote_access_input_and_missing_platform_context_fail_without_workers",
         "desktop_remote_access_window_drop_cancels_without_another_ui_frame",
         "desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_state",
@@ -6126,6 +6565,10 @@
         "headless_package_staging_refuses_unauthenticated_input_before_writing",
         "staging_parent_rejects_a_dacl_that_allows_child_substitution",
         "native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs",
+        "native_service_stopped_creation_projection_preserves_registration_and_durable_state",
+        "native_service_stopped_creation_projection_rejects_scope_policy_and_native_races",
+        "native_service_stopped_creation_projection_rechecks_after_qualification",
+        "stopped_creation_projection_preserves_committed_binary_replacement_history",
         "native_service_unpublished_receipt_proves_only_owned_absence_without_manager_calls",
         "native_service_unpublished_fixture_forbids_native_manager_effects",
         "native_service_unpublished_receipt_requires_exclusive_lease_and_current_instance",
@@ -6145,6 +6588,10 @@
         "task_xml_failure_never_publishes_partial_output",
         "task_xml_bounds_utf16_and_utf8_output",
         "host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port",
+        "host_cloud_placement_retries_denied_authorization_once_anonymously",
+        "host_cloud_placement_does_not_retry_other_failures_or_repeat_anonymous_denial",
+        "host_cloud_placement_cancellation_prevents_anonymous_retry",
+        "host_cloud_resource_operations_never_retry_denied_authorization_anonymously",
         "host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token",
         "host_cloud_scoped_host_token_refuses_replacement_account_absence_and_cancellation",
         "host_cloud_relay_uses_existing_identity_and_scoped_token_without_enrollment",
@@ -6156,6 +6603,13 @@
         "host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced",
         "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
         "host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker",
+        "host_cloud_create_protocol_is_pinned_and_missing_legacy_never_becomes_auto",
+        "host_cloud_receipt_and_host_token_require_the_pinned_protocol",
+        "host_cloud_legacy_protocol_reservations_fail_closed_without_rewriting_originals",
+        "host_cloud_legacy_retirement_crash_order_fences_old_ticket_and_requires_new_enable",
+        "host_cloud_legacy_retirement_refusals_preserve_original_bytes",
+        "host_cloud_protocol_cannot_replace_an_existing_exact_receipt",
+        "host_cloud_absence_release_requires_exact_epoch_even_when_old_ticket_survives",
         "host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced",
         "host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority",
         "host_cloud_manual_cleanup_never_displays_raw_receipt_urls",
@@ -6174,15 +6628,37 @@
         "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt",
         "host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create",
         "host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts",
-        "host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource"
+        "host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource",
+        "managed_bootstrap_waits_for_real_lifecycle_lease_before_preflight",
+        "managed_bootstrap_service_lease_alone_does_not_block_registration_preflight",
+        "managed_bootstrap_cli_store_open_can_fail_before_controller_entry",
+        "managed_bootstrap_entry_waits_for_store_open_without_new_history",
+        "managed_bootstrap_persistent_lifecycle_contention_uses_one_deadline",
+        "managed_bootstrap_read_phases_share_remaining_budget",
+        "managed_bootstrap_cancellation_stops_before_open_or_retry",
+        "managed_bootstrap_changed_consent_after_busy_refuses_without_history",
+        "managed_bootstrap_nonbusy_refusal_is_never_retried",
+        "managed_bootstrap_expired_deadline_still_allows_first_read_success",
+        "managed_bootstrap_expired_deadline_preserves_nonbusy_refusal",
+        "managed_bootstrap_deadline_preserves_original_busy_error",
+        "ordinary_policy_missing_remains_owner_only_without_rewriting_legacy_settings",
+        "provider_owner_requires_disabled_reviewed_enable_and_cannot_retarget_consent",
+        "ordinary_policy_unknown_values_never_become_provider_access",
+        "legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible",
+        "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant",
+        "native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_owner_only_strict",
+        "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend"
       ],
-      "manual_scenarios": ["HOSTSETUP-01"],
+      "manual_scenarios": [
+        "HOSTSETUP-01"
+      ],
       "status": "partial",
       "prerequisites": [
+        "New intents pin owner_default and omit ACL entries; full-ACL receipt checks refuse nonempty tunnel/port grants and unknown ACL fields. Missing policy preserves legacy GithubUsers and bound legacy receipts. Explicit unbound/unsubmitted retirement requires authenticated absence and durable exact-byte archival with old-ticket fencing. Matching signed helpers and native three-platform acceptance remain required.",
         "Official schema-2 host-bundle acquisition remains a GUI-free library seam: current trusted build/native target, fixed official assets, bounded HTTPS redirects/body/deadline and updater-root VerifiedArtifact owned bytes only. Desktop primary Setup now explicitly composes it with existing native publisher/staging/controller admission; Advanced manual files are not a failure fallback. Six-target positives use synthetic signatures rejected by the production root; missing/404 blocks without latest/older/schema-1 retry. Genuine publication, first-verifier delivery, native publisher/installed/vault/cloud and GUI usability acceptance remain open; the seam itself has no host effects and stopped-update/no-receipt/journal/old-helper authority stays unchanged",
         "Never-published native registration receipts permit only installation-owned absence in current StopRequested/CleanupPending under the exclusive Services lease and exact full-snapshot/epoch/state-directory fences; no manager calls, fabricated receipt or foreign definition probe/removal. Missing receipt remains no-observation for status; corrupt/foreign/non-file evidence or uncertain ownership refuses. Real controller/Services removal logic covers provisioning, cancellation and acknowledged-uncertainty adoption with explicitly fake cloud/account/native context and a panic-on-manager runner; active runtime lease and missing-lock/history guards remain mandatory. All replacement journals take precedence over missing active receipts, including Committed/Aborted: stop reconciles pending targets; cleanup cannot infer never-published absence from None. Interrupted updates, settled-update receipt loss and corrupt/foreign crash journals are covered. Production ordinary-account authorization and private-storage policy are unchanged; fixture evidence is not native Windows qualification. Native/cloud/vault acceptance and generation-conditional deletion remain open",
         "Windows stopped-update design-before-code: v3 compact installation/operation UUID task names preserve protected origin/account/epoch; fresh canonical XML/ACL and submission/observed identity live in the replacement journal before Create. Existing embedded updater and compiled native publisher policy remain mandatory for update/run/commit, not exact-owned local cleanup. CleanupPending epochs, XML/ACL/submission ownership, quiescence and independent absence gate removal even with unavailable/untrusted payloads; submitted-unobserved absence and foreign/uncertain tasks refuse, lost Remove retries exact operation/resources. One revoked-runtime-release/both-task deadline replaces no destructive stop. Implementation/model and real native old/new-bundle/ordinary-user/daemon acceptance are separate gates",
-        "Issue #681 stages 3–5/7: default headless build implements explicit authenticated zero-shell setup, foreground account consent, separate owner approval, run, revoke-first disable, authenticated stopped-version update and exact native cleanup; configuration stays disabled and permissions default denied. Explicit update verifies current complete new bundle and selected signed old version, reserves/journals exact old/new native receipts, preserves identity/account/resource/grants and daemon state, and never automatically enables, downgrades or repairs changed cache. Existing cloud resources retain unsuccessful CleanupPending without unqualified DELETE. Controller/core tests use real private lifecycle/enrollment with typed fake network/credentials/native registration, not native/cloud/vault acceptance",
+        "Issue #681 stages 3\u20135/7: default headless build implements explicit authenticated zero-shell setup, foreground account consent, separate owner approval, run, revoke-first disable, authenticated stopped-version update and exact native cleanup; configuration stays disabled and permissions default denied. Explicit update verifies current complete new bundle and selected signed old version, reserves/journals exact old/new native receipts, preserves identity/account/resource/grants and daemon state, and never automatically enables, downgrades or repairs changed cache. Existing cloud resources retain unsuccessful CleanupPending without unqualified DELETE. Controller/core tests use real private lifecycle/enrollment with typed fake network/credentials/native registration, not native/cloud/vault acceptance",
         "HOSTSETUP-01: stopped replacement failure injections cover reload-unknown, epoch revocation, same-target retry, candidate/provenance tamper, post-active-receipt interruption, missing mutex/corrupt journal and both-resource cleanup. Coupled owned-daemon regression launches the authenticated OLD stage/sessiond entry in installation state/daemon, adopts a real frontend, runs actual replacement, and checks identical PID/generation/endpoint, running frontend ID/control authority and record bytes, bounded PTY input/echo before/after, exact old cached helper path/bytes and read-only helper execution. The same oracle rejects deleted/replaced cached helper and ended daemon; restored helper passes again. Earlier disconnected-helper runs did not establish old-cache preservation. Current-source binary in synthetic 0.15.0 metadata, test signatures/qualifier and fake Linux manager are not genuine older-release, publisher or native switching proof; cross-version/native acceptance remains unqualified",
         "Settled update history proves prior registration: a lost active receipt cannot authorize never-published absence. Actual committed-update stop/cleanup regression reproduced false absence, then proves refusal without manager effects, receipt fabrication or changed lifecycle/journal/definition. Pending old/new reconciliation still precedes every missing-receipt path",
         "Production run supervision retries transient Store lease contention without inferring consent absence, revocation or success; changed current snapshots and nonbusy errors fail closed. Regression holds the real installation lease across multiple serving ticks then revokes. Temporary permission requires independent default-No foreground approval and never grants creation; creation requires configured and owner consent",
@@ -6200,12 +6676,18 @@
         "Owner decision allow_explicit_manual_fallback requires stopped local access and independent current provider ownership/incarnation review. No automatic browser, portal, sign-in or DELETE; GET-then-DELETE and undocumented If-Match DELETE remain forbidden. Read-only status withholds raw binding metadata and gives no removal instructions; actual provider review/removal/retry and native/cloud/vault acceptance remain HOSTSETUP-01 prerequisites",
         "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
         "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and authenticated exact cloud absence, including after explicit manual provider removal",
-        "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance"
+        "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance",
+        "Managed bootstrap source regression proves real lifecycle-lock preflight contention and separates service-only contention. Managed CLI Store::open and registration preflight share one fixed2s typedBusy/cancellation wait budget; every phase attempts its first read even after expiry, only actualBusy allows wait/retry, originalBusy and nonBusy outcomes are preserved, and full captured-snapshot changes are rejected, and preserve missing/foreign-registration refusal. Existing later2s initial service-lease admission remains separate. No native manager Start, runtime invocation, reservation, first persistence or final history write is retried. Corrected source evidence does not identify or resolve the preserved signed Linux0.17.3 second-Start native failure; no new native execution/Windows/platform/owner/vault qualification is claimed.",
+        "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
+        "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
+        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
     },
     {
       "id": "authenticated-host-helper-artifacts",
-      "edges": ["HOST-06"],
+      "edges": [
+        "HOST-06"
+      ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades",
         "docs/host-release-artifacts.md#verification-and-staging-api",
@@ -6213,9 +6695,14 @@
         "docs/host-release-artifacts.md#verification-and-staging-api",
         "docs/host-release-artifacts.md#official-host-bundle-acquisition",
         "docs/owned-installation-migration.md#protected-transaction-and-rollback",
-        "docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary"
+        "docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
-      "decisions": ["ADR-0084", "ADR-0085"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0085",
+        "ADR-0087"
+      ],
       "automated_tests": [
         "official_host_bundle_identity_is_exact_current_native_host_only",
         "official_host_bundle_six_signed_targets_return_owned_authenticated_bytes",
@@ -6289,6 +6776,7 @@
         "windows_publisher_policy_accepts_only_approved_profile_and_fresh_native_proofs",
         "windows_publisher_policy_rejects_missing_wrong_and_duplicate_ekus",
         "windows_publisher_policy_pins_full_chain_not_candidate_ca_names",
+        "windows_publisher_policy_rejects_mixed_reordered_and_incomplete_chains",
         "windows_publisher_subject_requires_exact_rdns_without_extra_or_duplicate_attributes",
         "windows_timestamp_filetime_copies_exact_bits_from_misaligned_sdk_storage",
         "windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection",
@@ -6296,9 +6784,18 @@
         "macos_native_gate_rejects_apple_signed_foreign_publisher",
         "host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced",
         "host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority",
-        "headless_cleanup_status_is_read_only_unverified_receipt_context"
+        "headless_cleanup_status_is_read_only_unverified_receipt_context",
+        "macos_long_generation_socket_computation_fits_without_creating_children",
+        "macos_long_generation_main_lifecycle_binds_and_cleans_exact_socket",
+        "native_start_with_long_runtime_uses_cache_socket_and_cleans_generation",
+        "empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement"
       ],
-      "manual_scenarios": ["DT-05", "DT-08", "HOSTSETUP-01", "HOSTMIG-01"],
+      "manual_scenarios": [
+        "DT-05",
+        "DT-08",
+        "HOSTSETUP-01",
+        "HOSTMIG-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "Official schema-2 acquisition is source-only; controlled six-target fixtures authenticate synthetic signatures/owned bytes and refuse wrong identity/key/tamper, missing/404/status, unsafe redirects, zero/oversized/encoded/truncated/chunked data, cancellation/timeouts and late verified results. Existing synchronous verifier keeps expanded/entry limits and is not preempted mid-decoder. Genuine published assets/404 remain an explicit BLOCK, not legacy fallback. Desktop integration and real release/native/first-verifier qualification are separate gates; no new signing workflow or trust root",

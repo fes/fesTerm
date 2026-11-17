@@ -15,8 +15,8 @@ use festerm_secret_store::{SecretReference, SecretStore};
 use festerm_tunnel_bridge::host_client::{
     self,
     approvals::{Receipt, ReceiptIndex, ReviewedOwner},
-    ApprovedAttachment, ApprovedContext, CreationIntent, CreationMode, Inventory, Outcome, Scope,
-    Target, Worker,
+    ApprovedAttachment, ApprovedContext, ClientContext, CreationIntent, CreationMode, Inventory,
+    Outcome, Scope, Target, Worker,
 };
 use festerm_tunnel_client::{
     host_control::{Binding, ConnectionPermit},
@@ -29,12 +29,86 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Local worker metadata; authentication recovery is never inferred from text.
+pub(crate) struct RequestFailure {
+    pub(crate) message: String,
+    pub(crate) needs_sign_in: bool,
+}
+impl std::fmt::Debug for RequestFailure {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("HostRequestFailure")
+            .field("needs_sign_in", &self.needs_sign_in)
+            .finish()
+    }
+}
+impl RequestFailure {
+    fn expired() -> Self {
+        Self {
+            message: "GitHub sign-in expired. Sign in again to continue.".into(),
+            needs_sign_in: true,
+        }
+    }
+}
+impl From<String> for RequestFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            needs_sign_in: false,
+        }
+    }
+}
+impl From<&str> for RequestFailure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+impl From<festerm_tunnel_client::Error> for RequestFailure {
+    fn from(error: festerm_tunnel_client::Error) -> Self {
+        Self {
+            message: error.to_string(),
+            needs_sign_in: matches!(
+                error.original_error(),
+                festerm_tunnel_client::Error::Expired
+                    | festerm_tunnel_client::Error::AccountChanged
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReauthenticationOrigin {
+    Discovery {
+        tab: TabId,
+        request: egui::Id,
+    },
+    Browser {
+        tab: TabId,
+        request: egui::Id,
+        generation: u64,
+    },
+}
+/// Ephemeral dispatch witness. It is never serialized or copied into logs.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Reauthentication {
+    pub(crate) origin: ReauthenticationOrigin,
+    pub(crate) account: DevTunnelAccount,
+}
+impl std::fmt::Debug for Reauthentication {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("HostReauthentication(<private>)")
+    }
+}
+
 enum ResultEvent {
     Prepared(Receipt),
     Resolved(Box<(Receipt, ResolvedTunnel)>),
+    Ordinary(Box<(host_client::ordinary::OrdinaryContext, Inventory)>),
 }
 
 enum Action {
+    Reauthenticate,
+    Ordinary,
+    AdvancedOwner,
     Load,
     Prepare,
     Inventory,
@@ -47,6 +121,47 @@ enum Action {
     Create,
 }
 
+/// Reuse only an unambiguous same-account, exact-locator public identity.
+/// The protected receipt and live host pin still have to verify before inventory.
+fn known_host_reference(
+    context: &egui::Context,
+    configuration: &festerm_config::Configuration,
+    account_id: u64,
+    locator: &str,
+) -> Option<HostReference> {
+    let remembered = crate::screens::host_workspace::remembered_hosts(context);
+    let candidates = remembered
+        .iter()
+        .filter(|host| host.hint.locator == locator)
+        .map(|host| &host.reference)
+        .chain(
+            configuration
+                .host_recipes()
+                .recipes()
+                .iter()
+                .filter_map(|recipe| {
+                    recipe
+                        .host_hint
+                        .as_ref()
+                        .filter(|hint| hint.locator == locator)
+                        .map(|_| &recipe.host)
+                }),
+        )
+        .filter(|reference| reference.account == AccountReference::Github { account_id });
+    let mut known = None;
+    for reference in candidates {
+        if known.as_ref().is_some_and(|known| known != reference) {
+            return None;
+        }
+        known = Some(reference.clone());
+    }
+    known
+}
+
+fn ordinary_privacy_loss(cancel: CancellationToken) -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(move || cancel.cancel())
+}
+
 fn valid_session_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
@@ -54,6 +169,28 @@ fn valid_session_name(name: &str) -> bool {
 
 pub(super) const MAX_PARALLEL_DISCOVERIES: usize = 3;
 const MAX_QUEUED_DISCOVERIES: usize = 32;
+// Native vault prompts are human-paced. Only service resolution consumes the
+// separate network budget; a cancelled native call retains its admission permit
+// until it returns and cannot publish a late result.
+const OWNER_VAULT_BUDGET: Duration = Duration::from_secs(300);
+const HOST_RESOLUTION_BUDGET: Duration = Duration::from_secs(30);
+
+fn owner_worker_budget(action: &Action) -> Duration {
+    OWNER_VAULT_BUDGET
+        + if matches!(action, Action::Inventory) {
+            HOST_RESOLUTION_BUDGET
+        } else {
+            Duration::ZERO
+        }
+}
+
+fn deliver_owner_completion<T>(
+    sender: &mpsc::SyncSender<T>,
+    cancel: &CancellationToken,
+    result: T,
+) -> bool {
+    !cancel.is_cancelled() && sender.try_send(result).is_ok()
+}
 
 /// Reserves a discovery permit only when another permit would still remain,
 /// so background host refreshes never take the last connection slot.
@@ -74,7 +211,7 @@ pub(super) struct Discovery {
     request: egui::Id,
     account: DevTunnelAccount,
     cancel: CancellationToken,
-    receiver: mpsc::Receiver<Result<Vec<service::TunnelSummary>, String>>,
+    receiver: mpsc::Receiver<Result<Vec<service::TunnelSummary>, RequestFailure>>,
 }
 
 impl Drop for Discovery {
@@ -82,6 +219,20 @@ impl Drop for Discovery {
         self.cancel.cancel();
     }
 }
+
+#[cfg(test)]
+type OrdinaryFuture = std::pin::Pin<
+    Box<
+        dyn std::future::Future<
+                Output = Result<
+                    (host_client::ordinary::OrdinaryContext, Inventory),
+                    host_client::Failure,
+                >,
+            > + Send,
+    >,
+>;
+#[cfg(test)]
+type OrdinaryService = Arc<dyn Fn(u64, String, CancellationToken) -> OrdinaryFuture + Send + Sync>;
 
 pub(super) struct Browser {
     tab: TabId,
@@ -97,19 +248,28 @@ pub(super) struct Browser {
     creation_confirmed: bool,
     locator: String,
     receipt: Option<Receipt>,
+    ordinary: Option<host_client::ordinary::OrdinaryContext>,
+    ordinary_selected: bool,
+    ordinary_lifetime: Option<CancellationToken>,
+    #[cfg(test)]
+    ordinary_service: Option<OrdinaryService>,
+    #[cfg(test)]
+    ordinary_privacy_loss: Option<Arc<std::sync::atomic::AtomicBool>>,
     #[cfg(test)]
     gallery_owner: Option<(festerm_tunnel_bridge::owner_auth::OwnerBinding, [u8; 32])>,
     #[cfg(test)]
     gallery_original: Option<(String, bool)>,
     resolved: Option<ResolvedTunnel>,
-    receiver: Option<mpsc::Receiver<Result<ResultEvent, String>>>,
+    receiver: Option<mpsc::Receiver<Result<ResultEvent, RequestFailure>>>,
     pending_deadline: Option<(Instant, CancellationToken)>,
     worker: Option<Worker>,
     inventory: Option<Inventory>,
     generation: u64,
     feedback: Option<String>,
+    needs_sign_in: bool,
     workspace: bool,
     discovered: bool,
+    directory_only: bool,
     auto_connect: bool,
     new_session: bool,
     session_name: String,
@@ -117,7 +277,8 @@ pub(super) struct Browser {
     unbound: bool,
     resolve_after_load: bool,
     profile_target: Option<Target>,
-    profile_create: bool,
+    save_new_profile: bool,
+    pending_created_profile: Option<(Scope, host_client::AttachmentId, String)>,
     profile_label: Option<String>,
 }
 
@@ -132,7 +293,13 @@ impl FesTermApp {
     pub(crate) fn gallery_host_browser(scene: &str) -> Self {
         let requested_scene = scene;
         let scene = match scene {
-            "retry-original" | "resolved-original" | "always-create" | "attach-only" => "create",
+            "retry-original"
+            | "resolved-original"
+            | "always-create"
+            | "attach-only"
+            | "workspace-new-shell"
+            | "workspace-new-shell-narrow" => "create",
+            "workspace-sessions" | "workspace-narrow" | "workspace-save-profile" => "sessions",
             _ => scene,
         };
         use festerm_config::{
@@ -184,6 +351,13 @@ impl FesTermApp {
             creation_confirmed: false,
             locator: "review-build.use".into(),
             receipt: None,
+            ordinary: None,
+            ordinary_selected: false,
+            ordinary_lifetime: None,
+            #[cfg(test)]
+            ordinary_service: None,
+            #[cfg(test)]
+            ordinary_privacy_loss: None,
             gallery_owner: None,
             gallery_original: None,
             resolved: None,
@@ -193,8 +367,10 @@ impl FesTermApp {
             inventory: None,
             generation: 1,
             feedback: None,
+            needs_sign_in: false,
             workspace: false,
             discovered: false,
+            directory_only: false,
             auto_connect: false,
             new_session: false,
             session_name: String::new(),
@@ -202,7 +378,8 @@ impl FesTermApp {
             unbound: false,
             resolve_after_load: false,
             profile_target: None,
-            profile_create: false,
+            save_new_profile: false,
+            pending_created_profile: None,
             profile_label: None,
         };
         if scene == "error" {
@@ -292,6 +469,35 @@ impl FesTermApp {
             }
             _ => {}
         }
+        if requested_scene.starts_with("workspace-") {
+            browser.workspace = true;
+            browser.ordinary_selected = true;
+            browser.discovered = true;
+            browser.recipe.host_hint = Some(HostHint {
+                locator: browser.locator.clone(),
+                name: "Synthetic build host".into(),
+            });
+            browser.recipe.behavior = ConnectionBehavior::ChooseSession;
+            browser.recipe.launch = Recipe {
+                shell: None,
+                args: Vec::new(),
+                cwd: None,
+            };
+            if requested_scene.starts_with("workspace-new-shell") {
+                browser.new_session = true;
+                browser.session_name = "Project work".into();
+                browser.save_new_profile = true;
+                browser.profile_name = "Project work".into();
+            }
+            if requested_scene == "workspace-save-profile" {
+                browser.profile_target = browser
+                    .inventory
+                    .as_ref()
+                    .and_then(|inventory| inventory.sessions.first())
+                    .map(|session| session.target.clone());
+                browser.profile_name = "Build shortcut".into();
+            }
+        }
         app.host_browser = Some(browser);
         app
     }
@@ -326,11 +532,109 @@ impl Browser {
             })
     }
 
+    fn browse_account(
+        &mut self,
+        account: DevTunnelAccount,
+        request: egui::Id,
+        context: &egui::Context,
+    ) {
+        if !self.workspace {
+            crate::screens::report_host_recipe_outcome(context, self.tab, self.request, Err("The saved-profile connection was cancelled by account selection. Select a host in Find & Connect."));
+        }
+        self.workspace = true;
+        // Retire only this host operation. The account lifetime token is shared by
+        // existing terminal tabs and must not be cancelled for a directory filter.
+        self.cancel.cancel();
+        if let Some((_, token)) = self.pending_deadline.take() {
+            token.cancel();
+        }
+        self.receiver = None;
+        if let Some(worker) = self.worker.take() {
+            worker.cancel();
+        }
+        self.cancel = CancellationToken::new();
+        self.request = request;
+        self.generation = 0;
+        self.account_reference = account.credential_reference().duplicate_for_transport();
+        self.account = account;
+        self.directory_only = true;
+        self.auto_connect = false;
+        self.resolve_after_load = false;
+        self.discovered = true;
+        self.ordinary = None;
+        self.ordinary_lifetime = None;
+        self.receipt = None;
+        self.resolved = None;
+        self.inventory = None;
+        self.host_approved = false;
+        self.consent = false;
+        self.creation_confirmed = false;
+        self.prerequisite.clear();
+        self.fingerprint.clear();
+        self.locator.clear();
+        self.recipe.host_hint = None;
+        self.feedback = None;
+        self.needs_sign_in = false;
+        self.new_session = false;
+        self.session_name.clear();
+        self.profile_name.clear();
+        self.profile_target = None;
+        self.save_new_profile = false;
+        self.pending_created_profile = None;
+        self.profile_label = None;
+        #[cfg(test)]
+        {
+            self.gallery_owner = None;
+        }
+    }
+
+    fn prepare_new_host_shell(&mut self) {
+        self.recipe.session_name = Some(self.session_name.trim().to_owned());
+        self.recipe.lifetime = Lifetime::Persistent {};
+        self.recipe.launch = Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None,
+        };
+        self.recipe.behavior = ConnectionBehavior::AlwaysCreate;
+        self.creation_confirmed = true;
+    }
+
+    fn confirmed_creation_shortcut(
+        &mut self,
+        scope: &Scope,
+        attachment: &host_client::AttachmentId,
+        session: &festerm_host_protocol::SessionSummary,
+    ) -> Option<PublicRecipe> {
+        let (original_scope, original_attachment, name) = self.pending_created_profile.as_ref()?;
+        if original_scope != scope || original_attachment != attachment {
+            return None;
+        }
+        let name = name.clone();
+        self.pending_created_profile = None;
+        Some(session_shortcut(
+            &self.recipe,
+            &session.target,
+            &session.name,
+            session.lifetime,
+            name,
+        ))
+    }
+
     fn busy(&self) -> bool {
         self.receiver.is_some() || self.worker.is_some()
     }
 
-    fn context(&self) -> Result<ApprovedContext, String> {
+    fn context(&self) -> Result<ClientContext, String> {
+        if self.directory_only {
+            return Err("Select a host before connecting.".into());
+        }
+        if let Some(context) = &self.ordinary {
+            return Ok(context.clone().into());
+        }
+        if self.ordinary_selected {
+            return Err("Connect to this host with the selected provider account first.".into());
+        }
         let receipt = self
             .receipt
             .as_ref()
@@ -359,10 +663,11 @@ impl Browser {
             resolved.connect_token.clone(),
             binding,
         )
+        .map(Into::into)
         .map_err(|error| error.message().to_owned())
     }
 
-    fn scope(&self, context: &ApprovedContext) -> Scope {
+    fn scope(&self, context: &ClientContext) -> Scope {
         Scope {
             request: uuid::Uuid::new_v4()
                 .to_string()
@@ -374,6 +679,9 @@ impl Browser {
     }
 
     fn allows_target(&self, target: &Target) -> bool {
+        if self.directory_only {
+            return false;
+        }
         match &self.recipe.behavior {
             ConnectionBehavior::ChooseSession => true,
             ConnectionBehavior::ResumeOrCreate | ConnectionBehavior::ResumeOnly {} => {
@@ -409,7 +717,8 @@ impl Browser {
     }
 
     fn allows_creation(&self) -> bool {
-        self.host_approved
+        !self.directory_only
+            && self.host_approved
             && self.creation_confirmed
             && self.inventory.as_ref().is_some_and(|inventory| {
                 let caps = inventory.capabilities;
@@ -453,7 +762,11 @@ impl Browser {
             let (_, cancel) = self.pending_deadline.take().expect("expired deadline");
             cancel.cancel();
             self.receiver = None;
-            self.feedback = Some("The protected owner worker timed out. Native preparation may have completed locally; reload the same protected receipt. No host session is known to be absent.".into());
+            self.feedback = Some(if self.ordinary_selected {
+                "The selected host connection timed out. A native device key may have been saved locally. Retry this host explicitly; no session absence or replay is inferred."
+            } else {
+                "The protected owner worker timed out. Native preparation may have completed locally; reload the same protected receipt. No host session is known to be absent."
+            }.into());
         }
     }
 }
@@ -463,7 +776,7 @@ impl crate::tabs::AppState {
         &mut self,
         recipe: &PublicRecipe,
         reference: &SecretReference,
-        approved: &ApprovedContext,
+        approved: &ClientContext,
         make: impl FnOnce() -> Option<(CreationMode, host_client::Creation)>,
     ) -> Result<Arc<CreationIntent>, String> {
         self.host_creation_intents
@@ -551,6 +864,13 @@ impl FesTermApp {
             creation_confirmed: false,
             locator,
             receipt: None,
+            ordinary: None,
+            ordinary_selected: true,
+            ordinary_lifetime: None,
+            #[cfg(test)]
+            ordinary_service: None,
+            #[cfg(test)]
+            ordinary_privacy_loss: None,
             #[cfg(test)]
             gallery_owner: None,
             #[cfg(test)]
@@ -562,8 +882,10 @@ impl FesTermApp {
             inventory: None,
             generation: 0,
             feedback: None,
+            needs_sign_in: false,
             workspace: false,
             discovered: false,
+            directory_only: false,
             auto_connect: resume_saved,
             new_session: false,
             session_name: String::new(),
@@ -571,11 +893,101 @@ impl FesTermApp {
             unbound: false,
             resolve_after_load: resume_saved,
             profile_target: None,
-            profile_create: false,
+            save_new_profile: false,
+            pending_created_profile: None,
             profile_label: None,
         });
-        if resume_saved {
-            self.apply_host_review_action(Action::Load, context);
+        self.begin_ordinary_host(context);
+    }
+
+    pub(super) fn host_reauthentication_command(
+        &mut self,
+        request: Reauthentication,
+        context: &egui::Context,
+    ) -> Option<AppCommand> {
+        let tab = match request.origin {
+            ReauthenticationOrigin::Discovery { tab, .. }
+            | ReauthenticationOrigin::Browser { tab, .. } => tab,
+        };
+        if self.state.active_tab().id != tab
+            || !matches!(
+                self.state.active_tab().content,
+                TabContent::Launcher | TabContent::Profiles
+            )
+            || self
+                .state
+                .configuration()
+                .account(request.account.identifier())
+                != Some(&request.account)
+        {
+            return None;
+        }
+        match request.origin {
+            ReauthenticationOrigin::Discovery {
+                tab,
+                request: generation,
+            } => {
+                if !crate::screens::host_workspace::reauthentication_is_current(
+                    context, tab, generation, &request,
+                ) {
+                    return None;
+                }
+                crate::screens::host_workspace::clear_reauthentication(context, tab);
+            }
+            ReauthenticationOrigin::Browser {
+                tab,
+                request: generation,
+                generation: operation,
+            } => {
+                if !self.host_browser.as_ref().is_some_and(|browser| {
+                    browser.tab == tab
+                        && browser.request == generation
+                        && browser.generation == operation
+                        && browser.account == request.account
+                        && browser.current(&self.state, context)
+                        && browser.needs_sign_in
+                        && !browser.busy()
+                }) {
+                    return None;
+                }
+                crate::screens::host_workspace::report_outcome(
+                    context,
+                    tab,
+                    generation,
+                    "Complete sign-in, then explicitly refresh the selected host.",
+                );
+                crate::screens::report_host_recipe_outcome(
+                    context,
+                    tab,
+                    generation,
+                    Err("Complete sign-in, then explicitly refresh the selected host."),
+                );
+                self.host_browser = None;
+            }
+        }
+        Some(AppCommand::ReauthenticateDevTunnelAccount {
+            account: request.account.identifier().to_owned(),
+        })
+    }
+
+    pub(super) fn dispatch_host_reauthentication(
+        &mut self,
+        request: Reauthentication,
+        context: &egui::Context,
+    ) {
+        if let Some(command) = self.host_reauthentication_command(request, context) {
+            self.dispatch_account_reauthentication(command, context);
+        }
+    }
+
+    /// The existing central reauthentication command owns the actual sign-in.
+    pub(super) fn dispatch_account_reauthentication(
+        &mut self,
+        command: AppCommand,
+        context: &egui::Context,
+    ) {
+        if let AppCommand::ReauthenticateDevTunnelAccount { account } = command {
+            self.reauthenticate_dev_tunnel_account(&account, context);
         }
     }
 
@@ -646,6 +1058,10 @@ impl FesTermApp {
     /// connects. Queued work waits for the next UI pass; it is never polled
     /// on a timer.
     fn start_queued_host_discoveries(&mut self, context: &egui::Context) {
+        // A queued automatic read must wait for the user to return to this window.
+        if !context.input(|input| input.focused) {
+            return;
+        }
         while self.host_discovery.len() < MAX_PARALLEL_DISCOVERIES {
             let Some(front) = self.host_discovery_queue.front() else {
                 return;
@@ -682,13 +1098,15 @@ impl FesTermApp {
             let result = (|| {
                 let _lease = super::tunnel_workflow::account_lease(Some(&work_account))
                     .map_err(|error| error.to_string())?;
+                if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let client = identity::registered_client_id().ok_or("GitHub sign-in is unavailable.")?;
                 let secret = store.get(work_account.credential_reference())
                     .map_err(|_| "Unlock secure storage and try again.")?;
+                if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let identity = secret.with_bytes(|bytes| Identity::decode_private(bytes,
-                    work_account.account_id(), client)).map_err(|error| error.to_string())?;
+                    work_account.account_id(), client)).map_err(RequestFailure::from)?;
                 if identity.needs_sign_in() {
-                    return Err("GitHub sign-in expired. Sign in again in Settings.".into());
+                    return Err(RequestFailure::expired());
                 }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "Host discovery could not start.")?;
@@ -698,7 +1116,7 @@ impl FesTermApp {
                         result = tokio::time::timeout(Duration::from_secs(30),
                             service::list_hosts(&identity, &work_cancel)) => {
                             let mut hosts = result.map_err(|_| "Host discovery timed out. Try again.")?
-                                .map_err(|error| error.to_string())?;
+                                .map_err(RequestFailure::from)?;
                             hosts.truncate(32);
                             Ok(hosts)
                         }
@@ -757,15 +1175,15 @@ impl FesTermApp {
                     continue;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    Err("Host discovery stopped. Try again.".into())
+                    Err(RequestFailure::from("Host discovery stopped. Try again."))
                 }
             };
             let discovery = self.host_discovery.remove(index);
-            crate::screens::host_workspace::report_discovery(
+            crate::screens::host_workspace::report_typed_discovery(
                 context,
                 discovery.tab,
                 discovery.request,
-                discovery.account.identifier(),
+                &discovery.account,
                 result,
             );
         }
@@ -782,8 +1200,16 @@ impl FesTermApp {
         let Some(account) = self.state.configuration().account(&host.account) else {
             return;
         };
-        let unbound = host.reference.is_none();
-        let reference = host.reference.unwrap_or_else(|| HostReference {
+        let known = host.reference.or_else(|| {
+            known_host_reference(
+                context,
+                self.state.configuration(),
+                account.account_id(),
+                &host.locator,
+            )
+        });
+        let unbound = known.is_none();
+        let reference = known.unwrap_or_else(|| HostReference {
             id: uuid::Uuid::new_v4()
                 .to_string()
                 .try_into()
@@ -897,6 +1323,13 @@ impl FesTermApp {
             creation_confirmed: false,
             locator,
             receipt: None,
+            ordinary: None,
+            ordinary_selected: true,
+            ordinary_lifetime: None,
+            #[cfg(test)]
+            ordinary_service: None,
+            #[cfg(test)]
+            ordinary_privacy_loss: None,
             #[cfg(test)]
             gallery_owner: None,
             #[cfg(test)]
@@ -908,8 +1341,10 @@ impl FesTermApp {
             inventory: None,
             generation: 0,
             feedback: None,
+            needs_sign_in: false,
             workspace: true,
             discovered,
+            directory_only: false,
             auto_connect,
             new_session: false,
             session_name,
@@ -917,11 +1352,195 @@ impl FesTermApp {
             unbound,
             resolve_after_load: !unbound,
             profile_target: None,
-            profile_create: false,
+            save_new_profile: false,
+            pending_created_profile: None,
             profile_label: None,
         });
-        if !unbound {
-            self.apply_host_review_action(Action::Load, context);
+        self.begin_ordinary_host(context);
+    }
+
+    fn begin_ordinary_host(&mut self, context: &egui::Context) {
+        use host_client::ordinary::OrdinaryAccountGuard;
+        #[cfg(not(test))]
+        use host_client::ordinary::OrdinaryKeyIndex;
+        let Some(browser) = self.host_browser.as_ref() else {
+            return;
+        };
+        if browser.directory_only
+            || !browser.current(&self.state, context)
+            || browser.busy()
+            || !context.input(|input| input.focused)
+        {
+            return;
+        }
+        #[cfg(test)]
+        let ordinary_service = browser.ordinary_service.clone();
+        #[cfg(test)]
+        let privacy_loss = browser
+            .ordinary_privacy_loss
+            .clone()
+            .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let account = browser.account.clone();
+        let account_cancel = match self.state.ordinary_account_token(&account) {
+            Ok(token) => token,
+            Err(error) => {
+                self.host_browser
+                    .as_mut()
+                    .expect("checked browser")
+                    .feedback = Some(error.into());
+                return;
+            }
+        };
+        let browser = self.host_browser.as_mut().expect("checked browser");
+        browser.ordinary_selected = true;
+        browser.ordinary_lifetime = Some(account_cancel.clone());
+        browser.ordinary = None;
+        browser.receipt = None;
+        browser.resolved = None;
+        browser.host_approved = false;
+        browser.consent = false;
+        browser.inventory = None;
+        browser.feedback = None;
+        browser.needs_sign_in = false;
+        if service::locator(&browser.locator).is_err() {
+            browser.feedback = Some("The selected host has no valid Dev Tunnel locator.".into());
+            return;
+        }
+        let store = match &self.secret_store {
+            Ok(store) => store.clone(),
+            Err(_) => {
+                browser.feedback =
+                    Some("Native secure storage is unavailable. No fallback is allowed.".into());
+                return;
+            }
+        };
+        let permit = match ConnectionPermit::reserve(&self.state.host_client_budgets) {
+            Ok(permit) => Arc::new(permit),
+            Err(_) => {
+                browser.feedback = Some(
+                    "The aggregate HOST worker budget is busy. Retry the selected host.".into(),
+                );
+                return;
+            }
+        };
+        let Some(generation) = browser.generation.checked_add(1) else {
+            browser.feedback = Some("The foreground operation generation is exhausted.".into());
+            return;
+        };
+        browser.generation = generation;
+        let locator = browser.locator.clone();
+        #[cfg(not(test))]
+        let budgets = self.state.host_client_budgets.clone();
+        let cancel = browser.cancel.child_token();
+        let pending_cancel = cancel.clone();
+        let wake = context.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new()
+            .name("festerm-ordinary-host".into())
+            .spawn(move || {
+                let result = (|| {
+                    if cancel.is_cancelled() {
+                        return Err("Host connection cancelled.".into());
+                    }
+                    let on_loss = ordinary_privacy_loss(account_cancel.clone());
+                    #[cfg(not(test))]
+                    let privacy = {
+                        let task = crate::recording_privacy::PrivacyTask::start_with_loss(
+                            Arc::new(|| {}),
+                            on_loss,
+                            permit.clone(),
+                        )
+                        .map_err(RequestFailure::from)?;
+                        task.wait(Duration::from_secs(30))
+                            .ok_or("OS privacy monitoring did not become ready. Retry explicitly.")?
+                            .map_err(RequestFailure::from)?
+                    };
+                    #[cfg(test)]
+                    let privacy = {
+                        drop(on_loss);
+                        crate::recording_privacy::PrivacyGuard::for_test(privacy_loss)
+                    };
+                    let loss = privacy.loss_flag();
+                    let privacy = Arc::new(privacy);
+                    let check_cancel = account_cancel.clone();
+                    let guard = OrdinaryAccountGuard::new(
+                        account_cancel,
+                        Arc::new(move || {
+                            let _retained_monitor = &privacy;
+                            if check_cancel.is_cancelled()
+                                || loss.load(std::sync::atomic::Ordering::Acquire)
+                            {
+                                Err(festerm_host_protocol::ContractError::Stale)
+                            } else {
+                                Ok(())
+                            }
+                        }),
+                    );
+                    guard
+                        .check()
+                        .map_err(|_| "OS privacy or account state changed.")?;
+                    let identity = load_host_identity(&account, store.as_ref())?;
+                    drop(permit);
+                    if cancel.is_cancelled() {
+                        return Err("Host connection cancelled.".into());
+                    }
+                    #[cfg(test)]
+                    {
+                        drop(identity);
+                        let service =
+                            ordinary_service.ok_or("No owned ordinary test service configured.")?;
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|_| "Owned ordinary test worker unavailable.")?;
+                        guard.check().map_err(|_| "Account credential changed.")?;
+                        let result = runtime
+                            .block_on(service(account.account_id(), locator, cancel.clone()))
+                            .map(|value| ResultEvent::Ordinary(Box::new(value)))
+                            .map_err(|error| RequestFailure::from(error.message()));
+                        guard.check().map_err(|_| "Account credential changed.")?;
+                        result
+                    }
+                    #[cfg(not(test))]
+                    {
+                        let index = OrdinaryKeyIndex::native()
+                            .map_err(|error| RequestFailure::from(error.message()))?;
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|_| {
+                                RequestFailure::from(
+                                    "The selected-host client worker could not start.",
+                                )
+                            })?;
+                        runtime
+                            .block_on(host_client::ordinary::discover(
+                                &identity, &locator, index, &budgets, guard, &cancel,
+                            ))
+                            .map(|value| ResultEvent::Ordinary(Box::new(value)))
+                            .map_err(|error| RequestFailure {
+                                needs_sign_in: matches!(
+                                    &error,
+                                    host_client::Failure::ProviderIdentityExpired
+                                ),
+                                message: error.message().to_owned(),
+                            })
+                    }
+                })();
+                if deliver_owner_completion(&sender, &cancel, result) {
+                    wake.request_repaint();
+                }
+            });
+        match spawned {
+            Ok(_) => {
+                let duration = OWNER_VAULT_BUDGET + HOST_RESOLUTION_BUDGET;
+                browser.receiver = Some(receiver);
+                browser.pending_deadline = Some((Instant::now() + duration, pending_cancel));
+                context.request_repaint_after(duration);
+            }
+            Err(_) => {
+                browser.feedback = Some("The bounded ordinary HOST worker could not start.".into())
+            }
         }
     }
 
@@ -943,19 +1562,67 @@ impl FesTermApp {
             return;
         }
         let mut next_action = None;
+        let mut ordinary_inventory = None;
+        let mut confirmed_profile = None;
+        let mut created_attachment = None;
         let Some(browser) = self.host_browser.as_mut() else {
             return;
         };
+        if browser
+            .ordinary_lifetime
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            if let Some((_, token)) = browser.pending_deadline.take() {
+                token.cancel();
+            }
+            browser.receiver = None;
+            if let Some(worker) = browser.worker.take() {
+                worker.cancel();
+            }
+            browser.ordinary = None;
+            browser.inventory = None;
+            browser.feedback = Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.".into());
+            return;
+        }
         browser.expire_pending(Instant::now());
         let event = browser.receiver.as_ref().and_then(|receiver| match receiver.try_recv() {
             Ok(event) => Some(event),
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err("The bounded owner worker closed without a result. Its outcome is not known to be absent.".into())),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(if browser.ordinary_selected {
+                "The bounded host connection worker closed without a result. Retry this host explicitly; no session absence is inferred."
+            } else {
+                "The bounded owner worker closed without a result. Its outcome is not known to be absent."
+            }.into())),
             Err(mpsc::TryRecvError::Empty) => None,
         });
         if let Some(event) = event {
             browser.receiver = None;
             browser.pending_deadline = None;
             match event {
+                Ok(ResultEvent::Ordinary(result)) => {
+                    let (ordinary, inventory) = *result;
+                    if ordinary.binding().account()
+                        != format!("github:{}", browser.account.account_id())
+                        || (!browser.unbound
+                            && &browser.recipe.host.id != ordinary.binding().host())
+                    {
+                        browser.feedback = Some("The authenticated host does not match the selected account or saved profile.".into());
+                    } else {
+                        browser.recipe.host.id = ordinary.binding().host().clone();
+                        browser.unbound = false;
+                        browser.host_approved = true;
+                        let scope = Scope {
+                            request: festerm_host_protocol::OperationId::new(),
+                            generation: browser.generation,
+                            binding: ordinary.binding().clone(),
+                        };
+                        browser.ordinary = Some(ordinary);
+                        ordinary_inventory = Some(host_client::Completion {
+                            scope,
+                            outcome: Outcome::Inventory(inventory),
+                        });
+                    }
+                }
                 Ok(ResultEvent::Prepared(receipt)) => {
                     browser.receipt = Some(receipt);
                     browser.feedback = Some("Protected local key ready. This does not enroll or authorize it on the host. Review its public key below.".into());
@@ -986,13 +1653,18 @@ impl FesTermApp {
                         Err(error) => browser.feedback = Some(error),
                     }
                 }
-                Err(error) => browser.feedback = Some(error),
+                Err(error) => {
+                    browser.needs_sign_in = error.needs_sign_in;
+                    browser.feedback = Some(error.message);
+                }
             }
         }
-        let completion = browser
-            .worker
-            .as_ref()
-            .and_then(|worker| worker.try_receive(worker.scope()));
+        let completion = ordinary_inventory.or_else(|| {
+            browser
+                .worker
+                .as_ref()
+                .and_then(|worker| worker.try_receive(worker.scope()))
+        });
         if let Some(completion) = completion {
             let completed_scope = completion.scope;
             browser.worker = None;
@@ -1062,18 +1734,39 @@ impl FesTermApp {
                 }
                 Outcome::Failed(error) => browser.feedback = Some(error.message().into()),
                 Outcome::Created(created) => {
+                    let created_session = created.session().clone();
                     if created.disposition() == host_client::EnsureDisposition::Recreated {
                         self.overlays.transient_notice = Some((
-                            "The host recreated this session. Previous shell state was not restored.".into(),
+                            "Previous session ended. Started a new shell.".into(),
                             Instant::now() + Duration::from_secs(12),
                         ));
                     }
                     let result = browser.context().and_then(|approved| {
-                        ApprovedAttachment::from_created(approved, completed_scope, *created)
-                            .map_err(|error| error.message().to_owned())
+                        ApprovedAttachment::from_created(
+                            approved,
+                            completed_scope.clone(),
+                            *created,
+                        )
+                        .map_err(|error| error.message().to_owned())
                     });
                     match result {
                         Ok(attachment) => {
+                            if let Some((_, _, original)) =
+                                self.state.host_creation_intents.iter().find(
+                                    |(recipe, credential, intent)| {
+                                        recipe == &browser.recipe
+                                            && credential == &browser.account_reference
+                                            && intent.confirmed_target().as_ref()
+                                                == Some(&created_session.target)
+                                    },
+                                )
+                            {
+                                confirmed_profile = browser.confirmed_creation_shortcut(
+                                    &completed_scope,
+                                    &original.creation().attachment,
+                                    &created_session,
+                                );
+                            }
                             let tab_id = browser.tab;
                             let request = browser.request;
                             crate::screens::host_workspace::set_connection_label(
@@ -1086,14 +1779,7 @@ impl FesTermApp {
                                     browser.recipe.name.clone()
                                 },
                             );
-                            self.state.dispatch(
-                                AppCommand::OpenApprovedHostFromProfiles {
-                                    tab_id,
-                                    request,
-                                    attachment: Box::new(attachment),
-                                },
-                                context,
-                            );
+                            created_attachment = Some((tab_id, request, attachment));
                             self.host_browser = None;
                         }
                         Err(error) => browser.feedback = Some(error),
@@ -1106,8 +1792,7 @@ impl FesTermApp {
                 } => {
                     if disposition == host_client::EnsureDisposition::Recreated {
                         self.overlays.transient_notice = Some((
-                            "The host recreated this profile session. Previous shell state was not restored."
-                                .into(),
+                            "Previous session ended. Started a new shell.".into(),
                             Instant::now() + Duration::from_secs(12),
                         ));
                     }
@@ -1151,6 +1836,25 @@ impl FesTermApp {
                 }
             }
         }
+        if let Some(recipe) = confirmed_profile {
+            let id = recipe.id.clone();
+            self.apply_host_recipe_command(festerm_config::host_recipes::MetadataCommand::Save(
+                recipe,
+            ));
+            if self.state.configuration().host_recipes().get(&id).is_none() {
+                self.overlays.transient_notice = Some(("Connected. The local profile could not be saved; save this session from Find & Connect.".into(), Instant::now() + Duration::from_secs(12)));
+            }
+        }
+        if let Some((tab_id, request, attachment)) = created_attachment {
+            self.state.dispatch(
+                AppCommand::OpenApprovedHostFromProfiles {
+                    tab_id,
+                    request,
+                    attachment: Box::new(attachment),
+                },
+                context,
+            );
+        }
         if let Some(action) = next_action {
             self.apply_host_review_action(action, context);
         }
@@ -1178,10 +1882,16 @@ impl FesTermApp {
             super::confirmations::confirmation_body(ui, |ui| {
                 ui.label(format!("Host: {}", browser.recipe.host.id));
                 ui.label(format!("Account: github:{} · {}", browser.account.account_id(), browser.account.login()));
-                ui.label("The recipe is an unverified hint. No discovery, sign-in or connection starts until you explicitly act here.");
+                if browser.ordinary_selected {
+                    ui.label("Connecting only to this host with the selected provider account.");
+                } else {
+                    ui.label("Advanced enrolled-owner connection. Public recipe metadata grants no authority.");
+                }
                 if let Some(message) = &browser.feedback { ui.label(message); }
+                if browser.needs_sign_in && !browser.busy() && ui.button("Sign in again").clicked() { action = Some(Action::Reauthenticate); }
                 if browser.busy() { ui.spinner(); ui.label("Working on the selected host only…"); }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
+                    if !browser.ordinary_selected {
                     let owner = browser.receipt.as_ref().map(|receipt| (receipt.binding(), receipt.public_key()));
                     #[cfg(test)]
                     let owner = owner.or_else(|| browser.gallery_owner.as_ref().map(|(binding, public)| (binding, *public)));
@@ -1229,6 +1939,10 @@ impl FesTermApp {
                             egui::Button::new("Trust this exact binding and prepare native owner key")).clicked() {
                             action = Some(Action::Prepare);
                         }
+                    }
+                    } else if browser.inventory.is_none() {
+                        if ui.button("Retry host connection").clicked() { action = Some(Action::Ordinary); }
+                        if ui.button("Advanced owner connection…").clicked() { action = Some(Action::AdvancedOwner); }
                     }
                     if let Some(inventory) = &browser.inventory {
                         ui.separator();
@@ -1333,7 +2047,11 @@ impl FesTermApp {
                 context,
                 browser.tab,
                 browser.request,
-                Err("Foreground host review cancelled. Local key preparation may have completed; reload the same protected receipt. No host enrollment or input replay was performed."),
+                Err(if browser.ordinary_selected {
+                    "Host connection cancelled. A native device key may have been saved locally. Reopen this host explicitly; no input or creation action is replayed."
+                } else {
+                    "Foreground host review cancelled. Local key preparation may have completed; reload the same protected receipt. No host enrollment or input replay was performed."
+                }),
             );
             return;
         }
@@ -1351,6 +2069,8 @@ impl FesTermApp {
                 browser.request,
             )
         });
+        let configuration = self.state.configuration().clone();
+        let mut sidebar_command = None;
         let Some(browser) = self.host_browser.as_mut() else {
             return;
         };
@@ -1358,34 +2078,61 @@ impl FesTermApp {
         let mut action = None;
         let mut save = None;
         let mut cancel_profile = false;
+        let mut open_profiles = false;
         let mut quick_create = false;
         let mut selection: Option<Option<Target>> = None;
         egui::Modal::new(egui::Id::new("foreground_host_review")).show(context, |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
-            super::confirmations::prepare_confirmation(ui, context, 520.0);
+            super::confirmations::prepare_confirmation(ui, context, if selection_mode { 520.0 } else { 920.0 });
+            ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+            ui.heading("Find & Connect");
+            ui.add_space(8.0);
+            let compact = context.viewport_rect().width() < 760.0;
+            ui.scope_builder(egui::UiBuilder::new().layout(if compact { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) }), |ui| {
+            if !selection_mode {
+                ui.vertical(|ui| {
+                    ui.set_width(if compact { ui.available_width() } else { 180.0 });
+                    sidebar_command = crate::screens::host_workspace::show_browser_sidebar(ui, browser.tab, &configuration, browser.account.identifier(), &browser.locator, browser.recipe.host_hint.as_ref().map(|hint| hint.name.as_str()).unwrap_or(&browser.recipe.name));
+                });
+                if compact { ui.separator(); } else { ui.add_space(16.0); }
+            }
+            ui.vertical(|ui| {
+            ui.set_max_width(ui.available_width());
+            if browser.directory_only {
+                ui.heading("Choose a host");
+                ui.label("Select a host on the left. Use Refresh hosts to load this account’s shared hosts.");
+            } else {
             ui.heading(browser.recipe.host_hint.as_ref().map(|hint| hint.name.as_str())
-                .unwrap_or("Dev Tunnel host"));
+                .unwrap_or(&browser.recipe.name));
             ui.small(format!("@{}", browser.account.login()));
             super::confirmations::confirmation_body(ui, |ui| {
                 if browser.busy() {
                     ui.horizontal(|ui| { ui.spinner(); ui.label("Connecting…"); });
                 }
+                if browser.needs_sign_in && !browser.busy() && ui.button("Sign in again").clicked() { action = Some(Action::Reauthenticate); }
                 if let Some(message) = &browser.feedback {
                     ui.label(
                         if message.len() > 140 { "The connection needs attention." } else { message });
-                    if message.len() > 140 { ui.collapsing("Details", |ui| { ui.label(message); }); }
+                    if message.len() > 140 { ui.collapsing("Details", |ui| { ui.add(egui::Label::new(message).wrap()); }); }
                 }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
-                    if browser.receipt.is_none() {
+                    if browser.ordinary_selected && browser.inventory.is_none() {
+                        if !browser.busy() && action_button(ui, ActionButtonRole::Accent, "Retry host connection").clicked() {
+                            action = Some(Action::Ordinary);
+                        }
+                        if action_button(ui, ActionButtonRole::Secondary, "Advanced owner connection…").clicked() {
+                            action = Some(Action::AdvancedOwner);
+                        }
+                    } else if !browser.ordinary_selected && browser.receipt.is_none() {
                         ui.label("Verify this host");
-                        ui.label("Public owner binding");
+                        ui.label("Host details");
                         ui.add(egui::TextEdit::multiline(&mut *browser.prerequisite)
                             .char_limit(4096).desired_rows(3));
                         ui.label("Host fingerprint");
                         ui.add(egui::TextEdit::singleline(&mut browser.fingerprint).char_limit(128));
                         ui.checkbox(&mut browser.consent, "I independently verified this host and account");
                         ui.collapsing("Where to find these details", |ui| {
-                            ui.label("Use this host's protected owner-approval details. Never paste a private key, credential or token.");
+                            ui.label("On the host, open Settings → Dev Tunnels → Remote access → Advanced · manually pair an owner device. Copy its host details and fingerprint. Never paste a private key or token.");
                         });
                         if action_button_enabled(ui, browser.consent && !browser.fingerprint.is_empty(),
                             ActionButtonRole::Accent, "Prepare client key").clicked() {
@@ -1396,7 +2143,7 @@ impl FesTermApp {
                             browser.resolve_after_load = true;
                             action = Some(Action::Load);
                         }
-                    } else if browser.inventory.is_none() {
+                    } else if !browser.ordinary_selected && browser.inventory.is_none() {
                         if browser.host_approved
                             && action_button(ui, ActionButtonRole::Secondary, "Review owner approval…").clicked() {
                             browser.host_approved = false;
@@ -1417,7 +2164,7 @@ impl FesTermApp {
                                     ui.collapsing("Approval details", |ui| {
                                         ui.monospace(public_key);
                                         ui.monospace(fingerprint);
-                                        ui.label("On this host, explicitly approve this public key using festerm-host approve-owner. Choose permissions separately.");
+                                        ui.label("On the host, open Settings → Dev Tunnels → Remote access → Approve a client. Paste this public key and fingerprint, then confirm the selected permissions.");
                                     });
                                 }
                             }
@@ -1436,75 +2183,70 @@ impl FesTermApp {
                         if selection_mode && action_button(ui, ActionButtonRole::Accent, "Use this host").clicked() {
                             selection = Some(None);
                         }
-                        ui.horizontal(|ui| {
+                        if !browser.new_session && browser.profile_target.is_none() {
+                        ui.horizontal_wrapped(|ui| {
                             ui.strong("Sessions");
-                            if action_button(ui, ActionButtonRole::Secondary, "Refresh").clicked() {
+                            if action_button(ui, ActionButtonRole::Secondary, "Refresh sessions").clicked() {
                                 action = Some(Action::Inventory);
                             }
+                            if !selection_mode && browser.discovered && inventory.capabilities.create && inventory.capabilities.creation_allowed && inventory.capabilities.attach && !browser.new_session && action_button(ui, ActionButtonRole::Accent, "New host shell").clicked() {
+                                browser.new_session = true;
+                                browser.session_name.clear();
+                                browser.profile_name.clear();
+                                browser.save_new_profile = false;
+                            }
                         });
-                        if inventory.sessions.is_empty() { ui.label("No authorized sessions."); }
-                        if !inventory.unknown.is_empty() {
-                            ui.label("Some session states are unknown.");
-                        }
-                        for session in &inventory.sessions {
-                            ui.push_id(session.target.logical.as_str(), |ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(&session.name);
-                                    if session.attached { ui.small("Already attached"); }
-                                    if selection_mode {
-                                        if action_button(ui, ActionButtonRole::Accent, "Select session").clicked() {
-                                            selection = Some(Some(session.target.clone()));
-                                        }
-                                    } else {
-                                    if action_button_enabled(ui, !session.attached
-                                        && inventory.capabilities.attach
-                                        && browser.allows_target(&session.target),
-                                        ActionButtonRole::Accent, "Connect").clicked() {
-                                        action = Some(Action::Attach(session.target.clone()));
-                                    }
-                                    if action_button(ui, ActionButtonRole::Secondary, "Save as profile…").clicked() {
+                        ui.add_space(12.0);
+                        if inventory.sessions.is_empty() && inventory.profiles.is_empty() { ui.label("No authorized sessions."); }
+                        if !inventory.unknown.is_empty() { ui.label("Some session states are unknown. Refresh sessions before starting another shell."); }
+                        let stacked = ui.available_width() < 600.0;
+                        egui::Grid::new("host_sessions_table").num_columns(if stacked { 1 } else { 4 }).spacing(egui::vec2(18.0, 14.0)).striped(!stacked).show(ui, |ui| {
+                            if !stacked { ui.small("Session"); ui.small("State"); ui.small("Local profile"); ui.small("Action"); ui.end_row(); }
+                            for session in &inventory.sessions {
+                                    ui.vertical(|ui| { ui.set_width(if stacked { ui.available_width() } else { 180.0 }); ui.add(egui::Label::new(&session.name).wrap()); ui.small(match session.lifetime { Lifetime::Persistent {} => "Persistent session", Lifetime::Temporary { .. } => "Temporary session" }); });
+                                    if stacked { ui.end_row(); }
+                                    ui.small(if session.attached { "Attached" } else { "Running" });
+                                    if stacked { ui.end_row(); }
+                                    if let Some(saved) = saved_session_profile(self.state.configuration().host_recipes(), &browser.recipe.host, &session.target) {
+                                        ui.vertical(|ui| { ui.small(format!("Saved locally · {}", saved.name)); if ui.link("Edit in Profiles").clicked() { open_profiles = true; } });
+                                    } else if !selection_mode && action_button(ui, ActionButtonRole::Secondary, "Save as profile…").clicked() {
                                         browser.profile_target = Some(session.target.clone());
                                         browser.profile_name = session.name.clone();
+                                    } else if selection_mode { ui.label("—"); }
+                                    if stacked { ui.end_row(); }
+                                    if selection_mode {
+                                        if action_button(ui, ActionButtonRole::Accent, "Select session").clicked() { selection = Some(Some(session.target.clone())); }
+                                    } else if action_button_enabled(ui, !session.attached && inventory.capabilities.attach && browser.allows_target(&session.target), ActionButtonRole::Accent, "Connect").clicked() {
+                                        action = Some(Action::Attach(session.target.clone()));
                                     }
-                                    }
-                                });
-                            });
-                        }
-                        if inventory.capabilities.profiles {
-                            ui.separator();
-                            ui.strong("Shared profiles");
-                            if inventory.profiles.is_empty() {
-                                ui.label("No profiles are enabled for this host.");
+                                    ui.end_row();
                             }
-                            for profile in &inventory.profiles {
-                                ui.push_id(profile.logical.as_str(), |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(&profile.name);
-                                        if !selection_mode
-                                            && action_button_enabled(
-                                                ui,
-                                                inventory.capabilities.ensure_profile
-                                                    && inventory.capabilities.attach,
-                                                ActionButtonRole::Accent,
-                                                "Connect / start",
-                                            )
-                                            .clicked()
-                                        {
-                                            action = Some(Action::EnsureProfile {
-                                                logical: profile.logical.clone(),
-                                                revision: profile.revision,
-                                                name: profile.name.clone(),
-                                            });
-                                        }
-                                    });
-                                });
+                            if inventory.capabilities.profiles {
+                                for profile in &inventory.profiles {
+                                    // A catalog advertisement and its running logical session are one row.
+                                    // Names never identify a remote session, and Unknown never means absent.
+                                    if inventory.sessions.iter().any(|session| session.target.logical == profile.logical) { continue; }
+                                    let unknown = inventory.unknown.iter().any(|target| target.logical == profile.logical);
+                                        ui.vertical(|ui| { ui.set_width(if stacked { ui.available_width() } else { 180.0 }); ui.add(egui::Label::new(&profile.name).wrap()); ui.small("Shared shell"); });
+                                        if stacked { ui.end_row(); }
+                                        ui.small(if unknown { "Unknown" } else { "Not started" });
+                                        if stacked { ui.end_row(); }
+                                        ui.label("—");
+                                        if stacked { ui.end_row(); }
+                                        if !selection_mode && action_button_enabled(ui, !unknown && inventory.capabilities.ensure_profile && inventory.capabilities.attach && inventory.capabilities.creation_allowed, ActionButtonRole::Accent, "Start & Connect").clicked() {
+                                            action = Some(Action::EnsureProfile { logical: profile.logical.clone(), revision: profile.revision, name: profile.name.clone() });
+                                        } else if selection_mode { ui.label("—"); }
+                                        ui.end_row();
+                                }
                             }
+                        });
+                        if !inventory.capabilities.creation_allowed { ui.small("New shell creation is disabled by this host."); }
                         }
                         if let Some(target) = &browser.profile_target {
                             ui.separator();
                             ui.label("Profile name");
                             ui.add(egui::TextEdit::singleline(&mut browser.profile_name).min_size(egui::vec2(0.0, 24.0)).char_limit(200));
-                            ui.checkbox(&mut browser.profile_create, "Create session if missing");
+                            ui.small("Adds a shortcut for this exact session in this device’s Profiles.");
                             ui.horizontal(|ui| {
                                 if action_button(ui, ActionButtonRole::Secondary, "Cancel profile").clicked() {
                                     cancel_profile = true;
@@ -1517,25 +2259,24 @@ impl FesTermApp {
                         }
                         let caps = inventory.capabilities;
                         if !selection_mode && browser.discovered && caps.create && caps.creation_allowed && caps.attach {
-                            if !browser.new_session {
-                                if action_button(ui, ActionButtonRole::Secondary, "+ New session").clicked() {
-                                    browser.new_session = true;
-                                    browser.session_name.clear();
-                                }
-                            } else {
+                            if browser.new_session {
                                 ui.separator();
+                                ui.heading("New host shell");
                                 ui.label("Session name");
                                 ui.add(egui::TextEdit::singleline(&mut browser.session_name).min_size(egui::vec2(0.0, 24.0)).char_limit(128));
+                                ui.small("Persistent session · Host default shell");
+                                ui.checkbox(&mut browser.save_new_profile, "Save as a local profile");
+                                if browser.save_new_profile {
+                                    ui.label("Profile name");
+                                    ui.add(egui::TextEdit::singleline(&mut browser.profile_name).char_limit(200));
+                                }
                                 ui.horizontal(|ui| {
-                                    if action_button(ui, ActionButtonRole::Secondary, "Cancel new session").clicked() {
+                                    if action_button(ui, ActionButtonRole::Secondary, "Cancel").clicked() {
                                         browser.new_session = false;
                                     }
-                                    if action_button_enabled(ui, valid_session_name(&browser.session_name),
-                                        ActionButtonRole::Accent, "Create and connect").clicked() {
-                                        browser.recipe.session_name = Some(browser.session_name.trim().to_owned());
-                                        browser.recipe.lifetime = Lifetime::Persistent {};
-                                        browser.recipe.behavior = ConnectionBehavior::AlwaysCreate;
-                                        browser.creation_confirmed = true;
+                                    if action_button_enabled(ui, valid_session_name(&browser.session_name) && (!browser.save_new_profile || !browser.profile_name.trim().is_empty()),
+                                        ActionButtonRole::Accent, "Create & Connect").clicked() {
+                                        browser.prepare_new_host_shell();
                                         quick_create = true;
                                         action = Some(Action::Create);
                                     }
@@ -1569,8 +2310,66 @@ impl FesTermApp {
                     }
                 });
             });
-            if action_button(ui, ActionButtonRole::Secondary, "Cancel").clicked() { dismiss = true; }
+            }
+            });
+            });
+            ui.add_space(12.0);
+            if !browser.new_session && browser.profile_target.is_none() && action_button(ui, ActionButtonRole::Secondary, "Done").clicked() { dismiss = true; }
         });
+        if open_profiles {
+            self.host_browser = None;
+            self.state.dispatch(AppCommand::OpenProfiles, context);
+            return;
+        }
+        if let Some(navigation) = sidebar_command {
+            use crate::screens::host_workspace::BrowserNavigation;
+            let command = match navigation {
+                BrowserNavigation::AccountChanged { account, request } => {
+                    let browser = self.host_browser.as_ref().expect("visible browser");
+                    if self.state.configuration().account(account.identifier()) != Some(&account)
+                        || !crate::screens::host_workspace::request_is_current(
+                            context,
+                            browser.tab,
+                            request,
+                        )
+                        || !self.state.tabs().iter().any(|tab| {
+                            tab.id == browser.tab
+                                && matches!(
+                                    tab.content,
+                                    TabContent::Launcher | TabContent::Profiles
+                                )
+                        })
+                    {
+                        return;
+                    }
+                    self.host_browser
+                        .as_mut()
+                        .expect("visible browser")
+                        .browse_account(account, request, context);
+                    return;
+                }
+                BrowserNavigation::Command(command) => *command,
+            };
+            match command {
+                AppCommand::FindDevTunnelHosts {
+                    tab_id,
+                    request,
+                    account,
+                } => self.find_host_tunnels(tab_id, request, &account, context),
+                AppCommand::ReviewDevTunnelHost {
+                    tab_id,
+                    request,
+                    host,
+                } => self.review_discovered_host(tab_id, request, host, context),
+                AppCommand::ReauthenticateHostAccount(request) => {
+                    self.dispatch_host_reauthentication(request, context)
+                }
+                _ => unreachable!(
+                    "sidebar emits existing discovery, selection or scoped authentication actions"
+                ),
+            }
+            return;
+        }
         if dismiss {
             let browser = self.host_browser.take().expect("visible browser");
             crate::screens::host_workspace::report_outcome(
@@ -1642,19 +2441,13 @@ impl FesTermApp {
             }) else {
                 return;
             };
-            let mut recipe = browser.recipe.clone();
-            recipe.id = festerm_config::host_recipes::RecipeId::new();
-            recipe.name = browser.profile_name.trim().to_owned();
-            recipe.session_name = Some(session.name.clone());
-            recipe.logical_session = target.logical;
-            recipe.lifetime = session.lifetime;
-            recipe.behavior = if browser.profile_create {
-                ConnectionBehavior::ResumeOrCreate
-            } else {
-                ConnectionBehavior::AttachOnly {
-                    generation: target.generation,
-                }
-            };
+            let recipe = session_shortcut(
+                &browser.recipe,
+                &target,
+                &session.name,
+                session.lifetime,
+                browser.profile_name.trim().to_owned(),
+            );
             let saved_id = recipe.id.clone();
             self.apply_host_recipe_command(festerm_config::host_recipes::MetadataCommand::Save(
                 recipe,
@@ -1683,15 +2476,48 @@ impl FesTermApp {
     }
 
     fn apply_host_review_action(&mut self, action: Action, context: &egui::Context) {
-        if !self
-            .host_browser
-            .as_ref()
-            .is_some_and(|browser| browser.current(&self.state, context) && !browser.busy())
+        if !self.host_browser.as_ref().is_some_and(|browser| {
+            browser.current(&self.state, context) && !browser.busy() && !browser.directory_only
+        }) {
+            return;
+        }
+        if matches!(action, Action::Ordinary)
+            || (matches!(action, Action::Inventory)
+                && self
+                    .host_browser
+                    .as_ref()
+                    .is_some_and(|browser| browser.ordinary_selected))
         {
+            self.begin_ordinary_host(context);
+            return;
+        }
+        if matches!(action, Action::AdvancedOwner) {
+            let browser = self.host_browser.as_mut().expect("current browser");
+            browser.ordinary_selected = false;
+            browser.ordinary_lifetime = None;
+            browser.ordinary = None;
+            browser.inventory = None;
+            browser.host_approved = false;
+            return;
+        }
+        if matches!(action, Action::Reauthenticate) {
+            let browser = self.host_browser.as_ref().expect("current browser");
+            if browser.needs_sign_in {
+                let request = Reauthentication {
+                    origin: ReauthenticationOrigin::Browser {
+                        tab: browser.tab,
+                        request: browser.request,
+                        generation: browser.generation,
+                    },
+                    account: browser.account.clone(),
+                };
+                self.dispatch_host_reauthentication(request, context);
+            }
             return;
         }
         let browser = self.host_browser.as_mut().expect("current browser");
         browser.feedback = None;
+        browser.needs_sign_in = false;
         if let Action::EnsureProfile {
             logical,
             revision,
@@ -1706,6 +2532,11 @@ impl FesTermApp {
                         .profiles
                         .iter()
                         .any(|profile| &profile.logical == logical && profile.revision == *revision)
+                    && inventory.capabilities.creation_allowed
+                    && !inventory
+                        .unknown
+                        .iter()
+                        .any(|target| &target.logical == logical)
             });
             if !selected {
                 return;
@@ -1771,6 +2602,19 @@ impl FesTermApp {
             };
             browser.generation = generation;
             let scope = browser.scope(&approved);
+            if browser.save_new_profile {
+                browser.pending_created_profile = Some((
+                    scope.clone(),
+                    intent.creation().attachment.clone(),
+                    browser.profile_name.trim().to_owned(),
+                ));
+            } else if let Some((pending_scope, attachment, _)) =
+                &mut browser.pending_created_profile
+            {
+                if attachment == &intent.creation().attachment {
+                    *pending_scope = scope.clone();
+                }
+            }
             let wake = context.clone();
             match Worker::start(
                 approved,
@@ -1921,11 +2765,7 @@ impl FesTermApp {
         browser.generation = generation;
         let cancel = cancel.child_token();
         let pending_cancel = cancel.clone();
-        let duration = Duration::from_secs(if matches!(action, Action::Inventory) {
-            45
-        } else {
-            15
-        });
+        let duration = owner_worker_budget(&action);
         let spawned = std::thread::Builder::new().name("festerm-host-approval".into()).spawn(move || {
             let _permit = permit;
             let result = (|| {
@@ -1937,19 +2777,21 @@ impl FesTermApp {
                 }.map_err(|error| error.message().to_owned())?;
                 if cancel.is_cancelled() { return Err("Host review cancelled; protected preparation may have completed locally. No connection was authorized.".into()); }
                 if !matches!(action, Action::Inventory) { return Ok(ResultEvent::Prepared(receipt)); }
+                let identity = load_host_identity(&account, store.as_ref())?;
+                if cancel.is_cancelled() { return Err("Host resolution cancelled.".into()); }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "The selected-host resolver worker could not start.".to_owned())?;
                 let resolved = runtime.block_on(async {
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled() => Err("Host resolution cancelled.".into()),
-                        value = tokio::time::timeout(Duration::from_secs(30), resolve_host(&account, store.as_ref(), &locator, &cancel)) =>
+                        value = tokio::time::timeout(HOST_RESOLUTION_BUDGET, resolve_host(&identity, &locator, &cancel)) =>
                             value.map_err(|_| "Host resolution timed out. No session is known to be absent.".to_owned())?,
                     }
                 })?;
                 Ok(ResultEvent::Resolved(Box::new((receipt, resolved))))
             })();
-            if !cancel.is_cancelled() { let _ = sender.try_send(result); wake.request_repaint(); }
+            if deliver_owner_completion(&sender, &cancel, result) { wake.request_repaint(); }
         });
         match spawned {
             Ok(_) => {
@@ -1965,25 +2807,67 @@ impl FesTermApp {
     }
 }
 
-async fn resolve_host(
+fn session_shortcut(
+    recipe: &PublicRecipe,
+    target: &Target,
+    name: &str,
+    lifetime: Lifetime,
+    profile_name: String,
+) -> PublicRecipe {
+    let mut saved = recipe.clone();
+    saved.id = festerm_config::host_recipes::RecipeId::new();
+    saved.name = profile_name;
+    saved.session_name = Some(name.to_owned());
+    saved.logical_session = target.logical.clone();
+    saved.lifetime = lifetime;
+    saved.launch = Recipe {
+        shell: None,
+        args: Vec::new(),
+        cwd: None,
+    };
+    saved.behavior = ConnectionBehavior::AttachOnly {
+        generation: target.generation,
+    };
+    saved
+}
+
+fn saved_session_profile<'a>(
+    recipes: &'a festerm_config::host_recipes::RecipeBook,
+    host: &HostReference,
+    target: &Target,
+) -> Option<&'a PublicRecipe> {
+    recipes.recipes().iter().find(|recipe| &recipe.host == host && recipe.logical_session == target.logical && matches!(recipe.behavior, ConnectionBehavior::AttachOnly { generation } if generation == target.generation))
+}
+
+fn load_host_identity(
     account: &DevTunnelAccount,
     store: &dyn SecretStore,
-    locator: &str,
-    cancel: &CancellationToken,
-) -> Result<ResolvedTunnel, String> {
+) -> Result<Identity, RequestFailure> {
     let client = identity::registered_client_id()
         .ok_or("Account sign-in is not configured in this build.")?;
     let secret = store.get(account.credential_reference()).map_err(|_| "The selected account's native credential is unavailable. No sign-in or fallback was attempted.")?;
     let identity = secret
         .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client))
-        .map_err(|error| error.to_string())?;
+        .map_err(RequestFailure::from)?;
     if identity.needs_sign_in() {
-        return Err("The selected account requires foreground sign-in in Profiles. No background sign-in or refresh was started.".into());
+        return Err(RequestFailure::expired());
     }
-    service::resolve_host(&identity, locator, cancel).await.map_err(|error| {
+    Ok(identity)
+}
+
+async fn resolve_host(
+    identity: &Identity,
+    locator: &str,
+    cancel: &CancellationToken,
+) -> Result<ResolvedTunnel, RequestFailure> {
+    service::resolve_host(identity, locator, cancel).await.map_err(|error| {
         if error == festerm_tunnel_client::Error::Tunnel {
-            "The selected endpoint does not advertise the HOST protocol. No legacy bridge fallback was attempted.".into()
-        } else { format!("{} No session absence was inferred.", error) }
+            RequestFailure::from("The selected endpoint does not advertise the HOST protocol. No legacy bridge fallback was attempted.")
+        } else {
+            let mut failure = RequestFailure::from(error);
+            failure.message.push_str(" No session absence was inferred.");
+            failure
+        }
     })
 }
 

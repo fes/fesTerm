@@ -3,7 +3,8 @@
 //! Installed endpoint activation and protected enrollment remain integration
 //! gates; a bearer connection is not an owner.
 
-use crate::owner_auth::{OwnerConnectionGuard, OwnerVerifier, VerifiedOwner};
+use crate::ordinary_auth::{OrdinaryCapability, OrdinaryPolicy};
+use crate::owner_auth::{OwnerConnectionGuard, OwnerVerifier, SessionPolicy, VerifiedOwner};
 use festerm_host_protocol::{
     AdmissionFence, BudgetPermit, Capabilities, ContractError, Envelope, Epoch, Refusal, Request,
     Resource, Response, SessionGrant, CONTROL_DEADLINE_SECONDS, CONTROL_FRAME_BYTES,
@@ -31,26 +32,143 @@ pub trait AuthorizationSource: Send + Sync + 'static {
         &self,
         check: &mut dyn FnMut(&OwnerVerifier) -> Result<(), ContractError>,
     ) -> Result<(), ContractError>;
+    fn with_ordinary(
+        &self,
+        _check: &mut dyn FnMut(&OrdinaryPolicy) -> Result<(), ContractError>,
+    ) -> Result<(), ContractError> {
+        Err(ContractError::Denied)
+    }
 }
 
 /// An owned policy lease keeps protected consent stable through a native
 /// reservation/publication, but is dropped before native startup/IPC waits.
-pub trait PolicyGuard {
-    fn verifier(&self) -> &OwnerVerifier;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthorityKind {
+    EnrolledOwner,
+    Ordinary,
 }
 
+#[derive(Clone, Copy)]
+pub enum PolicyView<'a> {
+    Owner(&'a OwnerVerifier),
+    Ordinary(&'a OrdinaryPolicy),
+}
+impl PolicyView<'_> {
+    pub fn session(&self) -> &SessionPolicy {
+        match self {
+            Self::Owner(v) => v.policy(),
+            Self::Ordinary(p) => &p.session,
+        }
+    }
+    pub fn capabilities(&self) -> Capabilities {
+        self.session().capabilities
+    }
+    pub fn project(&self, epoch: Epoch) -> Result<SessionPolicy, ContractError> {
+        match self {
+            Self::Owner(v) => Ok(v.with_issuance_epoch(epoch)?.policy().clone()),
+            Self::Ordinary(p) => {
+                let mut policy = p.session.clone();
+                policy.capabilities.issuance_epoch = Some(epoch);
+                Ok(policy)
+            }
+        }
+    }
+    pub fn owner(&self) -> Result<&OwnerVerifier, ContractError> {
+        match self {
+            Self::Owner(v) => Ok(v),
+            _ => Err(ContractError::Denied),
+        }
+    }
+}
+pub trait PolicyGuard {
+    fn view(&self) -> PolicyView<'_>;
+}
 pub trait ProtectedPolicySource: Send + Sync + 'static {
     type Guard: PolicyGuard;
     fn current_policy(&self) -> Result<Self::Guard, ContractError>;
+    fn current_policy_for(&self, kind: AuthorityKind) -> Result<Self::Guard, ContractError> {
+        match kind {
+            AuthorityKind::EnrolledOwner => self.current_policy(),
+            AuthorityKind::Ordinary => Err(ContractError::Denied),
+        }
+    }
+    fn observe_ordinary<'a>(
+        &'a self,
+        _route: &'a crate::ordinary_auth::OrdinaryRoute,
+        _cancel: &'a CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ContractError>> + Send + 'a>>
+    {
+        Box::pin(async { Err(ContractError::Denied) })
+    }
 }
-
 impl<A: ProtectedPolicySource> AuthorizationSource for A {
     fn with_current(
         &self,
         check: &mut dyn FnMut(&OwnerVerifier) -> Result<(), ContractError>,
     ) -> Result<(), ContractError> {
-        let guard = self.current_policy()?;
-        check(guard.verifier())
+        let guard = self.current_policy_for(AuthorityKind::EnrolledOwner)?;
+        check(guard.view().owner()?)
+    }
+    fn with_ordinary(
+        &self,
+        check: &mut dyn FnMut(&OrdinaryPolicy) -> Result<(), ContractError>,
+    ) -> Result<(), ContractError> {
+        let guard = self.current_policy_for(AuthorityKind::Ordinary)?;
+        match guard.view() {
+            PolicyView::Ordinary(p) => check(p),
+            _ => Err(ContractError::Denied),
+        }
+    }
+}
+/// Authentication kinds remain distinct; neither can be built from wire metadata.
+pub enum ConnectionAuthority {
+    EnrolledOwner(VerifiedOwner),
+    Ordinary(OrdinaryCapability),
+}
+impl From<VerifiedOwner> for ConnectionAuthority {
+    fn from(v: VerifiedOwner) -> Self {
+        Self::EnrolledOwner(v)
+    }
+}
+impl ConnectionAuthority {
+    pub fn kind(&self) -> AuthorityKind {
+        match self {
+            Self::EnrolledOwner(_) => AuthorityKind::EnrolledOwner,
+            Self::Ordinary(_) => AuthorityKind::Ordinary,
+        }
+    }
+    pub fn principal(&self) -> &festerm_host_protocol::PrincipalId {
+        match self {
+            Self::EnrolledOwner(v) => v.principal(),
+            Self::Ordinary(v) => v.principal(),
+        }
+    }
+    pub fn authorize(
+        &self,
+        current: PolicyView<'_>,
+        request: &Envelope<Request>,
+        epoch: Epoch,
+        grant: Option<&SessionGrant>,
+    ) -> Result<AdmissionFence, ContractError> {
+        self.authorize_projected(current, current.session(), request, epoch, grant)
+    }
+    fn authorize_projected(
+        &self,
+        current: PolicyView<'_>,
+        policy: &SessionPolicy,
+        request: &Envelope<Request>,
+        epoch: Epoch,
+        grant: Option<&SessionGrant>,
+    ) -> Result<AdmissionFence, ContractError> {
+        match (self, current) {
+            (Self::EnrolledOwner(v), PolicyView::Owner(_)) => {
+                v.authorize_policy(policy, request, epoch, grant)
+            }
+            (Self::Ordinary(v), PolicyView::Ordinary(p)) => {
+                v.authorize(p, policy, request, epoch, grant)
+            }
+            _ => Err(ContractError::Denied),
+        }
     }
 }
 
@@ -69,7 +187,7 @@ pub trait SessionBackend: Send + Sync + 'static {
 }
 
 pub struct OperationAdmission {
-    owner: Arc<VerifiedOwner>,
+    owner: Arc<ConnectionAuthority>,
     source: Arc<dyn AuthorizationSource>,
     request: Envelope<Request>,
     cancelled: Arc<AtomicBool>,
@@ -100,7 +218,7 @@ impl Drop for InventoryLifetime {
 impl OperationAdmission {
     #[cfg(feature = "relay")]
     pub(crate) fn terminal(
-        owner: Arc<VerifiedOwner>,
+        owner: Arc<ConnectionAuthority>,
         source: Arc<dyn AuthorizationSource>,
         request: Envelope<Request>,
         cancelled: Arc<AtomicBool>,
@@ -122,58 +240,80 @@ impl OperationAdmission {
         self.cancelled.load(Ordering::Acquire)
     }
 
+    pub fn kind(&self) -> AuthorityKind {
+        self.owner.kind()
+    }
     fn check_host(&self) -> Result<(), ContractError> {
         let mut request = self.request.clone();
         request.body = Request::Capabilities {};
         request.issuance_epoch = None;
-        self.source.with_current(&mut |current| {
-            if self.cancelled() {
-                return Err(ContractError::Stale);
-            }
-            self.owner
-                .authorize(current, &request, Epoch::new(1)?, None)?;
-            Ok(())
-        })
+        self.with_current(&request, None, Epoch::new(1)?)
+            .map(|_| ())
     }
-
-    /// Call inside the backend reservation, using its current record and epoch,
-    /// never a caller-asserted or previously captured grant.
+    fn with_current(
+        &self,
+        request: &Envelope<Request>,
+        grant: Option<&SessionGrant>,
+        epoch: Epoch,
+    ) -> Result<AdmissionFence, ContractError> {
+        if self.cancelled() {
+            return Err(ContractError::Stale);
+        }
+        let mut captured = None;
+        match self.kind() {
+            AuthorityKind::EnrolledOwner => self.source.with_current(&mut |p| {
+                captured =
+                    Some(
+                        self.owner
+                            .authorize(PolicyView::Owner(p), request, epoch, grant)?,
+                    );
+                Ok(())
+            })?,
+            AuthorityKind::Ordinary => self.source.with_ordinary(&mut |p| {
+                captured =
+                    Some(
+                        self.owner
+                            .authorize(PolicyView::Ordinary(p), request, epoch, grant)?,
+                    );
+                Ok(())
+            })?,
+        }
+        captured.ok_or(ContractError::Denied)
+    }
     pub fn capture(
         &self,
         grant: Option<&SessionGrant>,
         operation_epoch: Epoch,
     ) -> Result<AdmissionFence, ContractError> {
-        if self.cancelled() {
-            return Err(ContractError::Stale);
-        }
-
-        let mut fence = None;
-        self.source.with_current(&mut |current| {
-            if self.cancelled() {
-                return Err(ContractError::Stale);
-            }
-            fence = Some(
-                self.owner
-                    .authorize(current, &self.request, operation_epoch, grant)?,
-            );
-            Ok(())
-        })?;
-        fence.ok_or(ContractError::Denied)
+        self.with_current(&self.request, grant, operation_epoch)
     }
-
     #[cfg(feature = "relay")]
     pub(crate) fn authorize_current(
         &self,
-        current: &OwnerVerifier,
+        current: PolicyView<'_>,
         request: &Envelope<Request>,
         grant: Option<&SessionGrant>,
-        operation_epoch: Epoch,
+        epoch: Epoch,
+    ) -> Result<AdmissionFence, ContractError> {
+        if self.cancelled() {
+            return Err(ContractError::Stale);
+        }
+        self.owner.authorize(current, request, epoch, grant)
+    }
+    #[cfg(feature = "relay")]
+    pub(crate) fn authorize_projected(
+        &self,
+        current: PolicyView<'_>,
+        policy: &SessionPolicy,
+        request: &Envelope<Request>,
+        grant: Option<&SessionGrant>,
+        epoch: Epoch,
     ) -> Result<AdmissionFence, ContractError> {
         if self.cancelled() {
             return Err(ContractError::Stale);
         }
         self.owner
-            .authorize(current, request, operation_epoch, grant)
+            .authorize_projected(current, policy, request, epoch, grant)
     }
 
     pub fn revalidate(
@@ -283,13 +423,13 @@ fn execute(
 pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     permit: ConnectionPermit,
-    owner: VerifiedOwner,
+    owner: impl Into<ConnectionAuthority>,
     _guard: OwnerConnectionGuard,
     source: Arc<dyn AuthorizationSource>,
     backend: Arc<dyn SessionBackend>,
     shutdown: CancellationToken,
 ) -> Result<(), Error> {
-    let owner = Arc::new(owner);
+    let owner = Arc::new(owner.into());
     let permit = Arc::new(permit);
     // A fixed-shape correlated refusal remains writable when operation or
     // normal reply capacity is saturated. Reserved before receiving requests.

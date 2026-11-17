@@ -838,6 +838,8 @@ authority, and does not retain those short-lived guards or prevent revocation.
 | Idempotency records | 128; unresolved results cannot be evicted to authorize a duplicate |
 | Control JSON / control queue bytes | 64 KiB / 512 KiB, separately reserved from output |
 | Terminal queued bytes | 2 MiB global and 512 KiB per client |
+| Initial terminal snapshot | 8 MiB serialized; one in-flight transaction per shared host budget; separate from live queues |
+| HOST declared history policy / restored history charge | 64 MiB / 8 MiB (declaration does not preallocate) |
 | Authorized inventory page / snapshot | 16 / at most 64 entries |
 | Pending inventory snapshots | One per admitted client; retire on 15-second control deadline/epoch change |
 | Authentication / control deadline | 15 seconds each |
@@ -992,7 +994,19 @@ observes a protocol-2-or-newer native resize acknowledgement before publishing
 the correlated `Attached`. Temporary sessions additionally require the actual
 reserved attachment ticket/lease outcome. Pending recovery is never success.
 
-Snapshots are capped at 512 KiB and terminal chunks at 64 KiB. Frames retain
+Initial snapshots use the existing 8 MiB codec ceiling and a separate single
+transaction slot; terminal chunks remain 64 KiB and live queued bytes remain
+512 KiB/client and 2 MiB aggregate. SyncScrollback remains capped at 512 KiB.
+The transaction slot follows actual native reader work through recovered-model,
+frame and pending-adoption ownership, including cancellation and late completion;
+all copies release before Live. The negotiated native payload/decode limit and
+stored history charge are checked before restoration, while the HOST declared
+history policy remains bounded to its 64 MiB default. Legacy paths are unchanged.
+Pre-snapshot native recovery/codec failures return Incompatible, capacity returns
+Busy, and errors after a partial SNAPSHOT close without an appended reply.
+The slot bounds concurrent representations, not total RSS: terminal models, native
+wire, JSON capacity and semantic-validation copies can overlap (ADR 0084 §10).
+Non-snapshot/live frames retain
 aggregate/per-client byte permits through queued delivery. Partial frames and
 writes have 15-second deadlines; an idle live terminal is not a partial frame.
 The portable `TerminalHandle` uses eight command/four event slots, immutable

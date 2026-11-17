@@ -353,8 +353,17 @@ mod tests;
 
 fn active(policy: &PrivateSessionPolicy) -> Result<(), Error> {
     let owner = &policy.enrollment;
-    if policy.installation.phase != Phase::Provisioned
-        || !owner.remote_access
+    if policy.installation.phase != Phase::Provisioned {
+        return Err(Error::Revoked);
+    }
+    // This is local, explicitly reviewed publication under a fresh native
+    // policy guard. It grants no remote administrative operation or owner key.
+    if policy.installation.settings.ordinary_access
+        == crate::lifecycle::OrdinaryAccess::ProviderOwner
+    {
+        return Ok(());
+    }
+    if !owner.remote_access
         || !owner.keys.iter().any(|key| !key.revoked)
         || !owner.capabilities.inventory
         || !owner.capabilities.attach

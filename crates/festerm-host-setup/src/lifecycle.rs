@@ -41,6 +41,23 @@ pub struct Settings {
     pub allow_creation: bool,
     #[serde(default)]
     pub startup: Startup,
+    /// Protected Enable consent; absent legacy fields never grant ordinary access.
+    #[serde(default, skip_serializing_if = "OrdinaryAccess::is_owner_only")]
+    pub ordinary_access: OrdinaryAccess,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OrdinaryAccess {
+    #[default]
+    OwnerOnly,
+    ProviderOwner,
+}
+
+impl OrdinaryAccess {
+    fn is_owner_only(&self) -> bool {
+        *self == Self::OwnerOnly
+    }
 }
 
 impl Settings {
@@ -506,7 +523,27 @@ impl Store {
     /// Adapter evidence must establish that an uncertain submission created no
     /// resources. A timeout or missing reply is not sufficient.
     pub fn confirm_no_resources(&self, ticket: &Ticket) -> io::Result<()> {
+        self.confirm_no_resources_current(None, ticket)
+    }
+
+    #[cfg(feature = "cloud")]
+    pub(crate) fn confirm_no_resources_if_current(
+        &self,
+        expected: &Snapshot,
+        ticket: &Ticket,
+    ) -> io::Result<()> {
+        self.confirm_no_resources_current(Some(expected), ticket)
+    }
+
+    fn confirm_no_resources_current(
+        &self,
+        expected: Option<&Snapshot>,
+        ticket: &Ticket,
+    ) -> io::Result<()> {
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.foreground_scope_changed"));
+            }
             pending(record, ticket)?;
             if record.binding.is_some() {
                 return Err(refused("host.existing_identity_requires_stop"));
@@ -634,6 +671,25 @@ mod tests {
         (root, store)
     }
 
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn host_cloud_absence_release_requires_exact_epoch_even_when_old_ticket_survives() {
+        let (_root, store) = fixture();
+        let ticket = store.request_enable(&settings()).unwrap();
+        let observed = store.snapshot().unwrap();
+        store.revoke().unwrap();
+        let advanced = store.snapshot().unwrap();
+        assert_eq!(advanced.pending_ticket(), Some(&ticket));
+        assert!(store
+            .confirm_no_resources_if_current(&observed, &ticket)
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), advanced);
+        store
+            .confirm_no_resources_if_current(&advanced, &ticket)
+            .unwrap();
+        assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+    }
+
     #[test]
     fn host_desktop_consent_atomically_binds_settings_and_exact_snapshot() {
         let (_root, store) = fixture();
@@ -710,9 +766,65 @@ mod tests {
 
     fn settings() -> Settings {
         Settings {
+            ordinary_access: Default::default(),
             friendly_name: "Fixture host".into(),
             allow_creation: false,
             startup: Startup::Manual,
+        }
+    }
+
+    #[test]
+    fn ordinary_policy_missing_remains_owner_only_without_rewriting_legacy_settings() {
+        let legacy = serde_json::json!({
+            "friendly_name": "Legacy host", "allow_creation": false, "startup": "manual"
+        });
+        let settings: Settings = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(settings.ordinary_access, OrdinaryAccess::OwnerOnly);
+        assert_eq!(serde_json::to_value(settings).unwrap(), legacy);
+    }
+
+    #[test]
+    fn provider_owner_requires_disabled_reviewed_enable_and_cannot_retarget_consent() {
+        let (_root, store) = fixture();
+        let original = store.snapshot().unwrap();
+        let mut requested = serde_json::to_value(&original.settings).unwrap();
+        requested["ordinary_access"] = "provider-owner".into();
+        let requested: Settings = serde_json::from_value(requested).unwrap();
+        // Merely decoding a requested mode cannot grant access or mutate this store.
+        assert_eq!(store.snapshot().unwrap(), original);
+        store.configure(requested.clone()).unwrap();
+        assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+        assert!(store.request_enable(&original.settings).is_err());
+        let ticket = store.request_enable(&requested).unwrap();
+        assert_eq!(ticket.approved_settings(), &requested);
+        let requested_snapshot = store.snapshot().unwrap();
+        assert!(store.configure(original.settings).is_err());
+        assert_eq!(store.snapshot().unwrap(), requested_snapshot);
+    }
+
+    #[test]
+    fn legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible() {
+        #[derive(Deserialize, Serialize)]
+        #[serde(deny_unknown_fields)]
+        struct LegacySettings {
+            friendly_name: String,
+            allow_creation: bool,
+            startup: Startup,
+        }
+        let owner_only = serde_json::to_value(settings()).unwrap();
+        assert!(serde_json::from_value::<LegacySettings>(owner_only.clone()).is_ok());
+        let mut provider = owner_only;
+        provider["ordinary_access"] = "provider-owner".into();
+        assert!(serde_json::from_value::<Settings>(provider.clone()).is_ok());
+        assert!(serde_json::from_value::<LegacySettings>(provider).is_err());
+    }
+
+    #[test]
+    fn ordinary_policy_unknown_values_never_become_provider_access() {
+        for mode in ["", "provider", "anonymous", "provider-owner-v2"] {
+            let mut requested = serde_json::to_value(settings()).unwrap();
+            requested["ordinary_access"] = mode.into();
+            assert!(serde_json::from_value::<Settings>(requested).is_err());
         }
     }
 

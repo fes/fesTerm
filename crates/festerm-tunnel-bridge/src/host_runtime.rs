@@ -42,6 +42,13 @@ pub enum StreamRole {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "message", rename_all = "snake_case", deny_unknown_fields)]
 enum Authentication {
+    OrdinaryChallengeV1 {
+        challenge: crate::ordinary_auth::OrdinaryChallenge,
+    },
+    OrdinaryProofV1 {
+        proof: crate::ordinary_auth::OrdinaryProof,
+    },
+    OrdinaryRefreshRequiredV1 {},
     Challenge {
         challenge: ChannelOwnerChallenge,
     },
@@ -53,6 +60,108 @@ enum Authentication {
     Refused {
         reason: festerm_host_protocol::Refusal,
     },
+}
+
+/// Native client composition loads its key before connecting. This wire helper
+/// never opens a vault and never falls back to enrolled-owner authentication.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn authenticate_ordinary_client_using_guard(
+    mut stream: ClientConnection,
+    permit: ConnectionPermit,
+    expected: crate::ordinary_auth::OrdinaryRoute,
+    role: StreamRole,
+    cancel: CancellationToken,
+    prove: impl FnOnce(
+            &ClientConnection,
+            &crate::ordinary_auth::OrdinaryChallenge,
+        ) -> Result<crate::ordinary_auth::OrdinaryProof, ContractError>
+        + Send
+        + 'static,
+    may_publish: impl Fn() -> Result<(), ContractError> + Send + 'static,
+) -> Result<
+    (
+        ClientConnection,
+        ConnectionPermit,
+        crate::ordinary_auth::OrdinaryHostInfo,
+    ),
+    Error,
+> {
+    let permit = Arc::new(permit);
+    let work = async {
+        let frame = read_frame(&mut stream, permit.budgets()).await?;
+        let challenge = match frame.decode()? {
+            Authentication::OrdinaryChallengeV1 { challenge } => challenge,
+            Authentication::Challenge { .. } => return Err(Error::HostUpdateRequired),
+            Authentication::OrdinaryRefreshRequiredV1 {} => {
+                return Err(Error::HostPolicyRefreshRequired)
+            }
+            Authentication::Refused { reason } => return Err(Error::Refused(reason)),
+            _ => return Err(ContractError::Denied.into()),
+        };
+        drop(frame);
+        expected.validate()?;
+        if challenge.host_info.route != expected
+            || stream
+                .owner_pinned_fingerprint()
+                .map_err(|_| ContractError::Denied)?
+                != expected.host.host_key_fingerprint
+            || *stream
+                .owner_channel_binding()
+                .map_err(|_| ContractError::Denied)?
+                .as_bytes()
+                != crate::owner_auth::unhex::<32>(&challenge.channel_binding)?
+        {
+            return Err(ContractError::Denied.into());
+        }
+        may_publish()?;
+        let info = challenge.host_info.clone();
+        let charge = permit.clone();
+        let (mut stream, proof) = tokio::task::spawn_blocking(move || {
+            let _charge = charge;
+            let proof = prove(&stream, &challenge)?;
+            Ok::<_, ContractError>((stream, proof))
+        })
+        .await
+        .map_err(|_| Error::Closed)??;
+        if proof.role != role {
+            return Err(ContractError::Denied.into());
+        }
+        may_publish()?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        write_frame(
+            &mut stream,
+            permit.budgets(),
+            &Authentication::OrdinaryProofV1 { proof },
+        )
+        .await?;
+        let frame = read_frame(&mut stream, permit.budgets()).await?;
+        match frame.decode()? {
+            Authentication::Accepted {} => {}
+            Authentication::OrdinaryRefreshRequiredV1 {} => {
+                return Err(Error::HostPolicyRefreshRequired)
+            }
+            Authentication::Refused { reason } => return Err(Error::Refused(reason)),
+            _ => return Err(ContractError::Denied.into()),
+        }
+        drop(frame);
+        may_publish()?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        Ok::<_, Error>((stream, info))
+    };
+    let (stream, info) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Cancelled),
+        result = tokio::time::timeout(AUTH_DEADLINE, work) => result.map_err(|_| Error::Deadline)??,
+    };
+    Ok((
+        stream,
+        Arc::try_unwrap(permit).map_err(|_| Error::Closed)?,
+        info,
+    ))
 }
 
 /// Native callers must supply already foreground-approved owner metadata and
@@ -68,6 +177,28 @@ pub async fn authenticate_client(
     authenticate_client_using(stream, permit, role, cancel, move |stream, challenge| {
         stream.prove_owner(&key, &approved, challenge)
     })
+    .await
+}
+
+/// The selected-host client loaded this single-use native snapshot before
+/// opening the relay. No native vault access occurs inside the wire deadline.
+#[cfg(feature = "host-routing")]
+pub(crate) async fn authenticate_native_client(
+    stream: ClientConnection,
+    permit: ConnectionPermit,
+    attempt: crate::owner_auth::NativeOwnerAttempt,
+    role: StreamRole,
+    cancel: CancellationToken,
+) -> Result<(ClientConnection, ConnectionPermit), Error> {
+    let guard = attempt.publication_guard();
+    authenticate_client_using_guard(
+        stream,
+        permit,
+        role,
+        cancel,
+        move |stream, challenge| stream.prove_native_attempt(attempt, challenge),
+        move || guard.check(),
+    )
     .await
 }
 
@@ -91,6 +222,21 @@ pub async fn authenticate_headless_client(
 }
 
 async fn authenticate_client_using(
+    stream: ClientConnection,
+    permit: ConnectionPermit,
+    role: StreamRole,
+    cancel: CancellationToken,
+    prove: impl FnOnce(
+            &ClientConnection,
+            &ChannelOwnerChallenge,
+        ) -> Result<ChannelOwnerProof, OwnerKeyError>
+        + Send
+        + 'static,
+) -> Result<(ClientConnection, ConnectionPermit), Error> {
+    authenticate_client_using_guard(stream, permit, role, cancel, prove, || Ok(())).await
+}
+
+async fn authenticate_client_using_guard(
     mut stream: ClientConnection,
     permit: ConnectionPermit,
     role: StreamRole,
@@ -101,6 +247,7 @@ async fn authenticate_client_using(
         ) -> Result<ChannelOwnerProof, OwnerKeyError>
         + Send
         + 'static,
+    may_publish: impl Fn() -> Result<(), OwnerKeyError>,
 ) -> Result<(ClientConnection, ConnectionPermit), Error> {
     let permit = Arc::new(permit);
     let work = async {
@@ -119,6 +266,12 @@ async fn authenticate_client_using(
         })
         .await
         .map_err(|_| Error::Closed)??;
+        // A completed blocking proof may have waited in the executor queue.
+        // Check its original authority immediately before proof publication.
+        may_publish().map_err(|_| ContractError::Denied)?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         write_frame(
             &mut stream,
             permit.budgets(),
@@ -153,9 +306,11 @@ async fn authenticate_client_using(
 impl Validate for Authentication {
     fn validate(&self) -> Result<(), ContractError> {
         match self {
+            Self::OrdinaryChallengeV1 { challenge } => challenge.validate(),
+            Self::OrdinaryProofV1 { proof } => proof.validate(),
             Self::Challenge { challenge } => challenge.validate(),
             Self::Proof { proof } => proof.validate(),
-            Self::Accepted {} | Self::Denied {} => Ok(()),
+            Self::Accepted {} | Self::Denied {} | Self::OrdinaryRefreshRequiredV1 {} => Ok(()),
             Self::Refused {
                 reason: festerm_host_protocol::Refusal::Busy,
             } => Ok(()),
@@ -172,12 +327,34 @@ fn with_authentication_policy<T, R>(
     cancel: &CancellationToken,
     work: impl FnOnce(T, &crate::owner_auth::OwnerVerifier) -> R,
 ) -> Result<R, Box<(T, Error)>> {
+    with_policy_view(
+        source,
+        state,
+        host_control::AuthorityKind::EnrolledOwner,
+        deadline,
+        cancel,
+        |state, view| match view.owner() {
+            Ok(verifier) => Ok(work(state, verifier)),
+            Err(error) => Err(Box::new((state, error.into()))),
+        },
+    )
+}
+
+#[cfg(feature = "relay")]
+fn with_policy_view<T, R>(
+    source: &impl ProtectedPolicySource,
+    state: T,
+    kind: host_control::AuthorityKind,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+    work: impl FnOnce(T, host_control::PolicyView<'_>) -> Result<R, Box<(T, Error)>>,
+) -> Result<R, Box<(T, Error)>> {
     loop {
         if cancel.is_cancelled() {
             return Err(Box::new((state, Error::Cancelled)));
         }
-        match source.current_policy() {
-            Ok(current) => return Ok(work(state, current.verifier())),
+        match source.current_policy_for(kind) {
+            Ok(current) => return work(state, current.view()),
             Err(ContractError::Busy) => {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining <= AUTH_REFUSAL_RESERVE {
@@ -191,6 +368,59 @@ fn with_authentication_policy<T, R>(
                 std::thread::sleep(Duration::from_millis(10).min(remaining - AUTH_REFUSAL_RESERVE));
             }
             Err(error) => return Err(Box::new((state, error.into()))),
+        }
+    }
+}
+
+#[cfg(feature = "relay")]
+async fn ordinary_policy_phase<A: ProtectedPolicySource, R: Send + 'static>(
+    source: Arc<A>,
+    permit: Arc<ConnectionPermit>,
+    stream: HostStream,
+    deadline: tokio::time::Instant,
+    cancel: CancellationToken,
+    work: impl FnOnce(&HostStream, &crate::ordinary_auth::OrdinaryPolicy) -> Result<R, Error>
+        + Send
+        + 'static,
+) -> Result<(HostStream, R), Error> {
+    let charge = permit.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let _charge = charge;
+        with_policy_view(
+            source.as_ref(),
+            stream,
+            host_control::AuthorityKind::Ordinary,
+            deadline,
+            &cancel,
+            |stream, view| {
+                let host_control::PolicyView::Ordinary(policy) = view else {
+                    return Err(Box::new((stream, ContractError::Denied.into())));
+                };
+                match work(&stream, policy) {
+                    Ok(result) => Ok((stream, result)),
+                    Err(error) => Err(Box::new((stream, error))),
+                }
+            },
+        )
+    })
+    .await
+    .map_err(|_| Error::Closed)?;
+    match result {
+        Ok(value) => Ok(value),
+        Err(failure) => {
+            let (mut stream, error) = *failure;
+            let response = if matches!(error, Error::Refused(festerm_host_protocol::Refusal::Busy))
+            {
+                Authentication::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy,
+                }
+            } else if matches!(error, Error::Contract(ContractError::Stale)) {
+                Authentication::OrdinaryRefreshRequiredV1 {}
+            } else {
+                Authentication::Denied {}
+            };
+            let _ = write_frame(&mut stream, permit.budgets(), &response).await;
+            Err(error)
         }
     }
 }
@@ -289,18 +519,24 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
             _ = shutdown.cancelled() => return Err(Error::Cancelled),
             result = tokio::time::timeout_at(
                 deadline,
-                self.authenticate(stream, permit.clone(), deadline, shutdown.clone()),
+                self.authenticate_any(stream, permit.clone(), deadline, shutdown.clone()),
             ) =>
                 result.map_err(|_| Error::Deadline)??,
         };
-        let (mut stream, owner, guard) = authenticated.into_parts();
+        let (mut stream, owner, guard, ordinary_role) = authenticated;
         // Role is selected only on this proven encrypted channel. A single
         // byte avoids a peer-controlled pre-dispatch queue/allocation.
-        let role = tokio::select! {
-            biased;
-            _ = shutdown.cancelled() => return Err(Error::Cancelled),
-            result = tokio::time::timeout(AUTH_DEADLINE, stream.read_u8()) =>
-                result.map_err(|_| Error::Deadline)??,
+        let role = if let Some(role) = ordinary_role {
+            match role {
+                StreamRole::Control => 0,
+                StreamRole::Terminal => 1,
+            }
+        } else {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return Err(Error::Cancelled),
+                result = tokio::time::timeout(AUTH_DEADLINE, stream.read_u8()) => result.map_err(|_|Error::Deadline)??,
+            }
         };
         let permit = Arc::try_unwrap(permit).map_err(|_| Error::Closed)?;
         match role {
@@ -330,6 +566,166 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
             }
             _ => Err(ContractError::Malformed.into()),
         }
+    }
+
+    async fn authenticate_any(
+        &self,
+        stream: HostStream,
+        permit: Arc<ConnectionPermit>,
+        deadline: tokio::time::Instant,
+        cancel: CancellationToken,
+    ) -> Result<
+        (
+            HostStream,
+            host_control::ConnectionAuthority,
+            crate::owner_auth::ConnectionGuard,
+            Option<StreamRole>,
+        ),
+        Error,
+    > {
+        if stream.requested_authorization() != crate::relay_host::RequestedAuthorization::OrdinaryV1
+        {
+            let (stream, owner, guard) = self
+                .authenticate(stream, permit, deadline, cancel)
+                .await?
+                .into_parts();
+            return Ok((stream, owner.into(), guard, None));
+        }
+        self.authenticate_ordinary(stream, permit, deadline, cancel)
+            .await
+    }
+
+    async fn authenticate_ordinary(
+        &self,
+        stream: HostStream,
+        permit: Arc<ConnectionPermit>,
+        deadline: tokio::time::Instant,
+        cancel: CancellationToken,
+    ) -> Result<
+        (
+            HostStream,
+            host_control::ConnectionAuthority,
+            crate::owner_auth::ConnectionGuard,
+            Option<StreamRole>,
+        ),
+        Error,
+    > {
+        use crate::ordinary_auth::{OrdinaryCapability, PendingOrdinaryChallenge};
+        // A route is supplied only by the production provider relay. Encryption
+        // without that admission is insufficient, including local test streams.
+        let route = stream.ordinary_route().cloned();
+        let (mut stream, route) = ordinary_policy_phase(
+            self.policy.clone(),
+            permit.clone(),
+            stream,
+            deadline,
+            cancel.clone(),
+            move |stream, policy| {
+                stream
+                    .require_owner_channel_binding()
+                    .map_err(|_| ContractError::Denied)?;
+                let route = route.ok_or(ContractError::Denied)?;
+                policy.validate()?;
+                if policy.host_info.route != route {
+                    return Err(ContractError::Denied.into());
+                }
+                Ok(route)
+            },
+        )
+        .await?;
+        let observed = tokio::time::timeout_at(
+            deadline.min(tokio::time::Instant::now() + Duration::from_secs(10)),
+            self.policy.observe_ordinary(&route, &cancel),
+        )
+        .await;
+        if !matches!(observed, Ok(Ok(()))) {
+            let response = if matches!(observed, Ok(Err(ContractError::Stale))) {
+                Authentication::OrdinaryRefreshRequiredV1 {}
+            } else {
+                Authentication::Denied {}
+            };
+            let _ = write_frame(&mut stream, permit.budgets(), &response).await;
+            return Err(match observed {
+                Err(_) => Error::Deadline,
+                Ok(Err(error)) => error.into(),
+                _ => unreachable!(),
+            });
+        }
+        let (mut stream, pending) = ordinary_policy_phase(
+            self.policy.clone(),
+            permit.clone(),
+            stream,
+            deadline,
+            cancel.clone(),
+            move |stream, policy| {
+                policy.validate()?;
+                if policy.host_info.route != route {
+                    return Err(ContractError::Denied.into());
+                }
+                Ok(PendingOrdinaryChallenge::new(
+                    policy.host_info.clone(),
+                    stream
+                        .owner_channel_binding()
+                        .map_err(|_| ContractError::Denied)?,
+                    deadline.into_std(),
+                )?)
+            },
+        )
+        .await?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(Error::Deadline);
+        }
+        write_frame(
+            &mut stream,
+            permit.budgets(),
+            &Authentication::OrdinaryChallengeV1 {
+                challenge: pending.challenge().clone(),
+            },
+        )
+        .await?;
+        let frame = read_frame(&mut stream, permit.budgets()).await?;
+        let Authentication::OrdinaryProofV1 { proof } = frame.decode()? else {
+            return Err(ContractError::Denied.into());
+        };
+        drop(frame);
+        let (mut stream, (capability, guard, role)) = ordinary_policy_phase(
+            self.policy.clone(),
+            permit.clone(),
+            stream,
+            deadline,
+            cancel.clone(),
+            move |stream, policy| {
+                policy.validate()?;
+                let role = proof.role;
+                let verified = pending.verify(
+                    &proof,
+                    &policy.host_info,
+                    stream
+                        .owner_channel_binding()
+                        .map_err(|_| ContractError::Denied)?,
+                    &policy.denied_keys,
+                )?;
+                let (capability, guard) = OrdinaryCapability::mint(verified, policy)?;
+                Ok((capability, guard, role))
+            },
+        )
+        .await?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(Error::Deadline);
+        }
+        write_frame(&mut stream, permit.budgets(), &Authentication::Accepted {}).await?;
+        Ok((
+            stream,
+            host_control::ConnectionAuthority::Ordinary(capability),
+            guard,
+            Some(role),
+        ))
     }
 
     async fn authenticate(
@@ -432,6 +828,8 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
                 Authentication::Refused {
                     reason: festerm_host_protocol::Refusal::Busy,
                 }
+            } else if matches!(error, Error::Contract(ContractError::Stale)) {
+                Authentication::OrdinaryRefreshRequiredV1 {}
             } else {
                 Authentication::Denied {}
             };

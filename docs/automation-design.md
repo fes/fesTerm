@@ -1235,13 +1235,17 @@ private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
-A native Windows feasibility probe uses an inherited stdout byte pipe and
+A mandatory Windows contract test uses an inherited stdout byte pipe and
 job-supervised subprocesses to examine `PIPE_NOWAIT` writes, reader closure
 and mode changes through a duplicated writer. It waits for the test helper to
 reach its setup point and drains observed test-harness output before the initial
-mode change. An initial refusal still fails the probe even if a diagnostic
-retry succeeds, and a positive partial write must be observed and physically
-accounted for. A previous native run, before this startup synchronization,
+mode change. An initial refusal still fails even if a diagnostic retry succeeds.
+Every returned count is physically accounted for, including full, zero and short
+writes; the runtime is not required to exhibit a positive partial write.
+The separate, explicitly opted-in `windows_stdout_positive_partial_write_feasibility`
+experiment retains that additional observation requirement and fails when none
+occurs. Neither test enables production stdout. A previous native run, before
+this startup synchronization,
 reported `ERROR_PIPE_BUSY`, succeeded on retry after draining 16 bytes, and
 observed full or zero writes but no positive partial. In the revised
 [native run](https://github.com/fes/fesTerm/actions/runs/42516446589), the
@@ -1253,6 +1257,13 @@ observed and accounted for one byte from a 131,073-byte write with a pending
 one-byte reader; [five repeats](https://github.com/fes/fesTerm/actions/runs/42525773510)
 also passed that case. The stalled-reader cases did not establish a positive
 partial write, and production stdout remains unqualified.
+
+A later [contract run](https://github.com/fes/fesTerm/actions/runs/44023524091/job/133838310690)
+accounted for all bytes and passed the boundedness, mode and EOF checks, but
+observed only full or zero writes. Its positive-partial requirement failed.
+Windows documents [short nonblocking pipe writes](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile#pipes),
+not that this experiment must receive a positive count on every run. A pending
+thread I/O observation does not establish a particular write count.
 
 The probe applies only to its controlled pipe and tested environment. It does
 not establish exclusive mode ownership, caller liveness, or a physical

@@ -10,6 +10,9 @@ pub const MAX_CONTROL_OPERATIONS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = 4;
 pub const MAX_QUEUED_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BYTES_PER_CLIENT: usize = 512 * 1024;
+/// Initial recovery transactions, separate from live queued bytes.
+pub const MAX_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_SNAPSHOTS: usize = 1;
 pub const MAX_IDEMPOTENCY_RECORDS: usize = 128;
 pub const MAX_CONTROL_BYTES: usize = MAX_CONTROL_OPERATIONS * CONTROL_FRAME_BYTES;
 
@@ -22,6 +25,7 @@ pub enum Resource {
     Control,
     Attachment,
     TerminalBytes,
+    Snapshot,
     ControlBytes,
     IdempotencyRecord,
 }
@@ -37,15 +41,16 @@ impl Resource {
             Self::TerminalBytes => (5, MAX_QUEUED_BYTES),
             Self::ControlBytes => (6, MAX_CONTROL_BYTES),
             Self::IdempotencyRecord => (7, MAX_IDEMPOTENCY_RECORDS),
+            Self::Snapshot => (8, MAX_SNAPSHOTS),
         }
     }
 }
 
 #[derive(Clone, Default)]
-pub struct Budgets(Arc<Mutex<[usize; 8]>>);
+pub struct Budgets(Arc<Mutex<[usize; 9]>>);
 
 pub struct BudgetPermit {
-    state: Arc<Mutex<[usize; 8]>>,
+    state: Arc<Mutex<[usize; 9]>>,
     slot: usize,
     amount: usize,
 }
@@ -60,6 +65,13 @@ pub struct ClientBytesPermit {
     bytes: Arc<Mutex<usize>>,
     amount: usize,
     _global: BudgetPermit,
+    _client: Arc<BudgetPermit>,
+}
+
+/// Retains the admitted client and the one shared recovery transaction slot.
+/// This is a codec/work bound, not a process RSS measurement or authority.
+pub struct SnapshotPermit {
+    _snapshot: BudgetPermit,
     _client: Arc<BudgetPermit>,
 }
 
@@ -141,6 +153,13 @@ impl Budgets {
 }
 
 impl ClientBudget {
+    pub fn reserve_snapshot(&self) -> Result<SnapshotPermit, ContractError> {
+        Ok(SnapshotPermit {
+            _snapshot: self.budgets.reserve(Resource::Snapshot, 1)?,
+            _client: self.client.clone(),
+        })
+    }
+
     pub fn reserve_terminal_bytes(
         &self,
         amount: usize,
@@ -227,5 +246,52 @@ impl AdmissionFence {
             return Err(ContractError::Malformed);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn snapshot_slot_is_shared_and_independent_of_live_and_control_capacity() {
+        let budgets = Budgets::default();
+        let first = budgets.admit_client().unwrap();
+        let second = budgets.clone().admit_client().unwrap();
+        let snapshot = first.reserve_snapshot().unwrap();
+        assert!(matches!(
+            second.reserve_snapshot(),
+            Err(ContractError::Busy)
+        ));
+        let live = first.reserve_terminal_bytes(MAX_BYTES_PER_CLIENT).unwrap();
+        assert!(matches!(
+            first.reserve_terminal_bytes(1),
+            Err(ContractError::Busy)
+        ));
+        let control = budgets
+            .reserve(Resource::ControlBytes, MAX_CONTROL_BYTES)
+            .unwrap();
+        drop(snapshot);
+        assert!(second.reserve_snapshot().is_ok());
+        drop((live, control));
+    }
+    #[test]
+    fn snapshot_retains_client_admission_until_last_work_owner_drops() {
+        let budgets = Budgets::default();
+        let first = budgets.admit_client().unwrap();
+        let snapshot = Arc::new(first.reserve_snapshot().unwrap());
+        let late_reader = snapshot.clone();
+        drop(first);
+        let others: Vec<_> = (1..MAX_CLIENTS)
+            .map(|_| budgets.admit_client().unwrap())
+            .collect();
+        drop(snapshot);
+        assert!(matches!(budgets.admit_client(), Err(ContractError::Busy)));
+        assert!(matches!(
+            others[0].reserve_snapshot(),
+            Err(ContractError::Busy)
+        ));
+        drop(late_reader);
+        assert!(budgets.admit_client().is_ok());
+        assert!(others[0].reserve_snapshot().is_ok());
     }
 }

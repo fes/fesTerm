@@ -18,6 +18,35 @@ fn execute(request: Request) -> Result<Report, Failure> {
     Native.execute(request, &CancellationToken::new(), mpsc::sync_channel(1).0)
 }
 
+#[test]
+fn desktop_remote_access_native_refresh_never_promotes_legacy_or_enrolls_a_device() {
+    for ordinary_access in [OrdinaryAccess::OwnerOnly, OrdinaryAccess::ProviderOwner] {
+        let root = storage::private_test_directory();
+        let path = root.path().join("desktop");
+        let settings = Settings {
+            ordinary_access,
+            ..Draft::default().settings()
+        };
+        let store = Store::create(&path, Origin::Desktop, settings).unwrap();
+        let before = store.snapshot().unwrap();
+        let record = path.join("host-lifecycle.json");
+        let original = std::fs::read(&record).unwrap();
+        if ordinary_access == OrdinaryAccess::OwnerOnly {
+            assert!(!std::str::from_utf8(&original)
+                .unwrap()
+                .contains("ordinary_access"));
+        }
+        let report = execute(request(&path, Operation::Refresh, Scope::Unobserved)).unwrap();
+        assert_eq!(report.scope, Scope::Present(before.clone().into()));
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(std::fs::read(record).unwrap(), original);
+        assert!(!report.owner_approved);
+        assert!(report.owner_binding.is_none());
+        assert!(!path.join("owner-enrollment.json").exists());
+        assert!(!path.join("native-service.json").exists());
+    }
+}
+
 fn sharing_request(root: &Path, step: ShareStep, expected: Scope) -> Request {
     let mut work = request(root, Operation::Share(step), expected);
     let target = ShareTarget {
@@ -486,4 +515,124 @@ fn desktop_remote_access_enable_requires_setup_phase_before_acquisition_or_publi
     assert!(matches!(result, Err(Failure::Reconciliation)));
     assert_eq!(store.snapshot().unwrap(), snapshot);
     assert!(!state.join("signed-release-cache").exists());
+}
+
+#[test]
+fn desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification() {
+    use festerm_host_setup::diagnostics::{attach, Category, Recovery, Stage};
+    let expected = HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::Response,
+        recovery: Recovery::Reconcile,
+    };
+    let error = attach(
+        io::Error::other("host.cloud_response_refused private-token-path"),
+        expected,
+    );
+    let runtime = runtime().unwrap();
+    let mut diagnostic = None;
+    let result: Result<(), Failure> = run_async(
+        &runtime,
+        &CancellationToken::new(),
+        &mut diagnostic,
+        async { Err(error) },
+    );
+    assert_eq!(result, Err(Failure::CloudUncertain));
+    assert_eq!(diagnostic, Some(expected));
+    assert!(!format!("{diagnostic:?}").contains("private-token-path"));
+}
+
+#[test]
+fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_replacement() {
+    use festerm_host_setup::diagnostics::{Category, Recovery, Stage};
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    store.request_enable(&Draft::default().settings()).unwrap();
+    let owned = store.snapshot().unwrap();
+    let work = request(&path, Operation::Enable, Scope::Absent);
+    let diagnostic = Some(HostSetupDiagnostic {
+        stage: Stage::Creation,
+        http_status: Some(400),
+        category: Category::ProviderRejected,
+        recovery: Recovery::Reconcile,
+    });
+    let scope = Scope::Present(owned.clone().into());
+    assert!(scoped_diagnostic(diagnostic, &work, &scope).is_none());
+    *work.owned.lock().unwrap() = Some(owned.clone());
+    assert_eq!(scoped_diagnostic(diagnostic, &work, &scope), diagnostic);
+    let mut changed = owned.clone();
+    changed.epoch += 1;
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    let mut changed = owned.clone();
+    changed.installation = uuid::Uuid::new_v4().to_string();
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    let mut changed = owned;
+    changed.origin = Origin::Headless;
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
+    assert!(scoped_diagnostic(diagnostic, &work, &Scope::Absent).is_none());
+}
+
+#[test]
+fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
+    let root = storage::private_test_directory();
+    let store = Store::create(
+        &root.path().join("desktop"),
+        Origin::Desktop,
+        Draft::default().settings(),
+    )
+    .unwrap();
+    // Disabled projection must not be blocked or relabelled by obsolete run history.
+    std::fs::write(root.path().join("desktop/host-runtime.json"), b"{").unwrap();
+    let disabled = report(Some(&store)).unwrap();
+    assert!(disabled.last_run.is_none());
+    assert!(matches!(disabled.scope, Scope::Present(ref state) if state.phase == Phase::Disabled));
+    let mut snapshot = store.snapshot().unwrap();
+    snapshot.phase = Phase::Provisioned;
+    let record = |installation: &str, epoch| {
+        serde_json::from_value::<controller::RunRecord>(serde_json::json!({
+            "version": 1, "installation": installation, "epoch": epoch,
+            "run_id": "11111111-1111-4111-8111-111111111111", "state": "listening", "failure": null
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch))
+        ),
+        Some(controller::RunState::Listening)
+    );
+    assert_eq!(current_run_state(&snapshot, None), None);
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record("another-installation", snapshot.epoch))
+        ),
+        None
+    );
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch + 1))
+        ),
+        None
+    );
+    snapshot.epoch += 1;
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch - 1))
+        ),
+        None
+    );
+    snapshot.phase = Phase::Disabled;
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch))
+        ),
+        None
+    );
 }

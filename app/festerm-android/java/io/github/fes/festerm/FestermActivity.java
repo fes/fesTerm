@@ -86,6 +86,7 @@ public final class FestermActivity extends NativeActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        updateImeTarget(0);
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(true);
@@ -338,6 +339,25 @@ public final class FestermActivity extends NativeActivity {
         else nativeHinge(hinge.left / width, hinge.right / width);
     }
 
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        // Keep ordinary hardware/ADB text in the same ordered queue as IME commits.
+        // Modified chords and system/dead keys retain NativeActivity's handling.
+        if (input != null && input.dispatchPlainKey(event)) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void updateImeTarget(int mode) {
+        // Custom/hidden keyboard modes must not become the system IME target.
+        // A one-shot hide after restartInput does not prevent a later IME show.
+        int flag = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        boolean exclude = mode == 0 || mode == 2 || mode == 4;
+        boolean excluded = (getWindow().getAttributes().flags & flag) != 0;
+        if (exclude != excluded) {
+            if (exclude) getWindow().addFlags(flag);
+            else getWindow().clearFlags(flag);
+        }
+    }
+
     public void keyboardMode(int mode) {
         runOnUiThread(() -> {
             if (destroyed || (!resumed && mode != 0) || input.keyboardMode == mode) return;
@@ -496,6 +516,10 @@ public final class FestermActivity extends NativeActivity {
         runOnUiThread(() -> {
             if (destroyed) return;
             ready = true;
+            if (covered) {
+                input.clearKeyState();
+                input.hideSystemIme();
+            }
             if (enabled && (hide || covered)) {
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
             } else {
@@ -987,6 +1011,103 @@ public final class FestermActivity extends NativeActivity {
         private long sequence;
         private boolean secure, multiline, pending;
         private InputConnection connection;
+        private final Set<Integer> consumedKeys = new HashSet<>();
+        private boolean nativeComposition;
+        private boolean connectionComposition;
+
+        private void clearKeyState() {
+            consumedKeys.clear();
+            nativeComposition = false;
+            connectionComposition = false;
+        }
+
+        private boolean ownsInput(InputConnection owner, int mode, long id) {
+            return !destroyed && ready && resumed && !(protect && cover)
+                && hasFocus() && hasWindowFocus() && connection == owner
+                && keyboardMode != 0 && keyboardMode == mode
+                && (!editsField(mode) || field == id);
+        }
+
+        private boolean plainKey(KeyEvent event) {
+            if (nativeComposition) return false;
+            if ((event.getMetaState() & (KeyEvent.META_CTRL_MASK | KeyEvent.META_ALT_MASK
+                    | KeyEvent.META_META_MASK | KeyEvent.META_SHIFT_MASK
+                    | KeyEvent.META_SYM_ON | KeyEvent.META_FUNCTION_ON)) != 0) return false;
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DEL: case KeyEvent.KEYCODE_ENTER:
+                case KeyEvent.KEYCODE_TAB: case KeyEvent.KEYCODE_ESCAPE:
+                case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
+                case KeyEvent.KEYCODE_FORWARD_DEL: case KeyEvent.KEYCODE_MOVE_HOME:
+                case KeyEvent.KEYCODE_MOVE_END: return true;
+                default:
+                    int code = event.getUnicodeChar();
+                    return code >= 32 && Character.isValidCodePoint(code)
+                        && (code & KeyCharacterMap.COMBINING_ACCENT) == 0
+                        && !Character.isISOControl(code);
+            }
+        }
+
+        private boolean dispatchPlainKey(KeyEvent event) {
+            if (connection == null || !ownsInput(connection, keyboardMode, field)) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                return consumedKeys.remove(event.getKeyCode());
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                int code = event.getUnicodeChar();
+                if ((code & KeyCharacterMap.COMBINING_ACCENT) != 0) {
+                    nativeComposition = true;
+                    return false;
+                }
+                // NDK owns the accent and its following character as one composition.
+                if (nativeComposition) {
+                    if (code != 0) { nativeComposition = false; connectionComposition = false; }
+                    return false;
+                }
+            }
+            return event.getAction() == KeyEvent.ACTION_DOWN && plainKey(event)
+                && connection.sendKeyEvent(event);
+        }
+
+        private boolean plainKey(InputConnection owner, int mode, long id, KeyEvent event) {
+            if (!ownsInput(owner, mode, id)) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                return consumedKeys.remove(event.getKeyCode());
+            }
+            if (event.getAction() != KeyEvent.ACTION_DOWN || !plainKey(event)) return false;
+            boolean accepted;
+            if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
+                accepted = owner.deleteSurroundingTextInCodePoints(1, 0);
+            } else if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) {
+                accepted = owner.commitText("\n", 1);
+            } else if (event.getKeyCode() == KeyEvent.KEYCODE_TAB
+                    || event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_LEFT
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT
+                    || event.getKeyCode() == KeyEvent.KEYCODE_FORWARD_DEL
+                    || event.getKeyCode() == KeyEvent.KEYCODE_MOVE_HOME
+                    || event.getKeyCode() == KeyEvent.KEYCODE_MOVE_END) {
+                emit(6, "", event.getKeyCode(), event.getKeyCode());
+                accepted = true;
+            } else {
+                accepted = owner.commitText(new String(Character.toChars(event.getUnicodeChar())), 1);
+            }
+            if (accepted) consumedKeys.add(event.getKeyCode());
+            return accepted;
+        }
+
+        @Override protected void onFocusChanged(boolean focused, int direction, Rect previous) {
+            if (!focused) clearKeyState();
+            super.onFocusChanged(focused, direction, previous);
+        }
+
+        @Override public void onWindowFocusChanged(boolean focused) {
+            if (!focused) clearKeyState();
+            super.onWindowFocusChanged(focused);
+            if (focused) showSystemIme();
+        }
 
         /** Modes 3 and 4 edit the published form field; 4 has the app-owned keyboard on screen. */
         private boolean editsField(int mode) { return mode == 3 || mode == 4; }
@@ -1014,24 +1135,65 @@ public final class FestermActivity extends NativeActivity {
             field = 0;
         }
 
+        private boolean canShowSystemIme(int ownerMode, long ownerField) {
+            return (ownerMode == 1 || ownerMode == 3) && keyboardMode == ownerMode
+                && (!editsField(ownerMode) || field == ownerField)
+                && !destroyed && ready && resumed && !cover
+                && hasFocus() && hasWindowFocus();
+        }
+
+        private void showSystemIme() {
+            int ownerMode = keyboardMode;
+            long ownerField = field;
+            if (!canShowSystemIme(ownerMode, ownerField)) return;
+            InputMethodManager manager = getSystemService(InputMethodManager.class);
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController controller = getWindowInsetsController();
+                if (controller != null) {
+                    // Match AndroidX's focus synchronization on API 30–32.
+                    if (Build.VERSION.SDK_INT < 33) manager.isActive();
+                    controller.show(WindowInsets.Type.ime());
+                }
+            }
+            // Window/IME eligibility can settle after the mode transition. One
+            // posted request also supplies the API 29 path; stale owners refuse.
+            post(() -> {
+                if (canShowSystemIme(ownerMode, ownerField)) {
+                    manager.showSoftInput(this, 0);
+                }
+            });
+        }
+
+        private void hideSystemIme() {
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController controller = getWindowInsetsController();
+                if (controller != null) controller.hide(WindowInsets.Type.ime());
+            }
+            getSystemService(InputMethodManager.class)
+                .hideSoftInputFromWindow(getWindowToken(), 0);
+        }
+
         void mode(int mode) {
+            updateImeTarget(mode);
             if (keyboardMode == mode) return;
+            clearKeyState();
+            connection = null;
             keyboardMode = mode;
             InputMethodManager manager = getSystemService(InputMethodManager.class);
             if (mode == 0) {
                 clear();
                 secure = false;
                 multiline = false;
-                manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                hideSystemIme();
                 clearFocus();
             } else {
                 if (!editsField(mode)) { clear(); secure = false; multiline = false; }
                 requestFocus();
                 manager.restartInput(this);
                 if (appOwnedKeyboard(mode)) {
-                    manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                    hideSystemIme();
                 } else {
-                    manager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+                    showSystemIme();
                 }
             }
         }
@@ -1039,6 +1201,7 @@ public final class FestermActivity extends NativeActivity {
         void document(long id, String value, int start, int end, boolean secret, boolean multiple) {
             if (field == id && pending) return;
             boolean restart = field != id || secure != secret || multiline != multiple;
+            if (restart) { clearKeyState(); connection = null; }
             field = id;
             secure = secret;
             multiline = multiple;
@@ -1065,6 +1228,7 @@ public final class FestermActivity extends NativeActivity {
                 | (multiline || terminal ? EditorInfo.IME_ACTION_NONE : EditorInfo.IME_ACTION_NEXT);
             info.initialSelStart = Math.max(0, Selection.getSelectionStart(text));
             info.initialSelEnd = Math.max(0, Selection.getSelectionEnd(text));
+            clearKeyState();
             connection = new BaseInputConnection(this, true) {
                 private boolean composing;
                 private String composition = "";
@@ -1143,16 +1307,19 @@ public final class FestermActivity extends NativeActivity {
                     return super.setSelection(start, end);
                 }
                 @Override public boolean sendKeyEvent(KeyEvent event) {
-                    if (!active()) return false;
-                    if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
-                    if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) emit(2, "", 0, 0);
-                    else if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) emit(1, "\n", 0, 0);
-                    else {
-                        int code = event.getUnicodeChar();
-                        if (code != 0) emit(1, new String(Character.toChars(code)), 0, 0);
-                        else emit(6, "", event.getKeyCode(), event.getKeyCode());
+                    if (!active() || !ownsInput(this, ownerMode, ownerField)) return false;
+                    // BaseInputConnection posts to Activity asynchronously. Fence the
+                    // whole accent sequence at this ingress before posting the first key.
+                    // Only Activity's subsequent character dispatch retires this fence;
+                    // redispatching the accent must not create another ingress sequence.
+                    if (event.getAction() == KeyEvent.ACTION_DOWN
+                            && (event.getUnicodeChar() & KeyCharacterMap.COMBINING_ACCENT) != 0) {
+                        connectionComposition = true;
                     }
-                    return true;
+                    if (connectionComposition) return super.sendKeyEvent(event);
+                    if (plainKey(this, ownerMode, ownerField, event)) return true;
+                    // Do not flatten modified/dead/system keys into unmodified text.
+                    return super.sendKeyEvent(event);
                 }
                 @Override public boolean performEditorAction(int action) {
                     if (!active()) return false;

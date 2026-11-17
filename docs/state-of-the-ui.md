@@ -5,10 +5,16 @@
 
 # State of the UI
 
-**Inventory:** 479 captures; 454 distinct PNG hashes.
+**Inventory:** 483 captures; 458 distinct PNG hashes.
 
 **Captured:** 2026-11-14T01:16:04.456256+00:00 (Darwin/arm64); HEAD `b5442194c601f02e8f7f624495173b8ea3737559`; dirty sources: `True`.<br>
 **Source-tree SHA-256:** `2c76ebbe29e0bcbdcb194c3dcb79bb50feab4d16d781ee73a3b30bb32473d041`
+
+**Captured:** 2026-11-17T21:20:56.414895+00:00 (Darwin/arm64); HEAD `6f0a3f656e40f831cd7c4d288ba2e36ca7b643c1`; dirty sources: `True`.<br>
+**Source-tree SHA-256:** `8ed7c7217aad5513464b7b948bbb4ff0eefc2c4dfd3925d780d564c5399564e0`
+
+**Capture binary:** SHA-256 `c0b7f94fea492d2e7d77dd989d4fee101110be6841860eff338097dfe99fab13`; build HEAD `921f7d85f3007d137f2410d58bb1684770d89003`; dirty build sources: `True`.<br>
+**Widget-source qualification:** exact recorded widget files match `6f0a3f656e40f831cd7c4d288ba2e36ca7b643c1`; capture HEAD is not the binary's build HEAD.
 
 ## How to read this document
 
@@ -2410,7 +2416,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2420,7 +2426,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2430,7 +2436,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2440,7 +2446,7 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 
 Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
 
-**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Session name (editable dropdown)<br>
+**Enter:** Profiles → New Profile → Dev Tunnel → choose host → Existing session selector or Create session if missing<br>
 **Exit:** Selecting an existing session or typing a new name only edits the draft; Cancel/Back discards it. Save is a separate explicit action, never dispatched during capture.<br>
 **Production:** `screens::profiles::show_profiles`, `screens::profiles::host_recipes`
 
@@ -2695,6 +2701,46 @@ Production UI with synthetic, inert fixture state. No network, native vault, ser
 **Production:** `FesTermApp::show_host_browser`, `host_browser::Browser`
 
 ![Selected HOST · temporary lifetime creation consent](images/ui-state/host-temporary-review.png)
+
+### Find & Connect · narrow host session list
+
+Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
+
+**Enter:** New session → Dev Tunnel → selected host → Sessions / New host shell<br>
+**Exit:** Done or Escape closes the browser; issued creation remains the same original for explicit retry.<br>
+**Production:** `FesTermApp::show_host_browser`, `host_browser::Browser`
+
+![Find & Connect · narrow host session list](images/ui-state/host-workspace/host-workspace-narrow.png)
+
+### Find & Connect · host default shell and optional local shortcut
+
+Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
+
+**Enter:** New session → Dev Tunnel → selected host → Sessions / New host shell<br>
+**Exit:** Done or Escape closes the browser; issued creation remains the same original for explicit retry.<br>
+**Production:** `FesTermApp::show_host_browser`, `host_browser::Browser`
+
+![Find & Connect · host default shell and optional local shortcut](images/ui-state/host-workspace/host-workspace-new-shell.png)
+
+### Find & Connect · narrow new shell form
+
+Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
+
+**Enter:** New session → Dev Tunnel → selected host → Sessions / New host shell<br>
+**Exit:** Done or Escape closes the browser; issued creation remains the same original for explicit retry.<br>
+**Production:** `FesTermApp::show_host_browser`, `host_browser::Browser`
+
+![Find & Connect · narrow new shell form](images/ui-state/host-workspace/host-workspace-new-shell-narrow.png)
+
+### Find & Connect · host session table
+
+Production UI with synthetic, inert fixture state. No network, native vault, service, tunnel, remote execution or recording is started. See the route catalog for reachability and native-only limitations.
+
+**Enter:** New session → Dev Tunnel → selected host → Sessions / New host shell<br>
+**Exit:** Done or Escape closes the browser; issued creation remains the same original for explicit retry.<br>
+**Production:** `FesTermApp::show_host_browser`, `host_browser::Browser`
+
+![Find & Connect · host session table](images/ui-state/host-workspace/host-workspace-sessions.png)
 
 ### Profile hosting · explicit GitHub account choice
 

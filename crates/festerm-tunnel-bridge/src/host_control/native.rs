@@ -104,13 +104,23 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         state: &AdmissionState,
         request: &Envelope<Request>,
     ) -> Result<(A::Guard, Capabilities), ControlError> {
-        let guard = self.policy.current_policy().map_err(control_error)?;
+        let guard = self
+            .policy
+            .current_policy_for(admission.kind())
+            .map_err(control_error)?;
+        let view = guard.view();
         let projected = state
             .issuance_epoch
-            .map(|epoch| guard.verifier().with_issuance_epoch(epoch))
+            .map(|epoch| view.project(epoch))
             .transpose()
             .map_err(control_error)?;
-        let verifier = projected.as_ref().unwrap_or(guard.verifier());
+        let policy = projected.as_ref().unwrap_or(view.session());
+        if admission.kind() == super::AuthorityKind::Ordinary
+            && state.effect == Effect::Create
+            && !policy.capabilities.creation_allowed
+        {
+            return Err(ControlError::Denied);
+        }
         if matches!(
             request.body,
             Request::Ensure { .. } | Request::Create { .. } | Request::EnsureProfile { .. }
@@ -131,8 +141,8 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                 ..
             }) = &state.grant
             {
-                if !guard.verifier().policy().capabilities.create
-                    || !guard.verifier().policy().capabilities.creation_allowed
+                if !guard.view().session().capabilities.create
+                    || !guard.view().session().capabilities.creation_allowed
                 {
                     return Err(ControlError::Denied);
                 }
@@ -159,7 +169,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                 // not an absence reply or a grant reconstructed from config.
                 // Ensure may resume without creation permission, but a virgin
                 // identity always needs the current independent execution gate.
-                if !guard.verifier().policy().capabilities.creation_allowed {
+                if !guard.view().session().capabilities.creation_allowed {
                     return Err(ControlError::Denied);
                 }
                 provisional = Some(SessionGrant {
@@ -180,8 +190,9 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
             }
         }
         admission
-            .authorize_current(
-                verifier,
+            .authorize_projected(
+                view,
+                policy,
                 &effective_request,
                 state.grant.as_ref().or(provisional.as_ref()),
                 state
@@ -189,7 +200,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                     .unwrap_or(Epoch::new(1).map_err(control_error)?),
             )
             .map_err(control_error)?;
-        let capabilities = verifier.capabilities();
+        let capabilities = policy.capabilities;
         Ok((guard, capabilities))
     }
 
@@ -207,11 +218,11 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
             .map_err(refusal)?;
         let guard = self
             .policy
-            .current_policy()
+            .current_policy_for(admission.kind())
             .map_err(|error| refusal(control_error(error)))?;
         let fence = admission
             .authorize_current(
-                guard.verifier(),
+                guard.view(),
                 request,
                 None,
                 Epoch::new(1).map_err(|_| Refusal::Unknown)?,
@@ -336,7 +347,7 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                     .sessions
                     .inspect(admission.principal(), logical, |state| {
                         let guard = self.admit(admission, state, request)?;
-                        authorization_epoch = Some(guard.verifier().policy().grant_epoch);
+                        authorization_epoch = Some(guard.view().session().grant_epoch);
                         Ok(guard)
                     })
                     .map_err(refusal)?;

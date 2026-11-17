@@ -1,8 +1,9 @@
 //! Native daemon terminal composition; never installs a listener.
 use super::*;
+use crate::host_control::ConnectionAuthority;
 use crate::{
     host_control::{OperationAdmission, PolicyGuard, ProtectedPolicySource},
-    owner_auth::{OwnerConnectionGuard, VerifiedOwner},
+    owner_auth::OwnerConnectionGuard,
 };
 use festerm_host_protocol::{
     AdmissionFence, Capabilities, ContractError, DetachKind, Epoch, Refusal,
@@ -47,13 +48,56 @@ impl SessionEventNotifier for Wake {
     }
 }
 
+struct RecoveredSnapshot {
+    terminal: Terminal,
+    permit: Arc<festerm_host_protocol::SnapshotPermit>,
+}
+struct PreparedSnapshot {
+    bytes: Vec<u8>,
+    size: TerminalSize,
+    _permit: Arc<festerm_host_protocol::SnapshotPermit>,
+}
+impl RecoveredSnapshot {
+    fn prepare(self) -> Result<PreparedSnapshot, Error> {
+        let size = TerminalSize::with_pixels(
+            self.terminal.dimensions().columns() as u16,
+            self.terminal.dimensions().rows() as u16,
+            0,
+            0,
+        )
+        .map_err(|_| Error::Refused(Refusal::Incompatible))?;
+        if self.terminal.scrollback_stats().limit_bytes() > HOST_DECLARED_HISTORY_LIMIT {
+            return Err(Error::Refused(Refusal::Incompatible));
+        }
+        let bytes = encode_snapshot_bounded(&self.terminal, HOST_SNAPSHOT_LIMIT)
+            .map_err(|_| Error::Refused(Refusal::Incompatible))?;
+        drop(self.terminal);
+        Ok(PreparedSnapshot {
+            bytes,
+            size,
+            _permit: self.permit,
+        })
+    }
+}
+
+fn recovery_failure(lifecycle: SessionLifecycle) -> Option<Error> {
+    match lifecycle {
+        SessionLifecycle::Failed(_)
+        | SessionLifecycle::Disconnected(_)
+        | SessionLifecycle::Stopped
+        | SessionLifecycle::Exited(_) => Some(Error::Refused(Refusal::Incompatible)),
+        _ => None,
+    }
+}
+
 struct Worker<A: ProtectedPolicySource> {
     backend: Arc<NativeTerminal<A>>,
     admission: OperationAdmission,
-    owner: Arc<VerifiedOwner>,
+    owner: Arc<ConnectionAuthority>,
     request: Envelope<Request>,
     target: HostTarget,
     pending: PendingAttachment,
+    snapshot_permit: Option<Arc<festerm_host_protocol::SnapshotPermit>>,
     fence: Mutex<Option<AdmissionFence>>,
     adopted: bool,
     intentional: bool,
@@ -76,6 +120,61 @@ fn refusal(error: ControlError) -> Refusal {
         ControlError::CommittedButNotPublished => Refusal::OutcomeUncertain,
         ControlError::RecipeConflict | ControlError::OperationConflict => Refusal::RecipeConflict,
         _ => Refusal::Unknown,
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum BusyBoundary {
+    CapabilitiesPolicy,
+    CapabilitiesReplyBudget,
+    AttachPolicy,
+    AttachBudget,
+    BackendAttach,
+}
+
+#[cfg(test)]
+impl BusyBoundary {
+    fn message(self, reason: Refusal) -> Option<&'static str> {
+        if reason != Refusal::Busy {
+            return None;
+        }
+        Some(match self {
+            Self::CapabilitiesPolicy => "host terminal busy boundary=capabilities-policy",
+            Self::CapabilitiesReplyBudget => {
+                "host terminal busy boundary=capabilities-reply-budget"
+            }
+            Self::AttachPolicy => "host terminal busy boundary=attach-policy",
+            Self::AttachBudget => "host terminal busy boundary=attach-budget",
+            Self::BackendAttach => "host terminal busy boundary=backend-attach",
+        })
+    }
+
+    fn report(self, reason: Refusal) {
+        if let Some(message) = self.message(reason) {
+            eprintln!("{message}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn terminal_busy_diagnostic_boundaries_are_static_and_do_not_describe_other_refusals() {
+    for (boundary, name) in [
+        (BusyBoundary::CapabilitiesPolicy, "capabilities-policy"),
+        (
+            BusyBoundary::CapabilitiesReplyBudget,
+            "capabilities-reply-budget",
+        ),
+        (BusyBoundary::AttachPolicy, "attach-policy"),
+        (BusyBoundary::AttachBudget, "attach-budget"),
+        (BusyBoundary::BackendAttach, "backend-attach"),
+    ] {
+        assert_eq!(
+            boundary.message(Refusal::Busy).unwrap(),
+            format!("host terminal busy boundary={name}")
+        );
+        assert!(boundary.message(Refusal::Denied).is_none());
     }
 }
 
@@ -110,7 +209,11 @@ impl<A: ProtectedPolicySource> Worker<A> {
         other: Option<&Envelope<Request>>,
         cleanup: bool,
     ) -> Result<A::Guard, ControlError> {
-        let guard = self.backend.policy.current_policy().map_err(control)?;
+        let guard = self
+            .backend
+            .policy
+            .current_policy_for(self.owner.kind())
+            .map_err(control)?;
         let cleanup_admission = cleanup.then(|| {
             OperationAdmission::terminal(
                 self.owner.clone(),
@@ -122,7 +225,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
         let admit = cleanup_admission.as_ref().unwrap_or(&self.admission);
         let fresh = admit
             .authorize_current(
-                guard.verifier(),
+                guard.view(),
                 &self.request,
                 state.grant.as_ref(),
                 state.grant_epoch.ok_or(ControlError::Unknown)?,
@@ -137,7 +240,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
         if let Some(request) = other {
             admit
                 .authorize_current(
-                    guard.verifier(),
+                    guard.view(),
                     request,
                     state.grant.as_ref(),
                     state.grant_epoch.ok_or(ControlError::Unknown)?,
@@ -176,6 +279,24 @@ impl<A: ProtectedPolicySource> Worker<A> {
                 }
             },
         )
+    }
+
+    fn recovery(&mut self) -> Result<Option<Result<PreparedSnapshot, Error>>, ControlError> {
+        let (terminal, lifecycle) = self.action(|| {
+            Ok((
+                self.pending.session.take_recovered_terminal_deferred(),
+                self.pending.session.lifecycle(),
+            ))
+        })?;
+        let Some(terminal) = terminal else {
+            return Ok(recovery_failure(lifecycle).map(Err));
+        };
+        let permit = self.snapshot_permit.take().ok_or(ControlError::Storage)?;
+        // CPU work stays on this already-admitted blocking actor, with no
+        // installation/policy/journal lease held over serialization.
+        let prepared = RecoveredSnapshot { terminal, permit }.prepare();
+        self.action(|| Ok(()))?;
+        Ok(Some(prepared))
     }
 
     fn event(&self) -> Result<Option<SessionEvent>, ControlError> {
@@ -243,7 +364,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
                     serde_json::from_slice(&frame.bytes).map_err(|_| ControlError::Invalid)?;
                 match RecoverySyncCommand::try_from(sync).map_err(|_| ControlError::Invalid)? {
                     RecoverySyncCommand::SetScrollbackLimit { limit_bytes }
-                        if limit_bytes <= HOST_SNAPSHOT_LIMIT =>
+                        if limit_bytes <= HOST_SCROLLBACK_SYNC_LIMIT =>
                     {
                         self.pending
                             .session
@@ -450,7 +571,7 @@ fn response_for(request: &Envelope<Request>, body: Response) -> Envelope<Respons
 pub async fn serve_terminal<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource>(
     stream: S,
     permit: ConnectionPermit,
-    owner: VerifiedOwner,
+    owner: impl Into<ConnectionAuthority>,
     guard: OwnerConnectionGuard,
     backend: Arc<NativeTerminal<A>>,
     scheduler: OutputScheduler,
@@ -466,13 +587,13 @@ pub async fn serve_terminal<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolic
 async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource>(
     mut stream: S,
     permit: ConnectionPermit,
-    owner: VerifiedOwner,
+    owner: impl Into<ConnectionAuthority>,
     guard: OwnerConnectionGuard,
     backend: Arc<NativeTerminal<A>>,
     scheduler: OutputScheduler,
 ) -> Result<(), Error> {
     let permit = Arc::new(permit);
-    let owner = Arc::new(owner);
+    let owner = Arc::new(owner.into());
     let _refusal_charge = permit.budgets().reserve(Resource::ControlBytes, 512)?;
     let first = tokio::time::timeout(DEADLINE, read_frame(&mut stream, &permit, true))
         .await
@@ -493,9 +614,9 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         DEADLINE,
         tokio::task::spawn_blocking(move || {
             let _owned = auth_permit;
-            let current = auth_backend.policy.current_policy()?;
-            auth_owner.authorize(current.verifier(), &auth_hello, Epoch::new(1)?, None)?;
-            let supported = current.verifier().capabilities();
+            let current = auth_backend.policy.current_policy_for(auth_owner.kind())?;
+            auth_owner.authorize(current.view(), &auth_hello, Epoch::new(1)?, None)?;
+            let supported = current.view().capabilities();
             Ok::<_, ContractError>(Capabilities {
                 attach: supported.attach,
                 detach: supported.detach,
@@ -511,6 +632,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         Ok(caps) => caps,
         Err(error) => {
             let reason = refusal(control(error));
+            #[cfg(test)]
+            BusyBoundary::CapabilitiesPolicy.report(reason);
             refused(&mut stream, &hello, reason).await?;
             return Err(Error::Refused(reason));
         }
@@ -527,6 +650,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
     )
     .await;
     if let Err(Error::Contract(ContractError::Busy)) = reply {
+        #[cfg(test)]
+        BusyBoundary::CapabilitiesReplyBudget.report(Refusal::Busy);
         refused(&mut stream, &hello, Refusal::Busy).await?;
         return Err(Error::Refused(Refusal::Busy));
     }
@@ -549,8 +674,10 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         DEADLINE,
         tokio::task::spawn_blocking(move || {
             let _owned = current_permit;
-            let guard = current_backend.policy.current_policy()?;
-            current_owner.authorize(guard.verifier(), &gate, Epoch::new(1)?, None)?;
+            let guard = current_backend
+                .policy
+                .current_policy_for(current_owner.kind())?;
+            current_owner.authorize(guard.view(), &gate, Epoch::new(1)?, None)?;
             Ok::<_, ContractError>(())
         }),
     )
@@ -562,6 +689,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             return Err(error.into());
         }
         let reason = refusal(control(error));
+        #[cfg(test)]
+        BusyBoundary::AttachPolicy.report(reason);
         refused(&mut stream, &request, reason).await?;
         return Err(Error::Refused(reason));
     }
@@ -592,8 +721,18 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         Ok(charges) => charges,
         Err(error) => {
             let reason = refusal(control(error));
+            #[cfg(test)]
+            BusyBoundary::AttachBudget.report(reason);
             refused(&mut stream, &request, reason).await?;
             return Err(Error::Refused(reason));
+        }
+    };
+    // Reserve before the blocking actor, native FSA admission and reader allocation.
+    let snapshot_permit = match permit.reserve_snapshot() {
+        Ok(permit) => Arc::new(permit),
+        Err(_) => {
+            refused(&mut stream, &request, Refusal::Busy).await?;
+            return Err(Error::Refused(Refusal::Busy));
         }
     };
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -618,18 +757,22 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
     tokio::task::spawn_blocking(move || {
         let _owned = (guard, attachment_charge, worker_permit);
         let fence = Mutex::<Option<AdmissionFence>>::new(None);
-        let pending = backend.sessions.attach(
+        let pending = backend.sessions.attach_with_recovery_work(
             owner.principal(),
             &target,
             &attachment,
             takeover,
             HOST_SNAPSHOT_LIMIT as u32,
             Arc::new(Wake(worker_wake)),
+            Some(snapshot_permit.clone()),
             |state| {
-                let guard = backend.policy.current_policy().map_err(control)?;
+                let guard = backend
+                    .policy
+                    .current_policy_for(owner.kind())
+                    .map_err(control)?;
                 let captured = admission
                     .authorize_current(
-                        guard.verifier(),
+                        guard.view(),
                         &worker_request,
                         state.grant.as_ref(),
                         state.grant_epoch.ok_or(ControlError::Unknown)?,
@@ -658,6 +801,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             request: worker_request,
             target,
             pending,
+            snapshot_permit: Some(snapshot_permit),
             fence,
             adopted: false,
             intentional: false,
@@ -716,6 +860,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         };
         if let Err(error) = started {
             let reason = refusal(error);
+            #[cfg(test)]
+            BusyBoundary::BackendAttach.report(reason);
             let response = Envelope::new(
                 request.host.clone(),
                 request.operation.clone(),
@@ -726,34 +872,34 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             return Err(Error::Refused(reason));
         }
         let deadline = tokio::time::Instant::now() + DEADLINE;
-        let terminal = loop {
-            let notified = wake.notified();
-            let terminal = call(&jobs, |worker| {
-                worker.action(|| Ok(worker.pending.session.take_recovered_terminal_deferred()))
-            })
-            .await?;
-            if let Some(terminal) = terminal {
-                break terminal;
+        let recovery = async {
+            loop {
+                let notified = wake.notified();
+                if let Some(prepared) = call(&jobs, Worker::recovery).await? { break prepared; }
+                tokio::select! {
+                    biased;
+                    _ = stream.read_u8() => return Err(Error::Closed),
+                    result = tokio::time::timeout_at(deadline, notified) => { result.map_err(|_| Error::Deadline)?; }
+                }
             }
-            tokio::select! {
-                biased;
-                _ = stream.read_u8() => return Err(Error::Closed),
-                result = tokio::time::timeout_at(deadline, notified) => { result.map_err(|_| Error::Deadline)?; }
+        }.await;
+        let prepared = match recovery {
+            Ok(value) => value,
+            Err(error) => {
+                let reason = match error {
+                    Error::Refused(reason) => reason,
+                    Error::Contract(ContractError::Busy) => Refusal::Busy,
+                    _ => Refusal::Unknown,
+                };
+                // No SNAPSHOT byte yet. Transport errors after write begins
+                // below close only; never append a reply to a partial frame.
+                refused(&mut stream, &request, reason).await?;
+                return Err(error);
             }
         };
-        let size = TerminalSize::with_pixels(
-            terminal.dimensions().columns() as u16,
-            terminal.dimensions().rows() as u16,
-            0,
-            0,
-        )
-        .map_err(|_| ContractError::Malformed)?;
-        let charge = permit.reserve_terminal_bytes(HOST_SNAPSHOT_LIMIT)?;
-        let snapshot = encode_snapshot_bounded(&terminal, HOST_SNAPSHOT_LIMIT)?;
-        drop(terminal);
-        call(&jobs, |worker| worker.action(|| Ok(()))).await?;
-        write(&mut stream, SNAPSHOT, &snapshot).await?;
-        drop((snapshot, charge));
+        let size = prepared.size;
+        write(&mut stream, SNAPSHOT, &prepared.bytes).await?;
+        drop(prepared); // bytes first, then the transaction permit
         let frame = tokio::time::timeout_at(deadline, read_frame(&mut stream, &permit, true))
             .await
             .map_err(|_| Error::Deadline)??;
@@ -1039,5 +1185,70 @@ mod tests {
         );
         assert_eq!(result, Err(ControlError::Busy));
         assert_eq!(calls, 1);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn native_recovery_terminal_failure_is_incompatible_before_snapshot() {
+        use festerm_session::{SessionError, SessionErrorKind};
+        for lifecycle in [
+            SessionLifecycle::Failed(SessionError::new(SessionErrorKind::Output, "never copied")),
+            SessionLifecycle::Disconnected(SessionError::new(
+                SessionErrorKind::Output,
+                "never copied",
+            )),
+            SessionLifecycle::Stopped,
+        ] {
+            assert!(matches!(
+                recovery_failure(lifecycle),
+                Some(Error::Refused(Refusal::Incompatible))
+            ));
+        }
+        assert!(recovery_failure(SessionLifecycle::Starting).is_none());
+        assert!(recovery_failure(SessionLifecycle::Running).is_none());
+    }
+    #[test]
+    fn prepared_snapshot_retains_slot_until_frame_drops_and_refuses_incompatible_policy() {
+        let budgets = festerm_host_protocol::Budgets::default();
+        let client = ConnectionPermit::reserve(&budgets).unwrap();
+        let terminal = Terminal::new(festerm_core::Dimensions::new(119, 16).unwrap()).unwrap();
+        let prepared = RecoveredSnapshot {
+            terminal,
+            permit: Arc::new(client.reserve_snapshot().unwrap()),
+        }
+        .prepare()
+        .unwrap();
+        assert!(!prepared.bytes.is_empty());
+        assert!(matches!(
+            client.reserve_snapshot(),
+            Err(ContractError::Busy)
+        ));
+        drop(prepared);
+        let oversized = Terminal::with_scrollback_limit(
+            festerm_core::Dimensions::new(119, 16).unwrap(),
+            HOST_DECLARED_HISTORY_LIMIT + 1,
+        )
+        .unwrap();
+        let encoded = crate::protocol::encode_snapshot(&oversized).unwrap();
+        assert!(crate::protocol::decode_snapshot_with_history_limit(
+            &encoded,
+            HOST_DECLARED_HISTORY_LIMIT
+        )
+        .is_err());
+        // Legacy codec retains its existing declaration policy.
+        assert!(crate::protocol::decode_snapshot(&encoded).is_ok());
+        let refused = RecoveredSnapshot {
+            terminal: oversized,
+            permit: Arc::new(client.reserve_snapshot().unwrap()),
+        }
+        .prepare();
+        assert!(matches!(
+            refused,
+            Err(Error::Refused(Refusal::Incompatible))
+        ));
+        assert!(client.reserve_snapshot().is_ok());
     }
 }

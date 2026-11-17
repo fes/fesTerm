@@ -12,6 +12,18 @@ if [ "${FESTERM_RUN_OPTIONAL_VALIDATION:-}" != "1" ]; then
     exit 2
 fi
 
+# This collector owns an exclusive private result and the actual foreground
+# TTY. Run it alone, before aggregate output files or other optional suites.
+if [ "${FESTERM_RUN_TERMINAL_CAPABILITY_PROBE:-}" = "1" ]; then
+    if [ -z "${FESTERM_TERMINAL_CAPABILITY_CASE:-}" ] ||
+        [ -z "${FESTERM_TERMINAL_CAPABILITY_RESULT_PATH:-}" ]; then
+        exit 2
+    fi
+    exec python3 scripts/check_dev_tunnel_workflow.py --terminal-capability-probe \
+        --case "$FESTERM_TERMINAL_CAPABILITY_CASE" \
+        --result "$FESTERM_TERMINAL_CAPABILITY_RESULT_PATH"
+fi
+
 result_path=${FESTERM_OPTIONAL_VALIDATION_RESULT_PATH:-optional-validation-result.txt}
 p5_result_path=${FESTERM_P5_REFERENCE_RESULT_PATH:-p5-reference-result.txt}
 p6_result_path=${FESTERM_P6_RENDER_RESULT_PATH:-p6-render-result.txt}
@@ -21,6 +33,21 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if [ "${FESTERM_RUN_DEV_TUNNEL_LAB:-}" = "1" ]; then
+    if python3 scripts/check_dev_tunnel_workflow.py --run; then
+        printf 'suite=dev-tunnel-workflow status=pass scope=real-service-host-client gui=unrun\n' >>"$result_path"
+    else
+        campaign_exit=$?
+        if [ "$campaign_exit" -eq 2 ]; then
+            printf 'suite=dev-tunnel-workflow status=blocked reason=native-operator-prerequisites\n' >>"$result_path"
+        else
+            printf 'suite=dev-tunnel-workflow status=fail\n' >>"$result_path"
+        fi
+        status=fail
+    fi
+else
+    printf 'suite=dev-tunnel-workflow status=skipped reason=explicit-controlled-account-opt-in-required\n' >>"$result_path"
+fi
 if { [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; } &&
     [ -n "${FESTERM_ADR84_UPDATE_HELPER:-}" ]; then
     if cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud \
@@ -50,6 +77,7 @@ printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-tunnel-task-xml status=skipped reason=windows-required\n' >>"$result_path"
+printf 'suite=windows-stdout-positive-partial-feasibility status=skipped reason=use-windows-powershell-runner\n' >>"$result_path"
 if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
     [ "${FESTERM_ANDROID_NATIVE_INDEX_VALIDATION:-}" = "1" ]; then
     if python3 scripts/build-android.py --offline --recording-validation --install \

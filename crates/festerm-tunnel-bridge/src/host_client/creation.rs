@@ -15,7 +15,7 @@ pub enum CreationMode {
 /// One explicit action. Neither reconnect nor an uncertain reply may replace
 /// its logical identity, future attachment, recipe or captured issuer.
 pub struct CreationIntent {
-    owner: OwnerBinding,
+    owner: client_context::Issuer,
     reference: SecretReference,
     binding: Binding,
     mode: CreationMode,
@@ -30,6 +30,10 @@ pub struct CreationIntent {
 }
 
 impl CreationIntent {
+    /// Credential family needed to reopen this original; this conveys no grant.
+    pub fn is_ordinary(&self) -> bool {
+        matches!(self.owner, client_context::Issuer::Ordinary(_))
+    }
     pub fn is_protected_original(&self) -> bool {
         self.original
             .lock()
@@ -37,16 +41,22 @@ impl CreationIntent {
             .unwrap_or(true)
     }
 
-    pub fn new(
-        context: &ApprovedContext,
+    pub fn new<'a>(
+        context: impl Into<ClientContextRef<'a>>,
         mode: CreationMode,
         creation: Creation,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         creation.validate()?;
+        if matches!(context, ClientContextRef::Ordinary(_))
+            && matches!(creation.lifetime, Lifetime::Temporary { .. })
+        {
+            return Err(ContractError::Denied.into());
+        }
         Ok(Self {
-            owner: context.approved.clone(),
-            reference: context.reference.duplicate_for_transport(),
-            binding: context.binding.clone(),
+            owner: context.issuer(),
+            reference: context.reference(),
+            binding: context.binding().clone(),
             mode,
             creation,
             issued: Mutex::new(None),
@@ -64,7 +74,7 @@ impl CreationIntent {
         store: Arc<originals::OriginalStore>,
         review: String,
     ) -> Result<(), Failure> {
-        if !store.matches(&self.owner, &self.reference, &self.binding) {
+        if !store.matches_issuer(&self.owner, &self.reference, &self.binding) {
             return Err(Failure::BindingMismatch);
         }
         let mut original = self.original.lock().map_err(|_| Failure::OriginalStorage)?;
@@ -81,8 +91,8 @@ impl CreationIntent {
         Ok(())
     }
 
-    pub(super) fn from_original(
-        context: &ApprovedContext,
+    pub(super) fn from_original<'a>(
+        context: impl Into<ClientContextRef<'a>>,
         mode: CreationMode,
         creation: Creation,
         handle: Arc<originals::OriginalHandle>,
@@ -96,13 +106,14 @@ impl CreationIntent {
         Ok(intent)
     }
 
-    pub(super) fn matches(&self, context: &ApprovedContext) -> bool {
-        self.owner == context.approved
-            && self.reference == context.reference
-            && self.binding == context.binding
+    pub(super) fn matches<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
+        let context = context.into();
+        self.owner == context.issuer()
+            && self.reference == context.reference()
+            && self.binding == *context.binding()
     }
 
-    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
+    pub fn matches_context<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
         self.matches(context)
     }
 
@@ -117,7 +128,7 @@ impl CreationIntent {
         binding: &Binding,
         target: &Target,
     ) -> bool {
-        self.owner == *owner
+        self.owner == client_context::Issuer::EnrolledOwner(owner.clone())
             && self.reference == *key
             && self.binding == *binding
             && self.confirmed_target().as_ref() == Some(target)

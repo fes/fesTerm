@@ -138,6 +138,7 @@ impl Fixture {
                 &root.path().join("state"),
                 Origin::Headless,
                 Settings {
+                    ordinary_access: Default::default(),
                     friendly_name: "Windows update model".into(),
                     allow_creation: false,
                     startup: Startup::Manual,

@@ -7,6 +7,9 @@ pub mod lifecycle;
 pub mod native_binding;
 pub mod private_storage;
 mod remote;
+#[cfg(unix)]
+#[doc(hidden)]
+pub mod unix_endpoint;
 pub use detached::{
     ensure_detached, ensure_detached_in, ensure_owned_detached_in, spawn_fingerprint,
     verify_spawn_fingerprint_in, DetachedSessionRequest,
@@ -601,14 +604,19 @@ pub fn session_correlation_in(
         PersistentSessionError::new("observation.selected_generation_unavailable")
     })?;
     let suffix = format!("{}-{}", selected.pid, selected.created_at_unix_ms);
+    #[cfg(unix)]
+    let generation_endpoint =
+        unix_endpoint::matches_generation(root, &suffix, Path::new(&selected.endpoint))
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    #[cfg(not(unix))]
+    let generation_endpoint = selected.endpoint.ends_with(&suffix);
     if selected.pid == 0
         || selected.created_at_unix_ms == 0
         || record.name != selected.name
         || record.pid != selected.pid
         || record.created_at_unix_ms != selected.created_at_unix_ms
         || record.socket != selected.endpoint
-        || !(selected.endpoint.ends_with(&suffix)
-            || selected.endpoint.ends_with(&format!("{suffix}.sock")))
+        || !generation_endpoint
         || !record_is_live(root, record)?
     {
         return Err(PersistentSessionError::new(
@@ -845,7 +853,25 @@ pub fn daemon_generation_is_live(
     }
     let generation = format!("{pid}-{created_at_unix_ms}");
     // Older helpers used name-based endpoints and have no lifetime lease.
-    if !endpoint.ends_with(&generation) && !endpoint.ends_with(&format!("{generation}.sock")) {
+    #[cfg(unix)]
+    let short_generation = if Path::new(endpoint).file_name() == Some(std::ffi::OsStr::new("s")) {
+        if !unix_endpoint::matches_generation(root, &generation, Path::new(endpoint))
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?
+        {
+            return Err(PersistentSessionError::new(
+                "invalid short generation endpoint",
+            ));
+        }
+        true
+    } else {
+        false
+    };
+    #[cfg(not(unix))]
+    let short_generation = false;
+    if !short_generation
+        && !endpoint.ends_with(&generation)
+        && !endpoint.ends_with(&format!("{generation}.sock"))
+    {
         return Ok(true);
     }
     let path = root.join(format!("lease-{generation}"));
@@ -1076,8 +1102,12 @@ struct Shared {
     protocol_version: Mutex<u16>,
     identity: Mutex<ConnectionProvenance>,
     recovered_terminal: Mutex<Option<Terminal>>,
+    recovery_limit: usize,
+    recovery_work: Mutex<Option<Arc<dyn Send + Sync>>>,
     recovery_resize_blocked: AtomicBool,
     recovery_adoption_blocked: AtomicBool,
+    #[cfg(test)]
+    before_command_drain: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     events: SyncSender<SessionEvent>,
     notifier: Arc<dyn SessionEventNotifier>,
     cancelled: AtomicBool,
@@ -1272,13 +1302,14 @@ impl PersistentSession {
         Self::from_stream_with_reconnector(connection, notifier, None)
     }
 
-    pub(crate) fn resume_host_reserved_in(
+    pub(crate) fn resume_host_reserved_with_recovery_work(
         selected: &NativeSessionIdentity,
         root: &Path,
         takeover: bool,
         maximum_recovery_bytes: u32,
         ticket: &festerm_host_protocol::OperationId,
         notifier: Arc<dyn SessionEventNotifier>,
+        recovery_work: Option<Arc<dyn Send + Sync>>,
     ) -> Result<Self, PersistentSessionError> {
         let registry = load_registry_in(root)
             .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::Registry, None))?;
@@ -1303,8 +1334,18 @@ impl PersistentSession {
             maximum_recovery_bytes,
             Some(ticket),
         )?;
-        Self::from_stream_with_reconnector(connection, notifier, None)
-            .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::StreamStart, None))
+        Self::from_stream_with_protocol_identity_and_recovery(
+            connection.stream,
+            notifier,
+            None,
+            connection.protocol_version,
+            connection.snapshot_schema_version,
+            connection.identity,
+            connection.local_root,
+            maximum_recovery_bytes as usize,
+            recovery_work,
+        )
+        .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::StreamStart, None))
     }
 
     pub fn start(
@@ -1578,6 +1619,31 @@ impl PersistentSession {
         identity: Option<NativeSessionIdentity>,
         local_root: Option<PathBuf>,
     ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_protocol_identity_and_recovery(
+            stream,
+            notifier,
+            reconnector,
+            protocol_version,
+            snapshot_schema_version,
+            identity,
+            local_root,
+            MAX_RECOVERY_SNAPSHOT_BYTES,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_stream_with_protocol_identity_and_recovery(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
+        protocol_version: u16,
+        snapshot_schema_version: u16,
+        identity: Option<NativeSessionIdentity>,
+        local_root: Option<PathBuf>,
+        recovery_limit: usize,
+        recovery_work: Option<Arc<dyn Send + Sync>>,
+    ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
         let (completion_tx, completion_rx) = mpsc::sync_channel(1);
@@ -1596,6 +1662,8 @@ impl PersistentSession {
                 local_root,
             }),
             recovered_terminal: Mutex::new(None),
+            recovery_limit: recovery_limit.min(MAX_RECOVERY_SNAPSHOT_BYTES),
+            recovery_work: Mutex::new(recovery_work),
             recovery_resize_blocked: AtomicBool::new(recovery_snapshot_required(
                 protocol_version,
                 snapshot_schema_version,
@@ -1604,6 +1672,8 @@ impl PersistentSession {
                 protocol_version,
                 snapshot_schema_version,
             )),
+            #[cfg(test)]
+            before_command_drain: Mutex::new(None),
             events: events_tx,
             notifier,
             cancelled: AtomicBool::new(false),
@@ -1702,6 +1772,13 @@ impl PersistentSession {
             .lock()
             .expect("persistent session recovery lock is healthy")
             .take();
+        if terminal.is_some() {
+            self.shared
+                .recovery_work
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take();
+        }
         terminal
     }
 
@@ -2389,15 +2466,22 @@ fn read_initial_recovery_terminal(
     cancelled: &AtomicBool,
     protocol_version: u16,
     snapshot_schema_version: u16,
+    maximum: usize,
 ) -> Result<Option<Terminal>, io::Error> {
-    read_recovery_terminal_with_abort(stream, protocol_version, snapshot_schema_version, || {
-        cancelled.load(Ordering::Acquire).then(|| {
-            io::Error::new(
-                io::ErrorKind::Interrupted,
-                "persistent-session recovery read cancelled",
-            )
-        })
-    })
+    read_recovery_terminal_with_abort(
+        stream,
+        protocol_version,
+        snapshot_schema_version,
+        maximum,
+        || {
+            cancelled.load(Ordering::Acquire).then(|| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "persistent-session recovery read cancelled",
+                )
+            })
+        },
+    )
 }
 
 pub fn read_attach_recovery_terminal<R: Read>(
@@ -2406,20 +2490,27 @@ pub fn read_attach_recovery_terminal<R: Read>(
     snapshot_schema_version: u16,
     deadline: Instant,
 ) -> Result<Option<Terminal>, io::Error> {
-    read_recovery_terminal_with_abort(stream, protocol_version, snapshot_schema_version, || {
-        (Instant::now() >= deadline).then(|| {
-            io::Error::new(
-                io::ErrorKind::TimedOut,
-                "attach recovery prelude exceeded the read deadline",
-            )
-        })
-    })
+    read_recovery_terminal_with_abort(
+        stream,
+        protocol_version,
+        snapshot_schema_version,
+        MAX_RECOVERY_SNAPSHOT_BYTES,
+        || {
+            (Instant::now() >= deadline).then(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "attach recovery prelude exceeded the read deadline",
+                )
+            })
+        },
+    )
 }
 
 fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
     stream: &mut R,
     protocol_version: u16,
     snapshot_schema_version: u16,
+    maximum: usize,
     mut should_abort: impl FnMut() -> Option<io::Error>,
 ) -> Result<Option<Terminal>, io::Error> {
     if protocol_version < 2 {
@@ -2454,7 +2545,7 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
             "persistent-session recovery snapshot length overflows usize",
         )
     })?;
-    if payload_len > MAX_RECOVERY_SNAPSHOT_BYTES {
+    if payload_len > maximum {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "persistent-session recovery snapshot exceeds the protocol limit",
@@ -2491,10 +2582,13 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
     };
     let decoded = if snapshot_schema_version == 2 {
         bincode_options()
+            .with_limit(maximum as u64)
             .deserialize::<Schema2RecoveryTerminal>(bytes)
             .map(|snapshot| snapshot.0)
     } else {
-        bincode_options().deserialize::<Terminal>(bytes)
+        bincode_options()
+            .with_limit(maximum as u64)
+            .deserialize::<Terminal>(bytes)
     };
     let mut terminal = decoded.map_err(|error| {
         io::Error::new(
@@ -2510,7 +2604,10 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
             format!("persistent-session recovery snapshot is invalid: {error}"),
         )
     })?;
-    if terminal.scrollback_stats().charged_bytes() > MAX_RECOVERY_SNAPSHOT_BYTES {
+    if terminal.scrollback_stats().charged_bytes() > maximum
+        || (maximum < MAX_RECOVERY_SNAPSHOT_BYTES
+            && terminal.scrollback_stats().limit_bytes() > 64 * 1024 * 1024)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "persistent-session retained history allocation exceeds the protocol limit",
@@ -2572,13 +2669,22 @@ fn client_worker(
     commands: Receiver<SessionCommand>,
     completion: SyncSender<ShutdownResult>,
 ) {
+    // Retain actual reader work even after the frontend/actor is dropped.
+    let recovery_work = shared
+        .recovery_work
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     match read_initial_recovery_terminal(
         &mut *stream,
         &shared.cancelled,
         protocol_version,
         snapshot_schema_version,
+        shared.recovery_limit,
     ) {
         Ok(Some(terminal)) => {
+            drop(recovery_work); // payload gone; Shared still owns recovered state.
+
             *shared
                 .recovered_terminal
                 .lock()
@@ -2626,7 +2732,13 @@ fn client_worker(
             outbound.push_recovery_adopted();
             adoption_sent = true;
         }
-        while !outbound.is_full() {
+        #[cfg(test)]
+        if let Some(pause) = shared.before_command_drain.lock().unwrap().take() {
+            pause();
+        }
+        // Frontend adoption may change after the sample above. Only this
+        // worker's queued adoption frame permits later commands onto the wire.
+        while adoption_sent && !outbound.is_full() {
             match commands.try_recv() {
                 Ok(SessionCommand::Input(bytes)) => outbound.push_input(&bytes),
                 Ok(SessionCommand::Resize(size)) => outbound.push_resize(size),
@@ -4214,6 +4326,41 @@ mod recovery_wire_tests {
         }
     }
 
+    #[test]
+    fn host_recovery_reader_caps_header_before_allocation_and_declared_history_before_restore() {
+        let maximum = 8 * 1024 * 1024;
+        let measurement = WireMeasurement::start();
+        let mut header = RECOVERY_MAGIC.to_vec();
+        header.extend_from_slice(&((maximum + 1) as u64).to_be_bytes());
+        let error = read_recovery_terminal_with_abort(
+            &mut io::Cursor::new(header),
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            maximum,
+            || None,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(measurement.read().peak, 0);
+        for declaration in [64 * 1024 * 1024, 64 * 1024 * 1024 + 1] {
+            let terminal = Terminal::with_scrollback_limit(
+                festerm_core::Dimensions::new(119, 16).unwrap(),
+                declaration,
+            )
+            .unwrap();
+            let wire = encode_recovery_snapshot(&terminal).unwrap();
+            let read = read_recovery_terminal_with_abort(
+                &mut io::Cursor::new(wire.clone()),
+                PROTOCOL_VERSION,
+                RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                maximum,
+                || None,
+            );
+            assert_eq!(read.is_ok(), declaration == 64 * 1024 * 1024);
+            assert!(read_snapshot(&mut io::Cursor::new(wire)).is_ok()); // legacy policy unchanged
+        }
+    }
+
     fn large_recovery_terminal() -> Terminal {
         let mut terminal = Terminal::with_scrollback_limit(
             festerm_core::Dimensions::new(80, 24).unwrap(),
@@ -4617,6 +4764,94 @@ mod recovery_wire_tests {
 mod client_worker_tests {
     use super::*;
 
+    struct RecoveryCharge(Arc<AtomicBool>);
+    impl Drop for RecoveryCharge {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn recovery_work_is_released_on_transfer_before_live_session_ends() {
+        let stream = ScriptedStream::default();
+        let terminal = Terminal::new(festerm_core::Dimensions::new(119, 16).unwrap()).unwrap();
+        stream.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+        let released = Arc::new(AtomicBool::new(false));
+        let session = PersistentSession::from_stream_with_protocol_identity_and_recovery(
+            Box::new(stream),
+            noop_session_event_notifier(),
+            None,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            None,
+            None,
+            8 * 1024 * 1024,
+            Some(Arc::new(RecoveryCharge(released.clone()))),
+        )
+        .unwrap();
+        assert!(wait_for(|| session
+            .shared
+            .recovered_terminal
+            .lock()
+            .unwrap()
+            .is_some()));
+        assert!(!released.load(Ordering::Acquire));
+        let recovered = session.take_recovered_terminal_deferred().unwrap();
+        assert_eq!(recovered.dimensions(), terminal.dimensions());
+        assert!(released.load(Ordering::Acquire));
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Running
+        )));
+        session.shutdown(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn recovery_work_survives_frontend_drop_until_actual_blocked_reader_exits() {
+        struct BlockedReader {
+            entered: mpsc::SyncSender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl Read for BlockedReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(0)
+            }
+        }
+        impl Write for BlockedReader {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let released = Arc::new(AtomicBool::new(false));
+        let session = PersistentSession::from_stream_with_protocol_identity_and_recovery(
+            Box::new(BlockedReader {
+                entered: entered_tx,
+                release: release_rx,
+            }),
+            noop_session_event_notifier(),
+            None,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            None,
+            None,
+            8 * 1024 * 1024,
+            Some(Arc::new(RecoveryCharge(released.clone()))),
+        )
+        .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(session);
+        assert!(!released.load(Ordering::Acquire));
+        release_tx.send(()).unwrap();
+        assert!(wait_for(|| released.load(Ordering::Acquire)));
+    }
+
     #[test]
     fn initial_recovery_eof_reports_retryable_disconnect_without_adoption() {
         let session = PersistentSession::from_stream_with_protocol(
@@ -4642,6 +4877,51 @@ mod client_worker_tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(session.take_recovered_terminal().is_none());
+    }
+
+    #[test]
+    fn concurrent_frontend_adoption_keeps_resize_and_input_after_wire_adoption() {
+        let stream = ScriptedStream::default();
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(stream.clone()),
+            noop_session_event_notifier(),
+            None,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        let (sampled_tx, sampled_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        *session.shared.before_command_drain.lock().unwrap() = Some(Box::new(move || {
+            sampled_tx.send(()).unwrap();
+            resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }));
+        let terminal = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        stream.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+        sampled_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The worker has already sampled blocked adoption for this iteration.
+        // The frontend now installs the snapshot and immediately queues effects.
+        assert!(session.take_recovered_terminal().is_some());
+        let size = TerminalSize::new(117, 39).unwrap();
+        session.try_resize(size).unwrap();
+        session.try_send_input(b"first input").unwrap();
+        assert!(stream.written().is_empty());
+        resume_tx.send(()).unwrap();
+
+        let mut expected = b"FSD1".to_vec();
+        expected.push(FRAME_RECOVERY_ADOPTED);
+        expected.extend_from_slice(&0u32.to_be_bytes());
+        expected.extend_from_slice(b"FSD1");
+        expected.push(FRAME_RESIZE);
+        let resize = encode_resize(size);
+        expected.extend_from_slice(&(resize.len() as u32).to_be_bytes());
+        expected.extend_from_slice(&resize);
+        expected.extend_from_slice(&input_frame(b"first input"));
+        assert!(
+            wait_for(|| stream.written().len() >= expected.len()),
+            "worker never completed the queued frames"
+        );
+        assert_eq!(stream.written(), expected);
     }
 
     fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {
@@ -6412,8 +6692,14 @@ mod registry_filtering_tests {
         let fixture = RegistryFixture::new();
         let pid = std::process::id();
         let generation = 123456u128;
-        let endpoint = fixture.0.join(format!("{pid}-{generation}.sock"));
-        std::fs::write(&endpoint, b"metadata-fixture-not-an-attachment").unwrap();
+        #[cfg(unix)]
+        let endpoint = {
+            let path = fixture.0.join(format!("{pid}-{generation}.sock"));
+            std::fs::write(&path, b"metadata-fixture-not-an-attachment").unwrap();
+            path.to_str().unwrap().to_owned()
+        };
+        #[cfg(windows)]
+        let endpoint = format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}");
         let lease = OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -6424,7 +6710,7 @@ mod registry_filtering_tests {
         let expected = format!("fesTerm:{pid}:{generation}");
         let mut registry = serde_json::json!({"sessions": {"observe-test": {
             "name": "observe-test", "pid": pid,
-            "socket": endpoint.to_str().unwrap(),
+            "socket": endpoint,
             "created_at_unix_ms": generation,
             "attached": true, "attached_by": "remote",
             "correlation_id": expected
@@ -6441,7 +6727,7 @@ mod registry_filtering_tests {
             name: "observe-test".into(),
             pid,
             created_at_unix_ms: generation,
-            endpoint: endpoint.to_str().unwrap().into(),
+            endpoint,
         };
         let before = std::fs::read(fixture.0.join("registry.json")).unwrap();
         assert_eq!(

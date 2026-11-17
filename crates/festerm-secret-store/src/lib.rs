@@ -164,6 +164,16 @@ pub trait SecretStore: Send + Sync {
     /// Retrieves the secret named by `reference`.
     fn get(&self, reference: &SecretReference) -> Result<SecretBytes, SecretStoreError>;
 
+    /// Reads the current value without unlocking storage or presenting UI.
+    /// Unknown backends refuse; implementations must never fall back to `get`.
+    /// A refusal never authorizes initialization or replacement of the secret.
+    fn get_noninteractive(
+        &self,
+        _reference: &SecretReference,
+    ) -> Result<SecretBytes, SecretStoreError> {
+        Err(SecretStoreError::Unsupported)
+    }
+
     /// Replaces the secret named by `reference`.
     fn update(
         &self,
@@ -260,6 +270,14 @@ impl SecretStore for MemorySecretStore {
             .ok_or(SecretStoreError::Missing)
     }
 
+    fn get_noninteractive(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<SecretBytes, SecretStoreError> {
+        // This known backend has neither unlock operations nor a UI path.
+        self.get(reference)
+    }
+
     fn update(
         &self,
         reference: &SecretReference,
@@ -308,6 +326,7 @@ struct NativeSecretStore {
     store: Arc<CredentialStore>,
     modifiers: HashMap<&'static str, &'static str>,
     operation_lock: Mutex<()>,
+    noninteractive_native: bool,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -317,7 +336,14 @@ impl NativeSecretStore {
             store,
             modifiers,
             operation_lock: Mutex::new(()),
+            noninteractive_native: false,
         }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    fn with_noninteractive_native(mut self) -> Self {
+        self.noninteractive_native = true;
+        self
     }
 
     fn entry(&self, reference: &SecretReference) -> Result<Entry, SecretStoreError> {
@@ -380,6 +406,42 @@ impl SecretStore for NativeSecretStore {
             .get_secret()
             .map(SecretBytes::from_vec)
             .map_err(map_keyring_error)
+    }
+
+    fn get_noninteractive(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<SecretBytes, SecretStoreError> {
+        if !self.noninteractive_native {
+            return Err(SecretStoreError::Unsupported);
+        }
+        #[cfg(windows)]
+        {
+            // This native backend reads via CredRead, which has no UI/unlock API.
+            let secret = self.get(reference)?;
+            check_size(&secret)?;
+            Ok(secret)
+        }
+        #[cfg(any(
+            target_os = "macos",
+            all(unix, not(any(target_os = "macos", target_os = "ios")))
+        ))]
+        {
+            let _operation = self
+                .operation_lock
+                .lock()
+                .map_err(|_| SecretStoreError::BackendFailure)?;
+            noninteractive::get(reference)
+        }
+        #[cfg(not(any(
+            windows,
+            target_os = "macos",
+            all(unix, not(any(target_os = "macos", target_os = "ios")))
+        )))]
+        {
+            let _ = reference;
+            Err(SecretStoreError::Unsupported)
+        }
     }
 
     fn update(
@@ -462,6 +524,16 @@ fn map_platform_failure(_: &keyring_core::error::PlatformError) -> SecretStoreEr
     SecretStoreError::BackendFailure
 }
 
+#[cfg(any(
+    target_os = "macos",
+    all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ),
+    test
+))]
+mod noninteractive;
+
 /// Creates the target's native secret store.
 ///
 /// This never falls back to a file, keyutils, plaintext, or
@@ -479,7 +551,9 @@ mod native {
     pub(super) fn create() -> Result<Box<dyn SecretStore>, SecretStoreError> {
         let store =
             apple_native_keyring_store::keychain::Store::new().map_err(map_keyring_error)?;
-        Ok(Box::new(NativeSecretStore::new(store, HashMap::new())))
+        Ok(Box::new(
+            NativeSecretStore::new(store, HashMap::new()).with_noninteractive_native(),
+        ))
     }
 }
 
@@ -513,7 +587,9 @@ mod native {
         ]);
         let store = windows_native_keyring_store::Store::new_with_configuration(&configuration)
             .map_err(map_keyring_error)?;
-        Ok(Box::new(NativeSecretStore::new(store, HashMap::new())))
+        Ok(Box::new(
+            NativeSecretStore::new(store, HashMap::new()).with_noninteractive_native(),
+        ))
     }
 }
 
@@ -538,7 +614,9 @@ mod native {
         // entries without triggering a
         // GUI prompt to create a separate collection.
         let modifiers = HashMap::from([("label", "fesTerm secret")]);
-        Ok(Box::new(NativeSecretStore::new(store, modifiers)))
+        Ok(Box::new(
+            NativeSecretStore::new(store, modifiers).with_noninteractive_native(),
+        ))
     }
 }
 
@@ -549,6 +627,63 @@ mod tests {
 
     assert_not_impl_any!(SecretBytes: Clone, std::fmt::Debug, serde::Serialize);
     assert_not_impl_any!(SecretReference: Clone, std::fmt::Debug);
+
+    #[test]
+    fn noninteractive_unknown_backend_never_calls_interactive_get() {
+        struct InteractiveOnly;
+        impl SecretStore for InteractiveOnly {
+            fn put(&self, _: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+                panic!("no write")
+            }
+            fn get(&self, _: &SecretReference) -> Result<SecretBytes, SecretStoreError> {
+                panic!("interactive get forbidden")
+            }
+            fn update(&self, _: &SecretReference, _: &SecretBytes) -> Result<(), SecretStoreError> {
+                panic!("no write")
+            }
+            fn delete(&self, _: &SecretReference) -> Result<bool, SecretStoreError> {
+                panic!("no delete")
+            }
+        }
+        assert!(matches!(
+            InteractiveOnly.get_noninteractive(&SecretReference::generate()),
+            Err(SecretStoreError::Unsupported)
+        ));
+        let unknown = mock_backed_store();
+        assert!(matches!(
+            unknown.get_noninteractive(&SecretReference::generate()),
+            Err(SecretStoreError::Unsupported)
+        ));
+    }
+
+    #[test]
+    fn noninteractive_memory_reads_fresh_value_and_never_initializes_missing() {
+        let store = MemorySecretStore::new();
+        let reference = SecretReference::generate();
+        assert!(matches!(
+            store.get_noninteractive(&reference),
+            Err(SecretStoreError::Missing)
+        ));
+        store
+            .create_reserved(&reference, &SecretBytes::copy_from_slice(b"first"))
+            .unwrap();
+        store
+            .get_noninteractive(&reference)
+            .unwrap()
+            .with_bytes(|v| assert_eq!(v, b"first"));
+        store
+            .update(&reference, &SecretBytes::copy_from_slice(b"second"))
+            .unwrap();
+        store
+            .get_noninteractive(&reference)
+            .unwrap()
+            .with_bytes(|v| assert_eq!(v, b"second"));
+        store.delete(&reference).unwrap();
+        assert!(matches!(
+            store.get_noninteractive(&reference),
+            Err(SecretStoreError::Missing)
+        ));
+    }
 
     type BuiltEntry = (String, String, Vec<(String, String)>);
 

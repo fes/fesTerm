@@ -1,4 +1,4 @@
-//! Native feasibility probe only; this does not qualify an MCP output boundary.
+//! Native stdout contracts and opt-in feasibility; neither qualifies an MCP output boundary.
 
 #![cfg(windows)]
 
@@ -822,7 +822,7 @@ impl Observed {
     }
 }
 
-fn probe_controller(stop_after_initial: bool) {
+fn probe_controller(stop_after_initial: bool, require_positive_partial: bool) {
     let _ready = controller_start();
     assert!(check_pipe(ptr::null_mut()).is_err());
     assert!(set_pipe_mode(ptr::null_mut(), PIPE_NOWAIT).is_err());
@@ -1034,9 +1034,19 @@ fn probe_controller(stop_after_initial: bool) {
          restored_full_write=0 duplicate_wait_write=1 closed_error={}",
         partial, closed[2]
     );
-    assert!(
-        partial,
-        "positive partial write was not observed; stdout remains unqualified"
+    if require_positive_partial {
+        assert!(
+            partial,
+            "positive partial write was not observed; stdout remains unqualified"
+        );
+    }
+    eprintln!(
+        "Native stdout scope={} production_stdout=unqualified",
+        if require_positive_partial {
+            "positive-partial-feasibility"
+        } else {
+            "runtime-contract-only"
+        }
     );
     if let ModeSetup::SetAfterRefusal(first) = setup {
         panic!(
@@ -1278,8 +1288,9 @@ fn park_controller() {
 #[ignore = "subprocess helper; invoked only by the deadline-supervised tests"]
 fn windows_stdout_probe_subprocess() {
     match std::env::var(ROLE).as_deref() {
-        Ok("probe-controller") => probe_controller(false),
-        Ok("probe-controller-fail-after-initial") => probe_controller(true),
+        Ok("probe-controller") => probe_controller(false, false),
+        Ok("probe-controller-positive-partial") => probe_controller(false, true),
+        Ok("probe-controller-fail-after-initial") => probe_controller(true, false),
         Ok("initial-mode-diagnostic-controller") => initial_mode_diagnostic_controller(),
         Ok("startup-drain-controller") => startup_drain_controller(),
         Ok("probe-child") => probe_child(),
@@ -1304,6 +1315,16 @@ fn windows_stdout_probe_subprocess() {
 fn windows_stdout_inherited_pipe_nowait_probe() {
     let events = ControllerEvents::new();
     let mut controller = Supervised::spawn("probe-controller", false, Some(&events));
+    events.start();
+    controller.require_success(OUTER_TIMEOUT);
+}
+
+#[test]
+#[ignore = "opt-in positive-partial feasibility; production stdout remains unqualified"]
+fn windows_stdout_positive_partial_write_feasibility() {
+    let events = ControllerEvents::new();
+    let mut controller =
+        Supervised::spawn("probe-controller-positive-partial", false, Some(&events));
     events.start();
     controller.require_success(OUTER_TIMEOUT);
 }

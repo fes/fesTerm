@@ -1,6 +1,8 @@
 //! Native-created authority for the fixed HOST receipt child, not a path grant.
 use crate::SecretStoreError;
 use festerm_unix_security as unix;
+#[cfg(any(target_os = "ios", test))]
+use std::path::Component;
 use std::{fs::File, io, os::unix::fs::MetadataExt, path::Path};
 
 /// Pinned current-application storage. No path, descriptor, deserializer or
@@ -8,6 +10,15 @@ use std::{fs::File, io, os::unix::fs::MetadataExt, path::Path};
 pub struct NativeAppPrivateRoot {
     directory: File,
     identity: (u64, u64),
+    policy: RootPolicy,
+}
+
+#[derive(Clone, Copy)]
+enum RootPolicy {
+    #[cfg(any(target_os = "android", test))]
+    Private,
+    #[cfg(any(target_os = "ios", test))]
+    IosSandbox,
 }
 
 impl NativeAppPrivateRoot {
@@ -19,7 +30,11 @@ impl NativeAppPrivateRoot {
                 .map_err(|_| SecretStoreError::LockedOrUnavailable)?;
             Self::pin(directory).map_err(|_| SecretStoreError::LockedOrUnavailable)
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(target_os = "ios")]
+        {
+            ios_application_root().map_err(|_| SecretStoreError::LockedOrUnavailable)
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             Err(SecretStoreError::Unsupported)
         }
@@ -32,11 +47,23 @@ impl NativeAppPrivateRoot {
         Ok(Self {
             identity: (metadata.dev(), metadata.ino()),
             directory,
+            policy: RootPolicy::Private,
+        })
+    }
+
+    #[cfg(any(target_os = "ios", test))]
+    fn pin_ios(directory: File) -> io::Result<Self> {
+        validate_root(&directory, RootPolicy::IosSandbox)?;
+        let metadata = directory.metadata()?;
+        Ok(Self {
+            identity: (metadata.dev(), metadata.ino()),
+            directory,
+            policy: RootPolicy::IosSandbox,
         })
     }
 
     fn validate(&self) -> io::Result<()> {
-        validate(&self.directory)?;
+        validate_root(&self.directory, self.policy)?;
         let metadata = self.directory.metadata()?;
         if (metadata.dev(), metadata.ino()) != self.identity {
             return Err(io::ErrorKind::PermissionDenied.into());
@@ -69,10 +96,126 @@ impl NativeAppPrivateRoot {
         Ok(child)
     }
 
+    /// Checks that the existing profile store is this OS-issued namespace.
+    /// A matching caller path grants no authority and never creates anything.
+    #[cfg(any(target_os = "ios", test))]
+    pub fn matches_profile_directory(&self, path: &Path) -> io::Result<bool> {
+        self.validate()?;
+        let directory = open_ios_selected_directory(path)?;
+        let metadata = directory.metadata()?;
+        Ok((metadata.dev(), metadata.ino()) == self.identity)
+    }
+
     /// Compares pinned native namespace identity, never an ordinary path.
     pub fn same_root(&self, other: &Self) -> bool {
         self.identity == other.identity && self.validate().is_ok() && other.validate().is_ok()
     }
+}
+
+// Root authority comes from native app selection, never a caller path. The
+// receipt child below remains strict0700 on every platform.
+fn validate_root(directory: &File, policy: RootPolicy) -> io::Result<()> {
+    #[cfg(not(any(target_os = "android", target_os = "ios", test)))]
+    let _ = directory;
+    match policy {
+        #[cfg(any(target_os = "android", test))]
+        RootPolicy::Private => validate(directory),
+        #[cfg(any(target_os = "ios", test))]
+        RootPolicy::IosSandbox => {
+            let metadata = directory.metadata()?;
+            if !metadata.is_dir()
+                || metadata.nlink() == 0
+                || !ios_root_owner_and_mode(
+                    metadata.uid(),
+                    nix::unistd::Uid::effective().as_raw(),
+                    metadata.mode(),
+                )
+            {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            unix::secure_staging_parent(directory).map(|_| ())
+        }
+    }
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn ios_root_owner_and_mode(uid: u32, current_uid: u32, mode: u32) -> bool {
+    uid == current_uid && mode & 0o022 == 0
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn open_ios_application_root(application_support: &Path) -> io::Result<NativeAppPrivateRoot> {
+    let directory = open_ios_selected_directory(application_support)?;
+    validate_root(&directory, RootPolicy::IosSandbox)?;
+    let profile = unix::open_directory_read_nofollow(&directory, Path::new("festerm"))?;
+    NativeAppPrivateRoot::pin_ios(profile)
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn ios_var_alias_path(path: &Path, target: &Path) -> io::Result<std::path::PathBuf> {
+    if !matches!(target.to_str(), Some("private/var" | "/private/var")) {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(Path::new("/private/var").join(
+        path.strip_prefix("/var")
+            .map_err(|_| io::ErrorKind::PermissionDenied)?,
+    ))
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn ios_selected_path(path: &Path) -> io::Result<std::path::PathBuf> {
+    if !path.is_absolute() {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    if path.starts_with("/var") {
+        let metadata = std::fs::symlink_metadata("/var")?;
+        if metadata.is_symlink() {
+            return ios_var_alias_path(path, &std::fs::read_link("/var")?);
+        }
+        if !metadata.is_dir() {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn open_ios_selected_directory(path: &Path) -> io::Result<File> {
+    // Only the documented native /var alias is normalized. All remaining
+    // components, including the selected app/profile root, stay no-follow.
+    let path = ios_selected_path(path)?;
+    let mut directory = File::open("/")?;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                directory = unix::open_directory_read_nofollow(&directory, Path::new(name))?;
+            }
+            _ => return Err(io::ErrorKind::PermissionDenied.into()),
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(target_os = "ios")]
+fn ios_application_root() -> io::Result<NativeAppPrivateRoot> {
+    use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
+
+    let path = objc2::rc::autoreleasepool(|_| {
+        let urls = NSFileManager::defaultManager().URLsForDirectory_inDomains(
+            NSSearchPathDirectory::ApplicationSupportDirectory,
+            NSSearchPathDomainMask::UserDomainMask,
+        );
+        if urls.count() != 1 {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let url = urls.firstObject().ok_or(io::ErrorKind::NotFound)?;
+        if !url.isFileURL() {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        Ok::<_, io::Error>(url.path().ok_or(io::ErrorKind::NotFound)?.to_string())
+    })?;
+    open_ios_application_root(Path::new(&path))
 }
 
 fn validate(directory: &File) -> io::Result<()> {
@@ -106,6 +249,120 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn ios_native_root_retains_existing_namespace_below_os_managed_ancestor() {
+        let fixture = Fixture::new();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o775)).unwrap();
+        let support = fixture.0.join("Application Support");
+        let profile = support.join("festerm");
+        fs::create_dir_all(&profile).unwrap();
+        fs::set_permissions(&support, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(NativeAppPrivateRoot::pin(File::open(&profile).unwrap()).is_err());
+        let root = open_ios_application_root(&support).unwrap();
+        assert!(root.matches_profile_directory(&profile).unwrap());
+        assert!(!root.matches_profile_directory(&support).unwrap());
+        assert!(!root.matches_profile_directory(&Fixture::new().0).unwrap());
+        root.open_host_approval_directory(true).unwrap();
+        let child = profile.join("host-client-approvals");
+        assert_eq!(fs::metadata(&child).unwrap().mode() & 0o777, 0o700);
+        fs::write(child.join("retained"), b"owned fixture record").unwrap();
+        assert!(root.same_root(&open_ios_application_root(&support).unwrap()));
+        assert_eq!(
+            fs::read(child.join("retained")).unwrap(),
+            b"owned fixture record"
+        );
+        assert_eq!(fs::metadata(&fixture.0).unwrap().mode() & 0o777, 0o775);
+        assert_eq!(fs::metadata(&profile).unwrap().mode() & 0o777, 0o755);
+    }
+
+    #[test]
+    fn ios_native_root_refuses_symlinks_permissive_children_and_revoked_roots() {
+        let fixture = Fixture::new();
+        let support = fixture.0.join("Application Support");
+        let profile = support.join("festerm");
+        fs::create_dir_all(&profile).unwrap();
+        fs::set_permissions(&support, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+        let root = open_ios_application_root(&support).unwrap();
+        let child = profile.join("host-client-approvals");
+        fs::create_dir(&child).unwrap();
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(root.open_host_approval_directory(true).is_err());
+        assert_eq!(fs::metadata(&child).unwrap().mode() & 0o777, 0o755);
+        fs::remove_dir(&child).unwrap();
+        let other = Fixture::new();
+        std::os::unix::fs::symlink(&other.0, &child).unwrap();
+        assert!(root.open_host_approval_directory(true).is_err());
+        fs::remove_file(&child).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(root.open_host_approval_directory(true).is_err());
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir(&profile).unwrap();
+        assert!(root.open_host_approval_directory(true).is_err());
+        std::os::unix::fs::symlink(&other.0, &profile).unwrap();
+        assert!(open_ios_application_root(&support).is_err());
+        fs::remove_file(&profile).unwrap();
+        fs::create_dir(&profile).unwrap();
+        assert!(!root.same_root(&open_ios_application_root(&support).unwrap()));
+        assert!(!ios_root_owner_and_mode(502, 501, 0o755));
+        assert!(!ios_root_owner_and_mode(0, 501, 0o755));
+        assert!(!ios_root_owner_and_mode(501, 501, 0o775));
+        assert!(open_ios_application_root(Path::new("relative")).is_err());
+    }
+
+    #[test]
+    fn ios_native_root_only_normalizes_the_documented_var_alias() {
+        let selected = Path::new(
+            "/var/mobile/Containers/Data/Application/fixture/Library/Application Support",
+        );
+        let expected = Path::new(
+            "/private/var/mobile/Containers/Data/Application/fixture/Library/Application Support",
+        );
+        for target in [Path::new("private/var"), Path::new("/private/var")] {
+            assert_eq!(ios_var_alias_path(selected, target).unwrap(), expected);
+        }
+        for target in [
+            "/tmp",
+            "../private/var",
+            "private/var/other",
+            "/private/var/../var",
+        ] {
+            assert!(ios_var_alias_path(selected, Path::new(target)).is_err());
+        }
+        assert!(
+            ios_var_alias_path(Path::new("/variable/fixture"), Path::new("private/var")).is_err()
+        );
+        assert_eq!(
+            ios_selected_path(Path::new("/Users/public-fixture")).unwrap(),
+            Path::new("/Users/public-fixture")
+        );
+        // Read-only check of the host OS alias, no changes to /var or its target.
+        let var = fs::symlink_metadata("/var").unwrap();
+        let normalized = ios_selected_path(Path::new("/var")).unwrap();
+        if var.is_symlink() {
+            assert_eq!(normalized, Path::new("/private/var"));
+        } else {
+            assert!(var.is_dir());
+            assert_eq!(normalized, Path::new("/var"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ios_native_root_refuses_actual_acl_grants_without_repair() {
+        let fixture = Fixture::new();
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755)).unwrap();
+        let result = std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow add_file"])
+            .arg(&fixture.0)
+            .status()
+            .unwrap();
+        assert!(result.success());
+        assert!(NativeAppPrivateRoot::pin_ios(File::open(&fixture.0).unwrap()).is_err());
+        assert_eq!(fs::metadata(&fixture.0).unwrap().mode() & 0o777, 0o755);
     }
 
     #[test]

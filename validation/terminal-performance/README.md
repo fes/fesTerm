@@ -108,6 +108,12 @@ for the isolated allocation regression. Against the #650 baseline, the warmed
 core-and-view route made 4,096 allocation calls for 4,096 ASCII events and
 4,096 calls for four-byte Unicode events. The candidate made no allocations
 or reallocations in either case. The sink in this fixture allocates nothing.
+The target now runs directly on one main thread: the process-wide allocator
+counter otherwise also observes libtest scheduler allocations, even with
+`--test-threads=1`. A positive control requires one known allocation before the
+unchanged zero-allocation routing checks. Cargo/nextest listing and exact/filter
+selection retain the existing test name. This removes cross-thread ambiguity;
+it does not establish the source of the earlier CI count of two ASCII allocations.
 
 The source for a single-threaded timing probe is
 `crates/festerm-ui-egui/benches/routed_input.rs`. Build it with

@@ -652,3 +652,61 @@ fn shield_requests_the_remaining_resume_frame_without_user_input() {
         "only the opaque native cover retires"
     );
 }
+
+#[test]
+fn reasoned_content_callback_preserves_legacy_notifications_and_distinguishes_lock() {
+    use festerm_ios_lock::ContentLockReason::{Inactive, Locked};
+    let reasons = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = reasons.clone();
+    let clock = Arc::new(ManualClock::new());
+    let reasoned = AppLock::new_with_content_lock_reason_callback(
+        None,
+        FakeLocker::new(FACE),
+        clock.clone(),
+        || {},
+        move |reason| observed.lock().unwrap().push(reason),
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let legacy = AppLock::new_with_content_lock_callback(
+        None,
+        FakeLocker::new(FACE),
+        clock.clone(),
+        || {},
+        move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+        },
+    );
+    for (event, expected) in [
+        (LifecycleEvent::WillResignActive, vec![Inactive]),
+        (LifecycleEvent::DidEnterBackground, vec![Inactive, Inactive]),
+        (LifecycleEvent::DidBecomeActive, vec![Inactive, Inactive]),
+        (
+            LifecycleEvent::DeviceLocked,
+            vec![Inactive, Inactive, Locked],
+        ),
+    ] {
+        reasoned.handle_lifecycle(event);
+        legacy.handle_lifecycle(event);
+        assert_eq!(*reasons.lock().unwrap(), expected);
+        assert_eq!(calls.load(Ordering::SeqCst), expected.len());
+        assert_eq!(
+            reasoned.recording_privacy_generation(),
+            legacy.recording_privacy_generation()
+        );
+    }
+    reasoned.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    legacy.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    for lock in [&reasoned, &legacy] {
+        lock.apply_settings(enabled(BackgroundGrace::Minutes1))
+            .unwrap();
+        lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+        lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    }
+    clock.advance(secs(61));
+    reasoned.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    legacy.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    assert_eq!(reasons.lock().unwrap().last(), Some(&Locked));
+    assert_eq!(calls.load(Ordering::SeqCst), reasons.lock().unwrap().len());
+    assert_eq!(reasoned.state(), LockState::Locked);
+}

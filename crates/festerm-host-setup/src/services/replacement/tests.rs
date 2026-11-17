@@ -3,6 +3,70 @@ use crate::enrollment::{owner_key_fingerprint, OwnerStorage};
 use festerm_tunnel_bridge::{host_identity::HostIdentity, owner_auth::OwnerSigningKey};
 use std::{cell::RefCell, collections::BTreeSet, sync::Arc};
 
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+fn stopped_creation_projection_preserves_committed_binary_replacement_history() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    fixture.installed(&services);
+    fixture.update(&services).unwrap();
+    let history = std::fs::read(services.state.join(JOURNAL)).unwrap();
+    let original = services.registration().unwrap().1.unwrap();
+    let before = fixture.store.snapshot().unwrap();
+    let mut settings = before.settings.clone();
+    settings.allow_creation = true;
+    let ticket = fixture
+        .store
+        .request_enable_if_current(&before, &settings)
+        .unwrap();
+    fixture
+        .store
+        .record_provisioned(&ticket, before.binding.unwrap())
+        .unwrap();
+    let expected = fixture.store.snapshot().unwrap();
+    let owners = fixture
+        .store
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    let owner = owners.snapshot().unwrap();
+    let selected_root = storage::private_test_directory();
+    let selected = trusted::version_fixture(selected_root.path(), crate::VERSION);
+    let calls = services.runner.calls.borrow().len();
+    for _ in 0..2 {
+        services
+            .complete_setup_with(
+                &selected,
+                &expected,
+                &owner,
+                &owners,
+                &tokio_util::sync::CancellationToken::new(),
+                |_| {
+                    Ok(trusted::version_fixture(
+                        fixture.root.path(),
+                        crate::VERSION,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            services.replacement_status().unwrap().unwrap().state,
+            ReplacementState::Committed
+        );
+        assert_eq!(
+            std::fs::read(services.state.join(JOURNAL)).unwrap(),
+            history
+        );
+        let mut wanted = original.clone();
+        wanted.settings.allow_creation = true;
+        assert_eq!(services.registration().unwrap().1.unwrap(), wanted);
+        assert_eq!(owners.snapshot().unwrap(), owner);
+        assert!(!owner.capabilities.creation_allowed);
+    }
+    assert!(services.runner.calls.borrow()[calls..]
+        .iter()
+        .all(|args| args.iter().any(|arg| arg == "show")));
+}
+
 struct Model {
     directory: PathBuf,
     loaded: RefCell<BTreeSet<String>>,
@@ -104,6 +168,7 @@ impl Fixture {
                 &state,
                 Origin::Headless,
                 Settings {
+                    ordinary_access: Default::default(),
                     friendly_name: "Update fixture".into(),
                     allow_creation: false,
                     startup: Startup::Manual,

@@ -3809,7 +3809,7 @@ pub fn show_launcher(
             2,
             LauncherItem::untabulated(
                 "Dev Tunnel · Experimental".into(),
-                "Attach an existing exported remote session".into(),
+                "Connect to a remote host".into(),
                 LauncherItemKind::NewDevTunnel,
             ),
         );
@@ -7042,7 +7042,7 @@ mod tests {
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
             #[cfg(feature = "experimental-dev-tunnels")]
-            "Dev Tunnel · Experimental — Attach an existing exported remote session",
+            "Dev Tunnel · Experimental — Connect to a remote host",
             "SFTP — Browse and transfer files",
             "Serial — Connect to a serial device",
             "Markdown — Open a Markdown workspace",
