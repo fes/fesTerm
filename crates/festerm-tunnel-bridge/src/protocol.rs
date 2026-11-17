@@ -238,6 +238,13 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
 /// enforced before decoding; logical allocation charges are checked before
 /// restoring capacities. The trusted-local bincode decoder is not network-facing.
 pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Terminal> {
+    decode_snapshot_with_history_limit(bytes, usize::MAX)
+}
+
+pub(crate) fn decode_snapshot_with_history_limit(
+    bytes: &[u8],
+    history_limit: usize,
+) -> io::Result<Terminal> {
     validate_length(SNAPSHOT, bytes.len())?;
     let (semantics, bytes) = match bytes.split_first() {
         Some((0, bytes)) => (TerminalSemantics::Legacy, bytes),
@@ -252,6 +259,7 @@ pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Terminal> {
     let size = terminal.dimensions();
     if size.columns() > 256
         || size.rows() > 128
+        || terminal.scrollback_stats().limit_bytes() > history_limit
         || terminal.scrollback_stats().charged_bytes() > SNAPSHOT_LIMIT
         || !terminal.queued_input().is_empty()
         || !terminal.queued_replies().is_empty()

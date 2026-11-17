@@ -618,7 +618,8 @@ Capture host/principal/logical ID/generation/operation epochs at admission.
 Revalidate before publishing results or opening daemon IPC. List operations must
 not leak private-session names or existence. Host resolution is not authorization.
 
-Preserve or tighten current frame/snapshot/queue/deadline limits. Multi-session
+Preserve or tighten current live-frame/queue/deadline limits; initial recovery
+snapshots use the separately reviewed transaction budget below. Multi-session
 support requires additional aggregate limits on clients, sessions, pending
 creates, control operations and bytes; per-session limits alone are insufficient.
 Specify concrete constants in the protocol implementation review. Fair scheduling
@@ -627,6 +628,40 @@ boundedly; no unbounded task/thread creation. Installation, policy and journal
 guards are never held over network I/O. A separate bounded cloud-operation
 serialization lease may span its network operation without blocking revocation
 or becoming current installation/policy authority.
+
+Initial HOST recovery snapshots are a separate transaction from live queued
+bytes. A native probe recovered a valid styled 119×16 screen with no retained
+history or queued input/replies whose existing JSON codec produced 568,056 bytes;
+the former 512 KiB live-byte ceiling rejected it. HOST now uses the existing
+legacy codec's 8 MiB serialized snapshot ceiling with **one** in-flight snapshot
+transaction per shared `Budgets` domain (independently constructed budgets are
+not a process-wide quota). Live queues remain 512 KiB/client and 2 MiB
+aggregate; SyncScrollback remains 512 KiB, chunks 64 KiB, and deadlines unchanged.
+Snapshot saturation fails immediately with Busy rather than waiting in a queue;
+this offers no FIFO fairness or automatic retry.
+
+The slot is acquired before native attachment/receive allocation and follows
+actual blocking native-reader work, recovered terminal, encoded frame and client
+pending frontend adoption. Cancellation cannot free it while late work or a
+queued model retains recovery memory. Native reader wire length/bincode decode
+and actual retained history charges are bounded to 8 MiB before capacity
+restoration. HOST's declared history policy may retain the existing 64 MiB
+default: that declaration does not allocate 64 MiB; only validated stored
+capacities are restored. Larger declarations fail without truncation. Legacy
+local/native limits and legacy bridge declaration behavior are unchanged.
+All snapshot owners release before the live attachment continues, allowing a
+second recovery while the first terminal remains live. A pre-SNAPSHOT native
+recovery, encoding, semantic or size failure returns Incompatible; a write that
+has already begun closes on error without appending a reply to a partial frame.
+
+One admitted transaction is **not** an 8 MiB process-memory ceiling. Native
+encoded input, decoded terminal/capacities, JSON output capacity, and the codec's
+semantic validation terminal can overlap; the client likewise temporarily owns
+a frame and decoded model. The slot bounds concurrency of these representations,
+while each codec/validated capacity bound limits its own representation. The
+native wire buffer is retired before capacity restoration, the blocking reader
+retains the slot until its buffers are gone, and encoded buffers drop before the
+last permit. No terminal history is truncated to satisfy a live queue budget.
 
 Version mismatch and unsupported capabilities produce clear refusal. Changed
 generation retires pending input, file reads, observation, selection and recovery

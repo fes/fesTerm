@@ -1055,3 +1055,87 @@ async fn closed_initial_resize_retains_real_actor_eof_without_reclassifying_send
         "unrelated refusal is never replaced"
     );
 }
+
+#[test]
+fn styled_native_grid_snapshot_exceeds_live_queue_and_roundtrips_losslessly() {
+    let mut terminal = Terminal::new(Dimensions::new(119, 16).unwrap()).unwrap();
+    terminal.ingest(b"\x1b[38;2;123;45;67m\x1b[48;2;9;87;65mstyled recovery\x1b[?2004h");
+    for screen in 0..2 {
+        if screen == 1 {
+            terminal.ingest(b"\x1b[?1049h");
+        }
+        for row in 1..=16 {
+            terminal.ingest(
+                format!(
+                    "\x1b[{row};1H\x1b[1;3;4;38;2;123;45;67;48;2;9;87;65m{}",
+                    "X".repeat(119)
+                )
+                .as_bytes(),
+            );
+        }
+    }
+    let recovered = terminal.recovery_clone();
+    let bytes = encode_snapshot_bounded(&recovered, HOST_SNAPSHOT_LIMIT).unwrap();
+    assert!(
+        bytes.len() > festerm_host_protocol::MAX_BYTES_PER_CLIENT,
+        "encoded {}",
+        bytes.len()
+    );
+    assert!(bytes.len() <= HOST_SNAPSHOT_LIMIT);
+    assert_eq!(
+        recovered.scrollback_stats().limit_bytes(),
+        HOST_DECLARED_HISTORY_LIMIT
+    );
+    let decoded =
+        crate::protocol::decode_snapshot_with_history_limit(&bytes, HOST_DECLARED_HISTORY_LIMIT)
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(&decoded).unwrap(),
+        serde_json::to_value(&recovered).unwrap()
+    );
+    assert!(
+        encode_snapshot_bounded(&recovered, festerm_host_protocol::MAX_BYTES_PER_CLIENT).is_err()
+    );
+    validate(SNAPSHOT, HOST_SNAPSHOT_LIMIT, false).unwrap();
+    assert!(validate(SNAPSHOT, HOST_SNAPSHOT_LIMIT + 1, false).is_err());
+}
+
+#[tokio::test]
+async fn snapshot_prefix_refuses_oversize_before_body_and_releases_slot_on_partial_eof() {
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let (mut stream, mut peer) = duplex(32);
+    peer.write_u8(SNAPSHOT).await.unwrap();
+    peer.write_u32((HOST_SNAPSHOT_LIMIT + 1) as u32)
+        .await
+        .unwrap();
+    assert!(read_frame(&mut stream, &permit, false).await.is_err());
+    assert!(permit.reserve_snapshot().is_ok());
+    let (mut stream, mut peer) = duplex(32);
+    peer.write_u8(SNAPSHOT).await.unwrap();
+    peer.write_u32(HOST_SNAPSHOT_LIMIT as u32).await.unwrap();
+    drop(peer);
+    assert!(read_frame(&mut stream, &permit, false).await.is_err());
+    assert!(permit.reserve_snapshot().is_ok());
+}
+
+#[tokio::test]
+async fn snapshot_frame_slot_is_owned_by_frame_and_live_bytes_remain_independent() {
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let (mut stream, mut peer) = duplex(64);
+    peer.write_u8(SNAPSHOT).await.unwrap();
+    peer.write_u32(1).await.unwrap();
+    peer.write_u8(1).await.unwrap();
+    let frame = read_frame(&mut stream, &permit, false).await.unwrap();
+    assert!(matches!(
+        permit.reserve_snapshot(),
+        Err(ContractError::Busy)
+    ));
+    let live = permit
+        .reserve_terminal_bytes(festerm_host_protocol::MAX_BYTES_PER_CLIENT)
+        .unwrap();
+    drop(frame);
+    assert!(permit.reserve_snapshot().is_ok());
+    drop(live);
+}

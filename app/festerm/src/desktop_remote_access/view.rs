@@ -33,7 +33,16 @@ pub(crate) fn show(
     if requested
         && matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
     {
-        ui.label("Host configured. Connection status not checked.");
+        ui.label(view.enabled_status());
+        settings_note(ui, "Recorded status, not a current connection test.");
+        if let Some(process) = &view.process {
+            settings_note(ui, &format!("Last host process observation: {process}."));
+        }
+        ui.add_enabled_ui(!view.busy, |ui| {
+            if action_button(ui, ActionButtonRole::Secondary, "Check host process…").clicked() {
+                action = Some(Action::Review(Operation::ObserveNative));
+            }
+        });
     }
     if !requested && view.access_enabled() {
         ui.colored_label(

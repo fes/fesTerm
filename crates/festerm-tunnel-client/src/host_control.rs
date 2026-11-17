@@ -192,6 +192,10 @@ impl ConnectionPermit {
         &self.budgets
     }
 
+    pub fn reserve_snapshot(&self) -> Result<festerm_host_protocol::SnapshotPermit, ContractError> {
+        self.client.reserve_snapshot()
+    }
+
     pub fn reserve_terminal_bytes(
         &self,
         bytes: usize,

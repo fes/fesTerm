@@ -351,6 +351,22 @@ control worker: both must still cancel and report cancellation without replay.
 Deterministic tests cover these distinctions; native lifecycle acceptance
 remains separate.
 
+In HOSTSETUP-01 Settings, verify enabled access shows only the current installation
+and epoch’s last reported starting/listening/stopped/failed state, labelled as
+recorded status rather than a current connection test. Use **Check host process…**
+through its existing review and confirm the observed process state appears. Refresh
+must discard an older process observation, and disabled access must not display an
+enabled status from obsolete runtime history.
+
+Within HOST-03 / MOB-06 / TUNNEL-11, attach the retained styled 119×16 native
+screen whose JSON exceeds 512 KiB; verify full recovered content, styles and modes
+before activation, with no replacement shell or history truncation. Keep the first
+terminal live while attaching a second authorized terminal. Capacity saturation
+must return Busy; incompatible/oversized recovery must return Incompatible before
+SNAPSHOT. Cancellation during recovery/adoption must retain admission until actual
+work/buffers finish. Portable budget/codec tests cover these bounds; this does not
+claim the newly built signed/native route has passed until separately observed.
+
 HOST-03 / MOB-06 / TUNNEL-11 attachment failure: keep the viewer open after a
 controlled connection failure and read the finite stage/category/I/O-kind detail
 without navigating Back. Check that the unknown/not-absent and original-action

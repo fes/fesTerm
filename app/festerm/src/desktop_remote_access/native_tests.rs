@@ -573,3 +573,66 @@ fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_re
     assert!(scoped_diagnostic(diagnostic, &work, &Scope::Present(changed.into())).is_none());
     assert!(scoped_diagnostic(diagnostic, &work, &Scope::Absent).is_none());
 }
+
+#[test]
+fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
+    let root = storage::private_test_directory();
+    let store = Store::create(
+        &root.path().join("desktop"),
+        Origin::Desktop,
+        Draft::default().settings(),
+    )
+    .unwrap();
+    // Disabled projection must not be blocked or relabelled by obsolete run history.
+    std::fs::write(root.path().join("desktop/host-runtime.json"), b"{").unwrap();
+    let disabled = report(Some(&store)).unwrap();
+    assert!(disabled.last_run.is_none());
+    assert!(matches!(disabled.scope, Scope::Present(ref state) if state.phase == Phase::Disabled));
+    let mut snapshot = store.snapshot().unwrap();
+    snapshot.phase = Phase::Provisioned;
+    let record = |installation: &str, epoch| {
+        serde_json::from_value::<controller::RunRecord>(serde_json::json!({
+            "version": 1, "installation": installation, "epoch": epoch,
+            "run_id": "11111111-1111-4111-8111-111111111111", "state": "listening", "failure": null
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch))
+        ),
+        Some(controller::RunState::Listening)
+    );
+    assert_eq!(current_run_state(&snapshot, None), None);
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record("another-installation", snapshot.epoch))
+        ),
+        None
+    );
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch + 1))
+        ),
+        None
+    );
+    snapshot.epoch += 1;
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch - 1))
+        ),
+        None
+    );
+    snapshot.phase = Phase::Disabled;
+    assert_eq!(
+        current_run_state(
+            &snapshot,
+            Some(record(&snapshot.installation, snapshot.epoch))
+        ),
+        None
+    );
+}

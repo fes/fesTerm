@@ -292,6 +292,8 @@ pub struct View {
     /// Last operation metadata only; never inferred from a generic local error.
     pub diagnostic: Option<HostSetupDiagnostic>,
     pub process: Option<String>,
+    /// Protected current-epoch history; never a live endpoint observation.
+    pub last_run: Option<festerm_host_setup::controller::RunState>,
     pub owner_binding: Option<String>,
     pub owner_approved: bool,
     pub owner_revision: Option<u64>,
@@ -390,6 +392,17 @@ impl View {
         }
     }
 
+    pub fn enabled_status(&self) -> &'static str {
+        use festerm_host_setup::controller::RunState;
+        match self.last_run {
+            Some(RunState::Starting) => "Remote access is enabled. Last reported: starting.",
+            Some(RunState::Listening) => "Remote access is enabled. Last reported: listening.",
+            Some(RunState::Stopped) => "Remote access is enabled. Last reported: stopped.",
+            Some(RunState::Failed) => "Remote access is enabled. Last reported: failed.",
+            None => "Remote access is enabled. No current host report is available.",
+        }
+    }
+
     pub fn observation_label(&self) -> &'static str {
         match &self.scope {
             Scope::Unobserved => "Not observed. No readiness assertion.",
@@ -421,6 +434,7 @@ struct Request {
 struct Report {
     scope: Scope,
     process: Option<String>,
+    last_run: Option<festerm_host_setup::controller::RunState>,
     owner_binding: Option<String>,
     owner_approved: bool,
     owner_revision: Option<u64>,
@@ -1028,6 +1042,7 @@ impl Controller {
                             }
                             self.view.scope = report.scope;
                             self.view.process = report.process;
+                            self.view.last_run = report.last_run;
                             self.view.owner_binding = report.owner_binding;
                             self.view.owner_approved = report.owner_approved;
                             self.view.owner_revision = report.owner_revision;
@@ -1054,6 +1069,8 @@ impl Controller {
                             }
                         }
                         Err(error) => {
+                            self.view.last_run = None;
+                            self.view.process = None;
                             self.view.diagnostic = None;
                             self.view.failure = Some(error);
                         }

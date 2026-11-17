@@ -26,7 +26,9 @@ mod tests;
 
 pub const HOST_REQUEST: u8 = 60;
 pub const HOST_REPLY: u8 = 61;
-pub const HOST_SNAPSHOT_LIMIT: usize = MAX_BYTES_PER_CLIENT;
+pub const HOST_SNAPSHOT_LIMIT: usize = festerm_host_protocol::MAX_SNAPSHOT_BYTES;
+pub const HOST_DECLARED_HISTORY_LIMIT: usize = 64 * 1024 * 1024;
+const HOST_SCROLLBACK_SYNC_LIMIT: usize = MAX_BYTES_PER_CLIENT;
 const DEADLINE: Duration = Duration::from_secs(15);
 
 /// One ready chunk per terminal in FIFO rotation. Admission is bounded by the
@@ -94,6 +96,7 @@ pub struct Frame {
     kind: u8,
     bytes: Vec<u8>,
     _terminal: Option<ClientBytesPermit>,
+    snapshot: Option<Arc<festerm_host_protocol::SnapshotPermit>>,
     _control: Option<BudgetPermit>,
 }
 impl Frame {
@@ -147,7 +150,12 @@ async fn read_body(
     let length = stream.read_u32().await? as usize;
     validate(kind, length, from_client)?;
     let control = matches!(kind, HOST_REQUEST | HOST_REPLY);
-    let terminal = if length > 0 && !control {
+    let snapshot = if kind == SNAPSHOT {
+        Some(Arc::new(permit.reserve_snapshot()?))
+    } else {
+        None
+    };
+    let terminal = if length > 0 && !control && kind != SNAPSHOT {
         Some(permit.reserve_terminal_bytes(length)?)
     } else {
         None
@@ -170,7 +178,7 @@ async fn read_body(
             let sync: Sync = serde_json::from_slice(&bytes)
                 .map_err(|_| festerm_host_protocol::ContractError::Malformed)?;
             match sync {
-                Sync::Scrollback(limit) if limit > HOST_SNAPSHOT_LIMIT => {
+                Sync::Scrollback(limit) if limit > HOST_SCROLLBACK_SYNC_LIMIT => {
                     return Err(festerm_host_protocol::ContractError::Limit.into())
                 }
                 Sync::Bytes(bytes) if bytes.len() > CHUNK_LIMIT => {
@@ -185,6 +193,7 @@ async fn read_body(
         kind,
         bytes,
         _terminal: terminal,
+        snapshot,
         _control: control,
     })
 }
@@ -254,6 +263,7 @@ pub struct PendingTerminal<S> {
     binding: Binding,
     request: Envelope<Request>,
     snapshot: Option<Terminal>,
+    snapshot_permit: Arc<festerm_host_protocol::SnapshotPermit>,
     capabilities: festerm_host_protocol::Capabilities,
 }
 
@@ -317,7 +327,7 @@ pub(crate) async fn establish_diagnostic<S: AsyncRead + AsyncWrite + Unpin>(
         drop(frame);
         stage = crate::host_client::AttachStage::Snapshot;
         write_contract(&mut stream, &permit, HOST_REQUEST, &request).await?;
-        let frame = read_frame(&mut stream, &permit, false).await?;
+        let mut frame = read_frame(&mut stream, &permit, false).await?;
         if frame.kind == HOST_REPLY {
             let reply: Envelope<Response> = festerm_host_protocol::decode(&frame.bytes)?;
             reply.validate_for(&request)?;
@@ -329,13 +339,20 @@ pub(crate) async fn establish_diagnostic<S: AsyncRead + AsyncWrite + Unpin>(
         if frame.kind != SNAPSHOT {
             return Err(festerm_host_protocol::ContractError::Malformed.into());
         }
-        let snapshot = decode_snapshot(&frame.bytes)?;
+        let snapshot = crate::protocol::decode_snapshot_with_history_limit(
+            &frame.bytes,
+            HOST_DECLARED_HISTORY_LIMIT,
+        )?;
         Ok(PendingTerminal {
             stream,
             permit,
             binding,
             request,
             snapshot: Some(snapshot),
+            snapshot_permit: frame
+                .snapshot
+                .take()
+                .ok_or(festerm_host_protocol::ContractError::Denied)?,
             capabilities,
         })
     };
@@ -364,6 +381,9 @@ pub struct LiveTerminal<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> PendingTerminal<S> {
+    pub(crate) fn snapshot_permit(&self) -> Arc<festerm_host_protocol::SnapshotPermit> {
+        self.snapshot_permit.clone()
+    }
     pub fn take_snapshot(&mut self) -> Option<Terminal> {
         self.snapshot.take()
     }

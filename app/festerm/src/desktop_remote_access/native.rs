@@ -181,11 +181,30 @@ fn report(store: Option<&Store>) -> Result<Report, Failure> {
     } else {
         None
     };
+    let last_run = if snapshot.phase == Phase::Provisioned {
+        current_run_state(&snapshot, controller::last_run(store).map_err(failure)?)
+    } else {
+        None
+    };
     Ok(Report {
+        last_run,
         scope: Scope::Present(snapshot.into()),
         cleanup,
         ..Report::default()
     })
+}
+
+fn current_run_state(
+    snapshot: &Snapshot,
+    record: Option<controller::RunRecord>,
+) -> Option<controller::RunState> {
+    record
+        .filter(|record| {
+            snapshot.phase == Phase::Provisioned
+                && record.installation == snapshot.installation
+                && record.epoch == snapshot.epoch
+        })
+        .map(|record| record.state)
 }
 
 fn public_owner(

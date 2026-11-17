@@ -1649,3 +1649,100 @@ fn desktop_remote_access_diagnostics_refuse_invalidated_scope_reports() {
         assert!(controller.view.diagnostic.is_none());
     }
 }
+
+#[test]
+fn desktop_remote_access_normal_status_shows_recorded_state_and_checked_process_action() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_host_setup::controller::RunState;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1200.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    last_run: Some(RunState::Listening),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    harness.get_by_label("Remote access is enabled. Last reported: listening.");
+    harness.get_by_label("Recorded status, not a current connection test.");
+    assert!(harness
+        .query_by_label("Host configured. Connection status not checked.")
+        .is_none());
+    harness.get_by_label("Check host process…").click();
+    harness.run();
+    assert!(matches!(
+        harness.state().1,
+        Some(Action::Review(Operation::ObserveNative))
+    ));
+    for (state, label) in [
+        (
+            Some(RunState::Starting),
+            "Remote access is enabled. Last reported: starting.",
+        ),
+        (
+            Some(RunState::Stopped),
+            "Remote access is enabled. Last reported: stopped.",
+        ),
+        (
+            Some(RunState::Failed),
+            "Remote access is enabled. Last reported: failed.",
+        ),
+        (
+            None,
+            "Remote access is enabled. No current host report is available.",
+        ),
+    ] {
+        harness.state_mut().0.last_run = state;
+        harness.run();
+        harness.get_by_label(label);
+    }
+    let Scope::Present(snapshot) = &mut harness.state_mut().0.scope else {
+        panic!("fixture installation missing")
+    };
+    Arc::make_mut(snapshot).phase = Phase::Disabled;
+    harness.run();
+    assert!(harness.query_by_label("Check host process…").is_none());
+    assert!(harness
+        .query_by_label("Remote access is enabled. No current host report is available.")
+        .is_none());
+}
+
+#[test]
+fn desktop_remote_access_refresh_replaces_recorded_state_and_clears_previous_process_observation() {
+    use festerm_host_setup::controller::RunState;
+    let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_fail = fail.clone();
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        if worker_fail.load(Ordering::Acquire) {
+            return Err(Failure::ScopeChanged);
+        }
+        Ok(Report {
+            scope: provisioned_scope(),
+            last_run: Some(RunState::Stopped),
+            ..Report::default()
+        })
+    })));
+    controller.view.last_run = Some(RunState::Listening);
+    controller.view.process = Some("Running".into());
+    let context = egui::Context::default();
+    controller.action(Action::Refresh, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.last_run, Some(RunState::Stopped));
+    assert!(controller.view.process.is_none());
+    fail.store(true, Ordering::Release);
+    controller.view.last_run = Some(RunState::Listening);
+    controller.view.process = Some("Running".into());
+    controller.action(Action::Refresh, &context);
+    drain(&mut controller, &context);
+    assert!(controller.view.last_run.is_none());
+    assert!(controller.view.process.is_none());
+    assert_eq!(controller.view.failure, Some(Failure::ScopeChanged));
+}

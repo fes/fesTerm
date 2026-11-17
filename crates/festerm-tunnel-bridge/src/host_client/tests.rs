@@ -458,6 +458,12 @@ async fn selected_host_snapshot_adoption_fences_request_account_generation_and_c
             scope: original,
             terminal: recovered,
             acknowledge,
+            _snapshot_permit: Arc::new(
+                ConnectionPermit::reserve(&Budgets::default())
+                    .unwrap()
+                    .reserve_snapshot()
+                    .unwrap(),
+            ),
         };
         if change == 3 {
             drop(adopted);
@@ -479,6 +485,12 @@ async fn selected_host_snapshot_adoption_fences_request_account_generation_and_c
         scope: current.clone(),
         terminal: recovered,
         acknowledge,
+        _snapshot_permit: Arc::new(
+            ConnectionPermit::reserve(&Budgets::default())
+                .unwrap()
+                .reserve_snapshot()
+                .unwrap(),
+        ),
     };
     let mut presented = terminal();
     adoption.adopt_into(&current, &mut presented).unwrap();
@@ -553,4 +565,24 @@ async fn native_owner_key_prompt_budget_and_cancellation_keep_real_worker_charge
         .unwrap();
         drop(occupied);
     }
+}
+
+#[tokio::test]
+async fn cancelled_frontend_adoption_retains_snapshot_slot_until_queued_model_drops() {
+    let budgets = Budgets::default();
+    let permit = ConnectionPermit::reserve(&budgets).unwrap();
+    let (acknowledge, receiver) = tokio::sync::oneshot::channel();
+    let adoption = Adoption {
+        scope: scope(),
+        terminal: terminal(),
+        acknowledge,
+        _snapshot_permit: Arc::new(permit.reserve_snapshot().unwrap()),
+    };
+    drop(receiver); // worker timed out/cancelled; UI still owns its queued model.
+    assert!(matches!(
+        permit.reserve_snapshot(),
+        Err(ContractError::Busy)
+    ));
+    drop(adoption);
+    assert!(permit.reserve_snapshot().is_ok());
 }

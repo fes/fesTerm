@@ -1735,6 +1735,18 @@ These do not establish physical mobile/native-vault/GUI acceptance.
 Local Settings/Remote Access,
 sharing, durable client-action reconciliation and native acceptance remain open.
 
+HOST-01 enabled Settings show protected current-epoch last-run history separately
+from current connection readiness. **Check host process…** uses the existing
+reviewed native observation action; refresh retires a previous process observation.
+Disabled or stale runtime history never becomes enabled or ready.
+
+HOST-03 initial recovery uses the separate single admitted snapshot transaction
+(8 MiB existing codec ceiling), preserving live queue/control budgets and full
+terminal state. Busy or Incompatible before snapshot publication leaves the
+original generation intact; cancellation retains late reader/frame/adoption
+ownership until buffers are released. Native/mobile acceptance for the corrected
+signed route remains separate from portable codec/budget tests.
+
 The mobile HOST-03 viewer retains the existing finite attachment failure in its
 reconnect detail: relay/authentication, terminal capabilities/snapshot, frontend
 adoption, host activation or live stream, with a finite offline/closed category

@@ -2786,6 +2786,32 @@ impl SessionControl {
         notifier: Arc<dyn SessionEventNotifier>,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<PendingAttachment, ControlError> {
+        self.attach_with_recovery_work(
+            owner,
+            target,
+            attachment,
+            takeover,
+            maximum_recovery_bytes,
+            notifier,
+            None,
+            admit,
+        )
+    }
+
+    /// Resource retention only, never authorization. Installed HOST callers
+    /// reserve their bounded recovery transaction before entering this method.
+    #[allow(clippy::too_many_arguments)]
+    pub fn attach_with_recovery_work<G>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        attachment: &AttachmentId,
+        takeover: bool,
+        maximum_recovery_bytes: u32,
+        notifier: Arc<dyn SessionEventNotifier>,
+        recovery_work: Option<Arc<dyn Send + Sync>>,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<PendingAttachment, ControlError> {
         let mut tx = self.transaction().inspect_err(|_error| {
             #[cfg(any(test, feature = "test-support"))]
             AttachFailureDiagnostic::JournalAdmission(*_error).report(true);
@@ -2892,13 +2918,14 @@ impl SessionControl {
         drop(guard);
         drop(admission);
         let connected = match &ticket {
-            Some(ticket) => PersistentSession::resume_host_reserved_in(
+            Some(ticket) => PersistentSession::resume_host_reserved_with_recovery_work(
                 &identity,
                 record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 ticket,
                 notifier,
+                recovery_work,
             ),
             None => PersistentSession::resume_remote_in(
                 &identity,

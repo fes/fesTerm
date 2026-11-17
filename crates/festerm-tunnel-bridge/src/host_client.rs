@@ -519,6 +519,7 @@ pub struct Adoption {
     scope: Scope,
     terminal: Terminal,
     acknowledge: tokio::sync::oneshot::Sender<()>,
+    _snapshot_permit: Arc<festerm_host_protocol::SnapshotPermit>,
 }
 
 impl Adoption {
@@ -881,6 +882,7 @@ where
     let completion = Completion {
         scope: scope.clone(),
         outcome: Outcome::Snapshot(Box::new(Adoption {
+            _snapshot_permit: pending.snapshot_permit(),
             scope: scope.clone(),
             terminal,
             acknowledge,
