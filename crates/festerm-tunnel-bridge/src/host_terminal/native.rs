@@ -1,8 +1,9 @@
 //! Native daemon terminal composition; never installs a listener.
 use super::*;
+use crate::host_control::ConnectionAuthority;
 use crate::{
     host_control::{OperationAdmission, PolicyGuard, ProtectedPolicySource},
-    owner_auth::{OwnerConnectionGuard, VerifiedOwner},
+    owner_auth::OwnerConnectionGuard,
 };
 use festerm_host_protocol::{
     AdmissionFence, Capabilities, ContractError, DetachKind, Epoch, Refusal,
@@ -50,7 +51,7 @@ impl SessionEventNotifier for Wake {
 struct Worker<A: ProtectedPolicySource> {
     backend: Arc<NativeTerminal<A>>,
     admission: OperationAdmission,
-    owner: Arc<VerifiedOwner>,
+    owner: Arc<ConnectionAuthority>,
     request: Envelope<Request>,
     target: HostTarget,
     pending: PendingAttachment,
@@ -165,7 +166,11 @@ impl<A: ProtectedPolicySource> Worker<A> {
         other: Option<&Envelope<Request>>,
         cleanup: bool,
     ) -> Result<A::Guard, ControlError> {
-        let guard = self.backend.policy.current_policy().map_err(control)?;
+        let guard = self
+            .backend
+            .policy
+            .current_policy_for(self.owner.kind())
+            .map_err(control)?;
         let cleanup_admission = cleanup.then(|| {
             OperationAdmission::terminal(
                 self.owner.clone(),
@@ -177,7 +182,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
         let admit = cleanup_admission.as_ref().unwrap_or(&self.admission);
         let fresh = admit
             .authorize_current(
-                guard.verifier(),
+                guard.view(),
                 &self.request,
                 state.grant.as_ref(),
                 state.grant_epoch.ok_or(ControlError::Unknown)?,
@@ -192,7 +197,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
         if let Some(request) = other {
             admit
                 .authorize_current(
-                    guard.verifier(),
+                    guard.view(),
                     request,
                     state.grant.as_ref(),
                     state.grant_epoch.ok_or(ControlError::Unknown)?,
@@ -505,7 +510,7 @@ fn response_for(request: &Envelope<Request>, body: Response) -> Envelope<Respons
 pub async fn serve_terminal<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource>(
     stream: S,
     permit: ConnectionPermit,
-    owner: VerifiedOwner,
+    owner: impl Into<ConnectionAuthority>,
     guard: OwnerConnectionGuard,
     backend: Arc<NativeTerminal<A>>,
     scheduler: OutputScheduler,
@@ -521,13 +526,13 @@ pub async fn serve_terminal<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolic
 async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource>(
     mut stream: S,
     permit: ConnectionPermit,
-    owner: VerifiedOwner,
+    owner: impl Into<ConnectionAuthority>,
     guard: OwnerConnectionGuard,
     backend: Arc<NativeTerminal<A>>,
     scheduler: OutputScheduler,
 ) -> Result<(), Error> {
     let permit = Arc::new(permit);
-    let owner = Arc::new(owner);
+    let owner = Arc::new(owner.into());
     let _refusal_charge = permit.budgets().reserve(Resource::ControlBytes, 512)?;
     let first = tokio::time::timeout(DEADLINE, read_frame(&mut stream, &permit, true))
         .await
@@ -548,9 +553,9 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         DEADLINE,
         tokio::task::spawn_blocking(move || {
             let _owned = auth_permit;
-            let current = auth_backend.policy.current_policy()?;
-            auth_owner.authorize(current.verifier(), &auth_hello, Epoch::new(1)?, None)?;
-            let supported = current.verifier().capabilities();
+            let current = auth_backend.policy.current_policy_for(auth_owner.kind())?;
+            auth_owner.authorize(current.view(), &auth_hello, Epoch::new(1)?, None)?;
+            let supported = current.view().capabilities();
             Ok::<_, ContractError>(Capabilities {
                 attach: supported.attach,
                 detach: supported.detach,
@@ -608,8 +613,10 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
         DEADLINE,
         tokio::task::spawn_blocking(move || {
             let _owned = current_permit;
-            let guard = current_backend.policy.current_policy()?;
-            current_owner.authorize(guard.verifier(), &gate, Epoch::new(1)?, None)?;
+            let guard = current_backend
+                .policy
+                .current_policy_for(current_owner.kind())?;
+            current_owner.authorize(guard.view(), &gate, Epoch::new(1)?, None)?;
             Ok::<_, ContractError>(())
         }),
     )
@@ -689,10 +696,13 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             HOST_SNAPSHOT_LIMIT as u32,
             Arc::new(Wake(worker_wake)),
             |state| {
-                let guard = backend.policy.current_policy().map_err(control)?;
+                let guard = backend
+                    .policy
+                    .current_policy_for(owner.kind())
+                    .map_err(control)?;
                 let captured = admission
                     .authorize_current(
-                        guard.verifier(),
+                        guard.view(),
                         &worker_request,
                         state.grant.as_ref(),
                         state.grant_epoch.ok_or(ControlError::Unknown)?,

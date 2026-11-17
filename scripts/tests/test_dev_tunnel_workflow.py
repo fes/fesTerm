@@ -27,10 +27,12 @@ class WorkflowTests(unittest.TestCase):
         self.runtime = self.root / "sessiond"
         self.runtime.mkdir(mode=0o700)
         self.record = {
-            "schema_version": 1, "account": "fes-festerm1",
+            "schema_version": 2, "account": "fes-festerm1",
             "configuration": str(self.configuration), "runtime_root": str(self.runtime),
-            "recipe_name": "Lab host", "shared_profile_name": "Lab shared",
+            "locator": "festerm-lab-fixture.usw2", "shared_profile_name": "Lab shared",
             "private_profile_name": "Lab private",
+            "private_logical": "33333333-3333-4333-8333-333333333333",
+            "private_revision": 1,
             "generic_logical": "11111111-1111-4111-8111-111111111111",
             "denied_logical": "22222222-2222-4222-8222-222222222222",
             "creation_allowed": False, "allow_shell_input": True, "shell": "posix",
@@ -81,6 +83,18 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(runner.Blocked):
             runner.fixture_record(self.path)
 
+    def test_normal_campaign_refuses_legacy_pairing_fixture_and_invalid_exact_targets(self):
+        for change in ({"schema_version": 1}, {"recipe_name": "Lab host"},
+                       {"locator": "unqualified-name"}, {"private_revision": True},
+                       {"private_logical": self.record["generic_logical"]}):
+            with self.subTest(change=list(change)):
+                saved = dict(self.record)
+                self.record.update(change)
+                self.write_record()
+                with self.assertRaises(runner.Blocked):
+                    runner.fixture_record(self.path)
+                self.record = saved
+
     @unittest.skipIf(os.name == "nt", "Unix mode contract")
     def test_shared_readable_record_is_refused_without_permission_repair(self):
         self.write_record()
@@ -99,7 +113,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("status=pass", output)
 
     def test_passing_exit_without_exact_test_and_marker_is_not_evidence(self):
-        for output in (b"0 passed; 0 failed", runner.MARKER + b"0 passed; 0 failed", b"1 passed; 0 failed"):
+        for output in (b"0 passed; 0 failed", runner.MARKER + b"0 passed; 0 failed", b"1 passed; 0 failed",
+                       b"FESTERM_DEV_TUNNEL_LAB_SERVICE_CLIENT_PASS\n1 passed; 0 failed"):
             with patch.object(runner, "fixture_record", return_value=self.record), patch.object(
                     runner, "run_bounded", side_effect=[(0, b""), (0, output)]):
                 status, _ = self.invoke("--run")

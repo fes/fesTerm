@@ -56,7 +56,7 @@ impl MobileApp {
             self.tunnel.sign_in = None;
         }
         #[cfg(feature = "host-clients")]
-        self.sink.live.host.invalidate();
+        self.invalidate_host_account(id);
         if let Some(client) = self.tunnel_client() {
             if let Err(error) = client.sign_out(id) {
                 self.notice = Some(describe_error(&error));
@@ -520,7 +520,10 @@ impl MobileApp {
                 SignInState::Done(account) => {
                     self.tunnel.attach_error = None;
                     #[cfg(feature = "host-clients")]
-                    self.host_discovery_signed_in(&account.id);
+                    {
+                        self.invalidate_host_account(&account.id);
+                        self.host_discovery_signed_in(&account.id);
+                    }
                     match flow.resume {
                         Resume::Connect { profile, tab } => {
                             self.start_tunnel_connect(ctx, &profile, tab, false);

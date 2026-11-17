@@ -595,8 +595,14 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         controller.view.scope = Scope::Absent;
         controller.view.access_requested = Some(true);
         controller.view.draft.allow_creation = initially_enabled;
+        controller.view.draft.ordinary_access = if initially_enabled {
+            OrdinaryAccess::ProviderOwner
+        } else {
+            OrdinaryAccess::OwnerOnly
+        };
         controller.view.draft.startup_at_sign_in = initially_enabled;
         for label in [
+            "Allow connections through my GitHub account",
             "Allow remote clients to create shell sessions",
             "Start at my sign-in (only where the native policy is qualified)",
         ] {
@@ -617,6 +623,14 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         assert_eq!(settings.len(), 1);
         assert_eq!(settings[0].allow_creation, !initially_enabled);
         assert_eq!(
+            settings[0].ordinary_access,
+            if initially_enabled {
+                OrdinaryAccess::OwnerOnly
+            } else {
+                OrdinaryAccess::ProviderOwner
+            }
+        );
+        assert_eq!(
             settings[0].startup,
             if initially_enabled {
                 Startup::Manual
@@ -627,6 +641,77 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
         assert!(controller.view.sharing.is_none());
         assert!(!controller.view.owner_approved);
     }
+}
+
+#[test]
+fn desktop_remote_access_refresh_preserves_existing_ordinary_policy_without_enabling() {
+    assert_eq!(
+        Draft::default().ordinary_access,
+        OrdinaryAccess::ProviderOwner
+    );
+    for policy in [OrdinaryAccess::OwnerOnly, OrdinaryAccess::ProviderOwner] {
+        for edited in [false, true] {
+            let Scope::Present(mut snapshot) = provisioned_scope() else {
+                unreachable!();
+            };
+            Arc::make_mut(&mut snapshot).settings.ordinary_access = policy;
+            let expected = Scope::Present(snapshot);
+            let report_scope = expected.clone();
+            let mut controller = fixture(Arc::new(Fake(
+                move |request: Request, _: &CancellationToken| {
+                    assert_eq!(request.operation, Operation::Refresh);
+                    Ok(Report {
+                        scope: report_scope.clone(),
+                        ..Report::default()
+                    })
+                },
+            )));
+            let context = egui::Context::default();
+            if edited {
+                let mut draft = controller.view.draft.clone();
+                draft.ordinary_access = OrdinaryAccess::OwnerOnly;
+                controller.action(Action::Edit(draft), &context);
+            }
+            controller.action(Action::Refresh, &context);
+            drain(&mut controller, &context);
+            assert_eq!(controller.view.scope, expected);
+            assert_eq!(
+                controller.view.draft.ordinary_access,
+                if edited {
+                    OrdinaryAccess::OwnerOnly
+                } else {
+                    policy
+                }
+            );
+            assert!(controller.view.review.is_none());
+            assert!(!controller.view.owner_approved);
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_normal_enable_consent_explains_shell_privileges_and_no_pairing() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 2000.0))
+        .build_ui_state(
+            |ui, view: &mut View| {
+                assert!(show(ui, view, &[]).is_none());
+            },
+            View {
+                scope: Scope::Absent,
+                access_requested: Some(true),
+                review: Some(Operation::Enable),
+                ..View::default()
+            },
+        );
+    harness.run();
+    harness.get_by_label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+    harness.get_by_label("Enable and start listening now. Starting automatically at OS sign-in remains a separate preference.");
+    harness.get_by_label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+    assert!(harness
+        .query_by_label("Owner public key · 64 hex characters")
+        .is_none());
 }
 
 #[test]

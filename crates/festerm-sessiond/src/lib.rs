@@ -7,6 +7,9 @@ pub mod lifecycle;
 pub mod native_binding;
 pub mod private_storage;
 mod remote;
+#[cfg(unix)]
+#[doc(hidden)]
+pub mod unix_endpoint;
 pub use detached::{
     ensure_detached, ensure_detached_in, ensure_owned_detached_in, spawn_fingerprint,
     verify_spawn_fingerprint_in, DetachedSessionRequest,
@@ -601,14 +604,19 @@ pub fn session_correlation_in(
         PersistentSessionError::new("observation.selected_generation_unavailable")
     })?;
     let suffix = format!("{}-{}", selected.pid, selected.created_at_unix_ms);
+    #[cfg(unix)]
+    let generation_endpoint =
+        unix_endpoint::matches_generation(root, &suffix, Path::new(&selected.endpoint))
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    #[cfg(not(unix))]
+    let generation_endpoint = selected.endpoint.ends_with(&suffix);
     if selected.pid == 0
         || selected.created_at_unix_ms == 0
         || record.name != selected.name
         || record.pid != selected.pid
         || record.created_at_unix_ms != selected.created_at_unix_ms
         || record.socket != selected.endpoint
-        || !(selected.endpoint.ends_with(&suffix)
-            || selected.endpoint.ends_with(&format!("{suffix}.sock")))
+        || !generation_endpoint
         || !record_is_live(root, record)?
     {
         return Err(PersistentSessionError::new(
@@ -845,7 +853,25 @@ pub fn daemon_generation_is_live(
     }
     let generation = format!("{pid}-{created_at_unix_ms}");
     // Older helpers used name-based endpoints and have no lifetime lease.
-    if !endpoint.ends_with(&generation) && !endpoint.ends_with(&format!("{generation}.sock")) {
+    #[cfg(unix)]
+    let short_generation = if Path::new(endpoint).file_name() == Some(std::ffi::OsStr::new("s")) {
+        if !unix_endpoint::matches_generation(root, &generation, Path::new(endpoint))
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?
+        {
+            return Err(PersistentSessionError::new(
+                "invalid short generation endpoint",
+            ));
+        }
+        true
+    } else {
+        false
+    };
+    #[cfg(not(unix))]
+    let short_generation = false;
+    if !short_generation
+        && !endpoint.ends_with(&generation)
+        && !endpoint.ends_with(&format!("{generation}.sock"))
+    {
         return Ok(true);
     }
     let path = root.join(format!("lease-{generation}"));

@@ -847,8 +847,10 @@ separate workflow. The manual path exercised in the earlier lab campaign is
 historical diagnostic evidence, not normal-workflow acceptance.
 
 Automatic directory and denied-by-default route/proof primitives have portable
-regressions. Ordinary capability minting, automatic host expansion and native
-acceptance remain incomplete. Qualify fresh Desktop/iOS/Android clients against
+regressions. Ordinary server/client and host-expansion integration have focused
+tests, controlled native-helper coverage, workspace compilation and strict lint
+checks. Fresh three-platform CI and native acceptance remain open. Qualify fresh
+Desktop/iOS/Android clients against
 all three server OSs with creation OFF and ON, private targets excluded from both
 inventory and direct operations, exact existing-session reuse, and paired native
 screenshots. Keep fresh matched-grid Copilot initial-screen checks under DT-02.
@@ -859,6 +861,61 @@ credential replacement and privacy lock cancel affected connections without
 terminating durable shells; choosing another stored account for new discovery
 must not retarget independently bound live tabs. Neither UI tests nor a valid
 signature alone establishes ordinary authority or native acceptance.
+
+In Desktop Enable review, verify the account-connection choice and the notice
+that a shared shell runs with the host user's OS permissions. Refreshing an
+existing OwnerOnly installation must keep that mode, and editing either access
+or creation policy must invalidate the review. With creation ON, explicitly
+create a generic durable shell as well as ensuring a shared profile; with
+creation OFF, both generic creation and ensuring a stopped shared profile must
+refuse, while the current running shared generation remains attachable. No
+temporary-session or End authority follows from normal account access. Preserve
+the original action after an uncertain creation result.
+Verify fresh ProviderOwner Enable starts the listener through the shared native
+Start path with zero administrative keys, without opening Advanced recovery.
+This must not enable automatic OS sign-in startup. Cancellation or a changed
+scope must refuse/retain uncertainty without silently issuing a new setup.
+
+Connect the same opted-in local profile on the server and remotely. Both must
+identify the same logical session and exact daemon generation; local Connect
+must not create a sibling in the legacy session-name namespace. An explicit
+local Connect may start its catalog shell while remote creation is OFF, without
+starting the HOST listener. Workspace restoration may only reuse an already
+running generation and must not prompt for credentials or update policy merely
+to restore a tab. After unsharing or editing a disabled profile, local Connect
+must retain that namespace and the current recipe without re-enabling remote
+access. Missing, corrupt or foreign catalog state must refuse rather than
+silently starting a fallback shell. Verify genuine legacy profiles separately.
+Changing a running profile's launch command must report a recipe conflict and
+preserve that generation; applying the new command requires an explicit restart.
+
+For Desktop ordinary connections, qualify native lock/suspend cutoff both
+during bootstrap and after terminal attachment, without waiting for a UI frame.
+The session monitor reuses the existing platform privacy boundary (Linux logind,
+macOS notifications, Windows shared monitor); recording's additional Linux
+capture restrictions remain separate. After unlocking, an explicit new host
+selection must obtain a fresh privacy context while old connections stay
+cancelled. Monitor installation failure blocks the connection with an actionable
+message. Portable cancellation tests do not qualify native event delivery.
+
+After an advanced administrative owner-policy revision, confirm old ordinary
+channels revoke and new attempts request a host policy refresh. The host's
+diagnostic must identify the required Disable → Enable without credentials or
+provider response content. That reviewed lifecycle refresh must preserve durable
+sessions and allow a still-authorized, non-denied client to reconnect. Repeat for
+an expired ready provider identity. This initial explicit-refresh limitation is
+separate from ordinary account sign-in and requires no manual client pairing.
+
+For the macOS server, use the preserved default Application Support HOST root,
+not a shortened test override. Qualify generic creation, shared attach, detach,
+reconnect and daemon survival through ADR 0087's overflow socket location. Record
+the actual socket path byte length, exact generation and original durable roots.
+Confirm a valid older endpoint still works, a foreign `/s` cannot become native
+generation evidence, and updated helpers reject replaced/nonempty socket
+directories without removing unrelated entries. After exact owned shutdown,
+confirm only that socket and its empty child directory are removed. Source
+fixtures and the successful short-root control do not qualify this default-path
+case or older-binary native correlation.
 
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 

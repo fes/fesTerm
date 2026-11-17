@@ -3556,6 +3556,14 @@ pub struct AppState {
     host_account_bindings:
         std::collections::HashMap<SessionId, festerm_secret_store::SecretReference>,
     #[cfg(feature = "experimental-dev-tunnels")]
+    ordinary_account_tokens: std::collections::HashMap<
+        String,
+        (
+            festerm_config::DevTunnelAccount,
+            tokio_util::sync::CancellationToken,
+        ),
+    >,
+    #[cfg(feature = "experimental-dev-tunnels")]
     completed_hosted_profile: Option<festerm_config::Profile>,
     #[cfg(feature = "experimental-dev-tunnels")]
     hosted_open_error: Option<(Option<TabId>, String)>,
@@ -3695,6 +3703,10 @@ pub struct AppState {
 
 impl Drop for AppState {
     fn drop(&mut self) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        for (_, token) in self.ordinary_account_tokens.values() {
+            token.cancel();
+        }
         let mut documents = self.documents.borrow_mut();
         for tab in &self.tabs {
             if let Some(document) = view_document(&tab.content) {
@@ -3725,6 +3737,8 @@ impl AppState {
             host_creation_intents: Vec::new(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_account_bindings: Default::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            ordinary_account_tokens: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             completed_hosted_profile: None,
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -4747,6 +4761,10 @@ impl AppState {
     }
 
     pub(crate) fn request_background_shutdown(&mut self) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        for (_, token) in self.ordinary_account_tokens.values() {
+            token.cancel();
+        }
         for handle in &self.retiring_powershell_workers {
             handle.request_close();
         }
@@ -6667,8 +6685,38 @@ impl AppState {
         self.place_session_with_recording_on_surface(session, None, false);
     }
 
+    /// This account lifetime outlives an individual browser request. Choosing
+    /// another saved account does not revoke it; credential replacement does.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn ordinary_account_token(
+        &mut self,
+        account: &festerm_config::DevTunnelAccount,
+    ) -> Result<tokio_util::sync::CancellationToken, &'static str> {
+        self.invalidate_removed_host_accounts();
+        if !self.configuration.accounts().contains(account) {
+            return Err("The selected account credential changed.");
+        }
+        let (_, token) = self
+            .ordinary_account_tokens
+            .entry(account.identifier().to_owned())
+            .or_insert_with(|| (account.clone(), tokio_util::sync::CancellationToken::new()));
+        // Only a new explicit connection asks for a lifetime. Never revive the
+        // old token: pending/native work holding it remains cancelled.
+        if token.is_cancelled() {
+            *token = tokio_util::sync::CancellationToken::new();
+        }
+        Ok(token.clone())
+    }
+
     #[cfg(feature = "experimental-dev-tunnels")]
     fn invalidate_removed_host_accounts(&mut self) {
+        self.ordinary_account_tokens.retain(|_, (snapshot, token)| {
+            let current = self.configuration.accounts().contains(snapshot);
+            if !current {
+                token.cancel();
+            }
+            current
+        });
         let mut live = std::collections::HashSet::new();
         for tab in &self.tabs {
             let TabContent::Session(tab) = &tab.content else {

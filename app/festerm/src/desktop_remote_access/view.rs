@@ -107,6 +107,18 @@ pub(crate) fn show(
             }
             if settings_toggle_row_enabled(
                 ui,
+                "Allow connections through my GitHub account",
+                "Signed-in clients can discover this host and open shared sessions without device pairing.",
+                draft.ordinary_access == OrdinaryAccess::ProviderOwner,
+                true,
+            ) {
+                draft.ordinary_access = match draft.ordinary_access {
+                    OrdinaryAccess::OwnerOnly => OrdinaryAccess::ProviderOwner,
+                    OrdinaryAccess::ProviderOwner => OrdinaryAccess::OwnerOnly,
+                };
+            }
+            if settings_toggle_row_enabled(
+                ui,
                 "Allow remote clients to create shell sessions",
                 "Off by default. Existing shared sessions remain accessible.",
                 draft.allow_creation,
@@ -121,8 +133,15 @@ pub(crate) fn show(
                 if action_button(ui, ActionButtonRole::DangerOutline, "Review Disable to change host settings…").clicked() {
                     action = Some(Action::Review(Operation::Disable));
                 }
-            } else if action_button(ui, ActionButtonRole::Accent, "Review Enable…").clicked() {
-                action = Some(Action::Review(Operation::Enable));
+            } else {
+                let label = if draft.ordinary_access == OrdinaryAccess::ProviderOwner {
+                    "Review Enable and start…"
+                } else {
+                    "Review Enable…"
+                };
+                if action_button(ui, ActionButtonRole::Accent, label).clicked() {
+                    action = Some(Action::Review(Operation::Enable));
+                }
             }
         }
         ui.collapsing("Advanced / Recovery", |ui| {
@@ -190,7 +209,8 @@ pub(crate) fn show(
         });
         });
         if matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned) {
-            ui.collapsing("Connect another device", |ui| {
+            ui.collapsing("Advanced · manually pair an owner device", |ui| {
+                settings_note(ui, "Optional administrative pairing. Normal account-based connections do not require these details or a separate device approval.");
                 if action_button(ui, ActionButtonRole::Secondary, "Get host approval details…").clicked() {
                     action = Some(Action::Review(Operation::InspectOwner));
                 }
@@ -238,7 +258,17 @@ pub(crate) fn show(
                         } else {
                             "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
                         });
-                        ui.label("Explicit foreground sign-in may create a cloud resource and register a signed native helper. No shells are created or shared; owner access requires separate approval.");
+                        ui.label("Explicit foreground sign-in may create a cloud resource and register a signed native helper. No shells are created or shared by enabling access.");
+                        match draft.ordinary_access {
+                            OrdinaryAccess::ProviderOwner => {
+                                ui.label("Enable and start listening now. Starting automatically at OS sign-in remains a separate preference.");
+                                ui.label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+                                ui.label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+                            }
+                            OrdinaryAccess::OwnerOnly => {
+                                ui.label("Account-based connections are disabled. Only separately paired owner devices can connect.");
+                            }
+                        }
                     }
                     Operation::ApproveOwner => {
                         ui.label("Approve this exact public key/fingerprint and selected permissions? Native vault errors never select file storage.");

@@ -72,6 +72,7 @@ fn selected_host_mobile_cancel_records_closed_state_after_shared_token_cancel() 
         Worker {
             scope: scope(),
             cancel: cancel.clone(),
+            ordinary_guard: None,
             events,
         },
         Arc::new(Notify(tokio::sync::Notify::new())),
@@ -103,6 +104,7 @@ async fn presentation_round_trip(intentional_detach: bool) {
         Worker {
             scope: scope.clone(),
             cancel: cancel.clone(),
+            ordinary_guard: None,
             events,
         },
         notifier.clone(),
@@ -303,6 +305,7 @@ fn selected_host_session_app_lock_cancels_without_fabricated_detach_or_input() {
         Worker {
             scope: scope(),
             cancel: cancel.clone(),
+            ordinary_guard: None,
             events,
         },
         festerm_session::noop_session_event_notifier(),
@@ -327,6 +330,7 @@ fn selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop()
             Worker {
                 scope: scope.clone(),
                 cancel: CancellationToken::new(),
+                ordinary_guard: None,
                 events,
             },
             Arc::new(Notify(tokio::sync::Notify::new())),

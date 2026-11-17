@@ -133,6 +133,7 @@ fn selected_host_worker_account_request_generation_and_lock_fence_late_results()
         let worker = Worker {
             scope: scope.clone(),
             cancel: CancellationToken::new(),
+            ordinary_guard: None,
             events,
         };
         sender

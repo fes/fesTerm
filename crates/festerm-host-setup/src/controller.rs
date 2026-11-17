@@ -8,7 +8,8 @@ use crate::{
         owner_key_fingerprint, CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment,
         OwnerStorage,
     },
-    lifecycle::{Phase, Snapshot, Startup, Store},
+    lifecycle::{OrdinaryAccess, Phase, Snapshot, Startup, Store},
+    ordinary::CurrentHostPolicySource,
     protected_state::Lease,
     services::{Observation, ProcessState, Services, TrustedStage},
 };
@@ -1023,21 +1024,25 @@ fn authorize_run(
     record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
     {
         let current = store.owner_enrollment()?.snapshot()?;
-        if !current.remote_access || !current.keys.iter().any(|key| !key.revoked) {
+        if expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly
+            && (!current.remote_access || !current.keys.iter().any(|key| !key.revoked))
+        {
             return Err(refused("host.runtime_current_owner_consent_required"));
         }
     }
-    let policy = Arc::new(CurrentOwnerPolicySource::new(
-        store.clone(),
-        OwnerStorage::NativeVault,
-    ));
-    drop(policy.current_policy().map_err(|error| {
-        if error == ContractError::Busy {
-            io::Error::new(io::ErrorKind::WouldBlock, "host.installation_busy")
-        } else {
-            refused("host.runtime_current_owner_consent_required")
-        }
-    })?);
+    if expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly {
+        let policy = Arc::new(CurrentOwnerPolicySource::new(
+            store.clone(),
+            OwnerStorage::NativeVault,
+        ));
+        drop(policy.current_policy().map_err(|error| {
+            if error == ContractError::Busy {
+                io::Error::new(io::ErrorKind::WouldBlock, "host.installation_busy")
+            } else {
+                refused("host.runtime_current_owner_consent_required")
+            }
+        })?);
+    }
     Ok(stage)
 }
 
@@ -1054,10 +1059,9 @@ async fn run_admitted(
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
     let helper = stage.sessiond_path()?;
-    let policy = Arc::new(CurrentOwnerPolicySource::new(
-        store.clone(),
-        OwnerStorage::NativeVault,
-    ));
+    let policy = Arc::new(
+        CurrentHostPolicySource::prepare(store.clone(), OwnerStorage::NativeVault, &cancel).await?,
+    );
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
         .map_err(|_| refused("host.runtime_daemon_boundary_unavailable"))?;
@@ -1066,7 +1070,8 @@ async fn run_admitted(
         state,
         expected,
         stage,
-        runtime: Arc::new(HostRuntime::new(sessions, policy)),
+        runtime: Arc::new(HostRuntime::new(sessions, policy.clone())),
+        policy,
     };
     let shutdown = cancel.child_token();
     let recovering = recover_relay(&store, expected, record, &shutdown, async |record| {
@@ -1080,7 +1085,8 @@ struct RunningHost<'a> {
     state: &'a Path,
     expected: &'a Snapshot,
     stage: &'a TrustedStage,
-    runtime: Arc<HostRuntime<CurrentOwnerPolicySource>>,
+    runtime: Arc<HostRuntime<CurrentHostPolicySource>>,
+    policy: Arc<CurrentHostPolicySource>,
 }
 
 impl RunningHost<'_> {
@@ -1104,6 +1110,9 @@ impl RunningHost<'_> {
         record.failure = Some(RunFailure::RelayUnavailable);
         let mut relay = CloudHostAdapter::new(self.store).open_relay(cancel).await?;
         let served = async {
+            // Refresh the ready observer after relay credential refresh, before
+            // accepting streams, without resetting aggregate runtime budgets.
+            self.policy.refresh(cancel).await?;
             startup_admission(self.expected.settings.startup, cancel).await?;
             self.authorize(record)?;
             if cancel.is_cancelled() {

@@ -25,6 +25,8 @@ pub enum Error {
     Deadline,
     Cancelled,
     Offline,
+    HostUpdateRequired,
+    HostPolicyRefreshRequired,
 }
 
 impl fmt::Display for Error {
@@ -36,6 +38,8 @@ impl fmt::Display for Error {
             Self::Deadline => "host control deadline exceeded",
             Self::Cancelled => "host control cancelled",
             Self::Offline => "host control transport unavailable",
+            Self::HostUpdateRequired => "Update this host to use account-based remote access",
+            Self::HostPolicyRefreshRequired => "On the host, disable then enable remote access to refresh protected policy and account readiness; existing shells are retained",
         })
     }
 }

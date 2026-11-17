@@ -18,6 +18,35 @@ fn execute(request: Request) -> Result<Report, Failure> {
     Native.execute(request, &CancellationToken::new(), mpsc::sync_channel(1).0)
 }
 
+#[test]
+fn desktop_remote_access_native_refresh_never_promotes_legacy_or_enrolls_a_device() {
+    for ordinary_access in [OrdinaryAccess::OwnerOnly, OrdinaryAccess::ProviderOwner] {
+        let root = storage::private_test_directory();
+        let path = root.path().join("desktop");
+        let settings = Settings {
+            ordinary_access,
+            ..Draft::default().settings()
+        };
+        let store = Store::create(&path, Origin::Desktop, settings).unwrap();
+        let before = store.snapshot().unwrap();
+        let record = path.join("host-lifecycle.json");
+        let original = std::fs::read(&record).unwrap();
+        if ordinary_access == OrdinaryAccess::OwnerOnly {
+            assert!(!std::str::from_utf8(&original)
+                .unwrap()
+                .contains("ordinary_access"));
+        }
+        let report = execute(request(&path, Operation::Refresh, Scope::Unobserved)).unwrap();
+        assert_eq!(report.scope, Scope::Present(before.clone().into()));
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(std::fs::read(record).unwrap(), original);
+        assert!(!report.owner_approved);
+        assert!(report.owner_binding.is_none());
+        assert!(!path.join("owner-enrollment.json").exists());
+        assert!(!path.join("native-service.json").exists());
+    }
+}
+
 fn sharing_request(root: &Path, step: ShareStep, expected: Scope) -> Request {
     let mut work = request(root, Operation::Share(step), expected);
     let target = ShareTarget {

@@ -393,6 +393,19 @@ fn provision(store: &Store) -> Snapshot {
 
 #[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
 fn reconfigure_lifecycle(store: &Store, allow_creation: bool) -> Snapshot {
+    reconfigure_lifecycle_mode(
+        store,
+        allow_creation,
+        store.snapshot().unwrap().settings.ordinary_access,
+    )
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+fn reconfigure_lifecycle_mode(
+    store: &Store,
+    allow_creation: bool,
+    ordinary_access: crate::lifecycle::OrdinaryAccess,
+) -> Snapshot {
     store.revoke().unwrap();
     let stopped = store.snapshot().unwrap();
     store
@@ -401,6 +414,7 @@ fn reconfigure_lifecycle(store: &Store, allow_creation: bool) -> Snapshot {
     let before = store.snapshot().unwrap();
     let mut settings = before.settings.clone();
     settings.allow_creation = allow_creation;
+    settings.ordinary_access = ordinary_access;
     let ticket = store.request_enable_if_current(&before, &settings).unwrap();
     store
         .record_provisioned(&ticket, before.binding.unwrap())
@@ -437,7 +451,12 @@ fn native_service_stopped_creation_projection_preserves_registration_and_durable
     let selected_root = storage::private_test_directory();
     let selected = trusted::fixture(selected_root.path());
     for enabled in [true, false] {
-        let expected = reconfigure_lifecycle(&store, enabled);
+        let mode = if enabled {
+            crate::lifecycle::OrdinaryAccess::ProviderOwner
+        } else {
+            crate::lifecycle::OrdinaryAccess::OwnerOnly
+        };
+        let expected = reconfigure_lifecycle_mode(&store, enabled, mode);
         let owner = owners.snapshot().unwrap();
         let old = services.registration().unwrap().1.unwrap();
         assert_ne!(old.settings, expected.settings);
@@ -471,6 +490,7 @@ fn native_service_stopped_creation_projection_preserves_registration_and_durable
         let committed = services.registration().unwrap().1.unwrap();
         let mut wanted = original.clone();
         wanted.settings.allow_creation = enabled;
+        wanted.settings.ordinary_access = mode;
         assert_eq!(committed, wanted);
         assert_eq!(
             std::fs::read(&services.runner.definition).unwrap(),
@@ -2028,4 +2048,57 @@ fn native_service_windows_revocation_reconciles_exact_task_without_destructive_s
                     ..
                 }
         )));
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_owner_only_strict() {
+    for mode in [
+        crate::lifecycle::OrdinaryAccess::OwnerOnly,
+        crate::lifecycle::OrdinaryAccess::ProviderOwner,
+    ] {
+        let (root, store, vault) = crate::enrollment::tests::setup_origin(Origin::Desktop);
+        let owners = crate::enrollment::tests::fixture_owners(&store, vault.clone());
+        owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        if mode == crate::lifecycle::OrdinaryAccess::ProviderOwner {
+            reconfigure_lifecycle_mode(&store, false, mode);
+        }
+        let owner = owners.snapshot().unwrap();
+        assert!(owner.keys.is_empty() && !owner.remote_access);
+        let snapshot = store.snapshot().unwrap();
+        let mut services = services(root.path(), &store, Platform::Linux);
+        services.state = root.path().join("installation");
+        services.runner.receipt = services.state.join(RECORD);
+        let stage = trusted::fixture(root.path());
+        services
+            .install_with_recovery(&stage, snapshot.epoch)
+            .unwrap();
+        let before = services.runner.state.borrow().calls.len();
+        let result = services.start_with(&stage, snapshot.epoch, || {
+            services.require_start_credentials_with(&owners)
+        });
+        if mode == crate::lifecycle::OrdinaryAccess::ProviderOwner {
+            assert_eq!(result.unwrap().process, ProcessState::Running);
+            assert!(services.runner.state.borrow().running);
+            vault
+                .locked
+                .store(true, std::sync::atomic::Ordering::Release);
+            let calls = services.runner.state.borrow().calls.len();
+            assert!(services
+                .start_with(&stage, snapshot.epoch, || services
+                    .require_start_credentials_with(&owners))
+                .is_err());
+            assert_eq!(services.runner.state.borrow().calls.len(), calls);
+            vault
+                .locked
+                .store(false, std::sync::atomic::Ordering::Release);
+        } else {
+            assert!(result.is_err());
+            assert!(!services.runner.state.borrow().running);
+            assert_eq!(services.runner.state.borrow().calls.len(), before);
+        }
+        assert!(owners.snapshot().unwrap().keys.is_empty());
+    }
 }

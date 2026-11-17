@@ -117,3 +117,59 @@ fn selected_host_desktop_missing_account_is_not_an_empty_inventory_or_connection
         &context, tab, request
     ));
 }
+
+#[test]
+fn ordinary_account_lifetime_survives_chooser_and_cancels_before_session_installation() {
+    use festerm_config::{AccountProvider, Configuration, DevTunnelAccount};
+    let account = |id: &str, number| {
+        DevTunnelAccount::new(
+            id,
+            AccountProvider::Github,
+            number,
+            id,
+            festerm_secret_store::SecretReference::generate(),
+        )
+        .unwrap()
+    };
+    let first = account("first", 101);
+    let second = account("second", 102);
+    let configuration = Configuration::empty()
+        .with_account(first.clone())
+        .unwrap()
+        .0
+        .with_account(second.clone())
+        .unwrap()
+        .0;
+    let mut state = AppState::for_test();
+    state.replace_configuration(configuration);
+    let pending_first = state.ordinary_account_token(&first).unwrap();
+    let pending_second = state.ordinary_account_token(&second).unwrap();
+    // Another chooser admission does not revoke the existing account lifetime.
+    assert!(!pending_first.is_cancelled());
+    assert!(!pending_second.is_cancelled());
+    assert!(state.host_account_bindings.is_empty());
+    let replacement = account("first", 101);
+    let changed = state
+        .configuration()
+        .with_account(replacement.clone())
+        .unwrap()
+        .0;
+    state.replace_configuration(changed);
+    assert!(pending_first.is_cancelled());
+    assert!(!pending_second.is_cancelled());
+    assert!(state.ordinary_account_token(&first).is_err());
+    let renewed = state.ordinary_account_token(&replacement).unwrap();
+    assert!(!renewed.is_cancelled());
+    let removed = state.configuration().without_account("first").unwrap();
+    state.replace_configuration(removed);
+    assert!(renewed.is_cancelled());
+    assert!(!pending_second.is_cancelled());
+    assert_eq!(state.ordinary_account_tokens.len(), 1);
+    state.request_background_shutdown();
+    assert!(pending_second.is_cancelled());
+    let explicit_fresh = state.ordinary_account_token(&second).unwrap();
+    assert!(!explicit_fresh.is_cancelled());
+    assert!(pending_second.is_cancelled());
+    drop(state);
+    assert!(explicit_fresh.is_cancelled());
+}

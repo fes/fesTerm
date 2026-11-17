@@ -180,6 +180,48 @@ pub struct CloudHostAdapter<'a> {
     fixture_user: Option<&'static str>,
 }
 
+/// Provider credentials are ready before ordinary wire admission begins.
+#[cfg(feature = "host-runtime")]
+pub(crate) struct PreparedOrdinaryObserver {
+    identity: Identity,
+    exact: Receipt,
+    network: NativeNetwork,
+    pub(crate) record_digest: [u8; 32],
+}
+
+#[cfg(feature = "host-runtime")]
+impl PreparedOrdinaryObserver {
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.identity.needs_sign_in()
+    }
+    pub(crate) fn resource(&self) -> &Resource {
+        &self.exact.resource
+    }
+    pub(crate) async fn observe(&self, cancel: &CancellationToken) -> io::Result<()> {
+        require_ready_ordinary_identity(&self.identity)?;
+        match self
+            .network
+            .observe(&self.identity, &self.exact.resource, cancel)
+            .await
+            .map_err(account_error)?
+        {
+            Observation::Present(receipt) if receipt == self.exact => {
+                require_ready_ordinary_identity(&self.identity)
+            }
+            _ => Err(refused("host.ordinary_cloud_resource_or_acl_changed")),
+        }
+    }
+}
+
+#[cfg(feature = "host-runtime")]
+fn require_ready_ordinary_identity(identity: &Identity) -> io::Result<()> {
+    if identity.needs_sign_in() {
+        Err(refused("host.ordinary_observer_expired_reconnect_required"))
+    } else {
+        Ok(())
+    }
+}
+
 trait Network {
     #[cfg(feature = "host-runtime")]
     async fn host_token(
@@ -314,6 +356,57 @@ impl Network for NativeNetwork {
 }
 
 impl<'a> CloudHostAdapter<'a> {
+    /// Credential loading/refresh and native I/O precede the short wire budget.
+    #[cfg(feature = "host-runtime")]
+    pub(crate) async fn prepare_ordinary_observer(
+        &self,
+        cancel: &CancellationToken,
+    ) -> io::Result<PreparedOrdinaryObserver> {
+        let _operation = self.operation()?;
+        let snapshot = self.store.snapshot()?;
+        if snapshot.phase != Phase::Provisioned
+            || snapshot.settings.ordinary_access != crate::lifecycle::OrdinaryAccess::ProviderOwner
+        {
+            return Err(refused("host.ordinary_policy_not_enabled"));
+        }
+        let network = NativeNetwork::new()?;
+        let secrets = festerm_secret_store::native_store()
+            .map_err(|_| refused("host.secure_store_unavailable"))?;
+        let mut record = self.load()?;
+        let exact = record
+            .receipt
+            .clone()
+            .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
+        if exact.resource.create_access != CreateAccess::OwnerDefault
+            || snapshot.binding.as_ref() != Some(&binding(&record, &exact))
+        {
+            return Err(refused("host.ordinary_creator_only_resource_required"));
+        }
+        let identity = self
+            .load_identity(&mut record, &network, &*secrets, cancel)
+            .await?;
+        if self.store.snapshot()? != snapshot || cancel.is_cancelled() {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        let record_digest = self.store.with_locked(|directory, current| {
+            use sha2::Digest;
+            if current != &snapshot {
+                return Err(refused("host.runtime_consent_changed"));
+            }
+            Ok(sha2::Sha256::digest(storage::read_private(
+                directory,
+                Path::new(RECORD),
+                16 * 1024,
+            )?)
+            .into())
+        })?;
+        Ok(PreparedOrdinaryObserver {
+            identity,
+            exact,
+            network,
+            record_digest,
+        })
+    }
     pub fn new(store: &'a Store) -> Self {
         Self {
             store,
@@ -2569,6 +2662,33 @@ mod tests {
                 cloud
             );
         }
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[tokio::test(start_paused = true)]
+    async fn ordinary_ready_observer_expiry_refuses_without_refreshing_inside_wire_admission() {
+        let (_root, store, _secrets) = fixture();
+        let network = FixtureNetwork::new(&store);
+        let identity = network
+            .sign_in(42, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap();
+        require_ready_ordinary_identity(&identity).unwrap();
+        let encoded = identity.encode_private().unwrap();
+        let prefix = b"FESTERM_GITHUB_IDENTITY_V2\0";
+        let mut record: serde_json::Value =
+            serde_json::from_slice(encoded.strip_prefix(prefix).unwrap()).unwrap();
+        record["expires_at"] = 1.into();
+        let expired = [prefix.as_slice(), &serde_json::to_vec(&record).unwrap()].concat();
+        let expired = Identity::decode_private(&expired, 42, identity::SERVICE_CLIENT_ID).unwrap();
+        assert_eq!(
+            require_ready_ordinary_identity(&expired)
+                .unwrap_err()
+                .to_string(),
+            "host.ordinary_observer_expired_reconnect_required"
+        );
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert_eq!(network.state.borrow().host_tokens, 0);
     }
 
     #[cfg(feature = "host-runtime")]

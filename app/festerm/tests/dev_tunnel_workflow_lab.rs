@@ -2,10 +2,10 @@
 //! No password login, owner enrollment, token export, global cleanup or GUI claim.
 #![cfg(feature = "experimental-dev-tunnels")]
 
-use festerm_config::{host_recipes::PublicRecipe, Configuration};
+use festerm_config::Configuration;
 use festerm_core::{Dimensions, Terminal};
 use festerm_host_protocol::{
-    AttachmentId, Lifetime, LogicalSessionId, OperationId, Recipe, Refusal,
+    AttachmentId, ContractError, Epoch, Lifetime, LogicalSessionId, OperationId, Recipe, Refusal,
 };
 use festerm_secret_store::native_store;
 use festerm_session::{
@@ -13,16 +13,15 @@ use festerm_session::{
 };
 use festerm_tunnel_bridge::host_client::{
     self,
-    approvals::{Receipt, ReceiptIndex},
+    ordinary::{self, OrdinaryAccountGuard, OrdinaryContext, OrdinaryKeyIndex},
     originals::{OriginalId, OriginalStore},
-    ApprovedAttachment, ApprovedContext, Completion, CreationIntent, CreationMode, Inventory,
+    ApprovedAttachment, ClientContext, Completion, CreationIntent, CreationMode, Inventory,
     Operation, Outcome, Scope, Target, Worker,
 };
 use festerm_tunnel_client::{
-    host_control::{Binding, Error},
+    host_control::Error,
     identity::{self, Identity},
-    service::{self, ResolvedTunnel},
-    Https,
+    service, Https,
 };
 use serde::Deserialize;
 use std::{
@@ -40,9 +39,11 @@ struct Fixture {
     account: String,
     configuration: PathBuf,
     runtime_root: PathBuf,
-    recipe_name: String,
+    locator: String,
     shared_profile_name: String,
     private_profile_name: String,
+    private_logical: LogicalSessionId,
+    private_revision: Epoch,
     generic_logical: LogicalSessionId,
     denied_logical: LogicalSessionId,
     creation_allowed: bool,
@@ -163,8 +164,7 @@ fn private_bytes(path: &Path) -> Vec<u8> {
 }
 
 struct Peer {
-    receipt: Receipt,
-    resolved: ResolvedTunnel,
+    context: OrdinaryContext,
     budgets: host_client::Budgets,
     deadline: Instant,
     original_root: PathBuf,
@@ -172,29 +172,11 @@ struct Peer {
 }
 
 impl Peer {
-    fn context(&self) -> ApprovedContext {
-        let binding = require(Binding::new(
-            self.receipt.binding().host.host.clone(),
-            self.receipt.binding().account.clone(),
-            format!(
-                "{}.{}/{}/{}",
-                self.resolved.binding.tunnel_id,
-                self.resolved.binding.cluster,
-                self.resolved.binding.host_id,
-                self.resolved.binding.port
-            ),
-        ));
-        require(ApprovedContext::from_protected_approval(
-            self.receipt.binding().clone(),
-            self.receipt.reference(),
-            self.resolved.endpoint.clone(),
-            self.resolved.binding.port,
-            self.resolved.connect_token.clone(),
-            binding,
-        ))
+    fn context(&self) -> ClientContext {
+        self.context.clone().into()
     }
 
-    fn scope(&self, context: &ApprovedContext) -> Scope {
+    fn scope(&self, context: &ClientContext) -> Scope {
         Scope {
             request: OperationId::new(),
             generation: 1,
@@ -358,7 +340,7 @@ fn controlled_github_host_service_client_workflow() {
     );
     let fixture: Fixture = require(serde_json::from_slice(&private_bytes(&record)));
     assert!(
-        fixture.schema_version == 1
+        fixture.schema_version == 2
             && fixture.account == "fes-festerm1"
             && fixture.allow_shell_input,
         "controlled-account opt-in required"
@@ -371,31 +353,18 @@ fn controlled_github_host_service_client_workflow() {
         fixture.generic_logical, fixture.denied_logical,
         "distinct stable lab logical identities required"
     );
+    assert_ne!(fixture.private_logical, fixture.generic_logical);
+    assert_ne!(fixture.private_logical, fixture.denied_logical);
+    let configuration_bytes = private_bytes(&fixture.configuration);
     let configuration = require(Configuration::parse(require(std::str::from_utf8(
-        &private_bytes(&fixture.configuration),
+        &configuration_bytes,
     ))));
     let account = configuration
         .accounts()
         .iter()
         .find(|account| account.login() == fixture.account)
         .unwrap_or_else(|| blocked());
-    let recipes: Vec<&PublicRecipe> = configuration
-        .host_recipes()
-        .recipes()
-        .iter()
-        .filter(|recipe| recipe.name == fixture.recipe_name)
-        .collect();
-    if recipes.len() != 1 {
-        blocked();
-    }
-    let recipe = recipes[0];
-    let festerm_config::host_recipes::AccountReference::Github { account_id } = recipe.host.account;
-    assert_eq!(
-        account_id,
-        account.account_id(),
-        "fixture recipe must use the controlled account"
-    );
-    let hint = recipe.host_hint.as_ref().unwrap_or_else(|| blocked());
+    let account_id = account.account_id();
     let store = require(native_store());
     let secret = require(store.get(account.credential_reference()));
     let identity = require(secret.with_bytes(|bytes| {
@@ -415,7 +384,20 @@ fn controlled_github_host_service_client_workflow() {
             .enable_all()
             .build(),
     );
-    let resolved = runtime.block_on(async {
+    let budgets = host_client::Budgets::default();
+    let index = require(OrdinaryKeyIndex::native());
+    let configuration_path = fixture.configuration.clone();
+    let guard = OrdinaryAccountGuard::new(
+        CancellationToken::new(),
+        Arc::new(move || {
+            if private_bytes(&configuration_path) == configuration_bytes {
+                Ok(())
+            } else {
+                Err(ContractError::Stale)
+            }
+        }),
+    );
+    let (context, discovered_inventory) = runtime.block_on(async {
         require(
             tokio::time::timeout(Duration::from_secs(30), async {
                 require(
@@ -425,20 +407,27 @@ fn controlled_github_host_service_client_workflow() {
                 );
                 let hosts = require(service::list_hosts(&identity, &cancel).await);
                 assert!(
-                    hosts.iter().any(|host| host.locator == hint.locator),
+                    hosts.iter().any(|host| host.locator == fixture.locator),
                     "fixture host not found in controlled account"
                 );
-                require(service::resolve_host(&identity, &hint.locator, &cancel).await)
+                require(
+                    ordinary::discover(
+                        &identity,
+                        &fixture.locator,
+                        index,
+                        &budgets,
+                        guard,
+                        &cancel,
+                    )
+                    .await,
+                )
             })
             .await,
         )
     });
-    let index = require(ReceiptIndex::native());
-    let receipt = require(index.load(&recipe.host.id, &format!("github:{account_id}")));
     let peer = Peer {
-        receipt,
-        resolved,
-        budgets: host_client::Budgets::default(),
+        context,
+        budgets,
         deadline: Instant::now() + Duration::from_secs(120),
         shell: fixture.shell,
         original_root: fixture
@@ -447,7 +436,7 @@ fn controlled_github_host_service_client_workflow() {
             .unwrap_or_else(|| blocked())
             .to_owned(),
     };
-    let inventory = peer.inventory();
+    let inventory = discovered_inventory;
     assert_eq!(
         inventory.capabilities.creation_allowed, fixture.creation_allowed,
         "host creation policy differs from selected campaign phase"
@@ -465,6 +454,17 @@ fn controlled_github_host_service_client_workflow() {
             .any(|profile| profile.name == fixture.private_profile_name),
         "private profile leaked into authorized inventory"
     );
+    assert!(matches!(
+        peer.operation(Operation::EnsureProfile {
+            logical: fixture.private_logical.clone(),
+            revision: fixture.private_revision,
+            attachment: AttachmentId::new(),
+        })
+        .outcome,
+        Outcome::Failed(host_client::Failure::Control(Error::Refused(
+            Refusal::Denied | Refusal::Stale
+        )))
+    ));
     let profiles: Vec<_> = inventory
         .profiles
         .iter()
@@ -563,5 +563,5 @@ fn controlled_github_host_service_client_workflow() {
             _ => panic!("host did not explicitly deny generic creation while creation was off"),
         }
     }
-    println!("FESTERM_DEV_TUNNEL_LAB_SERVICE_CLIENT_PASS");
+    println!("FESTERM_DEV_TUNNEL_LAB_ORDINARY_CLIENT_PASS");
 }

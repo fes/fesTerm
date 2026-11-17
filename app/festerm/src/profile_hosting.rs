@@ -161,12 +161,18 @@ fn store(binding: &LocalTunnelHosting) -> io::Result<Store> {
     )
 }
 
+#[cfg(feature = "local-host-settings")]
 fn catalog_control() -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
     let root = super::desktop_remote_access::Controller::state_root()
         .ok_or("Remote-access storage is unavailable on this system.")?
         .join("daemon");
     festerm_sessiond::host_control::SessionControl::existing_only(&root)
         .map_err(|_| "The protected remote profile catalog is unavailable.")
+}
+
+#[cfg(not(feature = "local-host-settings"))]
+fn catalog_control() -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
+    Err("Computer-level local hosting is unavailable in this build.")
 }
 
 fn catalog_recipe(profile: &Profile) -> Result<festerm_host_protocol::Recipe, &'static str> {
@@ -202,6 +208,17 @@ fn catalog_status(
         .map_err(|_| "The protected remote profile catalog could not be verified.")
 }
 
+fn sync_saved_catalog(
+    profile: &Profile,
+    sync: impl FnOnce(&Profile, bool) -> Result<(), &'static str>,
+) -> Result<(), &'static str> {
+    if let Some(binding) = binding(profile).filter(|binding| binding.is_catalog()) {
+        sync(profile, binding.enabled())
+    } else {
+        Ok(())
+    }
+}
+
 fn sync_profile_catalog(profile: &Profile, enabled: bool) -> Result<(), &'static str> {
     let binding = binding(profile).ok_or("The profile has no remote-access identity.")?;
     let logical = binding
@@ -227,6 +244,91 @@ enum GrantReadFailure {
     Missing,
     ForeignConsent,
     Unavailable,
+}
+
+enum LocalProfileRoute {
+    Catalog(festerm_host_protocol::Epoch, bool),
+    Legacy(Box<Consent>),
+}
+
+fn select_local_route(
+    binding: &LocalTunnelHosting,
+    catalog: Result<Option<(festerm_host_protocol::Epoch, bool)>, &'static str>,
+    legacy: impl FnOnce() -> Result<Consent, GrantReadFailure>,
+) -> Result<LocalProfileRoute, String> {
+    match catalog {
+        Ok(Some((revision, enabled))) => Ok(LocalProfileRoute::Catalog(revision, enabled)),
+        Err(_) => Err("The protected profile catalog could not be verified; no fallback shell was started.".into()),
+        Ok(None) if binding.is_catalog() => Err("The protected profile catalog entry is missing; no fallback shell was started.".into()),
+        Ok(None) => legacy().map(|grant|LocalProfileRoute::Legacy(Box::new(grant)))
+            .map_err(|_|"Neither a protected catalog entry nor a verified legacy grant is available; no fallback shell was started.".into()),
+    }
+}
+
+#[cfg(feature = "local-host-settings")]
+fn connect_catalog_profile(
+    profile: &Profile,
+    revision: festerm_host_protocol::Epoch,
+    enabled: bool,
+    size: festerm_session::TerminalSize,
+    scrollback: usize,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    allow_start: bool,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    let binding = binding(profile).ok_or("profile_host.binding")?;
+    let logical = binding
+        .installation()
+        .to_owned()
+        .try_into()
+        .map_err(|_| "profile_host.binding")?;
+    let recipe = catalog_recipe(profile)?;
+    let root = super::desktop_remote_access::Controller::state_root()
+        .ok_or("Remote-access storage is unavailable on this system.")?;
+    let store = festerm_host_setup::lifecycle::Store::open(
+        &root,
+        festerm_host_setup::lifecycle::Origin::Desktop,
+    )
+    .map_err(|_| "The protected local host identity could not be verified.")?;
+    let target = festerm_host_setup::local_profiles::ensure(
+        &store,
+        &root,
+        festerm_host_setup::local_profiles::Request {
+            logical: &logical,
+            consent: binding.consent(),
+            expected_revision: revision,
+            expected_recipe: &recipe,
+            expected_enabled: enabled,
+            allow_start,
+            size,
+            scrollback_limit_bytes: scrollback,
+        },
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .map_err(|error| error.to_string())?;
+    let target = Target {
+        runtime_root: target.runtime_root,
+        name: target.identity.name,
+        pid: target.identity.pid,
+        generation: target.identity.created_at_unix_ms,
+        endpoint: target.identity.endpoint,
+    };
+    attach_target(&target, notifier)
+}
+
+#[cfg(not(feature = "local-host-settings"))]
+fn connect_catalog_profile(
+    _profile: &Profile,
+    _revision: festerm_host_protocol::Epoch,
+    _enabled: bool,
+    _size: festerm_session::TerminalSize,
+    _scrollback: usize,
+    _notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    _allow_start: bool,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    Err(
+        "Computer-level local hosting is unavailable in this build. No fallback shell was started."
+            .into(),
+    )
 }
 
 fn grant(binding: &LocalTunnelHosting) -> Result<Consent, GrantReadFailure> {
@@ -391,24 +493,20 @@ fn connect_profile_inner(
     let local = profile.as_local().ok_or("profile_host.profile")?;
     let persistence = local.persistence().ok_or("profile_host.profile")?;
     let native = crate::environment::with_corrected_local_path(local.to_local_profile());
-    let mut grant = match grant(binding) {
-        Ok(grant) => grant,
-        Err(GrantReadFailure::Missing | GrantReadFailure::ForeignConsent) => {
-            return connect_unbound_profile(
-                persistence.session_name(),
-                &native,
+    let mut grant = match select_local_route(binding, catalog_status(profile), || grant(binding))? {
+        LocalProfileRoute::Catalog(revision, enabled) => {
+            // Local attachment never grants remote access or starts the HOST.
+            return connect_catalog_profile(
+                profile,
+                revision,
+                enabled,
                 size,
                 scrollback,
                 notifier,
                 allow_start,
-                None,
-            )
+            );
         }
-        Err(GrantReadFailure::Unavailable) => {
-            return Err(
-                "Private hosting state is unavailable; no fallback shell was started.".into(),
-            )
-        }
+        LocalProfileRoute::Legacy(grant) => *grant,
     };
     if binding.enabled() && grant.phase.allows_hosting() {
         validate_loaded_session_name(persistence.session_name(), &grant)?;
@@ -839,8 +937,12 @@ impl Controller {
             {
                 continue;
             }
-            if old.enabled() && catalog_status(previous)?.is_some() {
+            let catalog = catalog_status(previous)?;
+            if old.enabled() && catalog.is_some() {
                 sync_profile_catalog(previous, false)?;
+            }
+            if old.is_catalog() || catalog.is_some() {
+                continue;
             }
             if let Some(grant) = revocation_grant(grant(old))? {
                 store(old)
@@ -862,23 +964,49 @@ impl Controller {
         explicit_enable: bool,
         _selected_account: Option<&str>,
     ) -> Result<(Profile, bool), &'static str> {
+        self.prepare_with_catalog(
+            profile,
+            previous,
+            expose,
+            explicit_enable,
+            _selected_account,
+            catalog_status,
+        )
+    }
+
+    fn prepare_with_catalog(
+        &mut self,
+        profile: Profile,
+        previous: Option<&Profile>,
+        expose: bool,
+        explicit_enable: bool,
+        _selected_account: Option<&str>,
+        mut catalog: impl FnMut(
+            &Profile,
+        )
+            -> Result<Option<(festerm_host_protocol::Epoch, bool)>, &'static str>,
+    ) -> Result<(Profile, bool), &'static str> {
         if !self.enabled {
             return Err("Hosting is unavailable in this application context.");
         }
         if !expose {
-            let metadata = previous
-                .and_then(binding)
-                .filter(|_| {
-                    profile
-                        .as_local()
-                        .and_then(|local| local.persistence())
-                        .is_some_and(|persistence| {
-                            persistence.provider() == PersistenceProviderKind::FestermSessiond
-                        })
-                })
-                .and_then(|old| {
-                    LocalTunnelHosting::new(old.installation(), old.consent(), false).ok()
-                });
+            let metadata = if let Some(previous) = previous.filter(|_| {
+                profile
+                    .as_local()
+                    .and_then(|local| local.persistence())
+                    .is_some_and(|p| p.provider() == PersistenceProviderKind::FestermSessiond)
+            }) {
+                match binding(previous) {
+                    Some(old) => match catalog(previous)? {
+                        Some(_) => Some(LocalTunnelHosting::for_catalog(old.installation(),old.consent(),false).map_err(|_|"Invalid hosting metadata.")?),
+                        None if old.is_catalog() => return Err("The protected profile catalog entry is missing. No replacement identity was created."),
+                        None => Some(old.with_enabled(false)),
+                    },
+                    None => None,
+                }
+            } else {
+                None
+            };
             return profile
                 .with_local_tunnel_hosting(metadata)
                 .map(|profile| (profile, false))
@@ -893,9 +1021,9 @@ impl Controller {
             .ok_or("Remote profile sharing requires the fesTerm session daemon.")?;
         if let Some(previous_profile) = previous {
             if let Some(existing) = binding(previous_profile) {
-                match catalog_status(previous_profile)? {
+                match catalog(previous_profile)? {
                     Some((_, true)) => {
-                        let metadata = LocalTunnelHosting::new(
+                        let metadata = LocalTunnelHosting::for_catalog(
                             existing.installation(),
                             existing.consent(),
                             true,
@@ -909,7 +1037,7 @@ impl Controller {
                     Some((_, false)) if explicit_enable => {
                         return profile
                             .with_local_tunnel_hosting(Some(
-                                LocalTunnelHosting::new(
+                                LocalTunnelHosting::for_catalog(
                                     existing.installation(),
                                     existing.consent(),
                                     true,
@@ -921,6 +1049,9 @@ impl Controller {
                     }
                     Some((_, false)) => {
                         return Err("This profile is not currently registered for remote access. Turn sharing off and on, then Save to renew its local permission.");
+                    }
+                    None if existing.is_catalog() => {
+                        return Err("The protected profile catalog entry is missing. No replacement identity was created.");
                     }
                     None if existing.enabled() => {
                         return Err("This is a legacy per-profile tunnel, not the computer-level remote host. Disable and Save it before enabling shared remote access.");
@@ -934,7 +1065,7 @@ impl Controller {
         }
         let installation = uuid::Uuid::new_v4().to_string();
         let consent = uuid::Uuid::new_v4().to_string();
-        let metadata = LocalTunnelHosting::new(installation, consent, true)
+        let metadata = LocalTunnelHosting::for_catalog(installation, consent, true)
             .map_err(|_| "Invalid hosting metadata.")?;
         profile
             .with_local_tunnel_hosting(Some(metadata))
@@ -968,6 +1099,11 @@ impl Controller {
                         "profile_host.profile_conflict".into(),
                     );
                 }
+                return;
+            }
+            if binding(profile).is_some_and(LocalTunnelHosting::is_catalog)
+                || !matches!(catalog_status(profile), Ok(None))
+            {
                 return;
             }
         }
@@ -1126,6 +1262,9 @@ impl Controller {
             let Some(metadata) = binding(profile).filter(|metadata| metadata.enabled()) else {
                 continue;
             };
+            if metadata.is_catalog() || !matches!(catalog_status(profile), Ok(None)) {
+                continue;
+            }
             let Ok(grant) = grant_view(metadata) else {
                 continue;
             };
@@ -1245,6 +1384,13 @@ impl Controller {
                             ..Default::default()
                         },
                     );
+                    continue;
+                }
+                Ok(None) if binding.is_catalog() => {
+                    views.insert(profile.identifier().to_owned(),screens::LocalHostView {
+                        message:"The protected profile catalog entry is missing. No legacy tunnel or fallback shell will be started.".into(),
+                        ..Default::default()
+                    });
                     continue;
                 }
                 Ok(None) => {}
@@ -1891,11 +2037,7 @@ impl FesTermApp {
                     super::ConfigurationStartupStatus::ProfileSaveFailure,
                     super::ConfigurationReloader::save_profile,
                 ) {
-                    if expose {
-                        sync_profile_catalog(&profile, true).map_err(str::to_owned)
-                    } else {
-                        Ok(())
-                    }
+                    sync_saved_catalog(&profile, sync_profile_catalog).map_err(str::to_owned)
                 } else {
                     Err(self.configuration_status.settings_message().to_owned())
                 }
@@ -1910,6 +2052,7 @@ impl FesTermApp {
             if master_access == Some(true)
                 && self.state.configuration().profile(profile.identifier()) == Some(&profile)
                 && binding(&profile).is_some_and(LocalTunnelHosting::enabled)
+                && !binding(&profile).is_some_and(LocalTunnelHosting::is_catalog)
                 && matches!(catalog_status(&profile), Ok(None))
             {
                 self.local_hosting.enqueue(Work::Ensure(
@@ -2314,6 +2457,152 @@ mod tests {
         .unwrap();
         assert!(
             unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell").is_err()
+        );
+    }
+
+    #[test]
+    fn local_catalog_route_precedes_legacy_and_refuses_missing_or_unknown_authority() {
+        let (old, grant, _) = fixture();
+        let catalog =
+            LocalTunnelHosting::for_catalog(old.installation(), old.consent(), true).unwrap();
+        let revision = festerm_host_protocol::Epoch::new(3).unwrap();
+        for binding in [&old, &catalog] {
+            assert!(
+                matches!(select_local_route(binding,Ok(Some((revision,false))),||panic!("catalog must not read legacy")),Ok(LocalProfileRoute::Catalog(r,false)) if r==revision)
+            );
+            assert!(
+                select_local_route(binding, Err("corrupt or foreign catalog"), || panic!(
+                    "unknown catalog cannot fall through"
+                ))
+                .is_err()
+            );
+        }
+        assert!(select_local_route(&catalog, Ok(None), || panic!(
+            "catalog marker must not select a sibling"
+        ))
+        .is_err());
+        let LocalProfileRoute::Legacy(selected) =
+            select_local_route(&old, Ok(None), || Ok(grant.clone())).unwrap()
+        else {
+            panic!("verified legacy route")
+        };
+        assert_eq!(*selected, grant);
+        for failure in [
+            GrantReadFailure::Missing,
+            GrantReadFailure::ForeignConsent,
+            GrantReadFailure::Unavailable,
+        ] {
+            assert!(select_local_route(&old, Ok(None), || Err(failure)).is_err());
+        }
+    }
+
+    #[test]
+    fn catalog_save_keeps_logical_identity_when_unshared_and_updates_disabled_recipe() {
+        let (old, _, previous) = fixture();
+        let revision = festerm_host_protocol::Epoch::new(4).unwrap();
+        let edited = Profile::local("fixture", "changed-shell", vec!["--new-arg".into()], None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "fixture")
+            .unwrap();
+        let mut controller = Controller {
+            enabled: true,
+            ..Default::default()
+        };
+        let (saved, _) = controller
+            .prepare_with_catalog(edited, Some(&previous), false, false, None, |_| {
+                Ok(Some((revision, true)))
+            })
+            .unwrap();
+        let saved_binding = binding(&saved).unwrap();
+        assert!(saved_binding.is_catalog() && !saved_binding.enabled());
+        assert_eq!(saved_binding.installation(), old.installation());
+        assert_eq!(saved_binding.consent(), old.consent());
+        let called = std::cell::Cell::new(false);
+        sync_saved_catalog(&saved, |profile, enabled| {
+            called.set(true);
+            assert!(!enabled, "Save must never re-expose this profile");
+            let recipe = catalog_recipe(profile).unwrap();
+            assert_eq!(recipe.shell.as_deref(), Some("changed-shell"));
+            assert_eq!(recipe.args, ["--new-arg"]);
+            Ok(())
+        })
+        .unwrap();
+        assert!(called.get());
+        assert!(controller.queue.is_empty() && controller.pending.is_none());
+        let (saved_again, _) = controller
+            .prepare_with_catalog(saved.clone(), Some(&saved), false, false, None, |_| {
+                Ok(Some((revision, false)))
+            })
+            .unwrap();
+        assert_eq!(binding(&saved_again), binding(&saved));
+        assert!(controller
+            .prepare_with_catalog(saved.clone(), Some(&saved), false, false, None, |_| Ok(
+                None
+            ))
+            .is_err());
+        assert!(controller
+            .prepare_with_catalog(saved.clone(), Some(&saved), true, true, None, |_| Ok(None))
+            .is_err());
+        assert!(controller
+            .prepare_with_catalog(saved.clone(), Some(&saved), false, false, None, |_| Err(
+                "corrupt"
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn new_catalog_save_marks_only_routing_and_retains_legacy_save_behavior() {
+        let mut controller = Controller {
+            enabled: true,
+            ..Default::default()
+        };
+        let profile = Profile::local("new", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "new")
+            .unwrap();
+        let (saved, new) = controller
+            .prepare_with_catalog(profile, None, true, true, None, |_| {
+                panic!("no prior catalog to read")
+            })
+            .unwrap();
+        assert!(new && binding(&saved).unwrap().is_catalog());
+        assert!(controller.queue.is_empty() && controller.pending.is_none());
+        let (_, _, legacy) = fixture();
+        let (disabled, _) = controller
+            .prepare_with_catalog(legacy.clone(), Some(&legacy), false, false, None, |_| {
+                Ok(None)
+            })
+            .unwrap();
+        assert!(!binding(&disabled).unwrap().is_catalog());
+        sync_saved_catalog(&disabled, |_, _| {
+            panic!("legacy save must not invent a catalog grant")
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn catalog_profile_never_queues_legacy_cloud_host_start() {
+        let (old, _, profile) = fixture();
+        let profile = profile
+            .with_local_tunnel_hosting(Some(
+                LocalTunnelHosting::for_catalog(old.installation(), old.consent(), true).unwrap(),
+            ))
+            .unwrap();
+        let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+        let mut controller = Controller {
+            enabled: true,
+            master_access: Some(true),
+            ..Default::default()
+        };
+        controller.reconcile_master_access(&configuration, true);
+        controller.reconcile_master_access(&configuration, false);
+        assert!(controller.queue.is_empty());
+        controller.enqueue(Work::Ensure(Box::new(profile), 1024));
+        controller.start_pending(&configuration, &egui::Context::default());
+        assert!(
+            controller.pending.is_none()
+                && controller.helpers.is_none()
+                && controller.queue.is_empty()
         );
     }
 

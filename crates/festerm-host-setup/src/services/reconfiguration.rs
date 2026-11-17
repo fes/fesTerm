@@ -110,6 +110,7 @@ impl<R: CommandRunner> Services<'_, R> {
         }
         let mut new = old.clone();
         new.settings.allow_creation = snapshot.settings.allow_creation;
+        new.settings.ordinary_access = snapshot.settings.ordinary_access;
         if new.settings != snapshot.settings || definitions::render(&new)? != old.definition {
             return Err(refused("host.service_explicit_replacement_required"));
         }

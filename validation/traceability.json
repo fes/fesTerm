@@ -1589,10 +1589,7 @@
         "powershell_cleanup_is_not_authorized_by_a_deferred_document_close",
         "closing_powershell_tab_retains_cleanup_until_worker_exit"
       ],
-      "manual_scenarios": [
-        "CP-25",
-        "CP-23"
-      ],
+      "manual_scenarios": ["CP-25", "CP-23"],
       "status": "partial",
       "prerequisites": [
         "native GUI lifecycle, accessibility and keyboard usability with an authorized endpoint on each desktop platform",
@@ -5625,12 +5622,14 @@
         "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery",
         "docs/dev-tunnel-workflow-lab.md#fresh-copilot-visual-parity-in-every-case",
         "docs/native-terminal-capability-probe.md",
-        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision"
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
       "decisions": [
         "ADR-0084",
         "ADR-0054",
-        "ADR-0086"
+        "ADR-0086",
+        "ADR-0087"
       ],
       "automated_tests": [
         "host_workspace_absent_request_rejects_stale_discovery",
@@ -5659,7 +5658,20 @@
         "mobile_host_profile_rename_with_inventory_preserves_logical_resume_policy",
         "mobile_host_saved_custom_launch_requires_explicit_review_before_creation",
         "mobile_host_quick_create_requires_name_and_preserves_original_intent_after_failure",
-        "mobile_host_discovered_selection_and_paint_are_offline_and_keep_failed_results",
+        "mobile_host_discovered_selection_starts_one_host_and_paint_keeps_discovery_rows",
+        "mobile_ordinary_host_expansion_runs_once_and_old_host_has_no_manual_fallback",
+        "mobile_ordinary_host_switch_cancels_pending_expansion_before_stale_publication",
+        "mobile_ordinary_expansion_adopts_authenticated_identity_and_inventory_once",
+        "mobile_ordinary_durable_creation_obeys_global_policy_and_protects_original",
+        "ordinary_desktop_expansion_once_requires_update_without_manual_fallback",
+        "ordinary_desktop_inventory_adoption_and_durable_create_follow_global_policy",
+        "ordinary_desktop_privacy_callback_cancels_pending_without_frame_and_blocks_late_adoption",
+        "ordinary_desktop_timeout_cancels_request_without_owner_receipt_guidance",
+        "ordinary_desktop_privacy_unavailable_refuses_before_bootstrap",
+        "ordinary_account_lifetime_survives_chooser_and_cancels_before_session_installation",
+        "ordinary_desktop_attach_installs_common_session_without_owner_enrollment",
+        "mobile_ordinary_attach_installs_common_session_without_owner_enrollment",
+        "mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes",
         "protected_original_reopen_retains_exact_ticket_body_and_old_epoch_after_lost_reply",
         "protected_original_fresh_process_reopens_native_fixture_and_replays_identical_wire_once",
         "protected_original_reopen_vault_errors_remain_typed_not_host_denial",
@@ -5990,6 +6002,18 @@
         "ordinary_proof_binds_real_ssh_channel_route_role_nonce_and_policy",
         "ordinary_private_key_refuses_cross_connection_changed_route_and_missing_exporter",
         "ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority",
+        "ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_change",
+        "ordinary_context_never_becomes_admin_and_refuses_temporary_creation",
+        "ordinary_cancelled_account_refuses_ready_results_and_new_workers",
+        "ordinary_account_cancel_drains_live_worker_but_chooser_cancel_does_not_cancel_account",
+        "ordinary_test_context_cannot_open_real_transport_or_grant_remote_authority",
+        "ordinary_native_key_reopens_exact_account_route_and_uses_distinct_purpose",
+        "ordinary_ready_missing_key_never_generates_replacement",
+        "ordinary_native_cancel_before_and_after_write_never_publishes_key_or_replaces_seed",
+        "ordinary_native_cancel_during_read_suppresses_ready_snapshot",
+        "ordinary_request_cancel_during_native_write_preserves_account_and_reserved_seed",
+        "session_privacy_loss_cancels_before_wake_without_a_ui_frame",
+        "session_privacy_wait_refuses_late_ready_guard_after_cancellation",
         "mobile_host_normal_open_discovers_saved_account_once_without_inventory_or_paint_retry",
         "mobile_host_discovery_failure_waits_for_explicit_refresh_and_preserves_results",
         "mobile_host_account_editor_event_cancels_old_discovery_and_lists_new_account_once",
@@ -6002,7 +6026,22 @@
         "normal_host_browser_account_switch_clears_ready_hosts_and_rejects_late_result",
         "normal_host_browser_failure_waits_for_explicit_refresh_without_automatic_retry",
         "automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_account_or_screen_change",
-        "encrypted_auth_selector_rejects_unknown_versions_empty_and_typos_without_legacy_fallback"
+        "encrypted_auth_selector_rejects_unknown_versions_empty_and_typos_without_legacy_fallback",
+        "ordinary_projection_rechecks_native_anchor_after_unobserved_or_observed_policy_rollback",
+        "original_endpoint_and_full_digest_domain_are_preserved",
+        "macos_short_endpoint_real_bind_retains_original_lease_and_native_evidence",
+        "macos_short_endpoint_refuses_existing_symlink_nonempty_and_replaced_directory",
+        "macos_short_endpoint_refuses_unowned_socket_entry_and_never_creates_preflight_children",
+        "local_catalog_routing_marker_preserves_legacy_and_cannot_change_identity",
+        "local_catalog_route_precedes_legacy_and_refuses_missing_or_unknown_authority",
+        "catalog_save_keeps_logical_identity_when_unshared_and_updates_disabled_recipe",
+        "new_catalog_save_marks_only_routing_and_retains_legacy_save_behavior",
+        "catalog_profile_never_queues_legacy_cloud_host_start",
+        "local_restore_never_prompts_writes_or_resolves_helper_and_locked_store_refuses",
+        "local_catalog_remote_off_disabled_host_create_reuse_unshare_and_restore_same_generation",
+        "publication_reenable_only_clears_exact_known_off_grant",
+        "unpublished_persistent_generation_keeps_local_use_and_rejects_remote_admission",
+        "local_catalog_initially_unshared_remote_off_creates_only_explicit_local_generation"
       ],
       "manual_scenarios": [
         "DT-05",
@@ -6048,7 +6087,7 @@
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
         "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred",
         "DT-02 active fresh native Copilot visual comparison spans all24 Desktop/iOS/Android lab cases, separately from protocol/create/attach/survival evidence. Require matching local-reference/client grid, recorded pixel geometry, actual PTY terminal/locale environment and query replies without duplicates, pinned Copilot/initial-state/theme/font/scale and paired screenshots. Static server TERM policy is valid for fesTerm clients; missing creation metadata alone is not a reproduced defect and this requirement introduces no protocol fields or new authority. Owner accepts the initial unauthenticated Copilot screen; no entitlement, Copilot sign-in or model request is required. Native comparisons remain unqualified.",
-        "Protected policy, route/proof primitives and automatic directory listing have portable regressions; ordinary runtime capability minting, shared-target dispatch and automatic host-expansion integration remain incomplete. Primitive signature verification does not grant authority.",
+        "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
         "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
         "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
@@ -6071,11 +6110,13 @@
         "docs/adr/0084-host-based-dev-tunnels.md#approved-native-host-process-recovery-730",
         "docs/native-host-services.md#native-host-process-recovery",
         "docs/manual-validation.md#native-host-process-recovery-730",
-        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision"
+        "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
       "decisions": [
         "ADR-0084",
-        "ADR-0086"
+        "ADR-0086",
+        "ADR-0087"
       ],
       "automated_tests": [
         "host_cloud_owner_default_access_is_pinned_and_never_reinterprets_legacy",
@@ -6114,6 +6155,9 @@
         "desktop_remote_access_refresh_cannot_retarget_an_existing_confirmation",
         "desktop_remote_access_only_explicit_reviewed_action_reaches_bounded_worker",
         "desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings",
+        "desktop_remote_access_refresh_preserves_existing_ordinary_policy_without_enabling",
+        "desktop_remote_access_native_refresh_never_promotes_legacy_or_enrolls_a_device",
+        "desktop_remote_access_normal_enable_consent_explains_shell_privileges_and_no_pairing",
         "desktop_remote_access_cancel_retains_global_admission_and_discards_late_grant",
         "desktop_remote_access_busy_never_edits_or_replaces_pending_consent",
         "desktop_remote_access_releases_admission_before_publishing_completion",
@@ -6335,7 +6379,9 @@
         "provider_owner_requires_disabled_reviewed_enable_and_cannot_retarget_consent",
         "ordinary_policy_unknown_values_never_become_provider_access",
         "legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible",
-        "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant"
+        "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant",
+        "native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_owner_only_strict",
+        "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
@@ -6366,7 +6412,7 @@
         "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and authenticated exact cloud absence, including after explicit manual provider removal",
         "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance",
         "Managed bootstrap source regression proves real lifecycle-lock preflight contention and separates service-only contention. Managed CLI Store::open and registration preflight share one fixed2s typedBusy/cancellation wait budget; every phase attempts its first read even after expiry, only actualBusy allows wait/retry, originalBusy and nonBusy outcomes are preserved, and full captured-snapshot changes are rejected, and preserve missing/foreign-registration refusal. Existing later2s initial service-lease admission remains separate. No native manager Start, runtime invocation, reservation, first persistence or final history write is retried. Corrected source evidence does not identify or resolve the preserved signed Linux0.17.3 second-Start native failure; no new native execution/Windows/platform/owner/vault qualification is claimed.",
-        "Protected policy, route/proof primitives and automatic directory listing have portable regressions; ordinary runtime capability minting, shared-target dispatch and automatic host-expansion integration remain incomplete. Primitive signature verification does not grant authority.",
+        "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
         "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
         "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
       ]
@@ -6381,9 +6427,14 @@
         "docs/host-release-artifacts.md#verification-and-staging-api",
         "docs/host-release-artifacts.md#official-host-bundle-acquisition",
         "docs/owned-installation-migration.md#protected-transaction-and-rollback",
-        "docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary"
+        "docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary",
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
       ],
-      "decisions": ["ADR-0084", "ADR-0085"],
+      "decisions": [
+        "ADR-0084",
+        "ADR-0085",
+        "ADR-0087"
+      ],
       "automated_tests": [
         "official_host_bundle_identity_is_exact_current_native_host_only",
         "official_host_bundle_six_signed_targets_return_owned_authenticated_bytes",
@@ -6465,7 +6516,10 @@
         "macos_native_gate_rejects_apple_signed_foreign_publisher",
         "host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced",
         "host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority",
-        "headless_cleanup_status_is_read_only_unverified_receipt_context"
+        "headless_cleanup_status_is_read_only_unverified_receipt_context",
+        "macos_long_generation_socket_computation_fits_without_creating_children",
+        "macos_long_generation_main_lifecycle_binds_and_cleans_exact_socket",
+        "empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement"
       ],
       "manual_scenarios": ["DT-05", "DT-08", "HOSTSETUP-01", "HOSTMIG-01"],
       "status": "partial",

@@ -37,7 +37,7 @@ pub struct HostSession {
 
 impl HostSession {
     pub fn start(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         target: Target,
         budgets: &Budgets,
@@ -53,7 +53,7 @@ impl HostSession {
     }
 
     pub(super) fn start_operation(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
@@ -70,7 +70,7 @@ impl HostSession {
     }
 
     pub(super) fn start_operation_with_cancellation(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
@@ -155,7 +155,7 @@ impl HostSession {
         let Some(adoption) = state.adoption.take() else {
             return Ok(false);
         };
-        if state.worker.cancel.is_cancelled() {
+        if state.worker.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
         adoption.adopt_into(&self.scope, terminal)?;
@@ -194,8 +194,20 @@ impl HostSession {
     }
 
     fn refresh(&self, state: &mut State) {
-        if state.worker.cancel.is_cancelled() {
+        if state.worker.is_cancelled() {
             state.pending_resize = None;
+            if matches!(
+                state.lifecycle,
+                SessionLifecycle::Starting | SessionLifecycle::Running | SessionLifecycle::Stopping
+            ) {
+                Self::finish(
+                    state,
+                    SessionLifecycle::Disconnected(Self::error(Error::Cancelled.into())),
+                );
+                state.lifecycle_pending = true;
+                self.notifier.notify();
+            }
+            return;
         }
         let Some(completion) = state.worker.try_receive(&self.scope) else {
             return;
@@ -384,7 +396,7 @@ impl Session for HostSession {
             .lock()
             .map_err(|_| Self::closed(SessionOperation::Resize))?;
         self.refresh(&mut state);
-        if state.worker.cancel.is_cancelled() {
+        if state.worker.is_cancelled() {
             return Err(Self::closed(SessionOperation::Resize));
         }
         if state.lifecycle == SessionLifecycle::Starting {

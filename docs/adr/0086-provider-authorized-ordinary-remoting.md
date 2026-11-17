@@ -63,6 +63,12 @@ state; the headless CLI owns Headless state. Origin mismatches still refuse.
 Add the ordinary-access choice only to those existing consent surfaces. This
 normal workflow does not require new Desktop CLI verbs or a new `--origin`
 option. Do not rewrite an origin or introduce a private enrollment operator.
+The normal Desktop Enable review explicitly includes starting the listener now,
+using the freshly configured protected scope and the shared native Start path.
+Startup at OS sign-in remains an independent preference. Both Desktop's local
+precheck and native Start validate the ProviderOwner anchor-backed installation
+without requiring an enrolled administrative key; OwnerOnly retains its existing
+administrative checks. Manual headless setup keeps its explicit Start operation.
 
 ### Authority is a provider-admitted capability
 
@@ -86,6 +92,11 @@ its proofs, ready results and active ordinary channels through the existing
 cancellation owners; they do not kill the host daemon or shell. Selecting another
 stored account for a new discovery cancels that chooser’s old pending work, but
 does not retarget or cancel independently bound live tabs for other stored accounts.
+Desktop bootstrap reuses the existing platform lock/suspend monitor, with
+readiness established outside wire admission and retained by the account-bound
+context. Native installation keeps its admission charge until the worker returns;
+loss cancels pending and active work without relying on a UI frame. Recording's
+additional Linux capture restrictions are not session-access requirements.
 
 Ordinary authority is distinct from administrative enrolled-owner authority.
 Represent it as a sealed `OrdinaryRemotingCapability`/authority enum variant;
@@ -96,10 +107,15 @@ that principal as an observed peer GitHub user. The advanced manual owner path
 remains separate and cannot become a fallback when normal authorization fails.
 
 Ordinary clients may inventory, attach, detach and ensure explicitly shared
-profiles. With creation OFF, Ensure may reuse only the exact already-Running shared
+profiles. With creation ON, they may also explicitly create a new generic durable
+shell through the existing issued-operation and original-action contract; this
+is a required normal workflow, not administrative owner authority. With creation
+OFF, Ensure may reuse only the exact already-Running shared
 generation. An absent, stopped, exited or unknown generation cannot be replaced
 or launched through Ensure; it refuses. Any operation that would create a new
-shell requires current global creation consent. The initial scope grants no explicit End, temporary-session or owner-policy/service/
+shell requires current global creation consent. Uncertain creation retains its
+exact original identity and cannot silently issue a replacement. The initial
+scope grants no explicit End, temporary-session or owner-policy/service/
 configuration/update/secret authority. Private profiles remain excluded.
 These are protocol/RPC authorization limits, not an operating-system sandbox.
 An accepted interactive shell runs as the HOST OS user and can exercise that
@@ -166,8 +182,23 @@ without current provider admission is never sufficient.
 Retain the existing 15-second authentication admission deadline. Prepare the host
 provider observer and its native credentials before accepting ordinary clients, under the existing charged, bounded credential-work owner.
 Observer readiness does not pre-authorize a connection or cache cloud success.
-No native-vault prompt, credential-store lock or credential load occurs inside
-the 15-second wire admission or while holding a lifecycle/policy lease. If the
+Every ordinary policy use freshly validates the native policy anchor and exact
+protected enrollment under the existing installation lease. A prepared digest
+alone cannot authorize after a native-anchor revision followed by disk rollback.
+This read uses an explicit noninteractive secret-store operation: macOS skips
+items requiring authentication UI, Linux refuses locked items without unlocking,
+and Windows uses its silent credential read. Missing, locked, unsupported or
+ambiguous results refuse; no interactive getter or cached authority is a fallback.
+The platform boundary follows [Apple's per-query UI suppression contract](https://developer.apple.com/documentation/security/ksecuseauthenticationuiskip).
+
+This is a deliberate exception to the initial no-vault-read-in-admission design:
+the fresh anchor read runs in the already charged protected-policy worker, with
+its lease retained through validation and publication. Account credential loading,
+refresh and prompts remain outside the short wire budget. A timeout/cancellation
+refuses admission but cannot preempt an OS call; its charge and lease remain until
+actual work drains, which can delay a concurrent local revocation. No UI-dependent
+or disk-conditioned cache invalidation substitutes for native-anchor validation.
+If the
 observer is unavailable or needs sign-in, refuse safely and let the host setup
 owner obtain readiness outside that deadline. A fresh per-mint HTTPS observation
 has at most 10 seconds within the single admission budget; the proof challenge
@@ -176,6 +207,16 @@ deadline. Native client key loading precedes this budget. Reserve existing clien
 frame and blocking-work charges before effects, and retain charges until actual
 work drains after cancellation. No deadline restarts, automatic replay or
 unbounded queued vault/HTTP work are introduced.
+
+For this initial implementation, an advanced administrative policy revision or
+expired ready provider identity requires an explicit host Disable → Enable to
+refresh readiness. The native policy anchor still validates the exact revision
+and digest; reading newer public JSON alone cannot replace that validation.
+Old connections revoke, new attempts return a typed host-policy-refresh refusal,
+and the host emits a fixed-content diagnostic. The refresh follows the existing
+reviewed lifecycle and preserves durable shells; it never auto-restarts the HOST
+or loads provider credentials during wire admission. Relay recovery prepares a new
+ready observer before accepting clients again.
 
 Unknown handshake modes/versions refuse before dispatch. Old HOSTs report that an
 update is required; clients do not downgrade to unauthenticated transport or
@@ -207,6 +248,27 @@ Malformed/unknown frames refuse. A requested ordinary mode on an `OwnerOnly`
 installation is a typed policy refusal, never implicit permission to upgrade.
 
 ### Revocation, active connections and durable sessions
+
+The server's explicit local profile Connect uses that same protected catalog
+logical session and exact native generation. It may start a shell even when
+remote creation is disabled; this local operation grants no remote authority
+and does not start the HOST listener. Restoration can only reuse a running
+generation. Disabled catalog entries retain their local namespace and recipe
+without becoming remotely visible. Public configuration can carry a routing
+marker, but cannot authorize a missing or conflicting protected catalog entry.
+There is no fallback to creating a sibling in the legacy session-name namespace;
+genuine legacy grants retain their separately verified path.
+
+Catalog unsharing must preserve existing daemon readers and local shells. For
+catalog-owned persistent generations without an imported binding, use
+the existing revoked remote lease representation for publication OFF, while the
+protected catalog retains the native Running generation and keeps permanent
+revocation separate. Do not introduce a lease combination that an older daemon
+would reject and treat as a reason to exit. Explicit re-sharing may clear only
+the exact known publication-OFF lease under the catalog transaction, matching
+its identity and expected grant revision. A newer, permanently revoked or
+uncertain lease must never be revived. Test interrupted lease/catalog commits,
+remote stream cutoff, local PTY survival and re-sharing the same generation.
 
 Ordinary grants live only on their exact admitted connection and local policy
 epoch. They cannot be serialized into portable recipes or reused on another

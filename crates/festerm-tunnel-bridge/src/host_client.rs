@@ -1,6 +1,8 @@
 //! Selected-host execution shared by desktop and mobile composition roots.
-//! Public recipes are not credentials. The caller supplies an already approved
-//! protected owner context; this module never enrolls, signs in or discovers.
+//! Normal bootstrap resolves an authenticated provider route and prepares a
+//! purpose-bound native device key. Advanced clients retain explicit protected
+//! owner approval. Public recipes grant neither role; this module never signs in
+//! or enrolls an owner.
 
 use crate::{
     host_runtime::{authenticate_native_client, StreamRole},
@@ -22,10 +24,13 @@ use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
 
 pub mod approvals;
+mod client_context;
+pub use client_context::{ClientContext, ClientContextRef};
 mod creation;
 #[cfg(test)]
 mod creation_tests;
 mod ending;
+pub mod ordinary;
 pub mod originals;
 mod session;
 pub(crate) use creation::create_authenticated;
@@ -38,6 +43,17 @@ pub use festerm_host_protocol::{
 pub use session::HostSession;
 #[cfg(feature = "testing")]
 pub mod testing {
+    /// Synthetic UI-only context; memory vault/private fixture storage, and all
+    /// transport attempts fail closed. Never provider or native evidence.
+    pub fn ordinary_context(
+        index: ordinary::OrdinaryKeyIndex,
+        account_id: u64,
+        info: crate::ordinary_auth::OrdinaryHostInfo,
+        guard: ordinary::OrdinaryAccountGuard,
+    ) -> Result<ordinary::OrdinaryContext, Failure> {
+        ordinary::testing_context(index, account_id, info, guard)
+    }
+
     use super::*;
 
     /// In-memory admitted worker for cancellation-only composition tests.
@@ -99,6 +115,9 @@ pub const ENROLLMENT_PREREQUISITE: &str =
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Failure {
+    OrdinaryKey(ordinary::KeyError),
+    ProviderIdentityExpired,
+    ProviderUnavailable,
     MissingApproval,
     BindingMismatch,
     OwnerKey(OwnerKeyError),
@@ -122,6 +141,9 @@ impl From<ContractError> for Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::OrdinaryKey(e) => e.message(),
+            Self::ProviderIdentityExpired => "GitHub sign-in expired or its account changed. Sign in again before finding hosts.",
+            Self::ProviderUnavailable => "The provider could not verify the selected account and host. Retry the explicit host read.",
             Self::OriginalStorage => "The protected original-action checkpoint is missing, corrupt, incomplete, full or could not be durably updated. No replacement was issued. Explicitly reopen protected originals; storage uncertainty is not absence.",
             Self::MissingApproval => ENROLLMENT_PREREQUISITE,
             Self::BindingMismatch => "The approved host, key, account or endpoint changed. Review the selected host in the foreground; the saved recipe was not changed.",
@@ -136,7 +158,7 @@ impl Failure {
                 "Host access was revoked. Fresh explicit host-local authorization is required.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Denied)
                 | Error::Contract(ContractError::Denied)) =>
-                "The host denied this operation. Verify explicit owner enrollment and the required host permission; no enrollment, takeover or replacement shell was attempted.",
+                "The host denied this operation under its current remoting or creation policy. No key enrollment, takeover or replacement shell was attempted.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unknown
                 | festerm_host_protocol::Refusal::OutcomeUncertain)) =>
                 "The host could not establish the operation's current outcome. Retain the original request; do not infer absence or create a replacement shell.",
@@ -146,6 +168,8 @@ impl Failure {
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unsupported)) =>
                 "This host does not advertise this operation. Update and qualify the host; no legacy fallback was attempted.",
             Self::Control(Error::Cancelled) => "Host operation cancelled. No terminal input will be replayed.",
+            Self::Control(Error::HostUpdateRequired) => "Update this HOST to a version supporting normal account-based remoting. No manual pairing or legacy fallback was attempted.",
+            Self::Control(Error::HostPolicyRefreshRequired) => "On the HOST, explicitly Disable then Enable remote access to refresh protected policy and account readiness. Existing shells are retained. This operation was not retried.",
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
             Self::Control(Error::Offline | Error::Closed) =>
                 "The host connection is unavailable. Its sessions are not known to be absent.",
@@ -318,7 +342,7 @@ pub enum Operation {
 /// An existing target selected after foreground approval. This command carries
 /// protected context, never a portable recipe or a service-token grant.
 pub struct ApprovedAttachment {
-    context: ApprovedContext,
+    context: ClientContext,
     scope: Scope,
     target: Target,
     attachment: Option<AttachmentId>,
@@ -335,7 +359,12 @@ impl std::fmt::Debug for ApprovedAttachment {
 }
 
 impl ApprovedAttachment {
-    pub fn new(context: ApprovedContext, scope: Scope, target: Target) -> Result<Self, Failure> {
+    pub fn new(
+        context: impl Into<ClientContext>,
+        scope: Scope,
+        target: Target,
+    ) -> Result<Self, Failure> {
+        let context = context.into();
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -350,10 +379,11 @@ impl ApprovedAttachment {
     }
 
     pub fn from_created(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         created: Created,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if !created.intent.matches(&context) || context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -369,12 +399,13 @@ impl ApprovedAttachment {
     }
 
     pub fn from_profile_ensured(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         session: SessionSummary,
         disposition: EnsureDisposition,
         attachment: AttachmentId,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -414,7 +445,7 @@ impl ApprovedAttachment {
     }
 
     pub fn port(&self) -> u16 {
-        self.context.port
+        self.context.port()
     }
 
     pub fn start(
@@ -503,11 +534,12 @@ pub struct Worker {
     scope: Scope,
     cancel: CancellationToken,
     events: flume::Receiver<Completion>,
+    ordinary_guard: Option<ordinary::OrdinaryAccountGuard>,
 }
 
 impl Worker {
     pub fn start(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
@@ -524,13 +556,14 @@ impl Worker {
     }
 
     pub fn start_with_cancellation(
-        context: ApprovedContext,
+        context: impl Into<ClientContext>,
         scope: Scope,
         operation: Operation,
         budgets: &Budgets,
         wake: Arc<dyn Fn() + Send + Sync>,
         cancel: CancellationToken,
     ) -> Result<Self, Failure> {
+        let context = context.into();
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
@@ -543,16 +576,20 @@ impl Worker {
             }
         }
         if let Operation::End(intent) = &operation {
-            if !intent.matches_context(&context) {
+            if !intent.matches_context(context.as_enrolled_owner().ok_or(ContractError::Denied)?) {
                 return Err(Failure::BindingMismatch);
             }
         }
+        if let Some(guard) = context.ordinary_guard() {
+            guard.check()?;
+        }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
-        Self::spawn_with_cancellation(
+        Self::spawn_with_guard(
             scope,
             wake,
             cancel,
+            context.ordinary_guard(),
             move |scope, cancel, events, wake| async move {
                 execute(context, permit, &scope, operation, &cancel, &events, &wake).await
             },
@@ -579,10 +616,32 @@ impl Worker {
         Self::spawn_with_cancellation(scope, wake, CancellationToken::new(), task)
     }
 
+    #[cfg(any(all(test, feature = "relay", unix), feature = "testing"))]
     fn spawn_with_cancellation<F, Fut>(
         scope: Scope,
         wake: Arc<dyn Fn() + Send + Sync>,
         cancel: CancellationToken,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
+        Self::spawn_with_guard(scope, wake, cancel, None, task)
+    }
+
+    fn spawn_with_guard<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+        ordinary_guard: Option<ordinary::OrdinaryAccountGuard>,
         task: F,
     ) -> Result<Self, Failure>
     where
@@ -602,6 +661,7 @@ impl Worker {
         let (events, receiver) = flume::bounded(2);
         let worker_cancel = cancel.clone();
         let worker_scope = scope.clone();
+        let lifetime = ordinary_guard.as_ref().map(|guard| guard.cancel.clone());
         std::thread::Builder::new()
             .name("festerm-selected-host".into())
             .spawn(move || {
@@ -621,6 +681,8 @@ impl Worker {
                     return;
                 };
                 runtime.block_on(async {
+                    let cancelled_wake=wake.clone();
+                    let served=async {
                     let result = task(
                         worker_scope.clone(),
                         worker_cancel.clone(),
@@ -643,6 +705,10 @@ impl Worker {
                         // TerminalHandle's actor belongs to this runtime.
                         worker_cancel.cancelled().await;
                     }
+                    };
+                    if let Some(lifetime)=lifetime {
+                        tokio::select! { biased; _=lifetime.cancelled()=>{worker_cancel.cancel();cancelled_wake();}, _=served=>{} }
+                    } else { served.await; }
                 });
             })
             .map_err(|_| Failure::WorkerUnavailable)?;
@@ -650,6 +716,7 @@ impl Worker {
             scope,
             cancel,
             events: receiver,
+            ordinary_guard,
         })
     }
 
@@ -661,8 +728,16 @@ impl Worker {
         self.cancel.cancel();
     }
 
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+            || self
+                .ordinary_guard
+                .as_ref()
+                .is_some_and(|guard| guard.check().is_err())
+    }
+
     pub fn try_receive(&self, current: &Scope) -> Option<Completion> {
-        if current != &self.scope || self.cancel.is_cancelled() {
+        if current != &self.scope || self.is_cancelled() {
             self.cancel();
             return None;
         }
@@ -680,7 +755,7 @@ impl Drop for Worker {
 }
 
 async fn execute(
-    context: ApprovedContext,
+    context: ClientContext,
     permit: ConnectionPermit,
     scope: &Scope,
     operation: Operation,

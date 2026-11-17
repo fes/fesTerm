@@ -505,11 +505,22 @@ impl MobileApp {
         if self.hosts.selected.is_some() && secondary(ui, "New profile for this host", !busy) {
             *action = Some(Action::NewProfile);
         }
-        if self.hosts.receipt.is_none() {
+        if self.hosts.ordinary_selected && self.hosts.inventory.is_none() {
+            if busy {
+                ui.label("Loading authorized sessions…");
+            } else if primary(ui, "Retry host connection", true) {
+                *action = Some(Action::Ordinary);
+            }
+            if secondary(ui, "Advanced owner connection…", !busy) {
+                *action = Some(Action::AdvancedOwner);
+            }
+            return;
+        }
+        if !self.hosts.ordinary_selected && self.hosts.receipt.is_none() {
             ui.label("Verify host");
             footnote(
                 ui,
-                "On the host, open Settings > Dev Tunnels > Remote access > Connect another device.",
+                "On the host, open Settings > Dev Tunnels > Remote access > Advanced · manually pair an owner device.",
             );
             if self.hosts.selected.is_some() && primary(ui, "Load protected approval", !busy) {
                 *action = Some(Action::Load);
@@ -532,7 +543,7 @@ impl MobileApp {
             });
             return;
         }
-        if !self.hosts.enrolled {
+        if !self.hosts.ordinary_selected && !self.hosts.enrolled {
             let receipt = self.hosts.receipt.as_ref().expect("checked receipt");
             ui.label("On the host, choose Approve a client and paste this device's public key and fingerprint.");
             ui.collapsing("Owner public key", |ui| {
@@ -609,7 +620,7 @@ impl MobileApp {
                 if secondary(
                     ui,
                     "End session…",
-                    inventory.capabilities.explicit_end && !busy,
+                    !self.hosts.ordinary_selected && inventory.capabilities.explicit_end && !busy,
                 ) {
                     *action = Some(Action::ReviewEnd(index));
                 }

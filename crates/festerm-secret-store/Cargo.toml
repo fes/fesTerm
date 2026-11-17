@@ -36,6 +36,7 @@ festerm-android-platform = { path = "../festerm-android-platform" }
 
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0", default-features = false, features = ["crypto-rust"] }
+secret-service = { version = "5.1", default-features = false, features = ["crypto-rust"] }
 
 [lints]
 workspace = true

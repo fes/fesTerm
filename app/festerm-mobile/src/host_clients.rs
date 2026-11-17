@@ -19,8 +19,8 @@ use festerm_tunnel_bridge::{
     host_client::{
         self,
         approvals::{Receipt, ReceiptIndex, ReviewedOwner},
-        ApprovedAttachment, ApprovedContext, Budgets, CreationIntent, CreationMode, EndIntent,
-        HostSession, Inventory, Outcome, Scope, Worker,
+        ApprovedAttachment, ApprovedContext, Budgets, ClientContext, CreationIntent, CreationMode,
+        EndIntent, HostSession, Inventory, Outcome, Scope, Worker,
     },
     owner_auth::{owner_key_fingerprint, OwnerBinding},
 };
@@ -142,6 +142,7 @@ enum ResultEvent {
     Hosts(Vec<TunnelSummary>),
     Receipt(Box<Receipt>),
     Resolved(Box<ResolvedTunnel>),
+    Ordinary(Box<(host_client::ordinary::OrdinaryContext, Inventory)>),
     Originals(Arc<OriginalStore>, Vec<RecoveredOriginal>),
     ForgetReview(Box<ReviewedForget>, u64),
     Forgotten(ForgottenOriginal, u64),
@@ -199,8 +200,9 @@ struct QuickCheck {
     account: TunnelAccount,
     epoch: u64,
     generation: u64,
-    owner: OwnerBinding,
-    reference: festerm_secret_store::SecretReference,
+    owner: Option<OwnerBinding>,
+    reference: Option<festerm_secret_store::SecretReference>,
+    binding: Binding,
 }
 
 struct Original {
@@ -214,6 +216,7 @@ struct SessionAccount {
     account: TunnelAccount,
     tab: u64,
     owner: Option<OwnerBinding>,
+    ordinary_lifetime: Option<Arc<CancellationToken>>,
 }
 
 struct OriginalEnd {
@@ -235,7 +238,7 @@ impl EndReview {
     fn authorize(
         &self,
         account: &TunnelAccount,
-        context: &ApprovedContext,
+        context: &ClientContext,
         epoch: u64,
         generation: u64,
     ) -> Result<Arc<EndIntent>, String> {
@@ -268,7 +271,7 @@ impl ForgetReview {
     fn authorize(
         &self,
         account: &TunnelAccount,
-        context: &ApprovedContext,
+        context: &ClientContext,
         epoch: u64,
         generation: u64,
     ) -> Result<(), String> {
@@ -301,6 +304,20 @@ type DiscoveryFuture = std::pin::Pin<
 #[cfg(test)]
 type DiscoveryService = Arc<dyn Fn(u64, CancellationToken) -> DiscoveryFuture + Send + Sync>;
 
+#[cfg(test)]
+type OrdinaryFuture = std::pin::Pin<
+    Box<
+        dyn std::future::Future<
+                Output = Result<
+                    (host_client::ordinary::OrdinaryContext, Inventory),
+                    host_client::Failure,
+                >,
+            > + Send,
+    >,
+>;
+#[cfg(test)]
+type OrdinaryService = Arc<dyn Fn(u64, String, CancellationToken) -> OrdinaryFuture + Send + Sync>;
+
 #[derive(Default)]
 pub(super) struct HostUi {
     pub(super) open: bool,
@@ -321,6 +338,11 @@ pub(super) struct HostUi {
     import: String,
     hosts: Vec<TunnelSummary>,
     receipt: Option<Receipt>,
+    ordinary: Option<host_client::ordinary::OrdinaryContext>,
+    ordinary_lifetime: Option<Arc<CancellationToken>>,
+    ordinary_selected: bool,
+    #[cfg(test)]
+    ordinary_service: Option<OrdinaryService>,
     approval_account: Option<TunnelAccount>,
     resolved: Option<ResolvedTunnel>,
     inventory: Option<Inventory>,
@@ -361,17 +383,16 @@ impl HostUi {
             .quick_check
             .take()
             .ok_or("Create review is no longer current.")?;
-        let receipt = self
-            .receipt
-            .as_ref()
-            .ok_or("Protected owner approval changed.")?;
+        let context = self.context()?;
+        let receipt = self.receipt.as_ref();
         if !self.quick_new
             || self.selected.as_ref() != Some(&review.recipe)
             || account != &review.account
             || self.epoch != review.epoch
             || self.generation != review.generation
-            || receipt.binding() != &review.owner
-            || receipt.reference() != review.reference
+            || receipt.map(|receipt| receipt.binding()) != review.owner.as_ref()
+            || receipt.map(Receipt::reference) != review.reference
+            || context.binding() != &review.binding
             || self.quick_name.trim() != review.recipe.session_name()
             || !self.quick_creation_allowed()
             || self.original_store.is_none()
@@ -661,7 +682,7 @@ impl HostUi {
         &self,
         id: &OriginalId,
         account: &TunnelAccount,
-        context: &ApprovedContext,
+        context: &ClientContext,
     ) -> bool {
         let same_account = |original: &TunnelAccount| {
             original.provider == account.provider && original.account_id == account.account_id
@@ -882,7 +903,7 @@ impl HostUi {
 
     fn retain_end(
         &mut self,
-        context: &ApprovedContext,
+        context: &ClientContext,
         account: TunnelAccount,
         intent: Arc<EndIntent>,
     ) -> Result<(), String> {
@@ -915,7 +936,7 @@ impl HostUi {
 
     fn end_intent(
         &mut self,
-        context: &ApprovedContext,
+        context: &ClientContext,
         target: host_client::Target,
         account: &TunnelAccount,
     ) -> Result<Arc<EndIntent>, String> {
@@ -928,7 +949,10 @@ impl HostUi {
             }
             return Ok(original.intent.clone());
         }
-        Ok(Arc::new(EndIntent::new(context, target)))
+        let owner = context
+            .as_enrolled_owner()
+            .ok_or("Ordinary access does not authorize End.")?;
+        Ok(Arc::new(EndIntent::new(owner, target)))
     }
 
     fn cancel(&mut self) {
@@ -947,6 +971,8 @@ impl HostUi {
     fn clear_approval(&mut self) {
         self.cancel();
         self.receipt = None;
+        self.ordinary = None;
+        self.ordinary_lifetime = None;
         self.approval_account = None;
         self.resolved = None;
         self.inventory = None;
@@ -970,9 +996,16 @@ impl HostUi {
         self.editing = false;
         self.existing_session = None;
         self.host_collapsed = false;
+        self.ordinary_selected = false;
     }
 
-    fn context(&self) -> Result<ApprovedContext, String> {
+    fn context(&self) -> Result<ClientContext, String> {
+        if let Some(context) = &self.ordinary {
+            return Ok(context.clone().into());
+        }
+        if self.ordinary_selected {
+            return Err("Connect to this host with the selected provider account first.".into());
+        }
         if !self.enrolled && self.saved_connect.is_none() {
             return Err(host_client::ENROLLMENT_PREREQUISITE.into());
         }
@@ -1004,12 +1037,13 @@ impl HostUi {
             resolved.connect_token.clone(),
             binding,
         )
+        .map(Into::into)
         .map_err(|error| error.message().into())
     }
 
     fn creation_intent(
         &mut self,
-        context: &ApprovedContext,
+        context: &ClientContext,
         recipe: PublicRecipe,
         account: TunnelAccount,
     ) -> Result<Arc<CreationIntent>, String> {
@@ -1108,6 +1142,8 @@ enum Action {
     Close,
     FindAccount(usize),
     SignIn,
+    Ordinary,
+    AdvancedOwner,
     SelectHost(usize),
     Settings,
     QuickNew,
@@ -1186,7 +1222,7 @@ impl MobileApp {
             .selected
             .as_ref()
             .is_some_and(requires_launch_review);
-        if let Err(error) = self.host_action(ctx, Action::Load) {
+        if let Err(error) = self.begin_ordinary_host(ctx) {
             self.hosts.saved_connect = None;
             self.hosts.error = Some(error);
         }
@@ -1379,6 +1415,7 @@ impl MobileApp {
         self.open_hosts();
         self.hosts.discover_on_open = false; // Profile selection/editing itself stays offline.
         self.select_host_recipe(recipe);
+        self.hosts.ordinary_selected = true;
         if edit {
             self.hosts.begin_profile_edit();
         }
@@ -1476,6 +1513,43 @@ impl MobileApp {
         store.host_recipes().get(&recipe.id) == Some(recipe)
     }
 
+    pub(super) fn invalidate_host_account(&mut self, id: &str) {
+        self.hosts.session_accounts.retain(|owner| {
+            if owner.account.id != id {
+                return true;
+            }
+            if let Some(token) = &owner.ordinary_lifetime {
+                token.cancel();
+            }
+            if let Some(session) = owner.session.upgrade() {
+                session.cancel();
+            }
+            false
+        });
+        let affected = self.hosts.account == id
+            || self
+                .hosts
+                .approval_account
+                .as_ref()
+                .is_some_and(|account| account.id == id)
+            || self
+                .hosts
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.account.id == id)
+            || self
+                .hosts
+                .worker_account
+                .as_ref()
+                .is_some_and(|account| account.id == id);
+        if affected {
+            if let Some(token) = &self.hosts.ordinary_lifetime {
+                token.cancel();
+            }
+            self.hosts.clear_approval();
+        }
+    }
+
     pub(super) fn host_discovery_account_changed(&mut self, account: &str) {
         if self.hosts.open
             && self.hosts.discover_on_open
@@ -1499,6 +1573,203 @@ impl MobileApp {
             self.hosts.account = account.to_owned();
             self.hosts.discovery_attempt = None;
         }
+    }
+
+    fn accept_ordinary_host(
+        &mut self,
+        ordinary: host_client::ordinary::OrdinaryContext,
+        inventory: Inventory,
+        account: Option<&TunnelAccount>,
+    ) -> Result<(), String> {
+        let account = account.ok_or("The selected account changed.")?;
+        if ordinary.binding().account() != format!("github:{}", account.account_id) {
+            return Err("The authenticated host account changed.".into());
+        }
+        if let Some(recipe) = &self.hosts.selected {
+            if &recipe.host.id != ordinary.binding().host() {
+                return Err("The authenticated host does not match the saved profile.".into());
+            }
+        } else {
+            let name = self
+                .hosts
+                .hosts
+                .iter()
+                .find(|host| host.locator == self.hosts.locator)
+                .and_then(|host| host.name.clone())
+                .unwrap_or_else(|| "Host session".into());
+            let mut recipe = PublicRecipe::persistent(
+                name.clone(),
+                HostReference {
+                    id: ordinary.binding().host().clone(),
+                    account: AccountReference::Github {
+                        account_id: account.account_id,
+                    },
+                },
+                Recipe {
+                    shell: None,
+                    args: Vec::new(),
+                    cwd: None,
+                },
+            )
+            .map_err(|_| "The authenticated host metadata is invalid.")?;
+            recipe.behavior = ConnectionBehavior::ChooseSession;
+            recipe.host_hint = Some(HostHint {
+                locator: self.hosts.locator.clone(),
+                name,
+            });
+            self.hosts.selected = Some(recipe);
+            self.hosts.saved = false;
+        }
+        self.hosts.approval_account = Some(account.clone());
+        self.hosts.ordinary = Some(ordinary);
+        self.hosts.inventory = Some(inventory);
+        self.hosts.error = None;
+        Ok(())
+    }
+
+    fn begin_ordinary_host(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        use host_client::ordinary::OrdinaryAccountGuard;
+        #[cfg(not(test))]
+        use host_client::ordinary::OrdinaryKeyIndex;
+        if !self.host_foreground() || self.hosts.busy() {
+            return Err("The selected host is not current or is already busy.".into());
+        }
+        service::locator(&self.hosts.locator)
+            .map_err(|_| "The selected host locator is invalid.")?;
+        let account = self
+            .host_account()
+            .ok_or("Sign in to the selected account first.")?;
+        let profiles = self
+            .profiles
+            .as_ref()
+            .ok_or("Account storage unavailable.")?;
+        let store = profiles.store_handle();
+        #[cfg(all(not(target_os = "android"), not(test)))]
+        let root = profiles.host_approval_directory();
+        let permit =
+            ConnectionPermit::reserve(&self.hosts.budgets).map_err(|error| error.to_string())?;
+        self.hosts.generation = self
+            .hosts
+            .generation
+            .checked_add(1)
+            .ok_or("HOST request generation exhausted.")?;
+        let saved_connect = self.hosts.saved_connect;
+        let launch = self.hosts.launch;
+        self.hosts.clear_approval();
+        self.hosts.saved_connect = saved_connect;
+        self.hosts.launch = launch;
+        self.hosts.ordinary_selected = true;
+        self.hosts.error = None;
+        let epoch = self.hosts.epoch;
+        let token = self.sink.live.host.token(epoch);
+        let cancel = token.clone();
+        // A separate privacy/account lifetime survives the completed request.
+        let lifetime = self.sink.live.host.token(epoch);
+        self.hosts.ordinary_lifetime = Some(lifetime.clone());
+        let guard_store = store.clone();
+        let guard_account = account.clone();
+        let guard = OrdinaryAccountGuard::new(
+            lifetime.as_ref().clone(),
+            Arc::new(move || {
+                if lifetime.is_cancelled() {
+                    return Err(festerm_host_protocol::ContractError::Stale);
+                }
+                let store = guard_store
+                    .lock()
+                    .map_err(|_| festerm_host_protocol::ContractError::Denied)?;
+                if store.accounts().contains(&guard_account) {
+                    Ok(())
+                } else {
+                    Err(festerm_host_protocol::ContractError::Stale)
+                }
+            }),
+        );
+        let snapshot = account.clone();
+        let snapshot_recipe = self.hosts.selected.clone();
+        let locator = self.hosts.locator.clone();
+        #[cfg(not(test))]
+        let budgets = self.hosts.budgets.clone();
+        #[cfg(test)]
+        let ordinary_service = self.hosts.ordinary_service.clone();
+        let job = Job::spawn(ctx, move |legacy_cancel| {
+            if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
+                return Err("Host expansion cancelled.".into());
+            }
+            let (credential, secrets) = {
+                let store = store.lock().map_err(|_| "Account store unavailable.")?;
+                if !store.accounts().contains(&snapshot) {
+                    return Err("Account credential changed.".into());
+                }
+                (snapshot.credential.to_reference(), store.secrets().clone())
+            };
+            let native = secrets
+                .get(&credential)
+                .map_err(|_| "Native account vault unavailable; no fallback.")?;
+            let client_id = identity::registered_client_id()
+                .ok_or("Foreground account sign-in is not configured.")?;
+            let identity = native
+                .with_bytes(|bytes| Identity::decode_private(bytes, snapshot.account_id, client_id))
+                .map_err(|_| "Sign in again from Settings.")?;
+            if identity.needs_sign_in() {
+                return Err("Sign in again from Settings.".into());
+            }
+            // Identity native work is complete before the ordinary facade owns its charges.
+            drop(permit);
+            #[cfg(not(test))]
+            let result = {
+                #[cfg(target_os = "android")]
+                let index = OrdinaryKeyIndex::in_native_app_sandbox(Arc::new(
+                    festerm_secret_store::NativeAppPrivateRoot::current()
+                        .map_err(|_| "Native application storage unavailable; no path fallback.")?,
+                ));
+                #[cfg(all(not(target_os = "android"), not(test)))]
+                let index = OrdinaryKeyIndex::in_app_sandbox(&root)
+                    .map_err(|error| error.message().to_owned())?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| "HOST client worker unavailable.")?;
+                runtime
+                    .block_on(host_client::ordinary::discover(
+                        &identity, &locator, index, &budgets, guard, &cancel,
+                    ))
+                    .map(|result| ResultEvent::Ordinary(Box::new(result)))
+                    .map_err(|error| error.message().to_owned())
+            };
+            #[cfg(test)]
+            let result = {
+                drop(identity);
+                let service =
+                    ordinary_service.ok_or("No owned ordinary test service configured.")?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| "Owned ordinary test worker unavailable.")?;
+                guard.check().map_err(|_| "Account credential changed.")?;
+                let result = runtime
+                    .block_on(service(
+                        snapshot.account_id,
+                        locator,
+                        cancel.as_ref().clone(),
+                    ))
+                    .map(|value| ResultEvent::Ordinary(Box::new(value)))
+                    .map_err(|error| error.message().to_owned());
+                guard.check().map_err(|_| "Account credential changed.")?;
+                result
+            };
+            if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
+                return Err("Host expansion cancelled; no result installed.".into());
+            }
+            result
+        });
+        self.hosts.pending = Some(Pending {
+            account,
+            recipe: snapshot_recipe,
+            epoch,
+            token,
+            job,
+        });
+        Ok(())
     }
 
     fn discover_open_hosts(&mut self, ctx: &egui::Context, accounts: &[TunnelAccount]) {
@@ -1598,15 +1869,18 @@ impl MobileApp {
             .map(Profiles::store_handle)
             .and_then(|store| store.lock().ok().map(|store| store.accounts().to_vec()))
             .unwrap_or_default();
-        if self
-            .hosts
-            .session_accounts
-            .iter()
-            .any(|owner| !current_accounts.contains(&owner.account))
-        {
-            self.sink.live.host.invalidate();
-            self.hosts.session_accounts.clear();
-        }
+        self.hosts.session_accounts.retain(|owner| {
+            if current_accounts.contains(&owner.account) {
+                return true;
+            }
+            if let Some(token) = &owner.ordinary_lifetime {
+                token.cancel();
+            }
+            if let Some(session) = owner.session.upgrade() {
+                session.cancel();
+            }
+            false
+        });
         if !self.host_foreground() || !self.host_recipe_current() {
             let cancelled_work = self.hosts.busy();
             self.hosts.clear_approval();
@@ -1658,6 +1932,20 @@ impl MobileApp {
                 Ok(ResultEvent::Hosts(hosts)) => {
                     self.hosts.hosts = hosts;
                     self.hosts.discovered = true;
+                }
+                Ok(ResultEvent::Ordinary(result)) => {
+                    let (ordinary, inventory) = *result;
+                    let result = self.accept_ordinary_host(ordinary, inventory, account.as_ref());
+                    if let Err(error) = result {
+                        self.hosts.saved_connect = None;
+                        self.hosts.error = Some(error);
+                    } else if self.hosts.saved_connect.is_some() {
+                        self.hosts.saved_connect = Some(SavedConnect::Inventory);
+                        if let Err(error) = self.continue_saved_inventory(ctx) {
+                            self.hosts.saved_connect = None;
+                            self.hosts.error = Some(error);
+                        }
+                    }
                 }
                 Ok(ResultEvent::Receipt(receipt)) => {
                     self.hosts.enrolled = false;
@@ -1946,6 +2234,7 @@ impl MobileApp {
                 .receipt
                 .as_ref()
                 .map(|receipt| receipt.binding().clone()),
+            ordinary_lifetime: self.hosts.ordinary_lifetime.clone(),
         });
         self.tabs.last_mut().expect("new tab").host = true;
         self.terminal = self.blank_terminal();
@@ -2085,13 +2374,22 @@ impl MobileApp {
                 .ok_or("Original action selection expired.")?;
             let (recipe, account) = (original.recipe.clone(), original.account.id.clone());
             let selected_original = original.intent.creation().attachment.to_string();
+            let ordinary = original.intent.is_ordinary();
             self.hosts.clear_review();
             if self.hosts.account != account {
                 self.hosts.hosts.clear();
             }
             self.hosts.account = account;
+            self.hosts.locator = recipe
+                .host_hint
+                .as_ref()
+                .map(|hint| hint.locator.clone())
+                .unwrap_or_default();
             self.hosts.selected = Some(recipe);
             self.hosts.selected_original = Some(selected_original);
+            if ordinary {
+                return self.begin_ordinary_host(ctx);
+            }
             return Ok(());
         }
         if !self.host_foreground() || !self.host_recipe_current() {
@@ -2099,6 +2397,16 @@ impl MobileApp {
                 "Unlock and foreground the app, then explicitly review the original host again."
                     .into(),
             );
+        }
+        if matches!(action, Action::AdvancedOwner) {
+            self.hosts.clear_approval();
+            self.hosts.ordinary_selected = false;
+            return Ok(());
+        }
+        if matches!(action, Action::Ordinary)
+            || (matches!(action, Action::Resolve) && self.hosts.ordinary_selected)
+        {
+            return self.begin_ordinary_host(ctx);
         }
         if matches!(action, Action::SignIn) {
             self.start_sign_in(ctx, None, super::tunnel_link::Resume::Nothing);
@@ -2246,15 +2554,13 @@ impl MobileApp {
                 self.hosts.clear_review();
                 self.hosts.locator = locator;
                 self.hosts.host_collapsed = false;
-                // A user-selected known host can reuse its protected approval.
-                // This path only lists inventory; it never creates or attaches.
-                let known = self.known_host_recipe(&self.hosts.locator);
-                if let Some(mut recipe) = known {
+                // Saved public identity is a consistency hint, never authority.
+                if let Some(mut recipe) = self.known_host_recipe(&self.hosts.locator) {
                     recipe.behavior = ConnectionBehavior::ChooseSession;
                     self.hosts.selected = Some(recipe);
-                    self.hosts.saved_connect = Some(SavedConnect::Receipt);
-                    return self.host_action(ctx, Action::Load);
                 }
+                // Expansion fetches only this host's authorized inventory.
+                return self.begin_ordinary_host(ctx);
             } else {
                 self.hosts.host_collapsed = !self.hosts.host_collapsed;
             }
@@ -2297,19 +2603,16 @@ impl MobileApp {
             let account = self.host_account().ok_or("Sign in from Settings first.")?;
             self.hosts.freeze_quick_recipe(&account)?;
             if self.hosts.original_store.is_none() {
-                self.hosts.context()?;
-                let receipt = self
-                    .hosts
-                    .receipt
-                    .as_ref()
-                    .ok_or("Protected owner approval unavailable.")?;
+                let context = self.hosts.context()?;
+                let receipt = self.hosts.receipt.as_ref();
                 self.hosts.quick_check = Some(QuickCheck {
                     recipe: self.hosts.selected.clone().expect("frozen quick recipe"),
                     account,
                     epoch: self.hosts.epoch,
                     generation: self.hosts.generation,
-                    owner: receipt.binding().clone(),
-                    reference: receipt.reference(),
+                    owner: receipt.map(|receipt| receipt.binding().clone()),
+                    reference: receipt.map(Receipt::reference),
+                    binding: context.binding().clone(),
                 });
                 self.hosts.launch = false;
                 let result = self.host_action(ctx, Action::RecoverOriginals);
@@ -2802,8 +3105,7 @@ impl MobileApp {
     }
 
     fn show_host_recovery(&mut self, ui: &mut egui::Ui, action: &mut Option<Action>) {
-        if self.hosts.resolved.is_some()
-            && self.hosts.enrolled
+        if (self.hosts.ordinary.is_some() || (self.hosts.resolved.is_some() && self.hosts.enrolled))
             && ui
                 .button("Explicitly reopen protected original actions (no network retry)")
                 .clicked()
@@ -2811,7 +3113,7 @@ impl MobileApp {
             *action = Some(Action::RecoverOriginals);
         }
         if self.hosts.original_store.is_none() {
-            ui.label("Create/End requires an explicit protected-original check under the current owner/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
+            ui.label("Creating or ending a session requires a protected-original check under the current host/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
         }
         for (index, original) in self.hosts.originals.iter().enumerate() {
             ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
@@ -2934,7 +3236,7 @@ impl MobileApp {
                 *action = Some(Action::CancelEnd);
             }
         }
-        ui.label("Originals are protected in the native vault before a mutation can be sent. After restart explicitly approve this same owner/account, reopen originals, review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
+        ui.label("Originals are protected in the native vault before a mutation can be sent. After restart connect explicitly to the same host/account, reopen originals, then review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
     }
 }
 

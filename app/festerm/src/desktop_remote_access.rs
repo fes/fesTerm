@@ -16,7 +16,7 @@ use eframe::egui;
 use festerm_host_setup::{
     cloud::CleanupContext,
     diagnostics::HostSetupDiagnostic,
-    lifecycle::{Phase, Settings, Snapshot, Startup},
+    lifecycle::{OrdinaryAccess, Phase, Settings, Snapshot, Startup},
 };
 use std::{
     path::PathBuf,
@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 pub struct Draft {
     pub friendly_name: String,
     pub allow_creation: bool,
+    pub ordinary_access: OrdinaryAccess,
     pub startup_at_sign_in: bool,
     pub account: String,
     pub manual_bundle: bool,
@@ -48,6 +49,7 @@ impl Default for Draft {
         Self {
             friendly_name: host_name_label(&gethostname::gethostname()),
             allow_creation: false,
+            ordinary_access: OrdinaryAccess::ProviderOwner,
             startup_at_sign_in: false,
             account: String::new(),
             manual_bundle: false,
@@ -76,7 +78,7 @@ impl Draft {
         Settings {
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
-            ordinary_access: festerm_host_setup::lifecycle::OrdinaryAccess::OwnerOnly,
+            ordinary_access: self.ordinary_access,
             startup: if self.startup_at_sign_in {
                 Startup::UserSignIn
             } else {
@@ -1011,6 +1013,8 @@ impl Controller {
                                         snapshot.settings.friendly_name.clone();
                                     self.view.draft.allow_creation =
                                         snapshot.settings.allow_creation;
+                                    self.view.draft.ordinary_access =
+                                        snapshot.settings.ordinary_access;
                                     self.view.draft.startup_at_sign_in =
                                         snapshot.settings.startup == Startup::UserSignIn;
                                     if let Some(binding) = &snapshot.binding {

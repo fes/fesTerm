@@ -10,13 +10,13 @@ Host setup still requires explicit protected access consent; legacy installation
 retain OwnerOnly until reviewed migration while disabled.
 
 **Current limitation:** ordinary runtime/bootstrap integration and all 24 normal
-native cases remain unqualified. The existing service-client runner described
-below exercises the advanced enrolled-owner path with **fes-festerm1**. Its
-protected fixture, manual-pairing results and success marker are diagnostic
-coverage only, not normal-workflow acceptance. That runner does not create GitHub
+native cases remain unqualified. The service-client runner below is being
+converted to the ordinary client facade with **fes-festerm1**. Its schema-2
+fixture rejects the old manual-pairing fixture and uses a distinct completion
+marker; old results cannot qualify this flow. The runner does not create GitHub
 accounts, automate password entry, accept credentials in job payloads or enroll
-owners. Replace its normal-case authentication with the shared ordinary client
-facade before using it as normal-flow evidence; do not reinterpret its old fixture.
+owners. Source integration and real-service execution must pass before using
+this runner as normal-flow evidence; do not reinterpret its old fixture.
 
 ## Desktop and mobile matrix
 
@@ -120,8 +120,8 @@ they never fall back to anonymous or organization access. Every resource query
 explicitly requests the full ACL. New-mode receipts reject nonempty tunnel or
 port ACLs and unknown ACL fields. The authenticated account, exact conditional
 reservation and recorded resource incarnation remain required; an empty ACL is
-not independent owner proof. Inner HOST key approval and creation grants remain
-separate.
+not independent owner proof. Actual inner HOST key verification and explicit
+protected access/creation policy remain required under ADR 0086.
 
 A missing access-policy field preserves the old `github_users` intent. Existing
 bound receipts retain that exact policy for observation and host-token checks.
@@ -136,7 +136,7 @@ New HOST cloud intents pin `create_protocol = "auto"` in the protected resource.
 Microsoft's [port protocol contract](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands#advanced-manage-dev-tunnel-ports)
 supports `auto`, `http`, and `https`; the native campaign observed a definitive
 HTTP 400 for the previous `tcp` request. The outer service protocol does not
-change the inner SSH/HOST handshake, owner approval, private account ACL, or
+change the inner SSH/HOST handshake, protected access consent, private account ACL, or
 shell creation grants. Receipt and host-token checks require the exact pinned
 protocol as well as the existing resource and account bindings.
 
@@ -205,21 +205,29 @@ On the host, use the normal fesTerm Settings/profile UI to:
 
 1. Sign in as `fes-festerm1` using device authorization, enable remote access and
    choose that verified account. Setup requires the exact signed host bundle
-   and working native service/vault prerequisites.
+   and working native service/vault prerequisites. Explicitly review account-based
+   access; an older OwnerOnly installation needs its reviewed stopped migration.
 2. Save a dedicated durable local-shell profile named **Lab shared**, and opt it
    into this computer's host catalog. Use an ordinary POSIX, cmd or PowerShell
    shell that supports `echo`, without a startup TUI or interactive login task.
 3. Save another durable profile named **Lab private**, leaving sharing off.
+   For the direct-UUID denial fixture, use a dedicated lab profile that was
+   previously published and is now unshared, retaining its actual protected
+   logical ID and revision. A never-published local profile has no HOST logical
+   ID; do not invent one and call that proof of revoking a known target. The
+   runner never publishes or changes the private fixture itself.
 4. Start with **Allow remote clients to create shell sessions** off.
+5. Start **Lab shared** locally before the creation-off phase. Remote Ensure
+   may reuse that running generation but must not start a stopped profile.
 
 On the client, use the normal account and host-discovery UI to sign in as the
-same controlled identity, independently verify the actual host binding and
-fingerprint, prepare a client owner key in the native store, and separately
-approve that exact key on the host. Grant inventory, shared-profile
-start/attach and persistent-session permissions appropriate to the selected
-phase. Save a Dev Tunnel recipe named **Lab host** for this exact host.
-The account numeric ID, host ID, key and endpoint bindings remain enforced by
-the production APIs; display-name matching does not grant authorization.
+same controlled identity, see hosts automatically and expand the selected host.
+The ordinary facade verifies the provider route and actual SSH key, obtains
+authenticated host details and prepares its native device key without a user
+typing or copying those values. No saved recipe or owner approval is required.
+Record the exact public tunnel locator and private profile's logical ID/revision
+for the diagnostic fixture below; these are operator test inputs, not fields in
+the normal connection UI. Display-name matching never grants authorization.
 
 For interactive macOS setup, use `python3 scripts/run-macos-development.py
 --output /absolute/private/new-client-run` from the checkout and keep its tracked
@@ -231,7 +239,7 @@ Windows/Linux use the existing isolated native development/lab launch procedure
 and its actual configuration/runtime paths. Do not point the campaign at a
 personal production profile or copy a native vault between machines.
 
-Account sign-in and host-local approval require the responsible operator. A
+Account sign-in and protected host setup require the responsible operator. A
 GitHub password or PAT is not an OAuth credential for this runner; the local
 password record supplied in chat is never read by the runner or committed.
 Complete GitHub's browser verification and any 2FA normally. The native store
@@ -250,13 +258,15 @@ The record contains public fixture metadata and explicit input consent only:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "account": "fes-festerm1",
   "configuration": "/absolute/private/new-client-run/config/festerm.toml",
   "runtime_root": "/absolute/private/new-client-run/sessiond",
-  "recipe_name": "Lab host",
+  "locator": "REPLACE-WITH-EXACT-TUNNEL-ID.CLUSTER",
   "shared_profile_name": "Lab shared",
   "private_profile_name": "Lab private",
+  "private_logical": "REPLACE-WITH-PRIVATE-PROFILE-LOGICAL-UUID",
+  "private_revision": 1,
   "generic_logical": "REPLACE-WITH-A-NEW-CANONICAL-UUID",
   "denied_logical": "REPLACE-WITH-A-DIFFERENT-NEW-CANONICAL-UUID",
   "creation_allowed": false,
@@ -265,7 +275,8 @@ The record contains public fixture metadata and explicit input consent only:
 }
 ```
 
-Generate the two UUIDs once during fixture preparation, for example with
+Use the private profile's actual logical UUID and current revision. Generate
+the two new generic/denied UUIDs once during fixture preparation, for example with
 `python3 -c 'import uuid; print(uuid.uuid4()); print(uuid.uuid4())'`. Replace both
 placeholders and keep those identities unchanged across runs. They must differ
 from each other and from the shared profile's logical identity. The denied
@@ -296,9 +307,11 @@ The creation-off phase verifies:
 - native stored credentials represent `fes-festerm1`, and GitHub confirms the
   expected numeric account identity;
 - actual account-scoped discovery lists the selected HOST endpoint;
-- pinned HOST resolution and protected owner authentication succeed;
+- provider-pinned HOST resolution and ordinary authentication succeed without
+  a manual-owner receipt or enrollment;
 - the opted-in shared profile is listed and the private profile is excluded;
-- shared-profile start/resume works while generic shell creation is off;
+- a direct ensure of the known private profile is denied;
+- shared-profile Ensure reuses the already-running generation while creation is off;
 - encrypted terminal input produces a fresh, non-echoed output marker;
 - exact detach requires a confirmed Stopped receipt (AlreadyStopped does not
   qualify) and leaves the same durable logical session/generation available;
@@ -307,8 +320,8 @@ The creation-off phase verifies:
   explicit host Denied response, rather than success or inferred absence.
 
 Next use the **host UI** to enable generic remote creation, including any
-required reviewed reconfiguration, and ensure the approved owner key separately
-has creation authority. Change only `creation_allowed` to `true` in the operator
+required reviewed reconfiguration. No per-device owner-key approval is needed.
+Change only `creation_allowed` to `true` in the operator
 record. Rerun with a new evidence destination:
 
 ```sh

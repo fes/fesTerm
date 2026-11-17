@@ -1,7 +1,7 @@
 //! Portable private receipt metadata; signing material stays in the native vault.
 #![cfg(unix)]
 #[cfg(test)]
-pub(super) use festerm_sessiond::private_storage::{
+pub(in crate::host_client) use festerm_sessiond::private_storage::{
     private_test_directory_in, PrivateTestDirectory,
 };
 use festerm_unix_security as unix;
@@ -18,7 +18,7 @@ fn denied() -> io::Error {
     )
 }
 
-pub(super) fn trusted_directory(path: &Path, _create: bool) -> io::Result<File> {
+pub(in crate::host_client) fn trusted_directory(path: &Path, _create: bool) -> io::Result<File> {
     if !path.is_absolute() {
         return Err(denied());
     }
@@ -36,7 +36,7 @@ pub(super) fn trusted_directory(path: &Path, _create: bool) -> io::Result<File> 
     Ok(directory)
 }
 
-pub(super) fn private_directory(path: &Path, create: bool) -> io::Result<File> {
+pub(in crate::host_client) fn private_directory(path: &Path, create: bool) -> io::Result<File> {
     let parent = trusted_directory(path.parent().ok_or_else(denied)?, false)?;
     let name = Path::new(path.file_name().ok_or_else(denied)?);
     let directory = match unix::open_directory_read_nofollow(&parent, name) {
@@ -60,7 +60,7 @@ fn private_file(directory: &File, name: &Path, create: bool) -> io::Result<File>
     Ok(file)
 }
 
-pub(super) fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
+pub(in crate::host_client) fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
     match private_file(directory, name, false) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             match private_file(directory, name, true) {
@@ -74,7 +74,11 @@ pub(super) fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<Fil
     }
 }
 
-pub(super) fn read_private(directory: &File, name: &Path, max: usize) -> io::Result<Vec<u8>> {
+pub(in crate::host_client) fn read_private(
+    directory: &File,
+    name: &Path,
+    max: usize,
+) -> io::Result<Vec<u8>> {
     let file = private_file(directory, name, false)?;
     let mut bytes = Vec::new();
     file.take(max as u64 + 1).read_to_end(&mut bytes)?;
@@ -84,7 +88,11 @@ pub(super) fn read_private(directory: &File, name: &Path, max: usize) -> io::Res
     Ok(bytes)
 }
 
-pub(super) fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(in crate::host_client) fn publish_new(
+    directory: &File,
+    name: &Path,
+    bytes: &[u8],
+) -> io::Result<()> {
     publish_new_with(directory, name, bytes, |file, bytes| file.write_all(bytes))
 }
 
@@ -119,11 +127,19 @@ fn publish_new_with(
 }
 
 #[cfg(test)]
-pub(super) fn write_new_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(in crate::host_client) fn write_new_private(
+    directory: &File,
+    name: &Path,
+    bytes: &[u8],
+) -> io::Result<()> {
     publish_new(directory, name, bytes)
 }
 
-pub(super) fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(in crate::host_client) fn replace_private(
+    directory: &File,
+    name: &Path,
+    bytes: &[u8],
+) -> io::Result<()> {
     private_file(directory, name, false)?;
     let temporary = format!("{}.pending", festerm_host_protocol::OperationId::new());
     let temporary = Path::new(&temporary);

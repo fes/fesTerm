@@ -1424,8 +1424,7 @@ fn generation_record(
     } = spec;
     let identity = format!("{pid}-{generation}");
     #[cfg(unix)]
-    let socket = root
-        .join(format!("{identity}.sock"))
+    let socket = session_socket_path(root, &identity)?
         .to_string_lossy()
         .into_owned();
     #[cfg(windows)]
@@ -1501,9 +1500,18 @@ fn with_daemon_generation_before_cleanup(
     let lease = UnlockOnDrop(lease);
     let mut socket_owned = false;
     let mut preserve_artifacts = false;
+    #[cfg(unix)]
+    let mut socket_directory = None;
     let result = (|| {
         lease.lock_exclusive()?;
         set_file_mode(&lease_path, 0o600)?;
+        #[cfg(unix)]
+        {
+            socket_directory = festerm_sessiond::unix_endpoint::prepare(
+                root,
+                &format!("{}-{}", record.pid, record.created_at_unix_ms),
+            )?;
+        }
         serve(&mut socket_owned, &mut preserve_artifacts)
     })();
     // Release before taking the registry lock: kill holds that lock while
@@ -1523,7 +1531,19 @@ fn with_daemon_generation_before_cleanup(
                         .into(),
                 )
             } else {
-                cleanup_dead_generation(root, record, socket_owned)
+                #[cfg(unix)]
+                {
+                    cleanup_dead_generation_with_directory(
+                        root,
+                        record,
+                        socket_owned,
+                        socket_directory.as_ref(),
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    cleanup_dead_generation(root, record, socket_owned)
+                }
             };
             if cleanup.is_err() {
                 if !registry.sessions.contains_key(&record.name)
@@ -4326,15 +4346,10 @@ fn session_socket_path(
     runtime_root: &Path,
     name: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let path = runtime_root.join(format!("{name}.sock"));
-    std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|error| {
-        format!(
-            "invalid Unix session socket {} ({} path bytes): {error}; use a shorter XDG_STATE_HOME",
-            path.display(),
-            path.as_os_str().as_encoded_bytes().len()
-        )
-    })?;
-    Ok(path)
+    Ok(festerm_sessiond::unix_endpoint::generation_path(
+        runtime_root,
+        name,
+    )?)
 }
 
 #[cfg(windows)]
@@ -4777,7 +4792,15 @@ fn validate_generation_endpoint(
             session_pipe_name(&record.name),
         )
     };
-    if record.socket == expected {
+    #[cfg(unix)]
+    let short = festerm_sessiond::unix_endpoint::matches_generation(
+        root,
+        &generation,
+        Path::new(&record.socket),
+    )?;
+    #[cfg(not(unix))]
+    let short = false;
+    if record.socket == expected || short {
         Ok(true)
     } else if record.socket == legacy {
         Ok(false)
@@ -4950,6 +4973,21 @@ fn cleanup_dead_generation(
     record: &SessionRecord,
     socket_owned: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    cleanup_dead_generation_with_directory(
+        root,
+        record,
+        socket_owned,
+        #[cfg(unix)]
+        None,
+    )
+}
+
+fn cleanup_dead_generation_with_directory(
+    root: &Path,
+    record: &SessionRecord,
+    socket_owned: bool,
+    #[cfg(unix)] socket_directory: Option<&festerm_sessiond::unix_endpoint::SocketDirectory>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if !validate_generation_endpoint(root, record)? {
         return Ok(());
     }
@@ -4980,11 +5018,19 @@ fn cleanup_dead_generation(
         )?;
     }
     #[cfg(unix)]
-    if socket_owned {
-        // This is derived, never an arbitrary registry-supplied path.
-        let socket = root.join(format!("{}-{}.sock", record.pid, record.created_at_unix_ms));
-        if let Some(metadata) = artifact_metadata(&socket, true)? {
-            remove_artifact_if_unchanged(&socket, &metadata, true)?;
+    {
+        let short = festerm_sessiond::unix_endpoint::cleanup_short(
+            root,
+            &format!("{}-{}", record.pid, record.created_at_unix_ms),
+            socket_owned,
+            socket_directory,
+        )?;
+        if socket_owned && !short {
+            // Derived, never an arbitrary registry-supplied path.
+            let socket = root.join(format!("{}-{}.sock", record.pid, record.created_at_unix_ms));
+            if let Some(metadata) = artifact_metadata(&socket, true)? {
+                remove_artifact_if_unchanged(&socket, &metadata, true)?;
+            }
         }
     }
     #[cfg(windows)]
@@ -8439,5 +8485,100 @@ mod tests {
         for worker in retired {
             worker.join().unwrap().unwrap();
         }
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_long_generation_socket_computation_fits_without_creating_children() {
+        let root = PathBuf::from("/").join("long-native-runtime-root-".repeat(5));
+        let name = format!("{}-{}", process::id(), now_ms());
+        let path = session_socket_path(&root, &name)
+            .expect("long default root must have a private short endpoint");
+        assert!(std::os::unix::net::SocketAddr::from_pathname(&path).is_ok());
+        assert!(
+            !path.parent().unwrap().exists(),
+            "preflight must create no generation directory"
+        );
+        assert!(!root.exists());
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_long_generation_main_lifecycle_binds_and_cleans_exact_socket() {
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = OwnedRoot(env::current_dir().unwrap().join(format!(
+            "long-generation-{}-{}",
+            uuid::Uuid::new_v4().simple(),
+            "x".repeat(80)
+        )));
+        let directory =
+            festerm_sessiond::private_storage::private_directory(&root.0, true).unwrap();
+        festerm_sessiond::private_storage::write_new_private(
+            &directory,
+            Path::new("sentinel"),
+            b"durable state stays here",
+        )
+        .unwrap();
+        let record = generation_record(
+            &root.0,
+            GenerationRecordSpec {
+                name: "owned-long".into(),
+                pid: process::id(),
+                generation: now_ms(),
+                shell: &ShellSpec {
+                    executable: "not-executed".into(),
+                    arguments: vec![],
+                    working_directory: None,
+                },
+                cols: 80,
+                rows: 24,
+                scrollback_limit_bytes: 4096,
+            },
+        )
+        .unwrap();
+        let socket = PathBuf::from(&record.socket);
+        assert!(!socket.parent().unwrap().exists());
+        with_daemon_generation(&root.0, &record, |owned, _| {
+            assert!(socket.parent().unwrap().exists());
+            let listener = bind_unix_listener(&socket)?;
+            *owned = true;
+            set_file_mode(&socket, 0o600)?;
+            let client = UnixStream::connect(&socket)?;
+            let (server, _) = listener.accept()?;
+            drop(server);
+            drop(client);
+            drop(listener);
+            with_registry_lock_in(
+                &root.0,
+                |registry| {
+                    registry
+                        .sessions
+                        .insert(record.name.clone(), record.clone());
+                    Ok(())
+                },
+                || {},
+            )?;
+            assert!(festerm_sessiond::daemon_generation_is_live(
+                &root.0,
+                record.pid,
+                record.created_at_unix_ms,
+                &record.socket
+            )?);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!socket.parent().unwrap().exists());
+        assert!(!generation_lease_path(&root.0, &record).exists());
+        assert_eq!(
+            fs::read(root.0.join("sentinel")).unwrap(),
+            b"durable state stays here"
+        );
+        assert!(!load_registry_in(&root.0, || {})
+            .unwrap()
+            .sessions
+            .contains_key(&record.name));
     }
 }

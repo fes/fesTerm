@@ -5,17 +5,19 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
 import selectors
 import shutil
 import time
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 ACCOUNT = "fes-festerm1"
 TEST = "controlled_github_host_service_client_workflow"
-MARKER = b"FESTERM_DEV_TUNNEL_LAB_SERVICE_CLIENT_PASS"
+MARKER = b"FESTERM_DEV_TUNNEL_LAB_ORDINARY_CLIENT_PASS"
 RECORD = Path.home() / ".festerm-lab" / "dev-tunnel-workflow.json"
 
 
@@ -35,15 +37,32 @@ def fixture_record(path=RECORD):
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise Blocked("operator-record-missing-or-invalid") from None
-    required = {"schema_version", "account", "configuration", "runtime_root", "recipe_name",
+    required = {"schema_version", "account", "configuration", "runtime_root", "locator",
                 "shared_profile_name", "private_profile_name", "generic_logical",
-                "denied_logical", "creation_allowed", "allow_shell_input", "shell"}
+                "private_logical", "private_revision", "denied_logical", "creation_allowed",
+                "allow_shell_input", "shell"}
     if (not isinstance(record, dict) or set(record) != required
-            or record["schema_version"] != 1 or record["account"] != ACCOUNT
+            or type(record["schema_version"]) is not int or record["schema_version"] != 2
+            or record["account"] != ACCOUNT
             or record["allow_shell_input"] is not True
             or not isinstance(record["creation_allowed"], bool)
             or record["shell"] not in ("posix", "powershell", "cmd")):
         raise Blocked("operator-record-does-not-authorize-campaign")
+    # The normal fixture identifies a provider resource, never a manually trusted
+    # app-host ID/owner receipt. Unknown old pairing fields are rejected above.
+    identifier = r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?"
+    if (not isinstance(record["locator"], str)
+            or re.fullmatch(rf"{identifier}\.{identifier}", record["locator"]) is None
+            or type(record["private_revision"]) is not int
+            or not 0 < record["private_revision"] < 2**64):
+        raise Blocked("operator-record-does-not-authorize-campaign")
+    logicals = [record[key] for key in ("generic_logical", "denied_logical", "private_logical")]
+    try:
+        if any(not isinstance(value, str) or str(uuid.UUID(value, version=4)) != value
+               for value in logicals) or len(set(logicals)) != len(logicals):
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise Blocked("operator-record-does-not-authorize-campaign") from None
     for key in ("configuration", "runtime_root"):
         value = record[key]
         if not isinstance(value, str):
@@ -418,7 +437,7 @@ def main(argv=None):
     env["FESTERM_RUN_DEV_TUNNEL_LAB"] = "1"
     env["FESTERM_DEV_TUNNEL_LAB_RECORD"] = str(RECORD)
     env["FESTERM_SESSIOND_RUNTIME_ROOT"] = record["runtime_root"]
-    # The private test itself selects the exact verified account/recipe. No login
+    # The private test itself selects the exact verified account/provider host. No login
     # password, OAuth token or native key is sent through the process environment.
     base = ["cargo", "test", "--locked", "-p", "festerm", "--test", "dev_tunnel_workflow_lab"]
     try:
@@ -435,7 +454,7 @@ def main(argv=None):
         evidence(args.result, "blocked", "toolchain-or-process-unavailable")
         return 2
     if b"FESTERM_DEV_TUNNEL_LAB_BLOCKED" in output:
-        evidence(args.result, "blocked", "native-account-host-approval-or-fixture-prerequisite")
+        evidence(args.result, "blocked", "native-account-ordinary-host-or-fixture-prerequisite")
         return 2
     if code != 0 or MARKER not in output or b"1 passed; 0 failed" not in output:
         evidence(args.result, "fail", "service-client-timeout" if code is None else "service-client-failed")

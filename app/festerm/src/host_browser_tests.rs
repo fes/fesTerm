@@ -79,6 +79,9 @@ fn fixture() -> (FesTermApp, egui::Context) {
     let request = egui::Id::new("foreground-host-review");
     crate::screens::install_host_recipe_request_for_test(&context, tab, request);
     app.review_host(tab, request, recipe, &context);
+    app.host_browser.as_mut().unwrap().ordinary_selected = false;
+    app.host_browser.as_mut().unwrap().ordinary_lifetime = None;
+    app.host_browser.as_mut().unwrap().feedback = None;
     (app, context)
 }
 
@@ -379,7 +382,7 @@ fn selected_host_desktop_creation_freezes_launch_and_distinguishes_new_logical_f
     assert!(app.state.host_creation_intents.is_empty());
 }
 
-fn protected_creation_context(recipe: &PublicRecipe) -> ApprovedContext {
+fn protected_creation_context(recipe: &PublicRecipe) -> ClientContext {
     use festerm_tunnel_bridge::owner_auth::{OwnerBinding, PinnedHost};
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
@@ -414,6 +417,7 @@ fn protected_creation_context(recipe: &PublicRecipe) -> ApprovedContext {
         binding,
     )
     .unwrap()
+    .into()
 }
 
 fn registry_creation(recipe: &PublicRecipe) -> Option<(CreationMode, host_client::Creation)> {
@@ -877,4 +881,342 @@ fn host_auth_recovery_discovery_nonauth_errors_have_no_sign_in_action() {
         let (_, harness) = discovery_failure_fixture(RequestFailure::from(error));
         assert!(harness.query_by_label("Sign in again").is_none());
     }
+}
+
+fn ordinary_ui_fixture(service: OrdinaryService) -> (FesTermApp, egui::Context) {
+    use festerm_secret_store::{MemorySecretStore, SecretBytes};
+    let (mut app, context) = fixture();
+    let vault: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let client_id = identity::registered_client_id().unwrap();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let mut bytes = b"FESTERM_GITHUB_IDENTITY_V2\0".to_vec();
+    bytes.extend(
+        serde_json::to_vec(&serde_json::json!({
+            "account":{"id":42,"login":"user"}, "client_id":client_id,
+            "access_token":"PRIVATE_OWNED_FAKE", "refresh_token":null,
+            "expires_at":expires, "refresh_expires_at":null
+        }))
+        .unwrap(),
+    );
+    let reference = vault.put(&SecretBytes::copy_from_slice(&bytes)).unwrap();
+    let account = DevTunnelAccount::new(
+        "github-user",
+        AccountProvider::Github,
+        42,
+        "user",
+        reference,
+    )
+    .unwrap();
+    let configuration = app
+        .state
+        .configuration()
+        .with_account(account.clone())
+        .unwrap()
+        .0;
+    app.state.replace_configuration(configuration);
+    app.secret_store = Ok(vault);
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.account_reference = account.credential_reference().duplicate_for_transport();
+    browser.account = account;
+    browser.locator = "build.fixture".into();
+    browser.unbound = true;
+    browser.discovered = true;
+    browser.recipe.behavior = ConnectionBehavior::ChooseSession;
+    browser.ordinary_service = Some(service);
+    let mut rendered = context.run_ui(
+        egui::RawInput {
+            focused: true,
+            ..Default::default()
+        },
+        |_| {},
+    );
+    rendered.textures_delta.clear();
+    assert!(context.input(|input| input.focused));
+    (app, context)
+}
+
+fn wait_ordinary_ui(app: &mut FesTermApp, context: &egui::Context) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        app.poll_host_browser(context);
+        if app
+            .host_browser
+            .as_ref()
+            .is_none_or(|browser| browser.receiver.is_none())
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "owned ordinary UI worker timed out"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn ordinary_desktop_expansion_once_requires_update_without_manual_fallback() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (mut app, context) = ordinary_ui_fixture(Arc::new(move |id, locator, _| {
+        assert_eq!(id, 42);
+        assert_eq!(locator, "build.fixture");
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    }));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.begin_ordinary_host(&context);
+    wait_ordinary_ui(&mut app, &context);
+    for _ in 0..3 {
+        app.poll_host_browser(&context);
+    }
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.ordinary_selected);
+    assert!(browser.receipt.is_none() && browser.ordinary.is_none());
+    assert!(browser.inventory.is_none() && !browser.host_approved && !browser.consent);
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some(
+            host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired
+            )
+            .message()
+        )
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(700.0, 900.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| app.show_host_browser(ui.ctx(), false),
+            app,
+        );
+    harness.run_steps(2);
+    use egui_kittest::kittest::Queryable;
+    harness.get_by_label("Retry host connection");
+    assert!(harness
+        .query_by_label("Trust this exact binding and prepare native owner key")
+        .is_none());
+    assert!(harness.query_by_label("Prepare client key").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+fn ordinary_fixture_context(
+    account_id: u64,
+) -> (tempfile::TempDir, host_client::ordinary::OrdinaryContext) {
+    use festerm_tunnel_bridge::{
+        ordinary_auth::{OrdinaryHostInfo, OrdinaryRoute},
+        owner_auth::PinnedHost,
+    };
+    use host_client::ordinary::{OrdinaryAccountGuard, OrdinaryKeyIndex};
+    use russh::keys::{Algorithm, HashAlg, PrivateKey};
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let ssh = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
+    let host = festerm_host_protocol::HostId::new();
+    let info = OrdinaryHostInfo {
+        version: 1,
+        installation: festerm_host_protocol::HostId::new(),
+        principal: festerm_host_protocol::PrincipalId::new(),
+        policy_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+        route: OrdinaryRoute {
+            tunnel_id: "build".into(),
+            cluster: "fixture".into(),
+            endpoint_id: format!("{host}-relay"),
+            port: 47461,
+            host: PinnedHost {
+                host,
+                host_key_fingerprint: ssh.public_key().fingerprint(HashAlg::Sha256).to_string(),
+            },
+        },
+    };
+    let token = CancellationToken::new();
+    let check = token.clone();
+    let guard = OrdinaryAccountGuard::new(
+        token,
+        Arc::new(move || {
+            if check.is_cancelled() {
+                Err(festerm_host_protocol::ContractError::Stale)
+            } else {
+                Ok(())
+            }
+        }),
+    );
+    let context = host_client::testing::ordinary_context(
+        OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap(),
+        account_id,
+        info,
+        guard,
+    )
+    .unwrap();
+    (root, context)
+}
+
+#[test]
+fn ordinary_desktop_inventory_adoption_and_durable_create_follow_global_policy() {
+    for enabled in [false, true] {
+        let (_root, context) = ordinary_fixture_context(42);
+        let binding = context.binding().clone();
+        let caps = festerm_host_protocol::Capabilities {
+            inventory: true,
+            attach: true,
+            create: true,
+            ensure: true,
+            creation_allowed: enabled,
+            issuance_epoch: Some(festerm_host_protocol::Epoch::new(1).unwrap()),
+            ..Default::default()
+        };
+        let inventory = Inventory {
+            capabilities: caps,
+            sessions: Vec::new(),
+            profiles: Vec::new(),
+            unknown: Vec::new(),
+        };
+        let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+            let result = (context.clone(), inventory.clone());
+            Box::pin(async move { Ok(result) })
+        }));
+        app.begin_ordinary_host(&ctx);
+        wait_ordinary_ui(&mut app, &ctx);
+        let browser = app.host_browser.as_mut().unwrap();
+        assert_eq!(browser.context().unwrap().binding(), &binding);
+        assert_eq!(&browser.recipe.host.id, binding.host());
+        assert!(browser.receipt.is_none() && browser.host_approved);
+        browser.creation_confirmed = true;
+        assert_eq!(browser.allows_creation(), enabled);
+        app.apply_host_review_action(Action::Create, &ctx);
+        assert_eq!(app.state.host_creation_intents.len(), usize::from(enabled));
+        assert_eq!(app.host_browser.as_ref().unwrap().worker.is_some(), enabled);
+        if enabled {
+            let (_, _, original) = &app.state.host_creation_intents[0];
+            assert!(
+                original.matches_context(&app.host_browser.as_ref().unwrap().context().unwrap())
+            );
+            assert_eq!(original.creation().lifetime, Lifetime::Persistent {});
+        }
+        // Its fixture transport is denied. This validates UI dispatch/context,
+        // not a native/server creation or provider grant.
+        app.host_browser = None;
+    }
+}
+
+#[test]
+fn ordinary_desktop_privacy_callback_cancels_pending_without_frame_and_blocks_late_adoption() {
+    let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = entered.clone();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let worker_release = release.clone();
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+        observed.store(true, std::sync::atomic::Ordering::Release);
+        let release = worker_release.clone();
+        Box::pin(async move {
+            release.notified().await;
+            Err(host_client::Failure::ProviderUnavailable)
+        })
+    }));
+    app.begin_ordinary_host(&ctx);
+    let account = app.host_browser.as_ref().unwrap().account.clone();
+    let account_token = app.state.ordinary_account_token(&account).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !entered.load(std::sync::atomic::Ordering::Acquire) {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let callback = ordinary_privacy_loss(account_token.clone());
+    callback();
+    // No UI frame/poll intervened between the platform callback and this fence.
+    assert!(account_token.is_cancelled());
+    assert!(app.host_browser.as_ref().unwrap().receiver.is_some());
+    release.notify_one();
+    wait_ordinary_ui(&mut app, &ctx);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.ordinary.is_none() && browser.inventory.is_none());
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+    );
+    let explicit_fresh = app.state.ordinary_account_token(&account).unwrap();
+    assert!(!explicit_fresh.is_cancelled());
+    assert!(account_token.is_cancelled());
+}
+
+#[test]
+fn ordinary_desktop_timeout_cancels_request_without_owner_receipt_guidance() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.ordinary_selected = true;
+    let request = browser.cancel.child_token();
+    browser.pending_deadline = Some((Instant::now(), request.clone()));
+    let (_, receiver) = mpsc::sync_channel(1);
+    browser.receiver = Some(receiver);
+    browser.expire_pending(Instant::now());
+    assert!(request.is_cancelled() && browser.receiver.is_none());
+    assert!(!browser.cancel.is_cancelled());
+    let message = browser.feedback.as_ref().unwrap();
+    assert!(message.contains("Retry this host explicitly"));
+    assert!(!message.contains("owner") && !message.contains("receipt"));
+}
+
+#[test]
+fn ordinary_desktop_privacy_unavailable_refuses_before_bootstrap() {
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(|_, _, _| {
+        panic!("privacy admission must precede bootstrap")
+    }));
+    app.host_browser.as_mut().unwrap().ordinary_privacy_loss =
+        Some(Arc::new(std::sync::atomic::AtomicBool::new(true)));
+    app.begin_ordinary_host(&ctx);
+    wait_ordinary_ui(&mut app, &ctx);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert_eq!(
+        browser.feedback.as_deref(),
+        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+    );
+    assert!(browser.receipt.is_none() && browser.ordinary.is_none() && browser.inventory.is_none());
+    assert!(app.state.host_creation_intents.is_empty());
+}
+
+#[test]
+fn ordinary_desktop_attach_installs_common_session_without_owner_enrollment() {
+    let (_root, context) = ordinary_fixture_context(42);
+    let target = host_client::Target {
+        logical: host_client::LogicalSessionId::new(),
+        generation: festerm_host_protocol::GenerationId::new(3).unwrap(),
+    };
+    let caps = festerm_host_protocol::Capabilities {
+        attach: true,
+        ..Default::default()
+    };
+    let inventory = Inventory {
+        capabilities: caps,
+        sessions: vec![festerm_host_protocol::SessionSummary {
+            target: target.clone(),
+            name: "Retained shell".into(),
+            lifetime: Lifetime::Persistent {},
+            attached: false,
+        }],
+        profiles: Vec::new(),
+        unknown: Vec::new(),
+    };
+    let (mut app, ctx) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+        let result = (context.clone(), inventory.clone());
+        Box::pin(async move { Ok(result) })
+    }));
+    app.begin_ordinary_host(&ctx);
+    wait_ordinary_ui(&mut app, &ctx);
+    assert!(app.host_browser.as_ref().unwrap().receipt.is_none());
+    app.apply_host_review_action(Action::Attach(target), &ctx);
+    assert!(app.host_browser.is_none());
+    assert!(matches!(
+        app.state.active_tab().content,
+        TabContent::Session(_)
+    ));
+    assert!(app.state.host_creation_intents.is_empty());
+    app.state.request_background_shutdown();
 }

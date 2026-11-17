@@ -6,10 +6,7 @@ use festerm_host_setup::{
     enrollment::{CurrentOwnerPolicy, CurrentOwnerPolicySource, OwnerStorage},
     lifecycle::Store,
 };
-use festerm_tunnel_bridge::{
-    host_control::{PolicyGuard, ProtectedPolicySource},
-    owner_auth::OwnerVerifier,
-};
+use festerm_tunnel_bridge::host_control::{PolicyGuard, PolicyView, ProtectedPolicySource};
 use std::sync::Arc;
 
 pub struct EnrollmentPolicy(CurrentOwnerPolicySource);
@@ -26,8 +23,8 @@ impl EnrollmentPolicy {
 }
 
 impl PolicyGuard for EnrollmentGuard {
-    fn verifier(&self) -> &OwnerVerifier {
-        self.0.verifier()
+    fn view(&self) -> PolicyView<'_> {
+        PolicyView::Owner(self.0.verifier())
     }
 }
 

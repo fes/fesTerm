@@ -1643,6 +1643,18 @@ pub(crate) mod tests {
         .await
     }
 
+    /// Encrypted channel with an injected provider route for runtime fixtures.
+    /// This does not exercise provider authentication or cloud ACL validation.
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn admitted_ordinary_pair(
+        key: russh::keys::PrivateKey,
+        route: crate::ordinary_auth::OrdinaryRoute,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let (client, mut stream, task) = ordinary_pair(key, route.host.clone()).await;
+        stream.ordinary_route = Some(route);
+        (client, stream, task)
+    }
+
     #[cfg(feature = "host-routing")]
     pub(crate) async fn owner_network_pair(
         key: russh::keys::PrivateKey,

@@ -12,7 +12,15 @@ use festerm_recording::{FinishReason, SharedRecording};
 #[cfg(target_os = "macos")]
 type Monitor = festerm_macos_window::PrivacyMonitor;
 #[cfg(target_os = "linux")]
-type Monitor = festerm_linux_power::RecordingPrivacyMonitor;
+enum Monitor {
+    Recording {
+        _monitor: festerm_linux_power::RecordingPrivacyMonitor,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    Session {
+        _monitor: festerm_linux_power::PrivacyMonitor,
+    },
+}
 #[cfg(windows)]
 type Monitor = festerm_windows_power::SharedPrivacyMonitor;
 
@@ -107,16 +115,42 @@ pub(crate) struct PrivacyTask {
 
 impl PrivacyTask {
     pub(crate) fn start(wake: Wake) -> Result<Self, String> {
+        Self::start_inner(wake, None, ())
+    }
+
+    /// Session access reuses the existing lock/sleep monitor; it does not
+    /// inherit recording's additional Linux screen-capture prerequisites.
+    #[cfg(all(feature = "experimental-dev-tunnels", not(test)))]
+    pub(crate) fn start_with_loss(
+        wake: Wake,
+        on_loss: Wake,
+        charge: impl Send + 'static,
+    ) -> Result<Self, String> {
+        Self::start_inner(wake, Some(on_loss), charge)
+    }
+
+    fn start_inner(
+        wake: Wake,
+        on_loss: Option<Wake>,
+        charge: impl Send + 'static,
+    ) -> Result<Self, String> {
+        let activity = if on_loss.is_some() {
+            "Remote connection"
+        } else {
+            "Recording"
+        };
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
         let (send, receiver) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("festerm-recording-privacy".to_owned())
             .spawn(move || {
-                let result = install(wake.clone()).and_then(|guard| {
+                // Cancellation of the waiter never releases admitted native work.
+                let _charge = charge;
+                let result = install(wake.clone(), on_loss).and_then(|guard| {
                     if worker_cancelled.load(Ordering::Acquire) {
                         drop(guard);
-                        Err("Recording preparation was cancelled".to_owned())
+                        Err(format!("{activity} preparation was cancelled"))
                     } else {
                         Ok(guard)
                     }
@@ -124,7 +158,7 @@ impl PrivacyTask {
                 let _ = send.send(result);
                 wake();
             })
-            .map_err(|error| format!("Recording privacy monitor could not start: {error}"))?;
+            .map_err(|error| format!("{activity} privacy monitor could not start: {error}"))?;
         Ok(Self {
             receiver,
             cancelled,
@@ -148,6 +182,25 @@ impl PrivacyTask {
             )),
         }
     }
+
+    /// Called only by an admitted background worker, before the wire deadline.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn wait(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Option<Result<PrivacyGuard, String>> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(Ok(guard)) if self.cancelled.load(Ordering::Acquire) => {
+                drop(guard);
+                Some(Err("Privacy preparation was cancelled".to_owned()))
+            }
+            Ok(result) => Some(result),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Some(Err("Privacy monitor stopped unexpectedly".to_owned()))
+            }
+        }
+    }
 }
 
 impl Drop for PrivacyTask {
@@ -156,14 +209,18 @@ impl Drop for PrivacyTask {
     }
 }
 
-fn install(wake: Wake) -> Result<PrivacyGuard, String> {
-    let loss = Arc::new(AtomicBool::new(false));
-    let recording: Slot = Arc::new(Mutex::new(None));
-    let callback_loss = loss.clone();
-    let callback_slot = recording.clone();
-    let callback: Wake = Arc::new(move || {
-        callback_loss.store(true, Ordering::Release);
-        let recording = callback_slot
+fn privacy_loss_callback(
+    loss: Arc<AtomicBool>,
+    recording: Slot,
+    wake: Wake,
+    on_loss: Option<Wake>,
+) -> Wake {
+    Arc::new(move || {
+        loss.store(true, Ordering::Release);
+        if let Some(on_loss) = &on_loss {
+            on_loss();
+        }
+        let recording = recording
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
@@ -173,11 +230,37 @@ fn install(wake: Wake) -> Result<PrivacyGuard, String> {
             }
         }
         wake();
-    });
+    })
+}
+
+fn install(wake: Wake, on_loss: Option<Wake>) -> Result<PrivacyGuard, String> {
+    let loss = Arc::new(AtomicBool::new(false));
+    let recording: Slot = Arc::new(Mutex::new(None));
+    let session = on_loss.is_some();
+    let activity = if session {
+        "Remote connection"
+    } else {
+        "Recording"
+    };
+    let callback = privacy_loss_callback(loss.clone(), recording.clone(), wake, on_loss);
     #[cfg(windows)]
     let monitor = Monitor::install_with_loss_flag(callback, loss.clone());
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let monitor = Monitor::install(callback);
+    #[cfg(target_os = "linux")]
+    let monitor = {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if session {
+            festerm_linux_power::PrivacyMonitor::install(callback)
+                .map(|monitor| Monitor::Session { _monitor: monitor })
+        } else {
+            festerm_linux_power::RecordingPrivacyMonitor::install(callback)
+                .map(|monitor| Monitor::Recording { _monitor: monitor })
+        }
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        festerm_linux_power::RecordingPrivacyMonitor::install(callback)
+            .map(|monitor| Monitor::Recording { _monitor: monitor })
+    };
     let monitor = monitor.map_err(|mut error| {
         #[cfg(windows)]
         let unresolved = {
@@ -203,14 +286,61 @@ fn install(wake: Wake) -> Result<PrivacyGuard, String> {
         };
         #[cfg(not(windows))]
         let hint = "";
-        format!("Recording cannot start without lock and sleep monitoring: {error}.{hint}")
+        format!("{activity} cannot start without lock and sleep monitoring: {error}.{hint}")
     })?;
     if loss.load(Ordering::Acquire) {
-        return Err("Recording cannot start because device privacy is unavailable".to_owned());
+        return Err(format!(
+            "{activity} cannot start because device privacy is unavailable"
+        ));
     }
     Ok(PrivacyGuard {
         monitor: Some(monitor),
         loss,
         recording,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_privacy_loss_cancels_before_wake_without_a_ui_frame() {
+        let loss = Arc::new(AtomicBool::new(false));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let observed_loss = loss.clone();
+        let observed_cancel = cancel.clone();
+        let woke = Arc::new(AtomicBool::new(false));
+        let observed_wake = woke.clone();
+        let callback = privacy_loss_callback(
+            loss.clone(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(move || {
+                assert!(observed_loss.load(Ordering::Acquire));
+                assert!(observed_cancel.is_cancelled());
+                observed_wake.store(true, Ordering::Release);
+            }),
+            Some(Arc::new(move || cancel.cancel())),
+        );
+        assert!(!loss.load(Ordering::Acquire));
+        assert!(!woke.load(Ordering::Acquire));
+        callback();
+        assert!(woke.load(Ordering::Acquire));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn session_privacy_wait_refuses_late_ready_guard_after_cancellation() {
+        let (send, receiver) = mpsc::sync_channel(1);
+        let task = PrivacyTask {
+            receiver,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(task.wait(std::time::Duration::ZERO).is_none());
+        let loss = Arc::new(AtomicBool::new(false));
+        assert!(send.send(Ok(PrivacyGuard::for_test(loss.clone()))).is_ok());
+        task.cancel();
+        assert!(matches!(task.wait(std::time::Duration::ZERO), Some(Err(_))));
+        assert!(loss.load(Ordering::Acquire));
+    }
 }

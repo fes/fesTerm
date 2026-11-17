@@ -2915,6 +2915,7 @@ dependencies = [
  "festerm-android-platform",
  "festerm-unix-security",
  "keyring-core",
+ "secret-service",
  "security-framework",
  "serde",
  "static_assertions",
@@ -2943,6 +2944,7 @@ dependencies = [
 name = "festerm-sessiond"
 version = "0.17.5"
 dependencies = [
+ "base64 0.22.1",
  "bincode",
  "festerm-core",
  "festerm-host-protocol",

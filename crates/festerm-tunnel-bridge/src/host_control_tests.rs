@@ -12,8 +12,8 @@ use tokio::io::duplex;
 pub(crate) struct Policy(pub(crate) Arc<tokio::sync::Mutex<OwnerVerifier>>);
 pub(crate) struct FixturePolicyGuard(tokio::sync::OwnedMutexGuard<OwnerVerifier>);
 impl PolicyGuard for FixturePolicyGuard {
-    fn verifier(&self) -> &OwnerVerifier {
-        &self.0
+    fn view(&self) -> PolicyView<'_> {
+        PolicyView::Owner(&self.0)
     }
 }
 impl ProtectedPolicySource for Policy {
@@ -824,19 +824,23 @@ pub(crate) mod native_routes {
 
     impl NativeFixture {
         pub(crate) fn new(creation_allowed: bool) -> Self {
-            let helper = PathBuf::from(
-                std::env::var_os("FESTERM_HOST_TEST_HELPER")
-                    .expect("set FESTERM_HOST_TEST_HELPER to the owned built sessiond helper"),
-            );
-            assert!(helper.is_absolute() && helper.is_file());
-            assert!(helper.with_file_name("festerm-pty-test-child").is_file());
             let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap()
                 .parent()
                 .unwrap()
                 .to_path_buf();
-            let directory = private_storage::private_test_directory_in(&parent);
+            Self::new_in(creation_allowed, &parent)
+        }
+
+        pub(crate) fn new_in(creation_allowed: bool, parent: &std::path::Path) -> Self {
+            let helper = PathBuf::from(
+                std::env::var_os("FESTERM_HOST_TEST_HELPER")
+                    .expect("set FESTERM_HOST_TEST_HELPER to the owned built sessiond helper"),
+            );
+            assert!(helper.is_absolute() && helper.is_file());
+            assert!(helper.with_file_name("festerm-pty-test-child").is_file());
+            let directory = private_storage::private_test_directory_in(parent);
             let root = directory.path().to_path_buf();
             let mut policy = policy();
             policy.capabilities = Capabilities {

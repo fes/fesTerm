@@ -262,6 +262,79 @@ pub struct VerifiedOrdinaryProof {
     public_key: [u8; 32],
     role: StreamRole,
 }
+
+/// Current protected local facts. This public value is not a capability.
+#[derive(Clone)]
+pub struct OrdinaryPolicy {
+    pub host_info: OrdinaryHostInfo,
+    pub session: crate::owner_auth::SessionPolicy,
+    pub denied_keys: Vec<[u8; 32]>,
+}
+impl Validate for OrdinaryPolicy {
+    fn validate(&self) -> Result<(), ContractError> {
+        self.host_info.validate()?;
+        self.session.host.validate()?;
+        self.session.capabilities.validate_permissions()?;
+        if self.host_info.route.host != self.session.host
+            || self.host_info.principal != self.session.principal
+            || self.host_info.policy_epoch != self.session.grant_epoch
+            || !self.session.remote_access
+            || self.session.capabilities.issuance_epoch.is_some()
+        {
+            return Err(ContractError::Denied);
+        }
+        Ok(())
+    }
+}
+
+/// Minted only by the runtime after fresh provider observation and channel proof.
+pub struct OrdinaryCapability {
+    scope: crate::owner_auth::SessionScope,
+    public_key: [u8; 32],
+}
+impl OrdinaryCapability {
+    #[cfg(feature = "relay")]
+    pub(crate) fn mint(
+        proof: VerifiedOrdinaryProof,
+        policy: &OrdinaryPolicy,
+    ) -> Result<(Self, crate::owner_auth::ConnectionGuard), ContractError> {
+        policy.validate()?;
+        if policy.denied_keys.contains(&proof.public_key) {
+            return Err(ContractError::Denied);
+        }
+        let (scope, guard) = crate::owner_auth::SessionScope::ordinary(&policy.session)?;
+        Ok((
+            Self {
+                scope,
+                public_key: proof.public_key,
+            },
+            guard,
+        ))
+    }
+    pub(crate) fn principal(&self) -> &PrincipalId {
+        self.scope.principal()
+    }
+    pub(crate) fn authorize(
+        &self,
+        current: &OrdinaryPolicy,
+        policy: &crate::owner_auth::SessionPolicy,
+        request: &festerm_host_protocol::Envelope<festerm_host_protocol::Request>,
+        epoch: Epoch,
+        grant: Option<&festerm_host_protocol::SessionGrant>,
+    ) -> Result<festerm_host_protocol::AdmissionFence, ContractError> {
+        use festerm_host_protocol::{LogicalState, Request};
+        current.validate()?;
+        if current.denied_keys.contains(&self.public_key)
+            || matches!(request.body, Request::ExplicitEnd { .. })
+            || matches!(request.body, Request::EnsureProfile { .. })
+                && !policy.capabilities.creation_allowed
+                && !grant.is_some_and(|g| matches!(g.state, LogicalState::Running(_)))
+        {
+            return Err(ContractError::Denied);
+        }
+        self.scope.authorize(policy, request, epoch, grant)
+    }
+}
 impl VerifiedOrdinaryProof {
     pub fn public_key(&self) -> &[u8; 32] {
         &self.public_key

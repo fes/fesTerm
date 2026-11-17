@@ -515,7 +515,24 @@ impl Native {
                 {
                     return Err(Failure::ScopeChanged);
                 }
-                result.process = Some(format!("{:?}", setup.native_registration.process));
+                let process = if snapshot.settings.ordinary_access == OrdinaryAccess::ProviderOwner
+                {
+                    if cancel.is_cancelled() {
+                        return Err(Failure::Cancelled);
+                    }
+                    // Normal Enable is consent to listen now. The independent
+                    // sign-in startup preference controls future OS logins.
+                    let services = Services::current_user(store, &request.root).map_err(failure)?;
+                    let stage = services.reopen_stage(snapshot.epoch).map_err(failure)?;
+                    let observation = services.start(&stage, snapshot.epoch).map_err(failure)?;
+                    if store.snapshot().map_err(failure)? != **snapshot {
+                        return Err(Failure::ScopeChanged);
+                    }
+                    observation.process
+                } else {
+                    setup.native_registration.process
+                };
+                result.process = Some(format!("{process:?}"));
                 public_owner(&mut result, setup.owner_approval_prerequisite)?;
                 Ok(result)
             }
@@ -563,8 +580,8 @@ impl Native {
                 let owners = store.owner_enrollment().map_err(failure)?;
                 let owner = owners.snapshot().map_err(failure)?;
                 if owner.storage != OwnerStorage::NativeVault
-                    || !owner.remote_access
-                    || !owner.keys.iter().any(|key| !key.revoked)
+                    || expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly
+                        && (!owner.remote_access || !owner.keys.iter().any(|key| !key.revoked))
                 {
                     return Err(Failure::OwnerApproval);
                 }
