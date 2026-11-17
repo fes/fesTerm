@@ -127,18 +127,20 @@ public final class PlatformSmoke extends Instrumentation {
         activity.keyboardMode(0);
     }
 
-    private void postedAccentKeys(FestermActivity activity, View input) throws Exception {
+    /** Synthetic Java/JNI ownership transition, not uninterrupted Rust form ownership. */
+    private void postedAccentOwnershipTransition(FestermActivity activity, View input) throws Exception {
         Field sequence = input.getClass().getDeclaredField("sequence");
         Field ingress = input.getClass().getDeclaredField("connectionComposition");
         Field nativeState = input.getClass().getDeclaredField("nativeComposition");
         sequence.setAccessible(true); ingress.setAccessible(true); nativeState.setAccessible(true);
-        AtomicReference<InputConnection> owned = new AtomicReference<>();
+        AtomicReference<InputConnection> original = new AtomicReference<>();
         onMain(() -> {
             try {
+                activity.keyboardMode(0);
                 activity.fieldDocument(1237, "", 0, 0, false, false);
                 activity.keyboardMode(3);
                 InputConnection connection = input.onCreateInputConnection(new EditorInfo());
-                owned.set(connection);
+                original.set(connection);
                 long before = sequence.getLong(input);
                 KeyEvent dead = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_APOSTROPHE) {
                     @Override public int getUnicodeChar() { return KeyCharacterMap.COMBINING_ACCENT | 0x301; }
@@ -151,20 +153,28 @@ public final class PlatformSmoke extends Instrumentation {
                 require(ingress.getBoolean(input), "ingress fence survives same UI turn");
             } catch (Exception error) { throw new AssertionError(error); }
         });
-        // Actually drain the posted Activity events; do not emulate their callbacks.
+        // Drain real posted Activity work. Rust/IMM may legitimately retire this
+        // synthetic owner; no claim that field1237 remains a current GUI form.
         waitForIdleSync();
         onMain(() -> {
             try {
+                activity.keyboardMode(0);
+                activity.fieldDocument(1238, "", 0, 0, false, false);
+                activity.keyboardMode(3);
+                InputConnection fresh = input.onCreateInputConnection(new EditorInfo());
+                require(fresh != null && fresh != original.get(), "deliberately fresh fixture owner");
                 require(!ingress.getBoolean(input) && !nativeState.getBoolean(input),
-                    "posted accent and following character retire both finite fences");
+                    "ownership transition clears both finite composition fences");
                 long before = sequence.getLong(input);
-                InputConnection connection = owned.get();
-                require(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_G)),
-                    "same owned connection accepts plain key after native drain");
-                require(sequence.getLong(input) == before + 1, "subsequent plain key emits exactly once");
-                require(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_G)),
-                    "subsequent plain key release consumed");
-                require(sequence.getLong(input) == before + 1, "subsequent release emits nothing");
+                require(!original.get().sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_G)),
+                    "original synthetic owner cannot reactivate after ownership transition");
+                require(sequence.getLong(input) == before, "retired synthetic owner emits no JNI input");
+                require(fresh.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_G)),
+                    "fresh fixture owner accepts plain key");
+                require(sequence.getLong(input) == before + 1, "fresh plain key emits exactly once");
+                require(fresh.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_G)),
+                    "fresh plain key release consumed");
+                require(sequence.getLong(input) == before + 1, "fresh release emits nothing");
                 activity.keyboardMode(0);
             } catch (Exception error) { throw new AssertionError(error); }
         });
@@ -664,7 +674,7 @@ public final class PlatformSmoke extends Instrumentation {
             Field inputField = FestermActivity.class.getDeclaredField("input");
             inputField.setAccessible(true);
             View input = (View) inputField.get(activity);
-            postedAccentKeys(activity, input);
+            postedAccentOwnershipTransition(activity, input);
             onMain(() -> {
                 try { orderedPlainKeys(activity, input); }
                 catch (Exception error) { throw new AssertionError(error); }
