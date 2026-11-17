@@ -54,6 +54,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0088: JavaScript Terminal Program Sessions](0088-javascript-terminal-program-sessions.md) - proposed own-tab ANSI program runtime motivated by a TradeWars 2002 port; bounded terminal I/O, interactive worker policy, private transactional saves and staged desktop qualification; no implementation or enablement
+
 - [ADR 0086: Provider-Authorized Ordinary Remoting](0086-provider-authorized-ordinary-remoting.md) - architecturally reviewed direction; implementation and native qualification remain open for the automatic account/host/shared-session flow, sealed provider-connect capability, explicit opt-in migration and separate advanced owner authority
 - [ADR 0087: Short macOS Session Daemon Socket Addresses](0087-macos-sessiond-socket-addresses.md) - architecturally reviewed overflow-only socket address; durable roots and generation authority retained, default-path native qualification open
 - [ADR 0084: Host-Based Dev Tunnels, Remote Session Creation, and Unified Host Installation](0084-host-based-dev-tunnels.md) - owner-requested design; explicit discovery, local resume-or-create recipes, shared setup, headless distribution and staged acceptance
