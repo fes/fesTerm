@@ -1855,9 +1855,13 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
                 let completion = match receiver.recv_async().await {
                     Ok(completion) => completion,
                     Err(_) => match worker.await.expect("native terminal worker panicked") {
-                        Err(crate::host_client::Failure::Control(Error::Refused(
-                            Refusal::Busy,
-                        ))) => {
+                        Err(
+                            crate::host_client::Failure::Control(Error::Refused(Refusal::Busy))
+                            | crate::host_client::Failure::Attachment {
+                                stage: crate::host_client::AttachStage::Snapshot,
+                                error: Error::Refused(Refusal::Busy),
+                            },
+                        ) => {
                             assert!(matches!(
                                 server.await.unwrap(),
                                 Err(Error::Refused(Refusal::Busy))

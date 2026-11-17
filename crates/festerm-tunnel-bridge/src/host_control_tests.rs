@@ -824,12 +824,9 @@ pub(crate) mod native_routes {
 
     impl NativeFixture {
         pub(crate) fn new(creation_allowed: bool) -> Self {
-            let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf();
+            // The runtime may supply a private short fixture directory when
+            // the checkout's ancestors fail the unchanged storage policy.
+            let parent = std::env::current_dir().unwrap();
             Self::new_in(creation_allowed, &parent)
         }
 

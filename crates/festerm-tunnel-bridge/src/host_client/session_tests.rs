@@ -392,9 +392,11 @@ async fn selected_host_real_eof_retains_attachment_phase_and_kind_through_sessio
         let notifier = Arc::new(Notify(tokio::sync::Notify::new()));
         let wake = notifier.clone();
         let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
-        let worker = Worker::spawn(
+        let worker = Worker::spawn_with_guard(
             scope,
             Arc::new(move || wake.notify()),
+            CancellationToken::new(),
+            None,
             move |scope, cancel, events, wake| async move {
                 attach_authenticated(stream, permit, &scope, target, &cancel, &events, &wake).await
             },
