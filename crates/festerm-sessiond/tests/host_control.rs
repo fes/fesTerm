@@ -2392,10 +2392,20 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
         AttachmentCancellation::Committed(Some(lease.clone()))
     );
     let pending = fixture.attach(&running.target, &AttachmentId::new(), true);
-    fixture
-        .control()
-        .revoke_local(&fixture.owner, &creation.logical)
+    let before_revoke = fixture.state()["sessions"][creation.logical.as_str()]["epoch"]
+        .as_u64()
         .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .revoke_local(&fixture.owner, &creation.logical)
+    })
+    .unwrap();
+    assert_eq!(
+        fixture.state()["sessions"][creation.logical.as_str()]["epoch"].as_u64(),
+        Some(before_revoke + 1),
+        "revocation must commit once despite admission contention"
+    );
     pending.session.acknowledge_recovery_adoption();
     drop(pending);
     thread::sleep(Duration::from_millis(100));
@@ -2413,6 +2423,7 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
         Some(lease.epoch.get())
     );
     assert!(state["remote_revoked"].as_bool().unwrap());
+    assert_eq!(state["grant"]["revision"].as_u64(), Some(before_revoke + 1));
     drop(active);
 }
 
