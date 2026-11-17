@@ -209,9 +209,8 @@ fn selected_host_receipt_review_requires_exact_account_host_and_independent_pin(
 
 #[test]
 fn selected_host_sandbox_receipt_opens_policy_created_private_root() {
-    let root = storage::private_test_directory();
+    let (root, _, vault) = fixture();
     let index = ReceiptIndex::in_app_sandbox(root.path()).unwrap();
-    let vault = MemorySecretStore::new();
     let binding = binding();
     let receipt = index.prepare_with(&vault, review(&binding)).unwrap();
     let reopened = index

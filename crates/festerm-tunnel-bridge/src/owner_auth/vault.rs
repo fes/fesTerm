@@ -150,7 +150,7 @@ impl ClientOwnerKey {
         Self::prepare_attempt_using(native_store()?.as_ref(), reference, approved, cancel)
     }
 
-    #[cfg(all(test, feature = "host-routing"))]
+    #[cfg(all(test, feature = "host-routing", feature = "relay"))]
     pub(crate) fn prepare_native_attempt_fixture(
         vault: &dyn SecretStore,
         reference: SecretReference,
