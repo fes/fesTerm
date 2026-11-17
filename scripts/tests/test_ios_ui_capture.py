@@ -82,6 +82,27 @@ class MobileCaptureTests(unittest.TestCase):
             self.assertEqual((output / "manifest.json").read_text(), "shell evidence")
             self.assertEqual((output / "documents/partial.png").read_bytes(), b"partial documents")
 
+    def test_missing_host_generator_manifest_refuses_incomplete_capture(self):
+        with tempfile.TemporaryDirectory(dir=self.temporary_parent) as directory:
+            output = Path(directory).resolve() / "new"
+
+            def capture_without_host(arguments, **kwargs):
+                test = arguments[-4]
+                if test == "ui_gallery::capture_host_client_ui_gallery":
+                    return
+                variable = ("FESTERM_DOCUMENT_UI_OUT" if test == "documents::tests::capture_document_ui"
+                            else "FESTERM_MOBILE_UI_OUT")
+                destination = Path(kwargs["env"][variable])
+                destination.mkdir(parents=True, exist_ok=True)
+                (destination / "manifest.json").write_text("{}")
+
+            with patch.object(capture.subprocess, "run", side_effect=capture_without_host) as run:
+                with self.assertRaisesRegex(RuntimeError, "capture_host_client_ui_gallery produced no manifest"):
+                    capture.main(["--output", str(output)])
+            self.assertEqual(run.call_count, 5)
+            self.assertTrue((output / "documents/manifest.json").exists())
+            self.assertFalse((output / "hosts/manifest.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

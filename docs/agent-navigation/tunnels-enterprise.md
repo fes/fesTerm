@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f30e71b4bef4d65a4d87e39213262326bd4bd73e9a49da7f87120e4589f4f1e3"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f8a9a0f6dd964fa005340e733a928234cb50a8b703f8571670832fd4f097df15"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns managed Dev Tunnel discovery, browser sign-in, host-cloud placement, and portable enterprise trust boundaries for session creation.
+Managed Dev Tunnel discovery, host-cloud placement, portable enterprise trust boundaries, and PowerShell/session flows for browser-to-host and local-hosted profiles.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -12,28 +12,27 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: When verifying browser sign-in, tunnel selection, or tunnel-to-profile handoff
 
-- [`Browser`](../../app/festerm/src/tunnel_browser.rs) — Sign-in, device-code flow, tunnel selection, and account persistence for browser-driven tunnel discovery.
-- [`PickedTunnel`](../../app/festerm/src/tunnel_browser.rs) — Carries a single selected tunnel into profile creation without double consumption.
+- [`Browser`](../../app/festerm/src/tunnel_browser.rs) — Device-code sign-in, account persistence, and tunnel picker lifecycle.
+- [`PickedTunnel`](../../app/festerm/src/tunnel_browser.rs) — Single-use tunnel choice carried into profile creation.
 
 Evidence:
-- [`account_sign_in_attempts_once_and_reports_copy_and_browser_independently`](../../app/festerm/src/tunnel_browser.rs) — Device actions copy and browser open are deduplicated and reported independently.
+- [`account_sign_in_attempts_once_and_reports_copy_and_browser_independently`](../../app/festerm/src/tunnel_browser.rs) — Deduplicates copy/browser actions and records them independently.
 - [`picked_tunnel_is_taken_exactly_once`](../../app/festerm/src/tunnel_browser.rs) — Selection is consumed once before profile creation.
 
 Caveats:
-- Account status is keyed by the exact credential snapshot, not generic failures.
-- Late sign-in events still must trigger cleanup and not leak state.
+- Account status is keyed to the exact credential snapshot, not generic failure.
+- Late sign-in events still must clean up state and not leak stale identity.
 - Selection is ephemeral and single-use across the UI state.
 
 ## Host cloud placement
 
 Use for: When tracing host creation, observation, and receipt-scoped token issuance
 
-- [`Management`](../../crates/festerm-tunnel-client/src/host.rs) — Fixed HTTPS authority, resource preflight, observation, and scoped host token issuance.
-- [`Resource`](../../crates/festerm-tunnel-client/src/host.rs) — Pinned tunnel identity, owner, cluster, and host labels used for exact resource verification.
+- [`Management`](../../crates/festerm-tunnel-client/src/host.rs) — Fixed HTTPS authority, create/observe/token flows, and exact receipt checks.
+- [`Resource`](../../crates/festerm-tunnel-client/src/host.rs) — Pinned tunnel identity, owner, cluster, and host labels used for exact verification.
 
 Evidence:
-- [`host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token`](../../crates/festerm-tunnel-client/src/host.rs) — A host token is scoped to the exact receipt and never reuses the management token.
-- [`host_cloud_resource_operations_never_retry_denied_authorization_anonymously`](../../crates/festerm-tunnel-client/src/host.rs) — Denied auth is not retried anonymously for create, observe, or token requests.
+- [`host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token`](../../crates/festerm-tunnel-client/src/host.rs) — Host token is scoped to the exact receipt and never reuses the management token.
 
 Caveats:
 - Only the exact receipt can mint a host token.
@@ -49,7 +48,7 @@ Use for: When validating saved tunnel recipes, import/export metadata, or sessio
 
 Evidence:
 - [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Launch metadata and all four connection behaviors survive import/export.
-- [`resume_only_round_trips_without_changing_exact_generation_or_legacy_defaults`](../../crates/festerm-client-recipes/tests/recipes.rs) — Resume-only and attach-only generation semantics are exact and backward compatible.
+- [`resume_only_round_trips_without_changing_exact_generation_or_legacy_defaults`](../../crates/festerm-client-recipes/tests/recipes.rs) — Resume-only and attach-only generation semantics remain exact and backward compatible.
 
 Caveats:
 - Portable metadata excludes credentials and consent decisions by design.
@@ -70,4 +69,4 @@ Evidence:
 Caveats:
 - Worker-side data stays off the UI thread and budgets are enforced.
 - HTTPS and SSH transport choices are explicit and non-ambiguous.
-- Failed and closed lifecycle states remain distinct rather than masking success.
+- Failed and closed lifecycle states remain distinct instead of masking success.

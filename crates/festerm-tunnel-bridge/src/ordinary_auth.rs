@@ -208,7 +208,8 @@ impl PendingOrdinaryChallenge {
         let expires = admission_deadline.min(now + PROOF_LIFETIME);
         let lifetime_ms = expires.saturating_duration_since(now).as_millis().min(5000) as u16;
         if lifetime_ms == 0 {
-            return Err(ContractError::Stale);
+            // This attempt is invalid; protected provider readiness may still be current.
+            return Err(ContractError::Denied);
         }
         let mut nonce = [0; 32];
         getrandom::fill(&mut nonce).map_err(|_| ContractError::Denied)?;
@@ -238,7 +239,8 @@ impl PendingOrdinaryChallenge {
             || &self.challenge.host_info != current
             || unhex::<32>(&self.challenge.channel_binding)? != *binding.as_bytes()
         {
-            return Err(ContractError::Stale);
+            // This attempt is invalid; protected provider readiness may still be current.
+            return Err(ContractError::Denied);
         }
         proof.validate()?;
         let key = unhex::<32>(&proof.public_key)?;
@@ -382,6 +384,14 @@ mod tests {
             )
             .unwrap()
         };
+        assert!(matches!(
+            PendingOrdinaryChallenge::new(
+                info.clone(),
+                server.owner_channel_binding().unwrap(),
+                Instant::now(),
+            ),
+            Err(ContractError::Denied)
+        ));
         let issued = pending();
         let proof = key
             .prove(&client, &route, issued.challenge(), StreamRole::Control)
@@ -397,7 +407,16 @@ mod tests {
             .unwrap();
         assert_eq!(verified.public_key(), &key.public_key());
         assert_eq!(verified.role(), StreamRole::Control);
-        for change in ["role", "key", "route", "epoch", "expired", "denied"] {
+        for change in [
+            "role",
+            "key",
+            "route",
+            "epoch",
+            "installation",
+            "principal",
+            "expired",
+            "denied",
+        ] {
             let mut issued = pending();
             let mut proof = key
                 .prove(&client, &route, issued.challenge(), StreamRole::Terminal)
@@ -411,19 +430,22 @@ mod tests {
                 }
                 "route" => current.route.tunnel_id = "other".into(),
                 "epoch" => current.policy_epoch = Epoch::new(2).unwrap(),
+                "installation" => current.installation = HostId::new(),
+                "principal" => current.principal = PrincipalId::new(),
                 "expired" => issued.expires = Instant::now(),
                 "denied" => denied.push(key.public_key()),
                 _ => unreachable!(),
             }
             assert!(
-                issued
-                    .verify(
+                matches!(
+                    issued.verify(
                         &proof,
                         &current,
                         server.owner_channel_binding().unwrap(),
                         &denied
-                    )
-                    .is_err(),
+                    ),
+                    Err(ContractError::Denied)
+                ),
                 "{change}"
             );
         }
@@ -482,14 +504,15 @@ mod tests {
         let proof = key
             .prove(&client, &route, issued.challenge(), StreamRole::Control)
             .unwrap();
-        assert!(issued
-            .verify(
+        assert!(matches!(
+            issued.verify(
                 &proof,
                 &info,
                 other_server.owner_channel_binding().unwrap(),
                 &[]
-            )
-            .is_err());
+            ),
+            Err(ContractError::Denied)
+        ));
         let issued = PendingOrdinaryChallenge::new(
             info,
             server.owner_channel_binding().unwrap(),

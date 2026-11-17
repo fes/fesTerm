@@ -228,6 +228,13 @@ reviewed lifecycle and preserves durable shells; it never auto-restarts the HOST
 or loads provider credentials during wire admission. Relay recovery prepares a new
 ready observer before accepting clients again.
 
+The typed readiness-refresh refusal is reserved for stale protected readiness.
+An expired one-use proof challenge, or changed HostInfo/SSH channel binding
+between challenge and verification, is an authentication denial for that attempt.
+It does not establish that Disable → Enable is needed. These refusals retain the
+same five-second proof lifetime, admission deadline and all current-policy,
+channel, transcript and replay checks; no automatic retry or fallback is added.
+
 Unknown handshake modes/versions refuse before dispatch. Old HOSTs report that an
 update is required; clients do not downgrade to unauthenticated transport or
 expose the advanced pairing form as normal recovery. Existing owner-authenticated

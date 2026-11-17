@@ -1903,6 +1903,17 @@ Disabling fences remote access without terminating durable local shells.
 Operator diagnostics, protected owner approval and recovery remain available
 through contextual disclosures rather than a permanent console.
 
+Normal remote-access confirmations use task names and task buttons: **Enable
+remote access? / Enable and start** (or **Enable** for paired-device-only access)
+and **Check host process? / Check process**. The Enable summary names the chosen
+GitHub account and host, creation and sign-in startup preferences, and signed
+component setup. Account-based access, bearer-credential exposure and user-level
+shell/file/command permissions remain explicit. Check process does not start or
+stop the host and never treats Running as endpoint readiness. Internal operation
+names, installation/epoch details and exact-release acquisition/recovery mechanics
+remain in Advanced / Recovery and diagnostics. These labels do not alter reviewed
+operations, confirmation dismissal, complete snapshot/draft capture or backend CAS.
+
 Only eligible durable local profiles offer **Allow remote access to this
 session** as one saved-profile opt-in. Exact-running-generation Bind/Switch
 controls are a separate Advanced workflow. When the host is off, show an actionable Settings
@@ -1993,6 +2004,15 @@ attachment and issued operation are shown for explicit retry. The process-local
 bounded registry survives closing review, but is not durable restart
 reconciliation. Unknown, denied, offline, busy and incompatible replies retain
 the original action; none means absence or authorizes a replacement shell.
+
+A closed mobile HOST terminal uses plain reconnect guidance and the existing
+**Review host** action. It does not claim the shell ended or that reconnection
+will succeed. Existing finite stage/category/I/O detail and unknown-generation/
+original-action mechanics remain in the terminal menu's diagnostics while the
+viewer stays open. The current presentation does not retain a reliable per-session
+background cause, so it uses generic **Connection closed** rather than attributing
+every cancellation or transport failure to leaving the app. Input remains paused;
+there is no automatic retry, replacement creation or replay.
 
 Import never grants execution consent. Before first executing an imported
 recipe, the foreground execution UI must explicitly review/reconfirm its shell,

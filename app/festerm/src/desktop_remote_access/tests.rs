@@ -1746,3 +1746,135 @@ fn desktop_remote_access_refresh_replaces_recorded_state_and_clears_previous_pro
     assert!(controller.view.process.is_none());
     assert_eq!(controller.view.failure, Some(Failure::ScopeChanged));
 }
+
+#[test]
+fn desktop_remote_access_enable_confirmation_uses_task_copy_and_retains_disclosure() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for ordinary_access in [OrdinaryAccess::ProviderOwner, OrdinaryAccess::OwnerOnly] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1600.0))
+            .build_ui_state(
+                |ui, state: &mut (View, Option<Action>)| {
+                    if let Some(action) = show(ui, &state.0, &[]) {
+                        state.1 = Some(action);
+                    }
+                },
+                (
+                    View {
+                        scope: Scope::Absent,
+                        access_requested: Some(true),
+                        review: Some(Operation::Enable),
+                        accounts: vec![HostAccount {
+                            account_id: 42,
+                            login: "lab-owner".into(),
+                        }],
+                        draft: Draft {
+                            friendly_name: "Study computer".into(),
+                            account: "42".into(),
+                            ordinary_access,
+                            allow_creation: false,
+                            startup_at_sign_in: false,
+                            ..Draft::default()
+                        },
+                        ..View::default()
+                    },
+                    None,
+                ),
+            );
+        harness.get_by_label("Enable remote access?");
+        harness.get_by_label("Host: Study computer");
+        harness.get_by_label("GitHub account: @lab-owner");
+        harness.get_by_label("Create additional shells: Off");
+        harness.get_by_label("Start automatically at sign-in: Off");
+        harness.get_by_label("You may be asked to sign in. Setup can create a Dev Tunnel. No shell sessions are created or shared by enabling access.");
+        assert!(harness
+            .query_by_label("Confirm Enable for the exact observed installation and epoch?")
+            .is_none());
+        assert!(harness.query_by_label("Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry.").is_none());
+        let label = if ordinary_access == OrdinaryAccess::ProviderOwner {
+            harness.get_by_label("Allow clients signed in to this host's GitHub account to list and open shared sessions without device pairing.");
+            harness.get_by_label("A shared shell runs as your user on this computer and has that user's file and command permissions. Anyone holding a valid tunnel connection credential can obtain this access. New shells require the separate creation setting.");
+            "Enable and start"
+        } else {
+            harness.get_by_label("Account-based connections are disabled. Only separately paired owner devices can connect.");
+            "Enable"
+        };
+        harness.get_by_label(label).click();
+        harness.run();
+        assert!(matches!(harness.state().1, Some(Action::Confirm)));
+        assert_eq!(harness.state().0.review, Some(Operation::Enable));
+        assert_eq!(harness.state().0.draft.account, "42");
+        assert_eq!(harness.state().0.draft.ordinary_access, ordinary_access);
+        assert!(!harness.state().0.draft.allow_creation);
+    }
+}
+
+#[test]
+fn desktop_remote_access_process_confirmation_is_plain_and_keeps_observation_intent() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1600.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    review: Some(Operation::ObserveNative),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    let original_scope = harness.state().0.scope.clone();
+    harness.get_by_label("Check host process?");
+    harness
+        .get_by_label("Check whether the host process is running. This does not start or stop it.");
+    harness
+        .get_by_label("A running process does not guarantee that a remote connection will work.");
+    assert!(harness
+        .query_by_label("Confirm ObserveNative for the exact observed installation and epoch?")
+        .is_none());
+    harness.get_by_label("Check process").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Confirm)));
+    assert_eq!(harness.state().0.review, Some(Operation::ObserveNative));
+    assert_eq!(harness.state().0.scope, original_scope);
+}
+
+#[test]
+fn desktop_remote_access_confirmation_keeps_bundle_mechanics_in_advanced() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1800.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    review: Some(Operation::Enable),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    let scope = harness.state().0.scope.clone();
+    harness.get_by_label("Advanced / Recovery").click();
+    harness.run();
+    harness.get_by_label("Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry.");
+    assert!(
+        harness.state().1.is_none(),
+        "opening details never confirms work"
+    );
+    harness.get_by_label("Not now").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Dismiss)));
+    assert_eq!(harness.state().0.scope, scope);
+}

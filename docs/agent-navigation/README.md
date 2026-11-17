@@ -8,17 +8,17 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns input routing, render caching, and native/software painting boundaries without session I/O. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the shared session lifecycle, PTY and serial backends, daemon persistence, and host-controlled attachments for recoverable terminals. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns the app-wide command bus, tab lifecycle, and keyboard dispatch policy for terminal actions and singleton surfaces. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
-| [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing and rendering, and syntax-bound document state. |
-| [Terminal recording and export](recording.md) | Private terminal recordings are prepared under consent, privacy-guarded during capture, and exported or recovered with synchronized staging and replay validation. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns managed Dev Tunnel discovery, browser sign-in, host-cloud placement, and portable enterprise trust boundaries for session creation. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, native window validation, and platform wake/privacy hooks for packaged runtime behavior. |
-| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust mobile runtime, Android JNI boundary, and offline-first host/document flows for iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, screen-driven launch flows, and host/remote-access consent around the terminal UI. |
+| [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
+| [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gating, export preparation, and replay/retention checks for terminal recordings. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Managed Dev Tunnel discovery, host-cloud placement, portable enterprise trust boundaries, and PowerShell/session flows for browser-to-host and local-hosted profiles. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop packaging, native smoke validation, and OS wake/privacy integration for packaged terminal runtime behavior. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime, Android JNI glue, and offline-first host, tunnel, and session flows for iOS and Android. |
+| [Desktop application shell and screens](app-shell.md) | The desktop shell owns app lifecycle, pane/session routing, and consent-gated host and remote Access flows across the GUI. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

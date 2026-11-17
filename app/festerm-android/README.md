@@ -120,3 +120,18 @@ input queue, not the host view.
   (ADR 0083). Store listing, Data safety and native acceptance (`PLAY-01`)
   remain manual. The development keystore must never be committed or used as
   a release key; the signer refuses it.
+
+Android ordinary printable/edit/navigation key events and IME commits use the same
+bounded JNI input queue while the current input owner is focused and active.
+Modified chords, system keys and dead-accent sequences retain the NativeActivity
+path. `PlatformSmoke` checks mixed-source order, exactly-once emission, masked
+secure context, and retired/covered connection rejection. Host compilation is
+not native input qualification: emulator/device checks must still verify actual
+ADB text order, composition, modifiers and focus changes (ADR 0073/MOB-06).
+
+The ordering correction applies while an active owned InputConnection exists.
+When no connection exists during restart/focus handoff, the existing NativeActivity
+fallback remains; stale-connection rejection does not establish ordering across
+that gap. Native qualification must include a real connection restart followed by
+text input, plus same-turn dead-accent/character delivery and a subsequent plain
+key after Android drains the posted events.

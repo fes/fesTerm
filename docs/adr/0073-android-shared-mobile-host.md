@@ -109,3 +109,13 @@ and records feature selection in the build receipt. Packaging regressions cover
 selection, incompatible modes and receipt/output isolation. Actual authenticated
 Dev Tunnel use against Windows, macOS and Linux remains MOB-06 native evidence;
 build success does not establish those flows or physical-device qualification.
+
+With an active owned input connection, ordinary printable hardware and edit
+keys enter the existing guarded Java/JNI input queue used by IME commits, preventing a later hardware batch from being
+appended ahead of an earlier IME batch. Matching consumed releases do not emit
+text; mode, field, focus and privacy changes retire input ownership. Modified
+chords, system keys and dead-key composition retain native dispatch. The
+PlatformSmoke ordering/ownership/delegation regression compiles; its native
+execution and physical keyboard/IME qualification remain required under MOB-02.
+The existing NativeActivity fallback while an input connection is unavailable
+is preserved; ordering across a restart gap needs separate native qualification.

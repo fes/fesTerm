@@ -10,8 +10,8 @@ Host setup still requires explicit protected access consent; legacy installation
 retain OwnerOnly until reviewed migration while disabled.
 
 **Current limitation:** ordinary runtime/bootstrap integration and all 24 normal
-native cases remain unqualified. The service-client runner below is being
-converted to the ordinary client facade with **fes-festerm1**. Its schema-2
+native cases remain unqualified. The service-client runner below uses the
+ordinary client facade with **fes-festerm1**. Its schema-2
 fixture rejects the old manual-pairing fixture and uses a distinct completion
 marker; old results cannot qualify this flow. The runner does not create GitHub
 accounts, automate password entry, accept credentials in job payloads or enroll

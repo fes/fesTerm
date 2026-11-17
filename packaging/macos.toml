@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.17.6"
+version = "0.17.7"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "An AI-friendly local, SSH, and serial terminal."

@@ -3238,6 +3238,16 @@ async fn ordinary_encrypted_handshake_refuses_observer_deny_key_and_changed_epoc
         )
         .await;
         assert!(result.is_err(), "{failure}");
+        assert!(
+            !matches!(&result, Err(Error::HostPolicyRefreshRequired)),
+            "proof or observer refusal must not prescribe host reconfiguration: {failure}"
+        );
+        if failure == "changed-epoch" {
+            assert!(
+                matches!(&result, Err(Error::Contract(ContractError::Denied))),
+                "{failure}"
+            );
+        }
         assert!(server.await.unwrap().is_err(), "{failure}");
         assert_eq!(source.observations.load(SeqCst), 1);
         ssh.abort();

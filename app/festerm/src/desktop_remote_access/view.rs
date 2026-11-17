@@ -174,6 +174,11 @@ pub(crate) fn show(
             festerm_host_setup::VERSION, std::env::consts::OS, std::env::consts::ARCH
         ));
         settings_note(ui, view.bundle_status.label());
+        settings_note(ui, if draft.manual_bundle {
+            "Explicit Advanced choice: verify the selected signed local bundle."
+        } else {
+            "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
+        });
         if let Scope::Present(snapshot) = &view.scope {
             ui.monospace(format!("Installation {} · epoch {} · {:?}",
                 snapshot.installation, snapshot.epoch, snapshot.phase));
@@ -255,19 +260,39 @@ pub(crate) fn show(
         }
         if let Some(operation) = view.review {
             ui.group(|ui| {
-                ui.label(format!("Confirm {operation:?} for the exact observed installation and epoch?"));
+                let (title, confirm_label) = confirmation_labels(operation, &draft);
+                ui.strong(title);
                 if operation == Operation::Reconcile {
                     settings_note(ui, "Recovery can retire an unsupported request only after verifying that its cloud host is absent. Review Enable again afterward.");
                 }
                 match operation {
                     Operation::Enable => {
-                        ui.label(format!("Name: {} · creation {} · startup {:?}", draft.friendly_name, draft.allow_creation, draft.settings().startup));
-                        ui.label(if draft.manual_bundle {
-                            "Explicit Advanced choice: verify the selected signed local bundle."
+                        ui.label(format!("Host: {}", draft.friendly_name));
+                        let account = view.accounts.iter()
+                            .find(|account| account.account_id.to_string() == draft.account)
+                            .map(|account| format!("GitHub account: @{}", account.login))
+                            .unwrap_or_else(|| {
+                                let id = view.bound_account().unwrap_or(draft.account.as_str());
+                                if id.is_empty() { "GitHub account: choose an account".into() }
+                                else { format!("GitHub account ID: {id}") }
+                            });
+                        ui.label(account);
+                        ui.label(if draft.allow_creation {
+                            "Create additional shells: On"
                         } else {
-                            "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
+                            "Create additional shells: Off"
                         });
-                        ui.label("Explicit foreground sign-in may create a cloud resource and register a signed native helper. No shells are created or shared by enabling access.");
+                        ui.label(if draft.startup_at_sign_in {
+                            "Start automatically at sign-in: On"
+                        } else {
+                            "Start automatically at sign-in: Off"
+                        });
+                        ui.label(if draft.manual_bundle {
+                            "Use the signed host component selected in Advanced."
+                        } else {
+                            "Set up fesTerm's signed host component for your user on this computer."
+                        });
+                        ui.label("You may be asked to sign in. Setup can create a Dev Tunnel. No shell sessions are created or shared by enabling access.");
                         match draft.ordinary_access {
                             OrdinaryAccess::ProviderOwner => {
                                 ui.label("Enable and start listening now. Starting automatically at OS sign-in remains a separate preference.");
@@ -278,6 +303,10 @@ pub(crate) fn show(
                                 ui.label("Account-based connections are disabled. Only separately paired owner devices can connect.");
                             }
                         }
+                    }
+                    Operation::ObserveNative => {
+                        ui.label("Check whether the host process is running. This does not start or stop it.");
+                        settings_note(ui, "A running process does not guarantee that a remote connection will work.");
                     }
                     Operation::ApproveOwner => {
                         ui.label("Approve this exact public key/fingerprint and selected permissions? Native vault errors never select file storage.");
@@ -302,7 +331,7 @@ pub(crate) fn show(
                     } else {
                         ActionButtonRole::Accent
                     };
-                    if action_button(ui, role, "Confirm explicitly").clicked() {
+                    if action_button(ui, role, confirm_label).clicked() {
                         action = Some(Action::Confirm);
                     }
                     if action_button(ui, ActionButtonRole::Secondary, "Not now").clicked() {
@@ -512,4 +541,24 @@ fn cleanup(ui: &mut egui::Ui, view: &View) {
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     ui.label(label);
     ui.add(egui::TextEdit::singleline(value).char_limit(4096));
+}
+
+// Presentation labels only. The reviewed operation and protected backend scope
+// are carried unchanged by the existing Review/Confirm command path.
+fn confirmation_labels(operation: Operation, draft: &Draft) -> (&'static str, &'static str) {
+    match operation {
+        Operation::Enable if draft.ordinary_access == OrdinaryAccess::ProviderOwner => {
+            ("Enable remote access?", "Enable and start")
+        }
+        Operation::Enable => ("Enable remote access?", "Enable"),
+        Operation::ObserveNative => ("Check host process?", "Check process"),
+        Operation::Refresh => ("Refresh local status?", "Refresh status"),
+        Operation::InspectOwner => ("Review device access?", "Review access"),
+        Operation::Reconcile => ("Recover host setup?", "Recover setup"),
+        Operation::ApproveOwner => ("Approve this device?", "Approve device"),
+        Operation::Start => ("Start remote access?", "Start host"),
+        Operation::Disable => ("Disable remote access?", "Disable access"),
+        Operation::Uninstall => ("Remove this host?", "Remove host"),
+        Operation::Share(_) => ("Review session sharing?", "Continue"),
+    }
 }

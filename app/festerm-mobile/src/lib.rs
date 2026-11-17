@@ -1884,7 +1884,7 @@ impl MobileApp {
 
     fn diagnostics(&self) -> Vec<(String, String)> {
         let lifecycle = self.lifecycle.get();
-        vec![
+        let diagnostics = vec![
             ("Resumes".to_owned(), lifecycle.resumes.to_string()),
             ("Suspensions".to_owned(), lifecycle.suspensions.to_string()),
             (
@@ -1895,7 +1895,36 @@ impl MobileApp {
                 "Input bytes".to_owned(),
                 self.sink.diagnostics.byte_count.to_string(),
             ),
-        ]
+        ];
+        #[cfg(all(feature = "live-ssh", feature = "host-clients"))]
+        let diagnostics = {
+            let mut diagnostics = diagnostics;
+            if let Some(detail) = self.host_connection_details() {
+                diagnostics.push(("HOST connection details".into(), detail));
+            }
+            diagnostics
+        };
+        diagnostics
+    }
+
+    #[cfg(all(feature = "live-ssh", feature = "host-clients"))]
+    fn host_connection_details(&self) -> Option<String> {
+        if !self.active_is_host() || self.live_view().is_some_and(|live| live.input_enabled) {
+            return None;
+        }
+        let failure = self
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .and_then(live_ssh::LiveSsh::host_error)
+            .map(str::to_owned);
+        let unknown = "Session state is unknown, not absent. Keep the original issued action.";
+        Some(failure.map_or_else(
+            || unknown.to_owned(),
+            |failure| format!("{failure}\n\n{unknown}"),
+        ))
     }
 
     /// Retains tunnel sessions for a foreground host check. Plain SSH still stops.
@@ -3558,25 +3587,13 @@ impl MobileApp {
             .map_or("Connection ended", |live| live.status);
         #[cfg(feature = "host-clients")]
         if self.active_is_host() {
-            let failure = self
-                .sink
-                .live
-                .connection
-                .borrow()
-                .as_ref()
-                .and_then(live_ssh::LiveSsh::host_error)
-                .map(str::to_owned);
-            let unknown = "Session state is unknown, not absent. Keep the original issued action.";
             return model::ReconnectBanner {
-                detail: Some(failure.map_or_else(
-                    || unknown.to_owned(),
-                    |failure| format!("{failure}\n\n{unknown}"),
-                )),
-                status: status.into(),
+                detail: None,
+                status: "Input is paused.".into(),
                 reattach: None,
                 custom: Some(model::BannerText {
-                    title: "HOST connection closed".into(),
-                    body: "Review the original host and generation explicitly. No new shell, legacy fallback or input replay is automatic.".into(),
+                    title: "Connection closed".into(),
+                    body: "Review this host to reconnect to the same session.".into(),
                     action: "Review host",
                 }),
             };

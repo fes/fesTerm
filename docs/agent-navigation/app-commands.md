@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b418059d0fb32e910600464d8a742f87d05eb6f8f4bf055373357bf1417be137"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "2468296b2df553df54cafbc0e1aa27ab7f6344ad2393802453a079c9298a898d"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -51,7 +51,7 @@ Use for: Need to reason about startup, active-tab selection, and close-cleanup t
 - [`close`](../../app/festerm/src/tabs.rs) — Removes a tab, tears down its session, and selects replacement focus
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Confirms close returns to the originating tab instead of the neighbor
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Confirms close returns to the origin tab instead of the neighbor
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — Shows singleton surfaces are passed through instead of returned to
 
 Caveats:

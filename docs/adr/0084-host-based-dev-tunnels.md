@@ -2595,3 +2595,23 @@ The `Find & Connect` header and profile-edit header balance space around the
 title so its center matches the full content width. The existing phone/tablet
 layout regression checks that center, non-overlap and the 44-point Done target;
 native text scaling and touch usability remain separate manual checks.
+
+### Normal confirmation copy
+
+Enable and process-observation confirmations use plain task labels and account/
+permission summaries. Internal operation/installation/epoch and exact-bundle
+acquisition details remain Advanced diagnostics. This is presentation only:
+existing typed review/Confirm/Dismiss, full draft/snapshot/owner revision, native
+publisher checks and CAS are unchanged. Focused rendered-copy/action-route
+regressions and existing stale-review tests are the automated validation; native
+Settings captures remain separately required under HOST-01 / HOST-04.
+
+### Mobile closed-connection copy
+
+Normal viewer guidance is concise and neutral about cause and remote session
+state. Finite attachment/unknown-generation/original-action mechanics remain in
+the existing terminal-menu diagnostics; the real framed-EOF viewer regression
+still verifies them without leaving the terminal. This presentation-only change
+does not change Review host, original-operation receipts, privacy cancellation,
+input gating, retry/creation/replay or session authority. Native background and
+explicit same-session reconnect are separate validation, not copy-test claims.
