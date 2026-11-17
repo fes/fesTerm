@@ -1768,7 +1768,45 @@ pub(crate) mod native_routes {
         assert_eq!(session.target.logical, creation.logical);
         let inventory_operation = OperationId::new();
         let inventory_deadline = Instant::now() + Duration::from_secs(8);
-        let inventory = loop {
+        // A nonblocking native observation can retain this exact generation as
+        // unknown, rather than returning top-level Busy or claiming absence.
+        // Force that production boundary before waiting for a healthy summary.
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+        let lease_name = format!("host-daemon-{}.lock", session.target.generation.get());
+        let generation_lease = private_storage::open_private_file(
+            &directory,
+            std::path::Path::new(&lease_name),
+            false,
+        )
+        .unwrap();
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&generation_lease) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "generation lease remained busy"
+                    );
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact generation lease failed: {error}"),
+            }
+        }
+        let contended = second
+            .request(
+                inventory_operation.clone(),
+                Request::List { cursor: None },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        let Response::Inventory { page } = contended.body else {
+            panic!("generation contention must retain an admitted unknown target")
+        };
+        assert!(page.sessions.is_empty());
+        assert_eq!(page.unknown, vec![session.target.clone()]);
+        drop(generation_lease);
+        let page = loop {
             let inventory = second
                 .request(
                     inventory_operation.clone(),
@@ -1777,21 +1815,39 @@ pub(crate) mod native_routes {
                 )
                 .await
                 .unwrap();
-            if matches!(
-                inventory.body,
+            match inventory.body {
                 Response::Refused {
-                    reason: Refusal::Busy
+                    reason: Refusal::Busy,
+                } => {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "inventory remained busy"
+                    );
                 }
-            ) && Instant::now() < inventory_deadline
-            {
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            } else {
-                break inventory;
+                Response::Inventory { page }
+                    if page.sessions.is_empty() && page.unknown == [session.target.clone()] =>
+                {
+                    assert!(
+                        Instant::now() < inventory_deadline,
+                        "inventory retained the exact unknown target beyond its bound"
+                    );
+                }
+                Response::Inventory { page } => {
+                    // Empty-without-unknown, foreign/extra targets and partial
+                    // healthy pages are failures, never reasons to poll again.
+                    assert!(
+                        page.unknown.is_empty(),
+                        "unexpected unknown inventory target"
+                    );
+                    assert_eq!(page.sessions.len(), 1);
+                    assert_eq!(page.sessions[0].target, session.target);
+                    break page;
+                }
+                _ => panic!("unexpected inventory response"),
             }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         };
-        let Response::Inventory { page } = inventory.body else {
-            panic!("inventory")
-        };
+        assert!(page.unknown.is_empty());
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].target, session.target);
         assert_eq!(

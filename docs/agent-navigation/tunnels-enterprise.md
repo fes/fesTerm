@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f8a9a0f6dd964fa005340e733a928234cb50a8b703f8571670832fd4f097df15"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f3937b5593cdc17c76856eeb1654359e2ba96dfc91fcb79804b568f5c6fcef08"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Managed Dev Tunnel discovery, host-cloud placement, portable enterprise trust boundaries, and PowerShell/session flows for browser-to-host and local-hosted profiles.
+This domain owns managed tunnel discovery, host onboarding, enterprise trust boundaries, and PowerShell/session flows for browser-to-host and local-hosted profiles.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -21,7 +21,7 @@ Evidence:
 
 Caveats:
 - Account status is keyed to the exact credential snapshot, not generic failure.
-- Late sign-in events still must clean up state and not leak stale identity.
+- Late sign-in events must still clean up stale identity and state.
 - Selection is ephemeral and single-use across the UI state.
 
 ## Host cloud placement
