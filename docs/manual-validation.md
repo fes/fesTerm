@@ -5429,6 +5429,17 @@ versus Simulator/emulator explicitly; portable tests and packaging receipts do
 not complete these cases or physical-device acceptance. See
 [the campaign matrix](dev-tunnel-workflow-lab.md#desktop-and-mobile-matrix).
 
+For iOS HOST-02 / MOB-06 index storage, preserve the existing profile directory
+and test-account credentials beneath the OS-managed sandbox. After normal
+GitHub sign-in and automatic host listing, expand a host and verify native key
+preparation reaches the server. An older server may return the typed update
+requirement; it must not require manual pairing or OS permission repair. Record
+that the Foundation-selected app root matches the existing profile directory,
+that its fixed receipt child is private, and that re-opening retains the same
+key. A changed root, symlink, writable root, permissive ACL or missing ready key
+must refuse without creating a replacement. Label Simulator and physical-device
+evidence separately; controlled filesystem fixtures do not complete this gate.
+
 HOSTSETUP-01 / DIAG-01 also requires a native capture of the typed last-setup
 diagnostic in About and Remote access: stage, actual HTTP status when available,
 fixed error category and recovery guidance. Check a provider refusal, native

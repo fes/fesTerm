@@ -40,6 +40,24 @@ use std::sync::{
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+// Both ordinary and Advanced receipts use this existing native namespace.
+// The legacy profile path is compared for identity, never accepted as authority.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn native_host_approval_root(
+    #[cfg(target_os = "ios")] profile: &std::path::Path,
+) -> Result<Arc<festerm_secret_store::NativeAppPrivateRoot>, String> {
+    let root = festerm_secret_store::NativeAppPrivateRoot::current()
+        .map_err(|_| "Native application storage unavailable; no path fallback.")?;
+    #[cfg(target_os = "ios")]
+    if !root
+        .matches_profile_directory(profile)
+        .map_err(|_| "Native profile storage could not be verified; no path fallback.")?
+    {
+        return Err("Native profile storage changed; no alternate index was used.".into());
+    }
+    Ok(Arc::new(root))
+}
+
 #[derive(Default)]
 pub(super) struct Privacy {
     epoch: AtomicU64,
@@ -1717,12 +1735,12 @@ impl MobileApp {
             drop(permit);
             #[cfg(not(test))]
             let result = {
-                #[cfg(target_os = "android")]
-                let index = OrdinaryKeyIndex::in_native_app_sandbox(Arc::new(
-                    festerm_secret_store::NativeAppPrivateRoot::current()
-                        .map_err(|_| "Native application storage unavailable; no path fallback.")?,
-                ));
-                #[cfg(all(not(target_os = "android"), not(test)))]
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                let index = OrdinaryKeyIndex::in_native_app_sandbox(native_host_approval_root(
+                    #[cfg(target_os = "ios")]
+                    &root,
+                )?);
+                #[cfg(all(not(any(target_os = "android", target_os = "ios")), not(test)))]
                 let index = OrdinaryKeyIndex::in_app_sandbox(&root)
                     .map_err(|error| error.message().to_owned())?;
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2970,15 +2988,15 @@ impl MobileApp {
                 return Err("HOST action cancelled.".into());
             }
             let index = || {
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "ios"))]
                 {
-                    festerm_secret_store::NativeAppPrivateRoot::current()
-                        .map(|root| ReceiptIndex::in_native_app_sandbox(Arc::new(root)))
-                        .map_err(|_| {
-                            "Native application storage unavailable; no path fallback.".to_owned()
-                        })
+                    native_host_approval_root(
+                        #[cfg(target_os = "ios")]
+                        &root,
+                    )
+                    .map(ReceiptIndex::in_native_app_sandbox)
                 }
-                #[cfg(not(target_os = "android"))]
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
                     ReceiptIndex::in_app_sandbox(&root).map_err(|error| error.message().to_owned())
                 }

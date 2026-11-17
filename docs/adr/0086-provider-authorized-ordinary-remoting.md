@@ -165,6 +165,16 @@ Use existing charged native-work and cancellation-before-consumption boundaries;
 hold no generation mutex across vault I/O and provide no plaintext fallback.
 This key is a possession/deny handle, not a reusable authorization grant.
 
+On iOS, obtain index-root authority from Foundation's current-application
+Application Support location, and verify that its pinned directory identity
+matches the existing profile directory. OS-managed sandbox ancestors need not
+meet the generic caller-path policy. The selected app root must remain owned by
+the current user, live, free of group/other write permission and permissive ACLs;
+the fixed receipt child remains private `0700` with descriptor-relative,
+no-follow access. Preserve the existing namespace and refuse a mismatch without
+fallback, permission repair or key replacement. Generic caller-path validation
+and Android's private-root policy remain unchanged.
+
 After verified service resolution and actual SSH host-key validation, a bounded
 authenticated `HostInfo` supplies the application host ID, installation and
 protected principal. Bind these automatically to that verified route/key/channel.
@@ -348,3 +358,9 @@ attachment after the explicit policy migration. Prior manual JSON/fingerprint
 typing, build-only results and simulated proofs do not qualify this normal
 workflow. Physical-device, publisher/platform and whole-matrix acceptance remain
 open until their actual evidence exists.
+
+iOS index validation also needs native evidence below OS-managed sandbox
+ancestors: automatic host expansion must reach the server without changing
+existing data or directory permissions. Portable fixtures cover native-root
+identity, symlink/ACL/permission refusal and the documented `/var` alias; they
+do not establish Simulator or physical-device acceptance.
