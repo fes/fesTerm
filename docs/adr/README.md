@@ -54,6 +54,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0088: JavaScript Terminal Program Sessions](0088-javascript-terminal-program-sessions.md) - proposed own-tab ANSI program runtime motivated by a TradeWars 2002 port; bounded terminal I/O, interactive worker policy, private transactional saves and staged desktop qualification; no implementation or enablement
+
 - [ADR 0084: Host-Based Dev Tunnels, Remote Session Creation, and Unified Host Installation](0084-host-based-dev-tunnels.md) - owner-requested design; explicit discovery, local resume-or-create recipes, shared setup, headless distribution and staged acceptance
 
 - [ADR 0077: Synchronized Local Terminal Recording and MP4 Export](0077-synchronized-terminal-recording-and-mp4-export.md) - explicitly selected sessions share a timeline and produce separate local MP4s; platform and privacy qualification required
