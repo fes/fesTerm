@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5b6e4d824ff73a699e4996e801165b2c8c05fe53884043a0869ed0ca4bc1405a"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b64ca9c24338dfc77e03c3d43b225e5a05b8d9a0bf7f008f15497ad4c836f1e7"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns brokered terminal automation authority, validated workflow intake, and protocol-state gating for MCP observation and control.
+This domain owns brokered automation authority, workflow intake validation, and MCP protocol-state gating for observation and control.
 
 Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
@@ -12,11 +12,11 @@ Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
 Use for: When a native review decides whether a connection may observe or control an exact target and how revocation is enforced.
 
-- [`Broker`](../../crates/festerm-automation/src/broker.rs) — Owns grant state, exact-target revocation, and controller enrollment bounds.
-- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds the approved scope, exact target refs, and native handoff decisions.
+- [`Broker`](../../crates/festerm-automation/src/broker.rs) — Owns grant state, exact-target revocation, and controller enrollment bounds
+- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds approved scope, exact target refs, and native handoff decisions
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Shows approvals and starts are bounded and stale input is rejected.
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves approvals and starts are bounded and stale input is rejected
 
 Caveats:
 - A connection is never a grant; only broker-owned approval yields authority.
@@ -27,11 +27,11 @@ Caveats:
 
 Use for: When a selected bundle, parameter mapping, and native approval are validated before a workflow run starts.
 
-- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — Binds the approved bundle, parameter digest, target map, and requested scope.
-- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and approval or denial commands.
+- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — Binds the approved bundle, parameter digest, target map, and requested scope
+- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and approval or denial commands
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves workflow approvals and starts are bounded and cannot replay stale input.
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Shows workflow approvals and starts are bounded and cannot replay stale input
 
 Caveats:
 - Manifest and parameter digests must match; stale or mismatched workflow input is rejected.
@@ -42,27 +42,27 @@ Caveats:
 
 Use for: When adapter channels, privacy gates, and controller enrollment are checked before terminal actions are sent.
 
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery.
-- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and valid window.
+- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery
+- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and valid window
 
 Evidence:
-- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy loss and disconnects revoke grants without restoring them.
+- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy loss and disconnects revoke grants without restoring them
 
 Caveats:
 - The privacy gate must close before grant admission or output can proceed.
 - Disconnect, privacy loss, and takeover cut old reservations without replaying uncertain actions.
-- A frozen association is only valid if target, window, enrollment, and identity all still match.
+- A frozen association is only valid if target, window, enrollment, and identity still match.
 
 ## MCP protocol
 
 Use for: When tool calls, negotiation, and completion semantics are validated for MCP observation and control.
 
-- [`Machine`](../../crates/festerm-automation-mcp/src/lib.rs) — Owns lifecycle, in-flight IDs, and completion or refusal logic.
-- [`Operation`](../../crates/festerm-automation-mcp/src/lib.rs) — Defines typed protocol operations for pairing, registration, and terminal reads.
+- [`Machine`](../../crates/festerm-automation-mcp/src/lib.rs) — Owns lifecycle, in-flight IDs, and completion or refusal logic
+- [`Operation`](../../crates/festerm-automation-mcp/src/lib.rs) — Defines typed protocol operations for pairing, registration, and terminal reads
 
 Evidence:
-- [`handshake_sequence_negotiation_and_ping`](../../crates/festerm-automation-mcp/tests/protocol.rs) — Proves initialize, negotiation, and lifecycle transitions across protocol versions.
-- [`initialization_requires_params_and_discards_untrusted_metadata`](../../crates/festerm-automation-mcp/tests/protocol.rs) — Verifies client metadata and grants are discarded as untrusted protocol input.
+- [`handshake_sequence_negotiation_and_ping`](../../crates/festerm-automation-mcp/tests/protocol.rs) — Proves initialize, negotiation, and lifecycle transitions across protocol versions
+- [`initialization_requires_params_and_discards_untrusted_metadata`](../../crates/festerm-automation-mcp/tests/protocol.rs) — Verifies client metadata and grants are discarded as untrusted protocol input
 
 Caveats:
 - The machine owns protocol state, not transport authentication or authorization.
