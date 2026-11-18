@@ -2308,6 +2308,21 @@
         "configured_ssh_profiles_can_open_gui_sftp_authentication_surfaces",
         "gui_sftp_workspace_restore_requires_fresh_authentication",
         "authentication_surface_offers_the_saved_credential_for_gui_sftp",
+        "file_manager_local_directory_creation_is_single_child_and_never_overwrites",
+        "file_manager_local_delete_handles_files_and_empty_folders_but_preserves_nonempty",
+        "file_manager_delete_refuses_changed_or_outside_review_targets",
+        "file_manager_local_delete_removes_symlink_without_following_target",
+        "file_manager_review_is_bound_to_selection_folder_and_remote_connection",
+        "file_manager_queued_completion_is_drained_before_classifying_worker_loss",
+        "file_manager_local_operations_are_serviced_while_remote_retry_waits",
+        "file_manager_delete_buttons_require_confirmation_and_keep_the_captured_side",
+        "file_manager_new_directory_buttons_submit_only_the_reviewed_child",
+        "file_manager_trim_changing_child_names_cannot_be_admitted",
+        "file_manager_long_create_and_delete_dialogs_fit_narrow_windows",
+        "file_manager_stale_or_full_delete_review_never_dispatches_another_target",
+        "file_manager_old_directory_event_cannot_adopt_a_new_connection_scope",
+        "file_manager_remote_link_delete_uses_remove_and_refuses_followed_target_metadata",
+        "gui_sftp_reviewed_link_metadata_and_remove_preserve_its_target",
         "authentication_surface_allows_connecting_before_host_trust_is_persisted",
         "gui_sftp_builds_stored_password_and_private_key_authentication_without_loading_secrets",
         "sftp_launcher_defaults_to_gui_mode_and_can_use_terminal_mode",
@@ -4317,7 +4332,9 @@
         "SFTPG-05",
         "SFTPG-06",
         "SFTPG-07",
-        "SFTPG-08"
+        "SFTPG-08",
+        "SFTPG-09",
+        "SFTPG-10"
       ],
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
@@ -4326,7 +4343,8 @@
         "docs/sftp-ui-design.md#bounded-gui-backlog-and-history",
         "docs/sftp-ui-design.md#bounded-recursive-planning",
         "docs/sftp-ui-design.md#owner-cancellation-and-cleanup",
-        "docs/sftp-ui-design.md#collision-and-overwrite-policy"
+        "docs/sftp-ui-design.md#collision-and-overwrite-policy",
+        "docs/sftp-ui-design.md#directory-creation-and-deletion"
       ],
       "decisions": [
         "ADR-0020",
@@ -4360,6 +4378,7 @@
         "bulk_cancel_finishes_more_than_one_command_queue_of_collision_paused_items",
         "bulk_cancel_does_not_cancel_work_enqueued_after_the_command",
         "gui_sftp_finished_history_retires_old_failures_at_the_approved_limit",
+        "gui_sftp_transfer_drawer_fits_and_paints_proportional_progress",
         "gui_sftp_history_keeps_active_rows_and_retires_by_finish_order",
         "gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity",
         "gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement",
@@ -4460,7 +4479,8 @@
         "FD-05",
         "FD-06",
         "SFTP-01",
-        "SFTP-03"
+        "SFTP-03",
+        "SFTP-04"
       ],
       "status": "partial",
       "prerequisites": [
@@ -6316,6 +6336,7 @@
         "command_line_refuses_nul_and_oversize_before_native_effects",
         "native_windows_starter_command_line_roundtrips_utf16_arguments",
         "unicode_environment_safearray_preserves_drive_entries_and_wide_values",
+        "com_startup_error_retains_only_numeric_hresult",
         "marker_is_one_hop_bounded_and_never_accepts_missing_context",
         "local_catalog_remote_off_disabled_host_create_reuse_unshare_and_restore_same_generation",
         "publication_reenable_only_clears_exact_known_off_grant",

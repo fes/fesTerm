@@ -8,17 +8,17 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal presentation, bounded row caches, and native/software painting while keeping session I/O in the application layer. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the shared terminal-session lifecycle, PTY and daemon backends, and the host-controlled persistence and cleanup boundaries that keep sessions recoverable and bounded. |
-| [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
-| [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns typed app commands, tab lifecycle, and keyboard shortcut routing for app-wide actions and singleton surfaces. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the shared terminal-session lifecycle, local PTY and daemon backends, and the app-side event pump that applies output without duplicate terminal replies. |
+| [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and the GUI-backed SFTP lifecycle that feeds app file transfers and remote reads. |
+| [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, workspace restore metadata, opaque secret references, and user-private file protections for native config and secret storage. |
+| [Application commands, tabs, and input routing](app-commands.md) | Owns typed application intents, singleton-tab routing, and keyboard gating for app-wide actions and terminal input. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns host-based tunnel discovery, enterprise inventory and trust boundaries, portable host recipes, host replacement consent, and PowerShell/host gating. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns packaged updater gating, native desktop integration, and OS wake/privacy monitoring across macOS, Windows, and Linux. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns host-based tunnel discovery, enterprise inventory and trust boundaries, portable public recipe semantics, signed host replacement, and PowerShell lifecycle gating across host/client flows. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns desktop app packaging gates, native smoke validation, and OS wake/privacy bridges for native desktop runtime integration. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust terminal host for iOS and Android, along with native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing. |
-| [Desktop application shell and screens](app-shell.md) | The app-shell owns startup, per-frame session rendering, screen navigation, host approval, and durable diagnostics around the egui window loop. |
+| [Desktop application shell and screens](app-shell.md) | The desktop shell owns app lifecycle, pane/session routing, consent-gated host and remote access, and the diagnostic journal around the egui loop. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

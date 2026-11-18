@@ -1,21 +1,22 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f70d7f5d89a156e39e9188014c2fa72c75bc43bc78a8638ee5c65129ed274369"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9e72d45d8339aeace0a03e149f8b177ba08152b9d957b81c27fd02e98699a86d"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns host-based tunnel discovery, enterprise inventory and trust boundaries, portable host recipes, host replacement consent, and PowerShell/host gating.
+This domain owns host-based tunnel discovery, enterprise inventory and trust boundaries, portable public recipe semantics, signed host replacement, and PowerShell lifecycle gating across host/client flows.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
 ## Host discovery
 
-Use for: Choosing or validating a tunnel by HOST marker and rejecting bridge fallback
+Use for: Which tunnel qualifies as HOST and what exact binding does it carry?
 
 - [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Resolves only HOST-marked tunnels after exact binding review.
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
+- [`docs/agent-navigation/tunnels-enterprise.md`](../../docs/agent-navigation/tunnels-enterprise.md) — Documents the HOST-only resolver and metadata stripping.
 
 Caveats:
 - HOST resolution never falls back to the legacy bridge label.
@@ -24,7 +25,7 @@ Caveats:
 
 ## Enterprise inventory
 
-Use for: Reviewing Dev Center sign-in, bounded inventory, and remote-session handoff
+Use for: How does Dev Center sign-in and bounded inventory fit into the worker-owned tab lifecycle?
 
 - [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Dev Center sign-in, worker-owned inventory, and tab lifecycle.
 - [`EnterpriseInventory`](../../app/festerm/src/enterprise.rs) — Bounded project and Dev Box rows with truncation signals.
@@ -39,9 +40,9 @@ Caveats:
 
 ## Portable recipes
 
-Use for: Validating public tunnel recipes, import/export metadata, and resume or attach behavior
+Use for: Which public metadata can cross profiles and hosts without credentials or consent?
 
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable public metadata excludes credentials and trust decisions.
+- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable recipe metadata excludes credentials and trust decisions.
 - [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validated collection, deduplication, and import/export semantics.
 
 Evidence:
@@ -54,7 +55,7 @@ Caveats:
 
 ## Host replacement
 
-Use for: Preparing, validating, and replacing native host services without granting execution authority
+Use for: How is a native host update prepared and verified without granting execution authority?
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Host-local approval only after the client reviewed the exact binding.
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only availability metadata; it does not grant replacement authority.
@@ -68,9 +69,9 @@ Caveats:
 - Signed bundle and same-intent checks happen before native task effects or consent restore.
 - Pending metadata retains original provenance even if another target is later evaluated.
 
-## PowerShell flow
+## PowerShell lifecycle
 
-Use for: Watching PowerShell connection lifecycle and separating failure state from a successful close
+Use for: How are PowerShell connection failures separated from a successful close and reuse?
 
 - [`PowerShellState`](../../app/festerm/src/powershell.rs) — Lifecycle states for setup, connect, running, failed, and close transitions.
 

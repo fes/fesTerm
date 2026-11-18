@@ -37,8 +37,10 @@ use windows_sys::Win32::{
 fn refused() -> io::Error {
     io::Error::other("independent Windows startup context unavailable")
 }
-fn map(_: windows::core::Error) -> io::Error {
-    refused()
+fn map(error: windows::core::Error) -> io::Error {
+    // Keep only the numeric HRESULT for the existing bounded startup ring.
+    // Never retain the COM message, arguments, paths or environment.
+    io::Error::from_raw_os_error(error.code().0)
 }
 fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
     let v: Vec<_> = value.encode_wide().collect();
@@ -366,6 +368,15 @@ pub fn relaunch_current_starter(timeout: Duration) -> io::Result<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn com_startup_error_retains_only_numeric_hresult() {
+        let code = 0x80070005u32 as i32;
+        let error = map(windows::core::Error::from_hresult(windows::core::HRESULT(
+            code,
+        )));
+        assert_eq!(error.raw_os_error(), Some(code));
+        assert!(error.get_ref().is_none());
+    }
     #[test]
     fn native_windows_starter_command_line_roundtrips_utf16_arguments() {
         let mut args = vec![

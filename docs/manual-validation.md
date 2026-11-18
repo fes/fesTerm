@@ -2567,7 +2567,21 @@ separate PS-02/07/10 evidence.
 | --- | --- | --- | --- |
 | SFTP-02 | In an owned text SFTP session, paste a command above 256 KiB, including one whose trimmed prefix would be valid. Finish with CRLF or Ctrl+C, then run a small valid command. No prefix or fragment may execute; refusal must be visible without disconnecting. Exercise a chunk-split CRLF and UTF-8 scalar, Backspace/Delete, cancel after a large paste, and briefly blocked frontend delivery. Confirm SSH-shell input is unchanged. | Automated byte/state, metrics/notifier and owned real-loopback; native keyboard/refusal visibility and usability pending | Exact 262144-byte acceptance, overflow/refusal across 64 KiB chunks, allocation release, UTF-8 byte accounting, bounded scalar lookback, backspace reclamation, retained/coalesced notice identity under a full event queue and retry during awaited I/O are automated. The real loopback records remote mkdir requests and proves only the next valid command executes. Native paste/keyboard gestures, transcript clarity and accessible refusal feedback remain manual on Windows/macOS/Linux. |
 
+### SFTP directory creation and deletion
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| SFTP-04 | On Local and an owned SFTP Remote, use New directory with a Unicode/spaced child name, invalid traversal/reserved names and an existing destination. Review actual side/endpoint/parent. Select owned files, symlinks and empty folders; Delete must focus Cancel and list exact paths, with no operation before confirmation. Cancel leaves them intact. Confirm removes only reviewed leaves, preserves link targets and refuses non-empty directories. Change selection/folder/connection during review; it must refuse rather than retarget. Saturate command admission, lose the connection during an operation and close the owner: inspect explicit partial/uncertain results, refresh/reselect/reconfirm without automatic replay. Local operations must still work while Remote awaits retry. | Automated owned filesystem/UI and in-process SFTP + native functional/visual/accessibility pending | Production modal geometry covers 320/460 logical-pixel windows with long folder/target names and retained button padding. Portable tests cover child admission/no-overwrite, real Local file/empty-dir/link semantics, observed changed-target refusal, stale directory events/selection/connection, both production buttons/dialogs and inert Cancel/full admission. The in-process SFTP fixture covers LSTAT and one link removal preserving target bytes. Native OS permissions, packaged keyboard/screen-reader/DPI behavior, real remote disconnect/partial-batch presentation and concurrent external path replacement remain manual; no atomic inode-conditional delete or rollback claim. |
+
 ### SFTP GUI backlog and transfer history
+
+For `SFTPG-02`, the production drawer paint regression checks both percent and
+byte bars at 320/640/1180 logical-pixel widths and 0/25/50/100% progress: finite
+panel bounds, retained inner padding, contrasting remaining tracks and correct
+filled widths. Review the normal and narrow transfer gallery captures; native
+Windows/macOS/Linux DPI, short-window scrolling and live-transfer visual
+usability remain manual. This layout fix does not change transfer admission,
+collision decisions or partial-file ownership.
 
 `SFTP-03` also covers the shared per-worker recursive-planning allowance:
 with owned directory trees, pause one copy at a collision, exhaust admission

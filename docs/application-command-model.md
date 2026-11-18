@@ -506,3 +506,14 @@ Enable/Disable. It binds the reviewed disabled snapshot and recorded release
 intent, reuses signed acquisition and the production stopped updater with
 Desktop origin, and returns Disabled. It adds no parallel button-owned updater,
 CLI origin override, automatic Enable, rollback or background upgrade.
+
+### Graphical file-manager mutations
+
+Local/Remote New directory and Delete translate to one pane-owned review and
+one typed bounded worker request, independent of the invocation surface.
+Widgets never perform filesystem/server mutations. The review retains exact
+side/parent/selection and the connection scope attached to the displayed listing;
+confirmation and worker dispatch recheck scope. Queue refusal retains review,
+Cancel is inert, and uncertain outcomes require a new explicit review rather
+than automatic replay. Existing SFTP Mkdir/Rm/Rmdir and ordinary Local operations
+provide the effects; transfer authority and recursive deletion are not added.

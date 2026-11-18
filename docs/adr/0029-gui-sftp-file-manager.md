@@ -390,15 +390,22 @@ otherwise:
 That keeps workspace restore aligned with ADR 0014's metadata-only posture and
 avoids silently reviving stale remote directory state as if it were current.
 
-### Deletion is explicitly out of scope for v1
+### Reviewed directory creation and non-recursive deletion
 
-The GUI SFTP surface will not expose delete buttons, delete keybindings,
-drag-to-trash, or implicit delete side effects in v1.
+The original v1 deliberately deferred deletion. The explicitly requested
+follow-on adds visible New directory and Delete controls on both panes through
+the same bounded worker. Creation reuses portable child-name admission and
+existing SFTP Mkdir; deletion reuses Rm/Rmdir and ordinary Local primitives.
+There is no recursive engine or implicit overwrite/trash behavior.
 
-Backend APIs added for this ADR therefore do **not** include local/remote
-delete queue operations. A future delete policy needs its own review because it
-changes safety, auditability, and recovery semantics in ways that file copying
-does not.
+Each confirmation retains exact side/parent/selection and the connection scope
+of the displayed directory result. Worker-side scope checks prevent a queued
+operation crossing reconnect. LSTAT/Local symlink metadata inspects the selected
+leaf; deletion does not follow a symlink target. Observed metadata changes refuse
+execution, without claiming atomic inode-conditional deletion. Cancel is inert,
+errors/uncertainty require fresh review, and partial batches report confirmed
+removals rather than promising rollback. Existing owner cancellation remains
+request-versus-completion aware.
 
 ## Alternatives considered
 
@@ -423,9 +430,9 @@ thread boundaries that already exist in `festerm-ssh`.
 
 ### Add delete in the same slice
 
-Rejected. The approved design explicitly defers delete in v1, and bundling it
-here would widen risk, review scope, and validation burden without helping the
-core transfer workflow.
+Rejected for the original copy-first v1 slice. The separately requested
+follow-on above now adds only explicitly reviewed, non-recursive deletion;
+recursive folder deletion and trash remain outside this decision.
 
 ## Consequences
 
@@ -437,9 +444,8 @@ core transfer workflow.
 - `app/festerm` gains a new application-surface tab type rather than forcing
   non-terminal behavior through `SessionTab`.
 - Settings gain one new additive global preference for pane order.
-- The GUI implementation remains intentionally copy-only in v1 and explicitly
-  does not promise delete, remote-file desktop drag-out, or resumed queues on
-  restore.
+- Transfers remain copies. Explicit reviewed deletion is non-recursive;
+  remote-file desktop drag-out and resumed queues on restore remain unsupported.
 
 ## Validation impact
 
@@ -447,7 +453,7 @@ core transfer workflow.
   surface distinct from text-mode SFTP; GUI and text-mode SFTP share SSH
   profile/trust/auth context but not tab lifecycle; queued GUI transfers never
   silently overwrite; collision approvals are batch-scoped and revalidated
-  before commit; delete is absent in v1; owner cancellation preserves and reports
+  before commit; scoped Delete requires explicit permanent confirmation; owner cancellation preserves and reports
   partials when race-free current ownership cannot be established; GUI bridges,
   per-poll work and finished history are bounded with explicit admission
   refusal and retirement accounting. Recursive enumeration and retained plans
@@ -559,3 +565,22 @@ core transfer workflow.
 - **Coverage superseded:** None yet. `validation/traceability.json` should be
   updated in the implementing change that wires the new GUI SFTP edges and test
   relationships into real coverage.
+
+`SFTPG-09` and `SFTPG-10` cover the new review/worker routes. Portable tests use
+owned scratch files for creation, no-overwrite, changed/outside targets, empty
+versus non-empty folders and symlink-target preservation; production UI tests
+exercise both panes, inert Cancel, confirmation-only admission, stale connection
+and full command capacity. A controlled in-process SFTP fixture distinguishes
+STAT from LSTAT and removes only the reviewed link, preserving its target bytes.
+Native permissions/DPI/accessibility and actual network-loss presentation remain
+`SFTP-04` manual qualification.
+
+For SFTPG-02, progress widgets use finite available content width rather than
+an infinite desired width. The existing drawer margin remains the padding
+boundary; its heading wraps when needed. State-colored fills represent actual
+aggregate/per-item byte fractions against a distinct palette track, including
+zero and completed progress. The production paint regression
+`gui_sftp_transfer_drawer_fits_and_paints_proportional_progress` checks finite
+panel bounds, padding and both painted fill ratios at narrow and desktop widths.
+Headless gallery captures complement those geometry checks; native DPI and
+live-transfer usability remain manual.

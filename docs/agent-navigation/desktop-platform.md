@@ -1,73 +1,74 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a39dc2690b4dfc84b9f514e6061197dfa1f7e7291d9c07e1fcf74ae7b90d11fb"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "feb0f6a1998de72a91328db18f72ba9b4fb18b1eb9effcd10d924b48f7eeb205"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns packaged updater gating, native desktop integration, and OS wake/privacy monitoring across macOS, Windows, and Linux.
+Owns desktop app packaging gates, native smoke validation, and OS wake/privacy bridges for native desktop runtime integration.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
-## Packaging flow
+## Packaging gate
 
-Use for: Which install marker, updater key, and package metadata gate a release build?
+Use for: Which build metadata and update gate are required before a packaged release can self-update?
 
-- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, managed, and self-updating modes.
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Build marker and verification key decide update availability and installability.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Reads the installation marker and public key before enabling updater behavior.
+- [`from_build`](../../app/festerm/src/updates.rs) — Build-time environment decides installation kind and signing key.
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse missing signing keys.
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only app, appimage, and nsis are self-updating.
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only app, appimage, and nsis are eligible for in-place updates.
 
 Caveats:
 - Install markers are package-specific and not interchangeable.
 - Updater signing is separate from app signing; only the public key is checked.
-- Developer builds never contact the update endpoint.
+- Only a small set of installation kinds are eligible for auto-update.
 
 ## Native smoke
 
 Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs real-window smoke tests for focus, resize, and PTY output.
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Consumes exactly one smoke mode and one result path from environment.
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the native smoke driver inside the real app event loop and PTY.
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Enforces exactly one smoke mode and one result path for CI.
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Only one smoke mode and one result path may be active.
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke enforces the terminal rendering contract.
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Smoke modes are mutually exclusive and require a result path.
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke enforces the terminal rendering contract, not a mock.
 
 Caveats:
-- Smoke is distinct from headless replay and validates real PTY and window behavior.
 - Only one smoke mode and one result path may be active at a time.
-- Live resize requires a driver result path; otherwise it fails.
+- This validates real PTY and window behavior, not headless replay.
+- Linux Xvfb can report an unfocused result and should not be mistaken for native focus proof.
 
-## macOS app bridge
+## macOS document bridge
 
 Use for: What should I read when a Finder open event or macOS menu action breaks?
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Registers Finder open-document AppleEvents and drains queued paths.
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Maps AppKit actions to semantic app commands.
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Registers Finder AppleEvents and drains queued file-open paths before UI attach.
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu actions into semantic app commands.
 
 Evidence:
-- [`native_menu_sync_skips_repeated_updates_but_retries_pending_work`](../../crates/festerm-macos-window/src/lib.rs) — Menu sync retries pending startup state without stale repeats.
-- [`open_document_bridge_buffers_paths_and_errors_until_drained`](../../crates/festerm-macos-window/src/lib.rs) — Bounded queues preserve order and drain without unbounded retention.
+- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — End-to-end AppleEvent test covers queued Finder open-document behavior.
 
 Caveats:
-- Open-document bridges must drain before UI attaches or Finder races are lost.
+- Finder open-document events must be drained before UI attaches or they can be lost.
 - Menu semantics are app policy; the bridge emits commands, not app state.
-- Non-macOS builds compile this as an unavailable no-op.
+- Oversized or malformed file URLs are rejected instead of retained.
 
 ## Wake and privacy
 
 Use for: What should I read when resume-from-sleep, lock-screen, or privacy callbacks misfire?
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Hidden message-only window watches resume broadcasts and triggers wake callbacks.
-- [`GnomePrivacyMonitor`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — GNOME lock-shield transition is the privacy cutoff for recording sessions.
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — A hidden message-only window listens for resume broadcasts and triggers wake.
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — The logind PrepareForSleep(false) signal is treated as resume and triggers wake.
+- [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Tracks lock, inactivity, and suspend-loss conditions with fail-closed semantics.
 
 Evidence:
-- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Resume events wake while unrelated power notifications are ignored.
-- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — Real GNOME shield transitions revoke consent.
+- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Resume broadcasts wake while unrelated power events are ignored.
+- [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — Only the resume edge from logind is treated as wake; suspend is ignored.
+- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — A real GNOME screen-shield transition is the privacy cutoff for recording mode.
 
 Caveats:
-- These monitors treat only resume edges as wake and ignore suspend transitions.
-- Linux privacy depends on systemd-logind and a matching GNOME shell and session.
-- Fail-closed policies count unknown or broken bus state as privacy loss.
+- These monitors treat only the resume edge as wake and ignore suspend transitions.
+- Linux privacy depends on systemd-logind and a compatible GNOME session and shell.
+- Fail-closed is required: unknown or broken bus state counts as privacy loss.

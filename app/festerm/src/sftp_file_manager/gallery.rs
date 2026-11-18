@@ -16,6 +16,11 @@ pub(crate) enum Scene {
     OperationError,
     Transfers,
     TransferDetails,
+    NewLocalDirectory,
+    NewRemoteDirectory,
+    DeleteLocal,
+    DeleteRemote,
+    TransferDetailsNarrow,
     Collision,
     Narrow,
     Swapped,
@@ -31,12 +36,14 @@ pub(crate) struct Fixture {
     tab: SftpFileManagerTab,
     authentication: AuthenticationFormState,
     scene: Scene,
+    _local_fixture: Option<tempfile::TempDir>,
 }
 
 impl Fixture {
     pub(crate) fn new(mut tab: SftpFileManagerTab, scene: Scene) -> Self {
         tab.local_loader = LocalDirectoryLoader::paused_for_test();
         let mut authentication = AuthenticationFormState::default();
+        let mut local_fixture = None;
         match scene {
             Scene::PrivateKey => authentication.mode = AuthMode::PrivateKey,
             Scene::Connecting | Scene::Failed => {
@@ -63,11 +70,44 @@ impl Fixture {
                     "The synthetic file exceeds the bounded text-file limit.".into(),
                 ))
             }
-            Scene::Transfers | Scene::TransferDetails | Scene::Collision => {
+            Scene::Transfers
+            | Scene::TransferDetails
+            | Scene::TransferDetailsNarrow
+            | Scene::Collision => {
                 for event in festerm_ssh::gallery_transfer_events(matches!(scene, Scene::Collision))
                 {
                     tab.apply_transfer_event(event);
                 }
+            }
+            Scene::NewLocalDirectory | Scene::DeleteLocal => {
+                let root = tempfile::tempdir().expect("owned local file-action gallery");
+                fs::write(
+                    root.path().join("reviewed-report.txt"),
+                    b"Owned gallery scratch file",
+                )
+                .unwrap();
+                let snapshot =
+                    festerm_ssh::read_local_directory_snapshot_sync(root.path()).unwrap();
+                let selected = snapshot.entries[0].path.clone();
+                tab.local_pane.set_snapshot(snapshot, None);
+                tab.local_pane.select_single(&selected);
+                tab.review_file_operation(PaneFocus::Local, matches!(scene, Scene::DeleteLocal));
+                local_fixture = Some(root);
+            }
+            Scene::NewRemoteDirectory | Scene::DeleteRemote => {
+                let selected = tab
+                    .remote_pane
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .find(|item| item.file_type == SftpEntryType::File)
+                    .unwrap()
+                    .path
+                    .clone();
+                tab.remote_pane.select_single(&selected);
+                tab.review_file_operation(PaneFocus::Remote, matches!(scene, Scene::DeleteRemote));
             }
             Scene::Swapped => tab.pane_order = SftpPaneOrderPreference::RemoteLeft,
             Scene::Empty => {
@@ -106,11 +146,15 @@ impl Fixture {
             tab,
             authentication,
             scene,
+            _local_fixture: local_fixture,
         }
     }
 
     pub(crate) fn show(&mut self, ui: &mut Ui, id: crate::tabs::TabId) {
-        if matches!(self.scene, Scene::TransferDetails) {
+        if matches!(
+            self.scene,
+            Scene::TransferDetails | Scene::TransferDetailsNarrow
+        ) {
             self.tab.show_transfer_drawer(ui);
             return;
         }
