@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "c675344cb2b843aa0be3002a284d184cd6408911e39fbcf3fb587938f6b3e775"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "eaee344819e4109cdaa4cad9c2927ddc083a35f5de1fd29154abbb1e305b15e9"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Automation owns brokered grant authority, exact workflow binding, and MCP lifecycle state for terminal observation and control.
+Automation owns brokered grant authority, frozen workflow inputs, and protocol lifecycle state for terminal observation and control.
 
 Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
@@ -12,7 +12,7 @@ Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
 Use for: Who may observe or control a target, and how are grant state and revocation tracked?
 
-- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns principal grants, controller enrollment, run tracking, and revocation
+- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns principal grants, controller enrollment, run state, and revocation
 - [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — binds exact target refs, invocation digests, and native consent
 
 Evidence:
@@ -25,22 +25,22 @@ Caveats:
 
 ## Workflow intake
 
-Use for: How is a selected workflow bundle, input mapping, and native approval validated before a run starts?
+Use for: What exact workflow bundle, parameter map, and approval are frozen before a run starts?
 
-- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — binds the approved bundle, parameter digest, target map, and manifest-scoped scope
+- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — binds the approved bundle, parameter digest, target map, and manifest scope
 - [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — routes native review, workflow start, and workflow-input approval commands
 
 Evidence:
 - [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — shows workflow approvals and starts are bounded and cannot replay stale input
 
 Caveats:
-- Manifest and parameter digests must match; stale or mismatched workflow input is rejected.
+- Manifest and parameter digests must match; stale workflow input is rejected.
 - Workflow scopes are capped by exact target refs and capability checks, not bundle path or name.
 - Selection and preview are non-authorizing; they do not start a workflow.
 
 ## MCP protocol
 
-Use for: How are tool calls, lifecycle negotiation, and completion semantics validated for MCP observation and control?
+Use for: How do MCP tool calls, lifecycle negotiation, and completion semantics stay protocol-safe?
 
 - [`Machine`](../../crates/festerm-automation-mcp/src/lib.rs) — owns protocol lifecycle, in-flight IDs, and completion or refusal logic
 - [`Operation`](../../crates/festerm-automation-mcp/src/lib.rs) — defines typed MCP actions like pairing, registration, and terminal reads
@@ -55,10 +55,10 @@ Caveats:
 
 ## App IPC flow
 
-Use for: How do adapter channels, privacy gates, and controller enrollment flow into terminal actions?
+Use for: How are adapter channels, privacy gates, and controller enrollment turned into terminal actions?
 
 - [`Connection`](../../app/festerm/src/automation/ipc.rs) — queues adapter messages under admission and privacy checks before delivery
-- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — locks a reviewed controller enrollment to its exact target and window
+- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — locks reviewed enrollment to the exact target and window
 
 Evidence:
 - [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — shows privacy and disconnect cuts revoke grants without re-authorizing stale state
