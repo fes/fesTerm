@@ -242,8 +242,9 @@ fn assert_native_wmi_job_survival(with_inner: bool) {
     let after = festerm_sessiond::list_running_sessions_in(&root)
         .unwrap()
         .into_iter()
-        .find(|s| s.name == selected.name)
-        .unwrap();
+        .find(|s| s.session.name == selected.name)
+        .unwrap()
+        .session;
     assert_eq!(after.pid, selected.pid);
     assert_eq!(after.created_at_unix_ms, selected.created_at_unix_ms);
     drop(session);
