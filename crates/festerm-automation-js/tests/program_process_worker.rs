@@ -2,12 +2,12 @@ use festerm_automation_js::{
     platform,
     program::{
         developer_echo_program, ApprovedProgram, ProgramCapability, ProgramHostMessage,
-        ProgramKind, ProgramManifest, ProgramSourceSnapshot, ProgramWorkerMessage, Submission,
-        TerminalSize,
+        ProgramKind, ProgramManifest, ProgramSourceSnapshot, Submission, TerminalSize,
     },
-    protocol::read_frame,
     ProgramSupervisor, WorkerProgram,
 };
+#[cfg(not(windows))]
+use festerm_automation_js::{program::ProgramWorkerMessage, protocol::read_frame};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
