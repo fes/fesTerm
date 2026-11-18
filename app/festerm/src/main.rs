@@ -31,6 +31,8 @@ mod environment;
 mod font_downloads;
 mod inspector;
 #[cfg(feature = "javascript-program-dev")]
+mod javascript_program_lifecycle;
+#[cfg(feature = "javascript-program-dev")]
 #[allow(dead_code)]
 mod javascript_program_storage;
 mod keyboard;

@@ -109,6 +109,7 @@ impl ProgramStorageHost for ProcessStorage {
 
 #[test]
 fn confined_program_worker_uses_injected_storage_only() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -251,6 +252,7 @@ fn confined_program_worker_echoes_normal_output_and_closes() {
 
 #[test]
 fn confined_program_worker_serves_assets_clock_and_async_stream() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -273,6 +275,7 @@ fn confined_program_worker_serves_assets_clock_and_async_stream() {
 
 #[test]
 fn confined_program_worker_completes_a_long_bounded_sleep() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -306,6 +309,7 @@ fn confined_program_worker_completes_a_long_bounded_sleep() {
 
 #[test]
 fn confined_program_worker_cancels_a_long_pending_sleep() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -346,6 +350,7 @@ fn confined_program_worker_cancels_a_long_pending_sleep() {
 
 #[test]
 fn confined_program_worker_close_does_not_wait_for_clock_sleep() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -377,6 +382,7 @@ fn confined_program_worker_close_does_not_wait_for_clock_sleep() {
 
 #[test]
 fn confined_program_worker_closes_admission_when_async_main_settles() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -400,6 +406,7 @@ fn confined_program_worker_closes_admission_when_async_main_settles() {
 
 #[test]
 fn confined_program_worker_latches_async_main_completion_after_input() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }

@@ -22,7 +22,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -34,6 +34,80 @@ const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const HOST_WAIT_TIMEOUT: Duration = Duration::from_millis(MAX_SLEEP_MS as u64);
 const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 type StartupReply = Result<(Vec<Vec<u8>>, bool), Error>;
+const DEFAULT_PROGRAM_COUNT: usize = 4;
+
+#[derive(Clone, Debug)]
+pub struct ProgramSupervisorQuota {
+    shared: Arc<Mutex<ProgramQuotaState>>,
+    max_programs: usize,
+    max_memory_bytes: u64,
+}
+
+#[derive(Debug)]
+struct ProgramQuotaState {
+    programs: usize,
+    memory_bytes: u64,
+}
+
+#[derive(Debug)]
+struct ProgramQuotaPermit {
+    quota: Arc<Mutex<ProgramQuotaState>>,
+    memory_bytes: u64,
+}
+
+impl ProgramSupervisorQuota {
+    pub fn new(programs: usize, memory_bytes: u64) -> Self {
+        assert!(programs > 0);
+        assert!(memory_bytes > 0);
+        Self {
+            shared: Arc::new(Mutex::new(ProgramQuotaState {
+                programs: 0,
+                memory_bytes: 0,
+            })),
+            max_programs: programs,
+            max_memory_bytes: memory_bytes,
+        }
+    }
+
+    pub fn developer_default() -> Self {
+        static DEFAULT: OnceLock<ProgramSupervisorQuota> = OnceLock::new();
+        DEFAULT
+            .get_or_init(|| {
+                Self::new(
+                    DEFAULT_PROGRAM_COUNT,
+                    crate::PROCESS_BYTES * DEFAULT_PROGRAM_COUNT as u64,
+                )
+            })
+            .clone()
+    }
+
+    fn acquire(&self) -> Result<ProgramQuotaPermit, Error> {
+        let mut state = self.shared.lock().map_err(|_| Error::Cleanup)?;
+        if state.programs >= self.max_programs
+            || state
+                .memory_bytes
+                .checked_add(crate::PROCESS_BYTES)
+                .is_none_or(|total| total > self.max_memory_bytes)
+        {
+            return Err(Error::ProgramQuota);
+        }
+        state.programs += 1;
+        state.memory_bytes += crate::PROCESS_BYTES;
+        Ok(ProgramQuotaPermit {
+            quota: self.shared.clone(),
+            memory_bytes: crate::PROCESS_BYTES,
+        })
+    }
+}
+
+impl Drop for ProgramQuotaPermit {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.quota.lock() {
+            state.programs = state.programs.saturating_sub(1);
+            state.memory_bytes = state.memory_bytes.saturating_sub(self.memory_bytes);
+        }
+    }
+}
 
 struct ProgramCpuBudget {
     previous_cpu: Option<Duration>,
@@ -131,10 +205,12 @@ pub struct ProgramSupervisor {
     next_sequence: u64,
     startup_output: Vec<Vec<u8>>,
     completed: bool,
+    stopped: Arc<AtomicBool>,
     commands: SyncSender<CommandRequest>,
     forced: Arc<AtomicBool>,
     fence: Arc<dyn ProgramDeliveryFence>,
     join: Mutex<Option<JoinHandle<Result<(), Error>>>>,
+    _quota: ProgramQuotaPermit,
 }
 
 impl ProgramSupervisor {
@@ -226,10 +302,64 @@ impl ProgramSupervisor {
         storage: Arc<dyn ProgramStorageHost>,
         params: crate::program::ProgramLaunchParams,
     ) -> Result<Self, Error> {
+        Self::spawn_with_launch_storage_and_quota(
+            worker,
+            program,
+            generation,
+            initial_size,
+            forced,
+            fence,
+            storage,
+            params,
+            ProgramSupervisorQuota::developer_default(),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_with_launch_storage_and_wake(
+        worker: &WorkerProgram,
+        program: ApprovedProgram,
+        generation: u64,
+        initial_size: crate::program::TerminalSize,
+        forced: Arc<AtomicBool>,
+        fence: Arc<dyn ProgramDeliveryFence>,
+        storage: Arc<dyn ProgramStorageHost>,
+        params: crate::program::ProgramLaunchParams,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Self, Error> {
+        Self::spawn_with_launch_storage_and_quota(
+            worker,
+            program,
+            generation,
+            initial_size,
+            forced,
+            fence,
+            storage,
+            params,
+            ProgramSupervisorQuota::developer_default(),
+            Some(wake),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_with_launch_storage_and_quota(
+        worker: &WorkerProgram,
+        program: ApprovedProgram,
+        generation: u64,
+        initial_size: crate::program::TerminalSize,
+        forced: Arc<AtomicBool>,
+        fence: Arc<dyn ProgramDeliveryFence>,
+        storage: Arc<dyn ProgramStorageHost>,
+        params: crate::program::ProgramLaunchParams,
+        quota: ProgramSupervisorQuota,
+        termination_wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<Self, Error> {
         platform::program_availability()?;
         if crate::cleanup_failed() {
             return Err(Error::Unavailable("an owned worker could not be reaped"));
         }
+        let quota = quota.acquire()?;
         initial_size.validate()?;
         if generation == 0 || generation > MAX_SAFE_INTEGER {
             return Err(Error::Protocol);
@@ -249,12 +379,16 @@ impl ProgramSupervisor {
         let digest = program.digest().to_owned();
         let (commands, receive) = mpsc::sync_channel(4);
         let (startup, ready) = mpsc::sync_channel(1);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let reaped = Arc::new(AtomicBool::new(false));
+        let supervisor_stopped = stopped.clone();
+        let supervisor_reaped = reaped.clone();
         let supervisor_forced = forced.clone();
         let supervisor_fence = fence.clone();
         let join = thread::Builder::new()
             .name("festerm-javascript-program-supervisor".into())
             .spawn(move || {
-                supervise_process(
+                let result = supervise_process(
                     path,
                     source,
                     capabilities,
@@ -268,7 +402,15 @@ impl ProgramSupervisor {
                     supervisor_forced,
                     supervisor_fence,
                     storage,
-                )
+                    supervisor_reaped.clone(),
+                );
+                if supervisor_reaped.load(Ordering::Acquire) {
+                    supervisor_stopped.store(true, Ordering::Release);
+                    if let Some(wake) = termination_wake {
+                        wake();
+                    }
+                }
+                result
             })
             .map_err(|_| Error::Unavailable("program supervisor thread unavailable"))?;
         match ready.recv_timeout(STARTUP_TIMEOUT + HOST_WAIT_TIMEOUT) {
@@ -277,10 +419,12 @@ impl ProgramSupervisor {
                 next_sequence: 1,
                 startup_output,
                 completed,
+                stopped,
                 commands,
                 forced,
                 fence,
                 join: Mutex::new(Some(join)),
+                _quota: quota,
             }),
             Ok(Err(error)) => {
                 forced.store(true, Ordering::Release);
@@ -318,7 +462,7 @@ impl ProgramSupervisor {
     }
 
     pub fn is_completed(&self) -> bool {
-        self.completed
+        self.completed || self.stopped.load(Ordering::Acquire)
     }
 
     pub fn resize(&mut self, size: crate::program::TerminalSize) -> Result<Vec<Vec<u8>>, Error> {
@@ -485,6 +629,7 @@ fn supervise_process(
     forced: Arc<AtomicBool>,
     fence: Arc<dyn ProgramDeliveryFence>,
     storage: Arc<dyn ProgramStorageHost>,
+    reaped: Arc<AtomicBool>,
 ) -> Result<(), Error> {
     if forced.load(Ordering::Acquire) {
         return Err(Error::DisclosureRevoked);
@@ -519,6 +664,7 @@ fn supervise_process(
         )));
     }
     crate::supervisor::reap_worker(&mut child).map_err(|_| Error::Cleanup)?;
+    reaped.store(true, Ordering::Release);
     result
 }
 
@@ -989,7 +1135,7 @@ fn serve_program_host_call(
     if !capabilities.contains(&request.capability()) {
         return Err(Error::Protocol);
     }
-    let _storage_permit = match &request {
+    let storage_permit = match &request {
         ProgramHostRequest::StorageLoad { .. } | ProgramHostRequest::StorageCommit { .. } => Some(
             fence
                 .try_enter(generation)?
@@ -1045,7 +1191,7 @@ fn serve_program_host_call(
         }
     };
     result.validate_for(&request)?;
-    let _delivery_permit = if _storage_permit.is_none() {
+    let _delivery_permit = if storage_permit.is_none() {
         Some(
             fence
                 .try_enter(generation)?
@@ -1130,13 +1276,8 @@ fn admit_host_call_wait(
     close: bool,
     host_wait: &mut Duration,
 ) -> bool {
-    if close
-        && matches!(
-            request,
-            ProgramHostRequest::StorageLoad { .. } | ProgramHostRequest::StorageCommit { .. }
-        )
-    {
-        return false;
+    if close {
+        return matches!(request, ProgramHostRequest::StorageCommit { .. });
     }
     let ProgramHostRequest::ClockSleep { milliseconds } = request else {
         return true;
@@ -1437,7 +1578,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_sleep_budget_is_aggregate_and_close_waits_are_refused() {
+    fn host_sleep_budget_is_aggregate_and_only_checkpoint_survives_close() {
         let mut deadline = Instant::now() + OPERATION_TIMEOUT;
         let mut host_wait = Duration::ZERO;
         assert!(admit_host_call_wait(
@@ -1457,6 +1598,18 @@ mod tests {
         assert!(!admit_host_call_wait(
             &mut deadline,
             &ProgramHostRequest::ClockSleep { milliseconds: 1 },
+            true,
+            &mut host_wait,
+        ));
+        assert!(admit_host_call_wait(
+            &mut deadline,
+            &ProgramHostRequest::StorageCommit {
+                slot: "primary".into(),
+                expected_revision: Some(1),
+                schema_version: 2,
+                value: vec![1],
+                operation_id: "00000000-0000-4000-8000-000000000001".into(),
+            },
             true,
             &mut host_wait,
         ));
@@ -1552,5 +1705,47 @@ mod tests {
             })
             .unwrap();
         assert_eq!(queries.get(), 1);
+    }
+
+    #[test]
+    fn aggregate_program_quota_is_thread_safe_and_released_on_all_paths() {
+        let quota = ProgramSupervisorQuota::new(2, crate::PROCESS_BYTES * 2);
+        let start = Arc::new(std::sync::Barrier::new(9));
+        let (send, receive) = mpsc::channel();
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let quota = quota.clone();
+                let start = start.clone();
+                let send = send.clone();
+                thread::spawn(move || {
+                    start.wait();
+                    let permit = quota.acquire();
+                    send.send(permit.inspect(|_| {
+                        thread::sleep(Duration::from_millis(10));
+                    }))
+                    .unwrap();
+                })
+            })
+            .collect();
+        start.wait();
+        let outcomes: Vec<_> = (0..8)
+            .map(|_| receive.recv_timeout(Duration::from_secs(1)).unwrap())
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let admitted = outcomes.into_iter().filter(Result::is_ok).count();
+        assert_eq!(admitted, 2);
+        let state = quota.shared.lock().unwrap();
+        assert_eq!(state.programs, 0);
+        assert_eq!(state.memory_bytes, 0);
+    }
+
+    #[test]
+    fn program_quota_memory_refusal_happens_before_spawn_and_does_not_touch_automation() {
+        let quota = ProgramSupervisorQuota::new(4, crate::PROCESS_BYTES - 1);
+        assert!(matches!(quota.acquire(), Err(Error::ProgramQuota)));
+        let automation_only = crate::protocol::Limits::default();
+        assert!(automation_only.validate().is_ok());
     }
 }
