@@ -1414,11 +1414,45 @@ impl SessionTab {
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit terminal limits");
+        let storage = if launch
+            .capabilities()
+            .contains(&festerm_automation_js::program::ProgramCapability::StorageLoad)
+        {
+            directories::ProjectDirs::from("com", "fes", "fesTerm")
+                .map(|project| project.data_dir().to_path_buf())
+                .map(|root| {
+                    Arc::new(
+                    crate::javascript_program_storage::ReviewedDeveloperStorageHost::from_application_data(
+                        root,
+                        launch.params().mode,
+                    ),
+                    ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                })
+                .ok_or_else(|| {
+                    festerm_javascript_session::JavaScriptSessionError::Runtime(
+                        festerm_javascript_session::JavaScriptRuntimeError::new(
+                            "Program save storage root is unavailable.",
+                        ),
+                    )
+                })
+        } else {
+            Ok(
+                Arc::new(festerm_javascript_session::UnavailableProgramStorage)
+                    as Arc<dyn festerm_javascript_session::ProgramStorageHost>,
+            )
+        };
         #[cfg(test)]
-        let runtime = QuickJsJavaScriptRuntime::reviewed(launch.clone());
+        let runtime = storage.and_then(|storage| {
+            QuickJsJavaScriptRuntime::reviewed_with_storage(launch.clone(), storage)
+        });
         #[cfg(not(test))]
-        let runtime =
-            ProcessJavaScriptRuntime::current_executable_reviewed(launch.clone(), fence.clone());
+        let runtime = storage.and_then(|storage| {
+            ProcessJavaScriptRuntime::current_executable_reviewed_with_storage(
+                launch.clone(),
+                fence.clone(),
+                storage,
+            )
+        });
         let result = runtime.and_then(|runtime| {
             JavaScriptSession::start_with_authority(runtime, size, make_notifier(context), fence)
         });
@@ -1427,12 +1461,19 @@ impl SessionTab {
             result,
             dimensions,
             SessionResultMeta {
-                label: "JavaScript Echo (developer)",
+                label: if launch
+                    .capabilities()
+                    .contains(&festerm_automation_js::program::ProgramCapability::StorageLoad)
+                {
+                    "JavaScript Save (developer)"
+                } else {
+                    "JavaScript Echo (developer)"
+                },
                 launch_secondary: Some("JavaScript terminal program · developer".into()),
                 profile_identifier: None,
                 session_name: "JavaScript program",
                 inspector_transport: InspectorTransport::JavaScript {
-                    name: "developer-echo".into(),
+                    name: launch.program().manifest().name.clone(),
                 },
                 ssh_password_retry: None,
             },
@@ -2973,7 +3014,12 @@ pub enum AppCommand {
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
     #[cfg(feature = "javascript-program-dev")]
+    #[allow(dead_code)]
     StartJavaScriptProgram,
+    #[cfg(feature = "javascript-program-dev")]
+    StartJavaScriptSave {
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    },
     /// Starts one transient local session from explicit launcher metadata
     /// without creating or recording a saved profile.
     StartLocalSessionWithProfile {
@@ -5163,6 +5209,8 @@ impl AppState {
             AppCommand::StartLocalSession => self.start_local_session(context),
             #[cfg(feature = "javascript-program-dev")]
             AppCommand::StartJavaScriptProgram => self.start_javascript_program(context),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartJavaScriptSave { mode } => self.start_javascript_save(context, mode),
             AppCommand::StartLocalSessionWithProfile { profile } => {
                 self.start_local_session_with_profile(profile, context)
             }
@@ -6723,6 +6771,43 @@ impl AppState {
                     return;
                 }
             };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_save(
+        &mut self,
+        context: &egui::Context,
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    ) {
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_save(
+                launch_generation,
+                mode,
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed JavaScript save fixture is invalid.".into());
+                    return;
+                }
+            };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn begin_javascript_program(
+        &mut self,
+        context: &egui::Context,
+        launch_generation: u64,
+        launch: festerm_javascript_session::JavaScriptProgramLaunch,
+    ) {
         let dimensions = self.current_session_dimensions();
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delivery_gate = Arc::new(Mutex::new(()));

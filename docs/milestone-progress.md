@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Wiring transactional JavaScript saves without exposing storage
+
+The JavaScript program worker now receives only opaque save slots, bounded
+typed values and operation IDs. The application owns the reviewed namespace,
+exclusive writer and schema policy; Start and Resume are distinct commands, and
+future/corrupt/unapproved saves fail without publication. Explicit schema
+migration reconciles uncertain durable state first, writes a recoverable
+pre-migration envelope and then publishes the reviewed replacement. Delivery
+fences cover storage admission, while full output queues release their permit
+before waiting so normal dequeue and close cannot deadlock. No path, picker,
+filesystem handle, generic save registry or workspace migration crossed into
+the program.
+
 ## Adding the narrow JavaScript host-services boundary
 
 Terminal programs now keep the synchronous developer echo entry compatible
@@ -15815,14 +15828,15 @@ isolated profile directories.
 
 This is not production enablement. Interactive native CPU policy, packaged
 confinement, native privacy-event timing, keyboard/IME/paste usability,
-multi-window lifecycle, private transactional saves and explicit resume remain
-JSP-01/JSP-04 qualification work. TradeWars rules, assets and provenance are a
-separate game implementation, not evidence supplied by the terminal host.
+multi-window lifecycle and packaged filesystem/privacy qualification remain
+JSP-01/JSP-04 work. TradeWars rules, assets and provenance are a separate game
+implementation, not evidence supplied by the terminal host.
 
 The save-storage prerequisite now has a bounded core implementation. It owns
 opaque program, universe and slot identities; one exclusive writer lease; a
 single versioned envelope; revision and operation checks; payload digests; and
 atomic private publication with explicit uncertain-outcome recovery. Fault
-tests cover the publication cut. This layer intentionally does not expose a
-worker save API, infer a dirty heap, bind an installed program identity, or
-resume a universe; those authority and protocol decisions remain JSP-04 work.
+tests cover the publication cut. The save-integration layer above it now binds
+that core to one reviewed developer fixture, explicit Start/Resume launch
+parameters, opaque worker calls and recoverable schema migration. It still
+does not expose a general storage registry or infer a dirty heap.
