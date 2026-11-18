@@ -8,11 +8,13 @@ use crate::{
         MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
     },
     protocol::{encode_frame, Decoder, CHUNK_BYTES, MAX_SAFE_INTEGER},
-    Error, WorkerProgram,
+    Error, WorkerProgram, PROGRAM_CPU_WINDOW, PROGRAM_CPU_WINDOW_LIMIT, PROGRAM_HARD_CPU_SECONDS,
+    PROGRAM_TURN_TIMEOUT,
 };
 #[cfg(not(windows))]
 use std::process::Child;
 use std::{
+    collections::VecDeque,
     io::{Read, Write},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
@@ -25,8 +27,72 @@ use std::{
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
-const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const OPERATION_TIMEOUT: Duration = PROGRAM_TURN_TIMEOUT;
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
+
+struct ProgramCpuBudget {
+    previous_cpu: Option<Duration>,
+    window_cpu: Duration,
+    samples: VecDeque<(Instant, Duration)>,
+    next_sample: Instant,
+}
+
+impl ProgramCpuBudget {
+    fn new(now: Instant) -> Self {
+        Self {
+            previous_cpu: None,
+            window_cpu: Duration::ZERO,
+            samples: VecDeque::new(),
+            next_sample: now + CPU_SAMPLE_INTERVAL,
+        }
+    }
+
+    fn sample_due(&self, now: Instant) -> bool {
+        now >= self.next_sample
+    }
+
+    fn sample(
+        &mut self,
+        now: Instant,
+        query: impl FnOnce() -> Result<Duration, Error>,
+    ) -> Result<(), Error> {
+        if !self.sample_due(now) {
+            return Ok(());
+        }
+        self.observe(now, query()?)
+    }
+
+    fn observe(&mut self, now: Instant, cpu: Duration) -> Result<(), Error> {
+        if self.previous_cpu.is_some_and(|previous| cpu < previous) {
+            return Err(Error::Unavailable("worker CPU evidence regressed"));
+        }
+        if cpu >= Duration::from_secs(PROGRAM_HARD_CPU_SECONDS) {
+            return Err(Error::WorkerFailed("program hard CPU fallback exhausted"));
+        }
+        while self.samples.front().is_some_and(|(sampled, _)| {
+            now.saturating_duration_since(*sampled) > PROGRAM_CPU_WINDOW
+        }) {
+            if let Some((_, used)) = self.samples.pop_front() {
+                self.window_cpu = self.window_cpu.saturating_sub(used);
+            }
+        }
+        if now < self.next_sample {
+            return Ok(());
+        }
+        let used = cpu.saturating_sub(self.previous_cpu.unwrap_or_default());
+        self.previous_cpu = Some(cpu);
+        self.next_sample = now + CPU_SAMPLE_INTERVAL;
+        if !used.is_zero() {
+            self.samples.push_back((now, used));
+            self.window_cpu = self.window_cpu.saturating_add(used);
+        }
+        if self.window_cpu >= PROGRAM_CPU_WINDOW_LIMIT {
+            return Err(Error::WorkerFailed("program rolling CPU budget exhausted"));
+        }
+        Ok(())
+    }
+}
 
 enum CommandRequest {
     Input {
@@ -105,7 +171,7 @@ impl ProgramSupervisor {
         forced: Arc<AtomicBool>,
         fence: Arc<dyn ProgramDeliveryFence>,
     ) -> Result<Self, Error> {
-        platform::availability()?;
+        platform::program_availability()?;
         if crate::cleanup_failed() {
             return Err(Error::Unavailable("an owned worker could not be reaped"));
         }
@@ -397,6 +463,7 @@ fn supervise_child(
         fence,
         generation,
     )?;
+    let mut cpu = ProgramCpuBudget::new(Instant::now());
     write_program_bundle(
         &mut input,
         &source,
@@ -428,6 +495,7 @@ fn supervise_child(
         deadline,
         forced,
         fence,
+        &mut cpu,
     )?;
     startup
         .try_send(Ok(startup_output))
@@ -437,6 +505,7 @@ fn supervise_child(
         if !fence.is_live(generation) {
             return Err(Error::DisclosureRevoked);
         }
+        check_program_limits(child, &mut cpu)?;
         #[cfg(target_os = "macos")]
         if platform::footprint_exceeded(child.id())? {
             return Err(Error::WorkerFailed("native memory ceiling exceeded"));
@@ -506,6 +575,7 @@ fn supervise_child(
                     deadline,
                     forced,
                     fence,
+                    &mut cpu,
                 )
             });
         let finished = close;
@@ -543,7 +613,9 @@ fn expect_ready(
         let message: Option<ProgramWorkerMessage> = decoder.read(output)?;
         if let Some(message) = message {
             match message {
-                ProgramWorkerMessage::Ready { profile } if profile == platform::availability()? => {
+                ProgramWorkerMessage::Ready { profile }
+                    if profile == platform::program_availability()? =>
+                {
                     return Ok(())
                 }
                 ProgramWorkerMessage::Failed { code } => return Err(worker_failure(code)),
@@ -594,6 +666,7 @@ fn wait_started(
     deadline: Instant,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
+    cpu: &mut ProgramCpuBudget,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
@@ -629,7 +702,7 @@ fn wait_started(
                 _ => return Err(Error::Protocol),
             }
         }
-        check_wait(child, deadline, forced, fence, generation)?;
+        check_wait(child, deadline, forced, fence, generation, cpu)?;
     }
 }
 
@@ -645,6 +718,7 @@ fn wait_operation(
     deadline: Instant,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
+    cpu: &mut ProgramCpuBudget,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
@@ -689,7 +763,7 @@ fn wait_operation(
                 _ => return Err(Error::Protocol),
             }
         }
-        check_wait(child, deadline, forced, fence, generation)?;
+        check_wait(child, deadline, forced, fence, generation, cpu)?;
     }
 }
 
@@ -699,8 +773,10 @@ fn check_wait(
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
     generation: u64,
+    cpu: &mut ProgramCpuBudget,
 ) -> Result<(), Error> {
     check_deadline(deadline, forced, fence, generation)?;
+    check_program_limits(child, cpu)?;
     if child.try_wait()?.is_some() {
         return Err(Error::Protocol);
     }
@@ -710,6 +786,17 @@ fn check_wait(
     }
     thread::sleep(Duration::from_millis(1));
     Ok(())
+}
+
+fn worker_cpu_time(child: &Child) -> Result<Duration, Error> {
+    #[cfg(windows)]
+    return child.cpu_time();
+    #[cfg(not(windows))]
+    return platform::child_cpu_time(child.id());
+}
+
+fn check_program_limits(child: &Child, cpu: &mut ProgramCpuBudget) -> Result<(), Error> {
+    cpu.sample(Instant::now(), || worker_cpu_time(child))
 }
 
 fn worker_failure(code: crate::program::ProgramWorkerFailure) -> Error {
@@ -954,5 +1041,94 @@ mod delivery_race_tests {
                 .recv_timeout(Duration::from_secs(1))
                 .unwrap();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rolling_cpu_budget_expires_idle_work_and_limits_new_work() {
+        let start = Instant::now();
+        let mut budget = ProgramCpuBudget::new(start);
+        budget
+            .observe(
+                start + CPU_SAMPLE_INTERVAL,
+                PROGRAM_CPU_WINDOW_LIMIT - Duration::from_millis(10),
+            )
+            .unwrap();
+        budget
+            .observe(
+                start + PROGRAM_CPU_WINDOW + Duration::from_millis(20),
+                PROGRAM_CPU_WINDOW_LIMIT - Duration::from_millis(10),
+            )
+            .unwrap();
+        assert!(budget
+            .observe(
+                start + PROGRAM_CPU_WINDOW + Duration::from_millis(30),
+                PROGRAM_CPU_WINDOW_LIMIT + Duration::from_millis(350),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn rolling_cpu_budget_rejects_regression_and_has_hard_fallback() {
+        let start = Instant::now();
+        let mut budget = ProgramCpuBudget::new(start);
+        budget
+            .observe(start + CPU_SAMPLE_INTERVAL, Duration::from_millis(10))
+            .unwrap();
+        assert!(budget
+            .observe(start + CPU_SAMPLE_INTERVAL * 2, Duration::ZERO)
+            .is_err());
+        let mut budget = ProgramCpuBudget::new(start);
+        assert!(budget
+            .observe(
+                start + CPU_SAMPLE_INTERVAL,
+                Duration::from_secs(PROGRAM_HARD_CPU_SECONDS),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn rolling_cpu_budget_allows_cumulative_work_after_windows_expire() {
+        let start = Instant::now();
+        let mut budget = ProgramCpuBudget::new(start);
+        let mut cpu = Duration::ZERO;
+        for window in 1..=30 {
+            let base = start + Duration::from_secs(window * 2);
+            for sample in 1..=20 {
+                cpu += CPU_SAMPLE_INTERVAL;
+                budget
+                    .observe(base + CPU_SAMPLE_INTERVAL * sample, cpu)
+                    .unwrap();
+            }
+        }
+        assert!(cpu > Duration::from_secs(5));
+    }
+
+    #[test]
+    fn process_cpu_query_waits_for_sampling_deadline() {
+        let start = Instant::now();
+        let mut budget = ProgramCpuBudget::new(start);
+        let queries = std::cell::Cell::new(0);
+        budget
+            .sample(
+                start + CPU_SAMPLE_INTERVAL - Duration::from_millis(1),
+                || {
+                    queries.set(queries.get() + 1);
+                    Ok(Duration::ZERO)
+                },
+            )
+            .unwrap();
+        assert_eq!(queries.get(), 0);
+        budget
+            .sample(start + CPU_SAMPLE_INTERVAL, || {
+                queries.set(queries.get() + 1);
+                Ok(Duration::from_millis(1))
+            })
+            .unwrap();
+        assert_eq!(queries.get(), 1);
     }
 }

@@ -21,8 +21,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Program-mode worker entry. Native confinement completes before `Ready` is
 /// written or any source byte is read.
 pub fn program_worker_entry(input: impl Read, output: impl Write) -> Result<(), Error> {
-    let profile = platform::availability()?;
-    platform::confine()?;
+    let profile = platform::program_availability()?;
+    platform::confine_program()?;
     let mut pipe = ProgramPipe {
         input,
         output,
