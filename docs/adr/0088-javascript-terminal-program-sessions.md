@@ -456,26 +456,34 @@ schedules, package acquisition and public game discovery are outside this ADR.
    resource exhaustion, keyboard/IME/paste and ANSI presentation on each
    supported desktop. Review native evidence before enabling that platform.
 
-No phase in this ADR is implemented or accepted by this documentation PR.
-Keep implementation work separately scoped; do not move current roadmap
-acceptance or enable existing automation while recording this proposal.
+The current implementation branch closes none of the delivery gates. It
+contains only a default-off developer vertical slice: one repository-owned
+QuickJS echo program, ordinary session-tab composition, exact encoded
+input/resize/output checks, bounded control and generation-fenced shutdown.
+The branch does not make the mode generally enabled or qualify a production
+worker. Keep transactional state, packaged/native confinement, launch review,
+TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** Proposed own-session capabilities,
-  generation-fenced worker messages, independent interactive quotas, private
-  transactional save ownership and explicit resume. Preserve the single app
+- **Invariants introduced or changed:** Own-session capabilities,
+  generation-fenced worker messages, independent developer-runtime budgets and
+  explicit close. A later accepted slice adds private transactional save
+  ownership and explicit resume. The developer slice preserves the single app
   terminal writer, core-owned protocol semantics, bounded queues, event-driven
-  wakes, restricted worker, centralized commands and metadata-only workspaces.
-- **GUI/action edges affected:** None in this documentation-only change.
-  Implementation must extend the action graph and registry together before
-  adding launch/review/resume/save-failure behavior. Revalidate existing
-  `ROOT-03`, `ROOT-04`, `CLOSE-01`, `CLOSE-04` and applicable move/window/input
-  edges rather than reinterpreting them as game-specific policy. This proposal
-  does not assign new stable GUI IDs to unavailable functionality.
-- **Automated tests required:** Planned test names below describe future
-  acceptance, not tests present or passing today. Add their concrete paths and
-  trace relationships during each implementation slice:
+  wakes, restricted host API, centralized commands and metadata-only workspaces.
+- **GUI/action edges affected:** `JSP-01` launches only the repository-owned
+  developer echo program through the typed command path; `JSP-02` carries
+  ordinary encoded input, resize and output; `JSP-03` preserves close and
+  backpressure behavior. `JSP-04` remains deferred for digest/save review and
+  resume. Revalidate existing `ROOT-03`, `ROOT-04`, `CLOSE-01`, `CLOSE-04` and
+  applicable move/window/input edges without reinterpreting them as game policy.
+- **Automated tests required:** The developer slice includes strict manifest
+  and protocol bounds, stale-generation refusal, ordered QuickJS echo/resize,
+  bounded backpressure and the app-level
+  `javascript_program_launches_without_shell_or_automation_authority` route.
+  Add the following concrete paths to the trace relationships as the remaining
+  delivery slices land:
   - `javascript_program_launches_without_shell_or_target_authority`;
   - `javascript_program_stream_input_handles_split_utf8_escape_and_replies`;
   - `javascript_program_resize_and_output_preserve_accepted_order`;
@@ -495,15 +503,11 @@ acceptance or enable existing automation while recording this proposal.
   fixtures. Game rules, seeded PRNG and maintenance idempotency need separate
   game-level tests. Existing workflow tests must prove their limits and grants
   have not expanded.
-- **Native/manual evidence required:** No new evidence is claimed or required
-  to publish this proposal. Before implementation enablement, add dedicated
-  program scenarios to `docs/manual-validation.md` and classify native security,
-  filesystem durability, lifecycle, performance and usability evidence on each
-  selected platform. Existing `AUTO-01` workflow consent evidence does not
-  qualify this new execution mode. Mobile remains deferred behind a qualified
-  worker and lifecycle design.
-- **Coverage superseded:** None. `validation/traceability.json` is unchanged
-  because this proposal creates no current GUI edge, test or manual-scenario
-  relationship. Future test names above are intentionally not registered as
-  existing evidence. The PR uses an explicit documentation-only no-impact
-  declaration; acceptance and platform qualification remain open.
+- **Native/manual evidence required:** `JSP-01` records the owner-run packaged,
+  keyboard/IME/paste, multi-window, pressure, shutdown, privacy-lock and
+  confinement checks required before enablement. Existing `AUTO-01` workflow
+  consent evidence does not qualify this execution mode. Mobile remains
+  deferred behind a separately qualified worker and lifecycle design.
+- **Coverage superseded:** None. `validation/traceability.json` registers the
+  implemented developer slice as partial and retains production confinement,
+  lifecycle, save, resume and platform evidence as prerequisites.
