@@ -481,6 +481,43 @@ pub trait SessionEventNotifier: Send + Sync {
     fn notify(&self);
 }
 
+/// A backend-owned permit that remains held while an event is physically used.
+///
+/// Ordinary sessions do not need one. Privacy-sensitive backends may use it to
+/// serialize revocation against terminal mutation, not merely queue removal.
+pub trait SessionEventDeliveryPermit {}
+
+impl<T: ?Sized> SessionEventDeliveryPermit for T {}
+
+/// One event plus any backend authority that must cover its physical delivery.
+pub struct SessionEventDelivery<'a> {
+    event: SessionEvent,
+    _permit: Option<Box<dyn SessionEventDeliveryPermit + 'a>>,
+}
+
+impl SessionEventDelivery<'_> {
+    pub fn new(event: SessionEvent) -> Self {
+        Self {
+            event,
+            _permit: None,
+        }
+    }
+
+    pub fn protected(
+        event: SessionEvent,
+        permit: Box<dyn SessionEventDeliveryPermit + '_>,
+    ) -> SessionEventDelivery<'_> {
+        SessionEventDelivery {
+            event,
+            _permit: Some(permit),
+        }
+    }
+
+    pub fn event(&self) -> &SessionEvent {
+        &self.event
+    }
+}
+
 /// The default notifier for callers without an event loop to wake.
 #[derive(Default)]
 pub struct NoopSessionEventNotifier;
@@ -624,6 +661,11 @@ pub trait Session: Send + Sync {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
+    fn try_recv_event_with_permit(
+        &self,
+    ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+        self.try_recv_event().map(SessionEventDelivery::new)
+    }
 
     /// Returns the backend's live attachment identity, if it supports safe
     /// automation observation. Implementations return the same shared epoch

@@ -1833,8 +1833,8 @@ fn pump_session_events_with_mutations(
     let mut output_received = false;
     let mut ingested_bytes = 0usize;
     for _ in 0..maximum {
-        match session.try_recv_event() {
-            Ok(event) => match &event {
+        match session.try_recv_event_with_permit() {
+            Ok(delivery) => match delivery.event() {
                 SessionEvent::Output(bytes) => {
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
@@ -1867,7 +1867,7 @@ fn pump_session_events_with_mutations(
                                 terminal,
                             });
                             ingested_bytes = ingested_bytes.saturating_add(recovered_bytes);
-                            observe(PumpedSessionEvent::Event(&event));
+                            observe(PumpedSessionEvent::Event(delivery.event()));
                             if ingested_bytes >= MAX_INGEST_BYTES_PER_SESSION_SLICE {
                                 return PumpResult {
                                     hit_limit: true,
@@ -1915,7 +1915,7 @@ fn pump_session_events_with_mutations(
                     } else {
                         mutation(TerminalMutation::Resize(terminal));
                     }
-                    observe(PumpedSessionEvent::Event(&event));
+                    observe(PumpedSessionEvent::Event(delivery.event()));
                 }
                 SessionEvent::Lifecycle(
                     SessionLifecycle::Failed(_) | SessionLifecycle::Disconnected(_),
@@ -1924,15 +1924,15 @@ fn pump_session_events_with_mutations(
                         "Recording stopped because a terminal session failed",
                     ));
                     mutation(TerminalMutation::End);
-                    observe(PumpedSessionEvent::Event(&event));
+                    observe(PumpedSessionEvent::Event(delivery.event()));
                 }
                 SessionEvent::Lifecycle(
                     SessionLifecycle::Exited(_) | SessionLifecycle::Stopped,
                 ) => {
                     mutation(TerminalMutation::End);
-                    observe(PumpedSessionEvent::Event(&event));
+                    observe(PumpedSessionEvent::Event(delivery.event()));
                 }
-                _ => observe(PumpedSessionEvent::Event(&event)),
+                _ => observe(PumpedSessionEvent::Event(delivery.event())),
             },
             Err(error @ (SessionTryReceiveError::Empty | SessionTryReceiveError::Closed)) => {
                 let closed = matches!(error, SessionTryReceiveError::Closed);
