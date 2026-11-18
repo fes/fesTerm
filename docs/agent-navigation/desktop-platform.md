@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1d221819a5e7ad0eabe8469fbfdab414934105a70f3f91011cdc19157c128395"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b6fa506a0515b1521ba4f93b02be67d020ae216111f5bb43b513e5f238398ed9"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,7 +12,7 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: When a packaged build decides whether self-update is allowed
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind, update status, and whether the build can self-update.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind, update status, and self-update eligibility.
 - [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps build markers to installability and trust decisions.
 
 Evidence:
@@ -29,7 +29,7 @@ Caveats:
 Use for: When CI needs to prove a real native window and PTY pass a smoke flow
 
 - [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the real native PTY smoke flow inside the app event loop.
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires exactly one smoke mode and the result path to be set.
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires one smoke mode and a result path before it starts.
 
 Evidence:
 - [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the one-of smoke-mode environment contract.
@@ -44,7 +44,7 @@ Caveats:
 
 Use for: When Finder or AppKit events are arriving from the native macOS app
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder open events until the app attaches and drains them.
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Installs the Finder open-document AppleEvent bridge.
 - [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Maps AppKit selectors into semantic app commands.
 
 Evidence:
@@ -58,7 +58,7 @@ Caveats:
 
 ## Wake and privacy
 
-Use for: When a platform needs to wake or revoke consent when the machine resumes or locks
+Use for: When a platform needs to wake or revoke consent on resume or lock
 
 - [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Handles Windows resume broadcasts in the native message loop.
 - [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Wakes on logind PrepareForSleep(false) resume edges.

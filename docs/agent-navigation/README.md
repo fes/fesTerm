@@ -11,10 +11,10 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns session lifecycle, native PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries. |
-| [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions. |
-| [Automation, workflows, and MCP](automation.md) | Application-scoped automation authority, workflow approval, and MCP protocol state for exact terminal observation and control. |
+| [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal input and global actions. |
+| [Automation, workflows, and MCP](automation.md) | Automation owns application-scoped grant authority, exact workflow binding, and MCP protocol state for terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
-| [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
+| [Terminal recording and export](recording.md) | This domain owns private terminal capture, privacy enforcement, synchronized export preparation, and source-safe replay/recovery for recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
 | [Desktop platform integration and packaging](desktop-platform.md) | This domain owns packaged update gating, native smoke validation, Apple event integration, and platform wake/privacy hooks for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
