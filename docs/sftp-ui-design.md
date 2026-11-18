@@ -261,9 +261,36 @@ Keyboard behavior when a file list has focus:
 - **Path/permission error:** keep the prior valid path/listing; show a concise inline error near the path plus Retry/Details as applicable.
 - **Initial connection error:** show the ordinary fesTerm SSH error treatment in the SFTP surface with Back to profile, Retry, and Details.
 
-## Deletion decision
+## Directory creation and deletion
 
-**Defer delete in v1 on both panes.** Delete is destructive, remote trash semantics are inconsistent, local/remote asymmetry is confusing, and transfer is the core job to validate first. Do not render disabled Delete buttons, accept a Delete keybinding, or expose drag-to-trash. Users can delete through their terminal or OS file manager. Revisit only with a separately reviewed policy covering confirmation, recursive folders, symlinks, remote trash absence, permissions, partial failure, auditability, and recovery.
+Both panes expose **New directory** and **Delete** in a compact action row.
+Both review dialogs fit the available viewport width with inner padding, including narrow 320/460-pixel windows and long folder/target names. New directory names one child of the displayed folder, using the existing
+portable filename admission rules, including refusal of leading/trailing Unicode whitespace that the existing command resolver would trim. Its dialog shows Local/Remote, the Remote
+endpoint when applicable, and the captured parent path. Create never overwrites
+an existing entry and does not recursively create missing ancestors.
+
+Delete opens a separate **Delete permanently?** review listing the exact selected
+paths and their side/endpoint, with Cancel initially focused. It removes files,
+symbolic links themselves and empty directories only: no trash, undo, recursive
+folder deletion or Delete-key shortcut. Unsupported/hidden selections and batches
+above the existing 256-item command limit are refused. Non-empty directories fail
+without deleting their contents.
+
+Reviews are scoped to the displayed folder, selection and actual SFTP connection.
+Navigation/selection/reconnect changes invalidate confirmation. A queued command
+also checks its original connection token, so reconnect cannot silently retarget
+an approved mutation. Metadata is inspected without following the selected leaf
+symlink; observed type/size/modification changes refuse deletion. These ordinary
+filesystem/SFTP path operations do not provide atomic inode-conditional deletion
+against concurrent external replacement.
+
+The existing bounded worker services Local operations even while Remote awaits
+retry. Each mutation is attempted once; it never reconnects/replays automatically.
+A batch stops at its first error and reports the count of confirmed removals and
+the affected target. A transport timeout, owner close or worker loss may leave
+an uncertain result: refresh, reselect and explicitly review again. Already-started
+filesystem/server operations can finish after cancellation. Completion refreshes
+only a pane still showing the captured parent, preserving later navigation.
 
 ## Accessibility and visual fit
 

@@ -146,6 +146,10 @@ pub(super) fn scenarios() -> Vec<Scenario> {
     sftp!("sftp-disconnected", Disconnected, "GUI SFTP: stale listing after disconnect", "Connected file manager > connection lost. Exit: Retry/Edit connection; retained listing stays visible.");
     sftp!("sftp-operation-error", OperationError, "GUI SFTP: operation refusal", "File manager > open an unsupported/oversize file. Exit: dismiss banner or choose another file.");
     sftp!("sftp-transfer-history", Transfers, "GUI SFTP: transfer progress and history", "Select local/remote files > Upload/Download. Synthetic typed worker events show running, completed and failed rows; no files are transferred.");
+    sftp!("sftp-new-local-directory", NewLocalDirectory, "GUI SFTP: new Local directory", "Local > New directory. Production dialog against an owned scratch folder; no Create is submitted.");
+    sftp!("sftp-new-remote-directory", NewRemoteDirectory, "GUI SFTP: new Remote directory", "Remote > New directory. Production dialog against synthetic remote metadata; no SFTP command is submitted.");
+    sftp!("sftp-delete-local", DeleteLocal, "GUI SFTP: permanent Local delete review", "Local > select owned scratch file > Delete. Actual target is displayed; Cancel is focused and no deletion is submitted.");
+    sftp!("sftp-delete-remote", DeleteRemote, "GUI SFTP: permanent Remote delete review", "Remote > select synthetic file > Delete. Actual captured side/endpoint/path is displayed; no deletion is submitted.");
     sftp!("sftp-transfer-details", TransferDetails, "GUI SFTP: isolated transfer drawer", "File manager > Transfers drawer. Isolated production drawer shows live progress and completed/failed history without the surrounding panes. Scroll for remaining rows.");
     sftp!("sftp-collision", Collision, "GUI SFTP: collision decision", "Transfer > existing destination. Exit: Replace/Skip/Keep Both/Cancel; optional apply-to-all. Synthetic worker event; no overwrite.");
     sftp!("sftp-browser-narrow", Narrow, "GUI SFTP: narrow pane switcher", "Resize GUI SFTP below split-view threshold. Switch Local/Remote to navigate. Exit: widen window.");

@@ -195,6 +195,7 @@ const SFTP_PANE_CORNER_RADIUS: u8 = 8;
 const SFTP_PANE_HEADER_HEIGHT: f32 = 35.0;
 const SFTP_PANE_TOOLBAR_HEIGHT: f32 = 39.0;
 const SFTP_PANE_FILTER_ROW_HEIGHT: f32 = 37.0;
+const SFTP_PANE_ACTION_ROW_HEIGHT: f32 = 30.0;
 const SFTP_PANE_FOOTER_HEIGHT: f32 = 26.0;
 const SFTP_TOOL_BUTTON_SIZE: f32 = 28.0;
 const SFTP_BREADCRUMB_HEIGHT: f32 = 28.0;
@@ -237,7 +238,8 @@ const SFTP_PANE_CHROME_HEIGHT: f32 = SFTP_PANE_HEADER_HEIGHT
     + SFTP_HAIRLINE
     + SFTP_PANE_TOOLBAR_HEIGHT
     + SFTP_HAIRLINE
-    + SFTP_PANE_FILTER_ROW_HEIGHT;
+    + SFTP_PANE_FILTER_ROW_HEIGHT
+    + SFTP_PANE_ACTION_ROW_HEIGHT;
 /// The shortest a pane can render: its fixed chrome, the table's column
 /// header, and the footer, with a zero-height listing between them.
 const SFTP_PANE_MIN_HEIGHT: f32 = SFTP_HAIRLINE * 2.0
@@ -1827,6 +1829,7 @@ struct TransferDrawerSummary {
     header_action: TransferDrawerHeaderAction,
 }
 
+mod file_operations;
 #[cfg(test)]
 pub(crate) mod gallery;
 
@@ -1887,11 +1890,13 @@ impl SftpCleanupReporter {
 }
 
 struct SftpWorkerOwner {
+    connection_scope: file_operations::ConnectionScope,
     shutdown: tokio::sync::oneshot::Receiver<()>,
     reporter: SftpCleanupReporter,
 }
 
 struct SftpWorkerNotifications {
+    connection_scope: file_operations::ConnectionScope,
     events: WorkerEventSender,
     repaint: egui::Context,
     reporter: SftpCleanupReporter,
@@ -1921,6 +1926,7 @@ pub(crate) struct SftpFileManagerTab {
     has_connected_once: bool,
     pub(crate) transfer_drawer: TransferDrawerState,
     pub(crate) collision_dialog: Option<SftpCollisionDialogState>,
+    file_operations: file_operations::State,
     command_sender: tokio::sync::mpsc::Sender<WorkerCommand>,
     shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
     cleanup_reporter: SftpCleanupReporter,
@@ -2021,6 +2027,7 @@ impl SftpFileManagerTab {
             has_connected_once: true,
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
+            file_operations: file_operations::State::default(),
             command_sender,
             shutdown_sender: None,
             cleanup_reporter: SftpCleanupReporter::default(),
@@ -2062,6 +2069,8 @@ impl SftpFileManagerTab {
         let repaint = context.clone();
         let launch_target = target.clone();
         let worker_event_sender = event_sender.clone();
+        let file_operations = file_operations::State::default();
+        let connection_scope = file_operations.connection.clone();
         thread::Builder::new()
             .name(format!("festerm-gui-sftp-{}", target.label))
             .spawn(move || {
@@ -2078,6 +2087,7 @@ impl SftpFileManagerTab {
                         worker_event_sender,
                         repaint,
                         SftpWorkerOwner {
+                            connection_scope,
                             shutdown: shutdown_receiver,
                             reporter: worker_reporter,
                         },
@@ -2103,6 +2113,7 @@ impl SftpFileManagerTab {
             has_connected_once: false,
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
+            file_operations,
             command_sender,
             shutdown_sender: Some(shutdown_sender),
             cleanup_reporter,
@@ -2139,6 +2150,14 @@ impl SftpFileManagerTab {
                 break;
             };
             self.apply_event(event);
+        }
+        if self.file_operations.pending
+            && self.command_sender.is_closed()
+            && self.event_receiver.is_empty()
+        {
+            self.file_operations.pending = false;
+            self.operation_error = Some(("File operation result is unknown".into(),
+                "The worker closed. An already-started filesystem or server operation may have completed. Reopen, refresh and review before trying again.".into()));
         }
         if !self.event_receiver.is_empty() {
             self.repaint.request_repaint();
@@ -2355,6 +2374,7 @@ impl SftpFileManagerTab {
         }
         self.show_transfer_drawer(ui);
         self.show_collision_dialog(ui.ctx());
+        self.show_file_operation_dialog(ui.ctx(), tab_id);
         self.take_pending_markdown_command().or(toolbar_command)
     }
 
@@ -2553,6 +2573,11 @@ impl SftpFileManagerTab {
         let mut request_up = false;
         let mut request_home = false;
         let mut request_refresh = false;
+        let mut request_create_directory = false;
+        let mut request_delete = false;
+        let operations_idle = !self.file_operations.pending;
+        let remote_ready = matches!(self.connection_state, SftpConnectionState::Ready)
+            && self.file_operations.current_connection();
         let mut request_open: Option<SftpDirectoryItem> = None;
         let mut request_navigate_text = false;
         let mut request_breadcrumb: Option<SftpPath> = None;
@@ -2924,6 +2949,44 @@ impl SftpFileManagerTab {
                                     pane.set_filter(filter_text);
                                 }
                             });
+                    });
+                    pane_chrome_row(ui, pane_width, SFTP_PANE_ACTION_ROW_HEIGHT, |ui| {
+                        ui.add_space(SFTP_TOOLBAR_PADDING);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let writable = operations_idle
+                            && !pane.loading
+                            && !pane.stale
+                            && pane.is_writable()
+                            && (focus == PaneFocus::Local || remote_ready);
+                        let create = ui.add_enabled(writable, egui::Button::new("New directory"));
+                        create.widget_info(|| {
+                            WidgetInfo::labeled(
+                                WidgetType::Button,
+                                writable,
+                                format!("New directory in {} folder", focus.label()),
+                            )
+                        });
+                        request_create_directory = create.clicked();
+                        let delete_enabled = writable
+                            && pane.selected_count() > 0
+                            && pane.selected_count() <= SftpTransferManager::max_batch_items()
+                            && {
+                                let selected = pane.selected_items();
+                                selected.len() == pane.selected_count() && selected.iter().all(|item|
+                                    item.file_type != SftpEntryType::Other
+                                    && item.path.parent_directory() == pane.current_path
+                                    && item.path.file_name().is_ok())
+                            };
+                        let delete = ui.add_enabled(delete_enabled, egui::Button::new("Delete"));
+                        delete.widget_info(|| {
+                            WidgetInfo::labeled(
+                                WidgetType::Button,
+                                delete_enabled,
+                                format!("Delete selected {} items", focus.label()),
+                            )
+                        });
+                        request_delete = delete.clicked();
+                        delete.on_disabled_hover_text(format!("Select up to {} files, links or directories in this folder. Directories must be empty.", SftpTransferManager::max_batch_items()));
                     });
                     if let Some(error) = error_summary {
                         egui::Frame::new()
@@ -3390,6 +3453,12 @@ impl SftpFileManagerTab {
         if request_home {
             self.navigate_home(focus);
         }
+        if request_create_directory {
+            self.review_file_operation(focus, false);
+        }
+        if request_delete {
+            self.review_file_operation(focus, true);
+        }
         if request_refresh {
             self.refresh_pane(focus);
         }
@@ -3682,7 +3751,7 @@ impl SftpFileManagerTab {
     }
 
     fn handle_keyboard(&mut self, ctx: &egui::Context) {
-        if self.collision_dialog.is_some() {
+        if self.collision_dialog.is_some() || self.file_operation_open() {
             return;
         }
         let command = ctx.input(|input| input.modifiers.command);
@@ -3941,16 +4010,21 @@ impl SftpFileManagerTab {
 
     fn apply_event(&mut self, event: WorkerEvent) {
         match event {
+            WorkerEvent::FileOperationFinished { request, result } => {
+                self.file_operation_finished(request, result)
+            }
             WorkerEvent::HostKeyVerificationRequired { prompt, resolver } => {
                 self.connection_state = SftpConnectionState::AwaitingHostKey;
                 self.pending_host_key = Some(PendingHostKeyDecision { prompt, resolver });
                 self.remote_pane.loading = false;
             }
             WorkerEvent::Connected {
+                connection_scope,
                 remote_directory,
                 remote_metadata,
                 verified_host_key_fingerprint,
             } => {
+                self.file_operations.displayed = connection_scope;
                 self.connection_state = SftpConnectionState::Ready;
                 self.has_connected_once = true;
                 self.pending_host_key = None;
@@ -3983,10 +4057,12 @@ impl SftpFileManagerTab {
                 }
             }
             WorkerEvent::RemoteDirectoryLoaded {
+                connection_scope,
                 snapshot,
                 metadata,
                 verified_host_key_fingerprint,
             } => {
+                self.file_operations.displayed = connection_scope;
                 self.connection_state = SftpConnectionState::Ready;
                 self.pending_host_key = None;
                 self.verified_host_key_fingerprint = Some(verified_host_key_fingerprint);
@@ -4208,6 +4284,7 @@ impl Drop for SftpFileManagerTab {
 
 #[derive(Debug)]
 enum WorkerCommand {
+    FileOperation(file_operations::Request),
     LoadRemote {
         path: String,
     },
@@ -4230,11 +4307,16 @@ enum WorkerCommand {
 
 #[derive(Debug)]
 enum WorkerEvent {
+    FileOperationFinished {
+        request: file_operations::Request,
+        result: Result<(), String>,
+    },
     HostKeyVerificationRequired {
         prompt: HostKeyPrompt,
         resolver: HostKeyDecisionResolver,
     },
     Connected {
+        connection_scope: Arc<()>,
         remote_directory: SftpDirectorySnapshot,
         remote_metadata: Option<SftpPathMetadata>,
         /// The host-key fingerprint accepted for this session, cached so a
@@ -4256,6 +4338,7 @@ enum WorkerEvent {
         details: String,
     },
     RemoteDirectoryLoaded {
+        connection_scope: Arc<()>,
         snapshot: SftpDirectorySnapshot,
         metadata: Option<SftpPathMetadata>,
         /// The fingerprint currently accepted for this session. A
@@ -4390,18 +4473,23 @@ fn buffer_transfer_event(
     });
 }
 
-/// Waits for the next `WorkerCommand`, ignoring anything except
-/// `Reconnect` (nothing else is meaningful before the very first connect
-/// attempt has ever succeeded -- there's no session yet to load a
-/// directory into or enqueue a transfer on). Returns `true` once a retry is
+/// Waits for remote `Reconnect`, while servicing Local file operations even
+/// when the remote endpoint is unavailable. Other remote commands have no
+/// authenticated session before the first successful connect. Returns `true` once a retry is
 /// requested, or `false` if the command channel closed (the tab was
 /// dropped/closed), so the caller can give up instead of waiting forever.
 async fn wait_for_initial_connect_retry(
     command_receiver: &mut tokio::sync::mpsc::Receiver<WorkerCommand>,
+    events: &WorkerEventSender,
+    repaint: &egui::Context,
 ) -> bool {
     loop {
         match command_receiver.recv().await {
             Some(WorkerCommand::Reconnect) => return true,
+            Some(WorkerCommand::FileOperation(request)) if request.focus == PaneFocus::Local => {
+                let result = file_operations::local(&request).await;
+                file_operations::report(request, result, events, repaint).await;
+            }
             Some(_) => continue,
             None => return false,
         }
@@ -4418,6 +4506,7 @@ async fn run_worker(
     owner: SftpWorkerOwner,
 ) {
     let SftpWorkerOwner {
+        connection_scope,
         mut shutdown,
         reporter,
     } = owner;
@@ -4429,6 +4518,7 @@ async fn run_worker(
         known_host_fingerprint,
         command_receiver,
         SftpWorkerNotifications {
+            connection_scope,
             events: event_sender,
             repaint: repaint.clone(),
             reporter: reporter.clone(),
@@ -4456,6 +4546,7 @@ async fn run_worker_operations(
     transfers: &mut Option<SftpTransferManager>,
 ) {
     let SftpWorkerNotifications {
+        connection_scope,
         events: event_sender,
         repaint,
         reporter,
@@ -4493,7 +4584,9 @@ async fn run_worker_operations(
                     })
                     .await;
                 repaint.request_repaint();
-                if !wait_for_initial_connect_retry(&mut command_receiver).await {
+                if !wait_for_initial_connect_retry(&mut command_receiver, &event_sender, &repaint)
+                    .await
+                {
                     return;
                 }
                 continue;
@@ -4522,7 +4615,9 @@ async fn run_worker_operations(
                     })
                     .await;
                 repaint.request_repaint();
-                if !wait_for_initial_connect_retry(&mut command_receiver).await {
+                if !wait_for_initial_connect_retry(&mut command_receiver, &event_sender, &repaint)
+                    .await
+                {
                     return;
                 }
                 continue;
@@ -4541,6 +4636,7 @@ async fn run_worker_operations(
             .flatten();
         let _ = event_sender
             .send(WorkerEvent::Connected {
+                connection_scope: connection_scope.capture(),
                 remote_directory: snapshot,
                 remote_metadata: metadata,
                 verified_host_key_fingerprint: session_known_host_fingerprint
@@ -4568,12 +4664,21 @@ async fn run_worker_operations(
             maybe_command = command_receiver.recv() => {
                 let Some(command) = maybe_command else { break; };
                 match command {
+                    WorkerCommand::FileOperation(request) => {
+                        let result = if request.focus == PaneFocus::Local {
+                            file_operations::local(&request).await
+                        } else {
+                            file_operations::remote(&request, &connection_scope, &mut browsing).await
+                        };
+                        file_operations::report(request, result, &event_sender, &repaint).await;
+                    }
                     WorkerCommand::LoadRemote { path } => {
                         match browsing.remote_directory_snapshot(Some(&path)).await {
                             Ok(snapshot) => {
                                 current_remote = path;
                                 let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                    connection_scope: connection_scope.capture(),
                                     snapshot,
                                     metadata,
                                     verified_host_key_fingerprint: session_known_host_fingerprint
@@ -4595,6 +4700,7 @@ async fn run_worker_operations(
                                 // retry fails the same way and the original
                                 // failure is still reported below.
                                 match reconnect_browsing_session(
+                            &connection_scope,
                                     &target,
                                     &authentication,
                                     &mut session_known_host_fingerprint,
@@ -4611,6 +4717,7 @@ async fn run_worker_operations(
                                                 current_remote = path;
                                                 let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
                                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                    connection_scope: connection_scope.capture(),
                                                     snapshot,
                                                     metadata,
                                                     verified_host_key_fingerprint: session_known_host_fingerprint
@@ -4656,6 +4763,7 @@ async fn run_worker_operations(
                                 // reconnect-and-retry before reporting a
                                 // failure to the user.
                                 match reconnect_browsing_session(
+                            &connection_scope,
                                     &target,
                                     &authentication,
                                     &mut session_known_host_fingerprint,
@@ -4748,6 +4856,7 @@ async fn run_worker_operations(
                     }
                     WorkerCommand::Reconnect => {
                         match reconnect_browsing_session(
+                            &connection_scope,
                             &target,
                             &authentication,
                             &mut session_known_host_fingerprint,
@@ -4763,6 +4872,7 @@ async fn run_worker_operations(
                                     Ok(snapshot) => {
                                         let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
                                         let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                    connection_scope: connection_scope.capture(),
                                             snapshot,
                                             metadata,
                                             verified_host_key_fingerprint: session_known_host_fingerprint
@@ -4815,6 +4925,7 @@ async fn run_worker_operations(
                     // and try again on the next tick or the next time the
                     // user issues a command.
                     if let Ok(session) = reconnect_browsing_session(
+                        &connection_scope,
                         &target,
                         &authentication,
                         &mut session_known_host_fingerprint,
@@ -4827,6 +4938,7 @@ async fn run_worker_operations(
                         if let Ok(snapshot) = browsing.remote_directory_snapshot(Some(&current_remote)).await {
                             let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
                             let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                    connection_scope: connection_scope.capture(),
                                 snapshot,
                                 metadata,
                                 verified_host_key_fingerprint: session_known_host_fingerprint
@@ -4863,12 +4975,14 @@ async fn wait_for_sftp_tab_owner<T>(
 /// host key changed since the last connect) so subsequent reconnects don't
 /// re-prompt unnecessarily.
 async fn reconnect_browsing_session(
+    connection_scope: &file_operations::ConnectionScope,
     target: &SftpFileManagerLaunchTarget,
     authentication: &SftpFileManagerAuthentication,
     known_host_fingerprint: &mut Option<String>,
     event_sender: &WorkerEventSender,
     repaint: &egui::Context,
 ) -> Result<festerm_ssh::SftpSession, String> {
+    connection_scope.retire();
     let (session, accepted_fingerprint) = connect_remote_session(
         target,
         authentication,
@@ -7105,7 +7219,7 @@ pub(crate) mod tests {
     /// synthetic `WorkerEvent`s directly into `apply_event` construct the
     /// struct literal here instead, with disconnected channels that no
     /// worker thread will ever touch.
-    fn test_tab() -> SftpFileManagerTab {
+    pub(super) fn test_tab() -> SftpFileManagerTab {
         let target = test_launch_target(None);
         let (command_sender, _command_receiver) =
             tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
@@ -7125,6 +7239,7 @@ pub(crate) mod tests {
             has_connected_once: false,
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
+            file_operations: file_operations::State::default(),
             command_sender,
             shutdown_sender: None,
             cleanup_reporter: SftpCleanupReporter::default(),
@@ -9410,6 +9525,7 @@ pub(crate) mod tests {
         let mut tab = test_tab();
         tab.verified_host_key_fingerprint = Some("SHA256:original".to_owned());
         tab.apply_event(WorkerEvent::RemoteDirectoryLoaded {
+            connection_scope: tab.file_operations.connection.capture(),
             snapshot: SftpDirectorySnapshot {
                 location: SftpLocation::Remote,
                 path: SftpPath::remote("/"),

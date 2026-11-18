@@ -723,6 +723,21 @@ impl SftpSession {
         self.remote_path_metadata_exact(&resolved).await
     }
 
+    /// Inspects the selected leaf itself, without following a symbolic link.
+    /// Used by reviewed non-recursive file-manager deletion; browsing keeps STAT semantics.
+    pub async fn remote_symlink_metadata(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
+        self.ensure_open()?;
+        let resolved = resolve_remote_path(&self.remote_working_directory, path)?;
+        match self.client.symlink_metadata(resolved.clone()).await {
+            Ok(metadata) => Ok(Some(remote_path_metadata(&resolved, metadata))),
+            Err(error) if is_remote_not_found(&error) => Ok(None),
+            Err(error) => Err(remote_error("inspect selected leaf", &resolved, error)),
+        }
+    }
+
     /// Reads one remote file snapshot up to `max_bytes`, reusing the existing
     /// authenticated SFTP session rather than opening a second SSH path.
     pub async fn read_markdown_snapshot(
@@ -1862,6 +1877,20 @@ pub(crate) fn local_file_name(path: &Path) -> Result<&str, SftpSessionError> {
 
 pub(crate) fn join_path_segment(base: &Path, segment: &str) -> PathBuf {
     normalize_local_path(base.join(segment))
+}
+
+/// Admits one portable child name for graphical directory creation.
+pub fn validate_sftp_child_name(name: &str) -> Result<(), SftpSessionError> {
+    // The existing text-command resolver trims a full path. A graphical
+    // review must never approve a name that this routing could change.
+    if name != name.trim() {
+        return Err(SftpSessionError::LocalOperationFailed {
+            operation: "create directory",
+            path: name.to_owned(),
+            reason: "directory names must not start or end with whitespace".to_owned(),
+        });
+    }
+    validate_remote_local_file_name(name, "create directory")
 }
 
 pub(crate) fn validate_remote_local_file_name(

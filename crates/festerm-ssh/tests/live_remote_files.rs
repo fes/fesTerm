@@ -12,9 +12,10 @@ use festerm_session::{
 };
 use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectOutcome, HostIdentity, HostTrustDecision,
-    RemoteFileReadError, SftpPath, SftpSessionError, SftpTerminalSession, SftpTransferEvent,
-    SftpTransferManager, SftpTransferRequest, SshAuthentication, SshConnectionProfile,
-    SshPortForwardRequestError, SshPortForwardSpec, SshSession, SshSessionOptions,
+    RemoteFileReadError, SftpCommand, SftpPath, SftpSessionError, SftpTerminalSession,
+    SftpTransferEvent, SftpTransferManager, SftpTransferRequest, SshAuthentication,
+    SshConnectionProfile, SshPortForwardRequestError, SshPortForwardSpec, SshSession,
+    SshSessionOptions,
 };
 use russh_sftp::protocol::{
     Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
@@ -38,10 +39,12 @@ enum ShellBehavior {
 
 const FIXTURE_PATH: &str = "/notes-\u{03bb}.md";
 const FIXTURE_PARENT_PATH: &str = "/link/../notes-\u{03bb}.md";
+const FIXTURE_LINK_PATH: &str = "/reviewed-link";
 const FIXTURE_CONTENT: &[u8] = b"# remote document\n\nExact snapshot bytes.\n";
 const CONTROLLED_CONTENT_BYTES: usize = 256 * 1024;
 
 struct MemoryFiles {
+    link_removed: bool,
     stall_reads: bool,
     read_started: mpsc::Sender<()>,
     content: Vec<u8>,
@@ -67,6 +70,7 @@ impl russh_sftp::server::Handler for MemoryFiles {
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let permissions = match path.as_str() {
             FIXTURE_PATH | FIXTURE_PARENT_PATH => 0o100644,
+            FIXTURE_LINK_PATH if !self.link_removed => 0o100644,
             "/" => 0o040755,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -81,7 +85,29 @@ impl russh_sftp::server::Handler for MemoryFiles {
     }
 
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        if path == FIXTURE_LINK_PATH && !self.link_removed {
+            return Ok(Attrs {
+                id,
+                attrs: FileAttributes {
+                    permissions: Some(0o120777),
+                    ..Default::default()
+                },
+            });
+        }
         self.stat(id, path).await
+    }
+
+    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+        if filename != FIXTURE_LINK_PATH || self.link_removed {
+            return Err(StatusCode::NoSuchFile);
+        }
+        self.link_removed = true;
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: String::new(),
+            language_tag: String::new(),
+        })
     }
 
     async fn open(
@@ -290,6 +316,7 @@ impl russh::server::Handler for TestServer {
                 self.subsystems.spawn(russh_sftp::server::run(
                     stream,
                     MemoryFiles {
+                        link_removed: false,
                         stall_reads: matches!(self.behavior, SubsystemBehavior::StallFileReads),
                         read_started: self.subsystem_started.clone(),
                         content: if matches!(self.behavior, SubsystemBehavior::ControlledFileReads)
@@ -1229,4 +1256,76 @@ fn live_remote_file_read_returns_exact_bytes_and_honest_bounds() {
     ));
     assert_eq!(session.lifecycle(), SessionLifecycle::Running);
     session.shutdown(Duration::from_secs(3)).unwrap();
+}
+
+#[test]
+fn gui_sftp_reviewed_link_metadata_and_remove_preserve_its_target() {
+    let (_server, port, _activity) =
+        start_server(SubsystemBehavior::ServeFiles, ShellBehavior::Quiet);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let outcome = connect_gui_sftp_session(
+            fixture_profile(port),
+            SshAuthentication::password("fixture-password"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let GuiSftpSessionConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } = outcome
+        else {
+            panic!("explicit fixture trust required");
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::AcceptOnce)
+            .unwrap();
+        let mut session = completion.wait().await.unwrap();
+        assert_eq!(
+            session
+                .remote_path_metadata(FIXTURE_LINK_PATH)
+                .await
+                .unwrap()
+                .unwrap()
+                .file_type,
+            festerm_ssh::SftpEntryType::File,
+            "existing navigation STAT still follows the link"
+        );
+        assert_eq!(
+            session
+                .remote_symlink_metadata(FIXTURE_LINK_PATH)
+                .await
+                .unwrap()
+                .unwrap()
+                .file_type,
+            festerm_ssh::SftpEntryType::Symlink,
+            "review LSTAT identifies the selected link itself"
+        );
+        session
+            .execute(SftpCommand::Rm {
+                path: FIXTURE_LINK_PATH.into(),
+            })
+            .await
+            .unwrap();
+        assert!(session
+            .remote_symlink_metadata(FIXTURE_LINK_PATH)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            session
+                .read_markdown_snapshot(FIXTURE_PATH, 1024)
+                .await
+                .unwrap(),
+            FIXTURE_CONTENT,
+            "link removal must leave target bytes intact"
+        );
+        session.close().await.unwrap();
+    });
 }
