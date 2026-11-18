@@ -2,11 +2,13 @@ use crate::{
     platform,
     program::{
         ApprovedProgram, ProgramCapability, ProgramHostError, ProgramHostMessage,
-        ProgramHostRequest, ProgramHostResult, ProgramOutcome, TerminalSize, MAX_INPUT_CHUNK_BYTES,
-        MAX_OUTPUT_CHUNK_BYTES, MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_HOST_CALLS, MAX_PENDING_WRITES,
-        MAX_SLEEP_MS,
+        ProgramHostRequest, ProgramHostResult, ProgramLaunchParams, ProgramOutcome, TerminalSize,
+        MAX_INPUT_CHUNK_BYTES, MAX_OUTPUT_CHUNK_BYTES, MAX_OUTPUT_QUEUE_BYTES,
+        MAX_PENDING_HOST_CALLS, MAX_PENDING_WRITES, MAX_SLEEP_MS,
     },
-    HEAP_BYTES, PROGRAM_TURN_CPU_LIMIT, PROGRAM_TURN_TIMEOUT, STACK_BYTES,
+    ProgramStorageCommit, ProgramStorageCommitRequest, ProgramStorageHost, ProgramStorageLoad,
+    UnavailableProgramStorage, HEAP_BYTES, PROGRAM_TURN_CPU_LIMIT, PROGRAM_TURN_TIMEOUT,
+    STACK_BYTES,
 };
 use rquickjs::{
     loader::{ImportAttributes, Loader, Resolver},
@@ -170,6 +172,20 @@ const BOOTSTRAP: &str = r#"
         now: () => call(JSON.stringify({method:"clockNow"})),
         sleep: milliseconds => call(JSON.stringify({method:"clockSleep", milliseconds}))
     });
+    const storage = Object.freeze({
+        load: slot => {
+            if (typeof slot !== "string") throw new TypeError("storage slot");
+            return call(JSON.stringify({method:"storageLoad", slot}));
+        },
+        commit: (slot, expectedRevision, schemaVersion, value, operationId) => {
+            if (!(value instanceof Uint8Array)) throw new TypeError("storage value");
+            if (typeof operationId !== "string") throw new TypeError("operation id");
+            return call(JSON.stringify({
+                method:"storageCommit", slot, expectedRevision, schemaVersion,
+                value: Array.from(value), operationId
+            }));
+        }
+    });
     const terminal = Object.freeze(Object.defineProperties({}, {
         write: {value: Object.freeze(write), enumerable: true},
         events: {value: Object.freeze(events), enumerable: true},
@@ -184,9 +200,10 @@ const BOOTSTRAP: &str = r#"
             {value: undefined, writable: false, configurable: false});
     }
     return {
-        start: (main, initialSize) => {
+        start: (main, initialSize, params) => {
             size = Object.freeze({columns: initialSize.columns, rows: initialSize.rows});
-            return main({terminal, assets, clock, params: Object.freeze({})});
+            return main({terminal, assets, clock, storage,
+                params: Object.freeze(Object.assign({}, params))});
         },
         setSize: next => {
             size = Object.freeze({columns: next.columns, rows: next.rows});
@@ -236,6 +253,18 @@ impl QuickJsProgramRuntime {
     }
 
     pub fn new(program: ApprovedProgram) -> Result<Self, QuickJsProgramRuntimeError> {
+        Self::new_with_storage(
+            program,
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
+            Arc::new(UnavailableProgramStorage),
+        )
+    }
+
+    pub fn new_with_storage(
+        program: ApprovedProgram,
+        params: ProgramLaunchParams,
+        storage: Arc<dyn ProgramStorageHost>,
+    ) -> Result<Self, QuickJsProgramRuntimeError> {
         if ![
             ProgramCapability::TerminalInput,
             ProgramCapability::TerminalOutput,
@@ -253,7 +282,16 @@ impl QuickJsProgramRuntime {
         let worker_state = state.clone();
         let worker = thread::Builder::new()
             .name("festerm-quickjs-program".into())
-            .spawn(move || worker_loop(program, receive, worker_cancel, worker_state))
+            .spawn(move || {
+                worker_loop(
+                    program,
+                    params,
+                    storage,
+                    receive,
+                    worker_cancel,
+                    worker_state,
+                )
+            })
             .map_err(|_| QuickJsProgramRuntimeError::Unavailable)?;
         Ok(Self {
             commands,
@@ -403,6 +441,8 @@ impl Drop for QuickJsProgramRuntime {
 
 fn worker_loop(
     program: ApprovedProgram,
+    params: ProgramLaunchParams,
+    storage: Arc<dyn ProgramStorageHost>,
     commands: Receiver<Command>,
     cancel: Arc<AtomicBool>,
     state: Arc<AtomicU8>,
@@ -423,7 +463,8 @@ fn worker_loop(
         state.store(FAILED, Ordering::Release);
         return;
     };
-    let result = context.with(|ctx| worker_context(&program, &commands, &ctx, &state, &cancel));
+    let result = context
+        .with(|ctx| worker_context(&program, &params, storage, &commands, &ctx, &state, &cancel));
     if result.is_err() && state.load(Ordering::Acquire) != CLOSED {
         state.store(FAILED, Ordering::Release);
     }
@@ -431,6 +472,8 @@ fn worker_loop(
 
 fn worker_context<'js>(
     program: &ApprovedProgram,
+    params: &ProgramLaunchParams,
+    storage: Arc<dyn ProgramStorageHost>,
     commands: &Receiver<Command>,
     ctx: &Ctx<'js>,
     state: &AtomicU8,
@@ -438,7 +481,7 @@ fn worker_context<'js>(
 ) -> rquickjs::Result<()> {
     let output = Rc::new(RefCell::new(Output::new()));
     let output_bytes = Rc::new(RefCell::new(0usize));
-    let host = Rc::new(RefCell::new(HostCalls::new(program)));
+    let host = Rc::new(RefCell::new(HostCalls::new(program, storage)));
     install_program_services(
         ctx.clone(),
         program,
@@ -478,12 +521,13 @@ fn worker_context<'js>(
             Command::Start(size, reply) => {
                 let size_value = size_object(ctx, size)?;
                 let result = start
-                    .call::<_, Value>((main.clone(), size_value))
+                    .call::<_, Value>((main.clone(), size_value, params_object(ctx, params)?))
                     .map_err(|_| QuickJsProgramRuntimeError::Script)
                     .and_then(|value| {
                         root = value.as_promise().cloned();
                         drive_local_host_calls(ctx, &host, &deliver, cancel, root.as_ref())
                     })
+                    .and_then(|()| reject_settled_failure(root.as_ref()))
                     .and_then(|()| take_output(&output, &output_bytes));
                 if result.is_ok()
                     && root
@@ -508,6 +552,7 @@ fn worker_context<'js>(
                     .and_then(|()| {
                         drive_local_host_calls(ctx, &host, &deliver, cancel, root.as_ref())
                     })
+                    .and_then(|()| reject_settled_failure(root.as_ref()))
                     .and_then(|()| take_output(&output, &output_bytes));
                 if result.is_ok()
                     && root
@@ -533,6 +578,7 @@ fn worker_context<'js>(
                     .and_then(|()| {
                         drive_local_host_calls(ctx, &host, &deliver, cancel, root.as_ref())
                     })
+                    .and_then(|()| reject_settled_failure(root.as_ref()))
                     .and_then(|()| take_output(&output, &output_bytes));
                 if result.is_ok()
                     && root
@@ -555,6 +601,7 @@ fn worker_context<'js>(
                     .and_then(|()| {
                         drive_local_host_calls(ctx, &host, &deliver, cancel, root.as_ref())
                     })
+                    .and_then(|()| reject_settled_failure(root.as_ref()))
                     .and_then(|()| take_output(&output, &output_bytes));
                 let successful = result.is_ok();
                 send_reply(reply, result);
@@ -604,9 +651,20 @@ fn take_output(
     if *bytes.borrow() > MAX_OUTPUT_QUEUE_BYTES {
         return Err(QuickJsProgramRuntimeError::Output);
     }
+
     let result = std::mem::take(&mut *output.borrow_mut());
     *bytes.borrow_mut() = 0;
     Ok(result)
+}
+
+fn reject_settled_failure(
+    root: Option<&rquickjs::Promise<'_>>,
+) -> Result<(), QuickJsProgramRuntimeError> {
+    if root.is_some_and(|promise| promise.state() == PromiseState::Rejected) {
+        Err(QuickJsProgramRuntimeError::Script)
+    } else {
+        Ok(())
+    }
 }
 
 fn send_reply(reply: Reply, result: Result<Output, QuickJsProgramRuntimeError>) {
@@ -623,10 +681,11 @@ struct HostCalls<'js> {
     outgoing: VecDeque<(u64, ProgramHostRequest)>,
     pending: BTreeMap<u64, PendingHostCall<'js>>,
     assets: BTreeMap<String, Vec<u8>>,
+    storage: Arc<dyn ProgramStorageHost>,
 }
 
 impl HostCalls<'_> {
-    fn new(program: &ApprovedProgram) -> Self {
+    fn new(program: &ApprovedProgram, storage: Arc<dyn ProgramStorageHost>) -> Self {
         Self {
             next_id: 0,
             outgoing: VecDeque::new(),
@@ -641,6 +700,7 @@ impl HostCalls<'_> {
                         .map(|bytes| (asset.id.clone(), bytes.to_vec()))
                 })
                 .collect(),
+            storage,
         }
     }
 }
@@ -673,6 +733,51 @@ fn install_program_services<'js>(
                     .and_then(serde_json::Value::as_u64)
                     .and_then(|value| u32::try_from(value).ok())
                     .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?,
+            },
+            Some("storageLoad") => ProgramHostRequest::StorageLoad {
+                slot: wire
+                    .get("slot")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?
+                    .to_owned(),
+            },
+            Some("storageCommit") => ProgramHostRequest::StorageCommit {
+                slot: wire
+                    .get("slot")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?
+                    .to_owned(),
+                expected_revision: wire
+                    .get("expectedRevision")
+                    .and_then(|value| {
+                        value
+                            .as_u64()
+                            .map(Some)
+                            .or_else(|| value.is_null().then_some(None))
+                    })
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?,
+                schema_version: wire
+                    .get("schemaVersion")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?,
+                value: wire
+                    .get("value")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_u64()
+                            .and_then(|byte| u8::try_from(byte).ok())
+                            .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))
+                    })
+                    .collect::<rquickjs::Result<Vec<_>>>()?,
+                operation_id: wire
+                    .get("operationId")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| rquickjs::Error::new_from_js("host", "request"))?
+                    .to_owned(),
             },
             _ => return Err(rquickjs::Error::new_from_js("host", "request")),
         };
@@ -719,15 +824,119 @@ fn resolve_host_result<'js>(
         .map_err(|_| rquickjs::Error::Exception)?;
     match result {
         ProgramHostResult::Asset { bytes } => {
-            deliver.call((call_id, TypedArray::<u8>::new(ctx.clone(), bytes)?))
+            deliver.call::<_, ()>((call_id, TypedArray::<u8>::new(ctx.clone(), bytes)?))
         }
         ProgramHostResult::Clock { unix_milliseconds } => {
-            deliver.call((call_id, unix_milliseconds as f64))
+            deliver.call::<_, ()>((call_id, unix_milliseconds as f64))
         }
-        ProgramHostResult::Slept {} => deliver.call((call_id, ())),
+        ProgramHostResult::Slept {} => deliver.call::<_, ()>((call_id, ())),
+        ProgramHostResult::StorageMissing {} => {
+            let result = Object::new(ctx.clone())?;
+            result.set("status", "missing")?;
+            deliver.call::<_, ()>((call_id, result))
+        }
+        ProgramHostResult::StoragePresent {
+            schema_version,
+            revision,
+            value,
+        } => {
+            let result = Object::new(ctx.clone())?;
+            result.set("status", "present")?;
+            result.set("schemaVersion", schema_version)?;
+            result.set("revision", revision)?;
+            result.set("value", TypedArray::<u8>::new(ctx.clone(), value)?)?;
+            deliver.call::<_, ()>((call_id, result))
+        }
+        ProgramHostResult::StorageCommitted { revision } => {
+            let result = Object::new(ctx.clone())?;
+            result.set("revision", revision)?;
+            deliver.call::<_, ()>((call_id, result))
+        }
+        ProgramHostResult::StorageConflict { actual_revision } => {
+            let result = Object::new(ctx.clone())?;
+            result.set("conflict", true)?;
+            result.set("actualRevision", actual_revision)?;
+            deliver.call::<_, ()>((call_id, result))
+        }
+
         ProgramHostResult::Error { code } => {
-            deliver.call((call_id, Option::<u8>::None, format!("{code:?}")))
+            deliver.call::<_, ()>((call_id, Option::<u8>::None, format!("{code:?}")))
         }
+    }?;
+    Ok(())
+}
+
+fn params_object<'js>(
+    ctx: &Ctx<'js>,
+    params: &ProgramLaunchParams,
+) -> rquickjs::Result<Object<'js>> {
+    let result = Object::new(ctx.clone())?;
+    result.set(
+        "mode",
+        match params.mode {
+            crate::program::ProgramLaunchMode::New => "new",
+            crate::program::ProgramLaunchMode::Resume => "resume",
+        },
+    )?;
+    Ok(result)
+}
+
+fn storage_load_result(result: ProgramStorageLoad) -> ProgramHostResult {
+    match result {
+        ProgramStorageLoad::Missing => ProgramHostResult::StorageMissing {},
+        ProgramStorageLoad::Present {
+            schema_version,
+            revision,
+            value,
+        } => ProgramHostResult::StoragePresent {
+            schema_version,
+            revision,
+            value,
+        },
+        ProgramStorageLoad::Corrupt => ProgramHostResult::Error {
+            code: ProgramHostError::Corrupt,
+        },
+        ProgramStorageLoad::Future { .. } => ProgramHostResult::Error {
+            code: ProgramHostError::Future,
+        },
+        ProgramStorageLoad::Unavailable => ProgramHostResult::Error {
+            code: ProgramHostError::Unavailable,
+        },
+        ProgramStorageLoad::BusyWriter => ProgramHostResult::Error {
+            code: ProgramHostError::BusyWriter,
+        },
+        ProgramStorageLoad::ResourceLimit => ProgramHostResult::Error {
+            code: ProgramHostError::ResourceLimit,
+        },
+    }
+}
+
+fn storage_commit_result(result: ProgramStorageCommit) -> ProgramHostResult {
+    match result {
+        ProgramStorageCommit::Committed { revision } => {
+            ProgramHostResult::StorageCommitted { revision }
+        }
+        ProgramStorageCommit::Conflict { actual_revision } => {
+            ProgramHostResult::StorageConflict { actual_revision }
+        }
+        ProgramStorageCommit::Corrupt => ProgramHostResult::Error {
+            code: ProgramHostError::Corrupt,
+        },
+        ProgramStorageCommit::Future { .. } => ProgramHostResult::Error {
+            code: ProgramHostError::Future,
+        },
+        ProgramStorageCommit::Unavailable => ProgramHostResult::Error {
+            code: ProgramHostError::Unavailable,
+        },
+        ProgramStorageCommit::BusyWriter => ProgramHostResult::Error {
+            code: ProgramHostError::BusyWriter,
+        },
+        ProgramStorageCommit::Uncertain => ProgramHostResult::Error {
+            code: ProgramHostError::Uncertain,
+        },
+        ProgramStorageCommit::ResourceLimit => ProgramHostResult::Error {
+            code: ProgramHostError::ResourceLimit,
+        },
     }
 }
 
@@ -824,6 +1033,24 @@ fn drive_local_host_calls<'js>(
                     }
                 }
             }
+            ProgramHostRequest::StorageLoad { slot } => {
+                storage_load_result(calls.borrow().storage.load(&slot))
+            }
+            ProgramHostRequest::StorageCommit {
+                slot,
+                expected_revision,
+                schema_version,
+                value,
+                operation_id,
+            } => storage_commit_result(calls.borrow().storage.commit(
+                &slot,
+                ProgramStorageCommitRequest {
+                    expected_revision,
+                    schema_version,
+                    value,
+                    operation_id,
+                },
+            )),
         };
         resolve_host_result(calls, ctx, deliver, call_id, result)
             .map_err(|_| QuickJsProgramRuntimeError::Script)?;
@@ -854,6 +1081,7 @@ pub(crate) fn run_inline_program(
     program: ApprovedProgram,
     generation: u64,
     initial_size: TerminalSize,
+    params: ProgramLaunchParams,
     transport: &mut impl InlineProgramTransport,
 ) -> Result<(), crate::Error> {
     let runtime = Runtime::new().map_err(|_| crate::Error::WorkerFailed("QuickJS runtime"))?;
@@ -880,7 +1108,10 @@ pub(crate) fn run_inline_program(
             begin_inline_turn(&active_turn)?;
             let output = Rc::new(RefCell::new(Output::new()));
             let output_bytes = Rc::new(RefCell::new(0usize));
-            let host = Rc::new(RefCell::new(HostCalls::new(&program)));
+            let host = Rc::new(RefCell::new(HostCalls::new(
+                &program,
+                Arc::new(UnavailableProgramStorage),
+            )));
             install_program_services(
                 ctx.clone(),
                 &program,
@@ -909,7 +1140,11 @@ pub(crate) fn run_inline_program(
             let set_size: Function = bootstrap.get("setSize")?;
             let deliver: Function = bootstrap.get("deliver")?;
             let main: Function = module.get("main")?;
-            let root: Value = start.call((main, size_object(&ctx, initial_size)?))?;
+            let root: Value = start.call((
+                main,
+                size_object(&ctx, initial_size)?,
+                params_object(&ctx, &params)?,
+            ))?;
             let root = root.as_promise().cloned();
             while ctx.execute_pending_job() {}
             if root
@@ -1170,7 +1405,113 @@ fn inline_message_generation(message: &ProgramHostMessage) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{developer_echo_program, developer_host_services_program};
+    use crate::program::{
+        developer_echo_program, developer_host_services_program, developer_save_program,
+    };
+
+    #[derive(Clone, Debug, Default)]
+    struct MemoryStorage {
+        snapshot: Arc<Mutex<Option<StoredSnapshot>>>,
+    }
+
+    type StoredSnapshot = (u32, u64, Vec<u8>);
+
+    impl ProgramStorageHost for MemoryStorage {
+        fn load(&self, slot: &str) -> ProgramStorageLoad {
+            if slot != "primary" {
+                return ProgramStorageLoad::Unavailable;
+            }
+            match self.snapshot.lock().unwrap().clone() {
+                Some((schema_version, revision, value)) => ProgramStorageLoad::Present {
+                    schema_version,
+                    revision,
+                    value,
+                },
+                None => ProgramStorageLoad::Missing,
+            }
+        }
+
+        fn commit(&self, slot: &str, request: ProgramStorageCommitRequest) -> ProgramStorageCommit {
+            if slot != "primary" {
+                return ProgramStorageCommit::Unavailable;
+            }
+            let mut snapshot = self.snapshot.lock().unwrap();
+            let actual_revision = snapshot.as_ref().map(|(_, revision, _)| *revision);
+            if request.expected_revision != actual_revision {
+                return ProgramStorageCommit::Conflict { actual_revision };
+            }
+            let revision = actual_revision.unwrap_or(0) + 1;
+            *snapshot = Some((request.schema_version, revision, request.value));
+            ProgramStorageCommit::Committed { revision }
+        }
+    }
+
+    #[test]
+    fn developer_save_fixture_exercises_explicit_new_and_resume() {
+        let storage = MemoryStorage::default();
+        let runtime = QuickJsProgramRuntime::new_with_storage(
+            developer_save_program().unwrap(),
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
+            Arc::new(storage.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            runtime
+                .start(TerminalSize {
+                    columns: 80,
+                    rows: 24,
+                })
+                .unwrap(),
+            vec![b"new-ready\n".to_vec()]
+        );
+        assert_eq!(runtime.input(b"x").unwrap(), vec![b"saved:1\n".to_vec()]);
+        runtime.close().unwrap();
+        assert_eq!(storage.snapshot.lock().unwrap().as_ref().unwrap().0, 2);
+
+        let duplicate = QuickJsProgramRuntime::new_with_storage(
+            developer_save_program().unwrap(),
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
+            Arc::new(storage.clone()),
+        )
+        .unwrap();
+        assert!(duplicate
+            .start(TerminalSize {
+                columns: 80,
+                rows: 24,
+            })
+            .is_err());
+
+        let missing = MemoryStorage::default();
+        let missing_resume = QuickJsProgramRuntime::new_with_storage(
+            developer_save_program().unwrap(),
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::Resume),
+            Arc::new(missing),
+        )
+        .unwrap();
+        assert!(missing_resume
+            .start(TerminalSize {
+                columns: 80,
+                rows: 24,
+            })
+            .is_err());
+
+        let resumed = QuickJsProgramRuntime::new_with_storage(
+            developer_save_program().unwrap(),
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::Resume),
+            Arc::new(storage),
+        )
+        .unwrap();
+        assert_eq!(
+            resumed
+                .start(TerminalSize {
+                    columns: 80,
+                    rows: 24,
+                })
+                .unwrap(),
+            vec![b"resume-ready\n".to_vec()]
+        );
+        assert_eq!(resumed.input(b"yz").unwrap(), vec![b"saved:2\n".to_vec()]);
+    }
 
     #[test]
     fn active_turn_interrupts_at_controlled_cpu_budget_boundary() {
@@ -1410,6 +1751,7 @@ mod tests {
                 columns: 80,
                 rows: 24,
             },
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
             &mut transport,
         )
         .unwrap();
@@ -1469,6 +1811,7 @@ mod tests {
                 columns: 80,
                 rows: 24,
             },
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
             &mut transport,
         )
         .unwrap();
@@ -1521,6 +1864,7 @@ mod tests {
                 columns: 80,
                 rows: 24,
             },
+            ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
             &mut transport,
         )
         .unwrap();

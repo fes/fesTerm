@@ -10,6 +10,8 @@ mod engine;
 pub mod platform;
 #[cfg(feature = "javascript-program-dev")]
 pub mod program;
+#[cfg(feature = "javascript-program-dev")]
+mod program_storage;
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
 mod program_supervisor;
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
@@ -27,6 +29,12 @@ mod worker;
 
 #[cfg(feature = "javascript-program-dev")]
 pub use program::{JavaScriptProgramLaunch, ProgramDeliveryFence, ProgramDeliveryPermit};
+#[cfg(feature = "javascript-program-dev")]
+pub use program_storage::{
+    ProgramStorageCommit, ProgramStorageCommitRequest, ProgramStorageHost, ProgramStorageLoad,
+    ProgramStoragePreparation, ProgramStorageSnapshot, UnavailableProgramStorage,
+    MAX_STORAGE_SLOT_BYTES, MAX_STORAGE_VALUE_BYTES,
+};
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
 pub use program_supervisor::ProgramSupervisor;
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
@@ -107,4 +115,6 @@ pub enum Error {
     Cleanup,
     #[error("automation worker failed: {0}")]
     WorkerFailed(&'static str),
+    #[error("{0}")]
+    Storage(&'static str),
 }

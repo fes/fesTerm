@@ -3482,14 +3482,24 @@ impl FesTermApp {
             },
         ];
         #[cfg(feature = "javascript-program-dev")]
-        items.push(PaletteItem {
-            id: 4,
-            category: C::Sessions,
-            label: "Start JavaScript Echo (developer)".to_owned(),
-            hint: None,
-            is_tab: false,
-            shortcut_label: None,
-        });
+        items.extend([
+            PaletteItem {
+                id: 4,
+                category: C::Sessions,
+                label: "Start JavaScript Save Fixture (developer)".to_owned(),
+                hint: None,
+                is_tab: false,
+                shortcut_label: None,
+            },
+            PaletteItem {
+                id: 48,
+                category: C::Sessions,
+                label: "Resume JavaScript Save Fixture (developer)".to_owned(),
+                hint: None,
+                is_tab: false,
+                shortcut_label: None,
+            },
+        ]);
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.extend([
                 PaletteItem {
@@ -3916,9 +3926,19 @@ impl FesTermApp {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
             #[cfg(feature = "javascript-program-dev")]
-            4 => self
-                .state
-                .dispatch(AppCommand::StartJavaScriptProgram, context),
+            4 => self.state.dispatch(
+                AppCommand::StartJavaScriptSave {
+                    mode: festerm_javascript_session::ProgramLaunchMode::New,
+                },
+                context,
+            ),
+            #[cfg(feature = "javascript-program-dev")]
+            48 => self.state.dispatch(
+                AppCommand::StartJavaScriptSave {
+                    mode: festerm_javascript_session::ProgramLaunchMode::Resume,
+                },
+                context,
+            ),
             23 => self.state.dispatch(AppCommand::OpenWindow, context),
             30 => self
                 .state
