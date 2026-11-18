@@ -11,10 +11,23 @@ events, result retention, packaging/provenance, and default-off settings.
 in-process slice behind a dedicated worker thread on non-iOS targets. `start`,
 `input`, `resize` and `close` synchronously return ordered terminal output
 chunks and content-free errors. The QuickJS `Runtime` and `Context` stay on that
-one thread between events. `main({ terminal })` receives synchronous
-`terminal.events(callback)`, `terminal.write(text)`, and current
-`terminal.size`; input reaches JavaScript as an exact `Uint8Array`. A write is
-accepted only as bounded strict UTF-8 text.
+one thread between events. The accepted entry remains compatible with
+`main({ terminal })` and synchronous `terminal.events(callback)`. It also
+supports async `main({ terminal, assets, clock, params })`: one
+`terminal.events().next()` consumer, exact byte `Uint8Array` input, bounded
+`assets.read(id)`, `clock.now()` and cancellable `clock.sleep(ms)`.
+`params` is currently an empty frozen compatibility object, not a reviewed
+launch-payload channel. `terminal.write(text)` accepts only bounded strict
+UTF-8 text. Ambient wall-clock access through `Date` is not exposed.
+
+The reviewed manifest contains an exact opaque asset inventory; each entry has
+an ID, byte length and SHA-256 digest. Bytes are frozen into the approved
+program and verified at construction and worker transfer. There is no path,
+directory, save, picker, network or filesystem API. Host calls are typed and
+generation-bound, limited to eight outstanding calls, and delivered through
+the application-owned fence. Sleeps are at most 60 seconds and may be cut by
+worker cancellation. Root Promise settlement with pending host work reports
+`UnsettledWork`; late or mismatched results are protocol errors.
 
 This runtime is developer-only and default-off. It is not a qualified
 subprocess, production confinement boundary, GUI process, or enablement of a

@@ -4,8 +4,9 @@ use crate::{
     platform,
     program::{
         encode_program_frame, ApprovedProgram, ProgramBundleMessage, ProgramDeliveryFence,
-        ProgramHostMessage, ProgramOutcome, ProgramWorkerMessage, Submission, WriteAcceptance,
-        MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
+        ProgramHostError, ProgramHostMessage, ProgramHostRequest, ProgramHostResult,
+        ProgramOutcome, ProgramWorkerMessage, Submission, WriteAcceptance, MAX_OUTPUT_QUEUE_BYTES,
+        MAX_PENDING_WRITES, MAX_SLEEP_MS, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
     },
     protocol::{encode_frame, Decoder, CHUNK_BYTES, MAX_SAFE_INTEGER},
     Error, WorkerProgram, PROGRAM_CPU_WINDOW, PROGRAM_CPU_WINDOW_LIMIT, PROGRAM_HARD_CPU_SECONDS,
@@ -14,7 +15,7 @@ use crate::{
 #[cfg(not(windows))]
 use std::process::Child;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io::{Read, Write},
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
@@ -29,7 +30,9 @@ use std::{
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 const OPERATION_TIMEOUT: Duration = PROGRAM_TURN_TIMEOUT;
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+const HOST_WAIT_TIMEOUT: Duration = Duration::from_millis(MAX_SLEEP_MS as u64);
 const CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
+type StartupReply = Result<(Vec<Vec<u8>>, bool), Error>;
 
 struct ProgramCpuBudget {
     previous_cpu: Option<Duration>,
@@ -98,17 +101,24 @@ enum CommandRequest {
     Input {
         sequence: u64,
         bytes: Vec<u8>,
-        reply: SyncSender<Result<Vec<Vec<u8>>, Error>>,
+        reply: SyncSender<OperationReply>,
     },
     Resize {
         sequence: u64,
         size: crate::program::TerminalSize,
-        reply: SyncSender<Result<Vec<Vec<u8>>, Error>>,
+        reply: SyncSender<OperationReply>,
     },
     Close {
         sequence: u64,
-        reply: SyncSender<Result<Vec<Vec<u8>>, Error>>,
+        reply: SyncSender<OperationReply>,
     },
+}
+
+type OperationReply = Result<OperationResponse, Error>;
+
+struct OperationResponse {
+    output: Vec<Vec<u8>>,
+    completed: bool,
 }
 
 /// Separately confined, persistent process for one program generation.
@@ -119,6 +129,7 @@ pub struct ProgramSupervisor {
     generation: u64,
     next_sequence: u64,
     startup_output: Vec<Vec<u8>>,
+    completed: bool,
     commands: SyncSender<CommandRequest>,
     forced: Arc<AtomicBool>,
     fence: Arc<dyn ProgramDeliveryFence>,
@@ -180,6 +191,8 @@ impl ProgramSupervisor {
             return Err(Error::Protocol);
         }
         let source = program.snapshot_bytes()?;
+        let capabilities = program.manifest().capabilities.clone();
+        let assets = program.assets().clone();
         let path = worker.as_path().to_owned();
         let digest = program.digest().to_owned();
         let (commands, receive) = mpsc::sync_channel(4);
@@ -192,6 +205,8 @@ impl ProgramSupervisor {
                 supervise_process(
                     path,
                     source,
+                    capabilities,
+                    assets,
                     digest,
                     generation,
                     initial_size,
@@ -202,11 +217,12 @@ impl ProgramSupervisor {
                 )
             })
             .map_err(|_| Error::Unavailable("program supervisor thread unavailable"))?;
-        match ready.recv_timeout(STARTUP_TIMEOUT) {
-            Ok(Ok(startup_output)) => Ok(Self {
+        match ready.recv_timeout(STARTUP_TIMEOUT + HOST_WAIT_TIMEOUT) {
+            Ok(Ok((startup_output, completed))) => Ok(Self {
                 generation,
                 next_sequence: 1,
                 startup_output,
+                completed,
                 commands,
                 forced,
                 fence,
@@ -226,6 +242,9 @@ impl ProgramSupervisor {
     }
 
     pub fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
+        if self.completed {
+            return Err(Error::Protocol);
+        }
         self.submit(&ProgramHostMessage::Input {
             generation: self.generation,
             sequence: self.next_sequence,
@@ -244,7 +263,14 @@ impl ProgramSupervisor {
         std::mem::take(&mut self.startup_output)
     }
 
+    pub fn is_completed(&self) -> bool {
+        self.completed
+    }
+
     pub fn resize(&mut self, size: crate::program::TerminalSize) -> Result<Vec<Vec<u8>>, Error> {
+        if self.completed {
+            return Err(Error::Protocol);
+        }
         self.submit(&ProgramHostMessage::Resize {
             generation: self.generation,
             sequence: self.next_sequence,
@@ -260,6 +286,9 @@ impl ProgramSupervisor {
     }
 
     pub fn close(&mut self) -> Result<Vec<Vec<u8>>, Error> {
+        if self.completed {
+            return Ok(Vec::new());
+        }
         self.submit(&ProgramHostMessage::Close {
             generation: self.generation,
             sequence: self.next_sequence,
@@ -316,14 +345,15 @@ impl ProgramSupervisor {
         self.commands
             .try_send(request)
             .map_err(|_| Error::Protocol)?;
-        let output = result
-            .recv_timeout(OPERATION_TIMEOUT + Duration::from_secs(1))
+        let response = result
+            .recv_timeout(OPERATION_TIMEOUT + HOST_WAIT_TIMEOUT + Duration::from_secs(1))
             .map_err(|_| {
                 self.force();
                 Error::Deadline
             })??;
+        self.completed = response.completed;
         self.next_sequence = self.next_sequence.checked_add(1).ok_or(Error::Protocol)?;
-        Ok((Submission::Accepted, output))
+        Ok((Submission::Accepted, response.output))
     }
 
     pub fn force(&self) {
@@ -381,6 +411,7 @@ fn message_generation(message: &ProgramHostMessage) -> u64 {
         | ProgramHostMessage::Resize { generation, .. }
         | ProgramHostMessage::Close { generation, .. }
         | ProgramHostMessage::WriteResult { generation, .. }
+        | ProgramHostMessage::HostCallResult { generation, .. }
         | ProgramHostMessage::Cancel { generation } => *generation,
     }
 }
@@ -389,11 +420,13 @@ fn message_generation(message: &ProgramHostMessage) -> u64 {
 fn supervise_process(
     path: std::path::PathBuf,
     source: Vec<u8>,
+    capabilities: BTreeSet<crate::program::ProgramCapability>,
+    assets: BTreeMap<String, Vec<u8>>,
     digest: String,
     generation: u64,
     initial_size: crate::program::TerminalSize,
     commands: mpsc::Receiver<CommandRequest>,
-    startup: SyncSender<Result<Vec<Vec<u8>>, Error>>,
+    startup: SyncSender<StartupReply>,
     forced: Arc<AtomicBool>,
     fence: Arc<dyn ProgramDeliveryFence>,
 ) -> Result<(), Error> {
@@ -403,6 +436,8 @@ fn supervise_process(
         supervise_child(
             &mut child,
             source,
+            capabilities,
+            assets,
             digest,
             generation,
             initial_size,
@@ -426,11 +461,13 @@ fn supervise_process(
 fn supervise_child(
     child: &mut Child,
     source: Vec<u8>,
+    capabilities: BTreeSet<crate::program::ProgramCapability>,
+    assets: BTreeMap<String, Vec<u8>>,
     digest: String,
     generation: u64,
     initial_size: crate::program::TerminalSize,
     commands: mpsc::Receiver<CommandRequest>,
-    startup: &SyncSender<Result<Vec<Vec<u8>>, Error>>,
+    startup: &SyncSender<StartupReply>,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
 ) -> Result<(), Error> {
@@ -486,7 +523,8 @@ fn supervise_child(
     };
     write_message(&mut input, &launch, forced, fence, generation)?;
     let deadline = Instant::now() + STARTUP_TIMEOUT;
-    let startup_output = wait_started(
+    let mut next_host_call_id = 1_u64;
+    let (startup_output, completed) = wait_started(
         child,
         &mut decoder,
         &mut output,
@@ -496,10 +534,16 @@ fn supervise_child(
         forced,
         fence,
         &mut cpu,
+        &capabilities,
+        &assets,
+        &mut next_host_call_id,
     )?;
     startup
-        .try_send(Ok(startup_output))
+        .try_send(Ok((startup_output, completed)))
         .map_err(|_| Error::Protocol)?;
+    if completed {
+        return Ok(());
+    }
 
     while !forced.load(Ordering::Acquire) {
         if !fence.is_live(generation) {
@@ -576,15 +620,18 @@ fn supervise_child(
                     forced,
                     fence,
                     &mut cpu,
+                    &capabilities,
+                    &assets,
+                    &mut next_host_call_id,
                 )
             });
-        let finished = close;
+        let completed = operation.as_ref().is_ok_and(|response| response.completed);
         let failed = operation.is_err();
         let _ = reply.try_send(operation);
         if failed {
             return Err(Error::Protocol);
         }
-        if finished {
+        if completed || close {
             return Ok(());
         }
     }
@@ -596,7 +643,7 @@ fn expect_ready(
     child: &mut Child,
     decoder: &mut Decoder,
     output: &mut impl Read,
-    startup: &SyncSender<Result<Vec<Vec<u8>>, Error>>,
+    startup: &SyncSender<StartupReply>,
     forced: &AtomicBool,
     timeout: Duration,
     fence: &dyn ProgramDeliveryFence,
@@ -663,13 +710,17 @@ fn wait_started(
     output: &mut impl Read,
     input: &mut impl Write,
     generation: u64,
-    deadline: Instant,
+    mut deadline: Instant,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
     cpu: &mut ProgramCpuBudget,
-) -> Result<Vec<Vec<u8>>, Error> {
+    capabilities: &BTreeSet<crate::program::ProgramCapability>,
+    assets: &BTreeMap<String, Vec<u8>>,
+    next_host_call_id: &mut u64,
+) -> Result<(Vec<Vec<u8>>, bool), Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
+    let mut host_wait = Duration::ZERO;
     loop {
         check_deadline(deadline, forced, fence, generation)?;
         let message: Option<ProgramWorkerMessage> = decoder.read(output)?;
@@ -697,7 +748,33 @@ fn wait_started(
                 }
                 ProgramWorkerMessage::Started {
                     generation: started,
-                } if started == generation => return Ok(writes),
+                } if started == generation => return Ok((writes, false)),
+                ProgramWorkerMessage::Finished {
+                    generation: finished,
+                    outcome: ProgramOutcome::Completed {},
+                } if finished == generation => return Ok((writes, true)),
+                ProgramWorkerMessage::HostCall {
+                    generation: call_generation,
+                    call_id,
+                    request,
+                } if call_generation == generation => {
+                    expect_host_call_id(call_id, next_host_call_id)?;
+                    let admitted =
+                        admit_host_call_wait(&mut deadline, &request, false, &mut host_wait);
+                    serve_program_host_call(
+                        child,
+                        input,
+                        generation,
+                        call_id,
+                        request,
+                        capabilities,
+                        assets,
+                        forced,
+                        fence,
+                        cpu,
+                        admitted,
+                    )?
+                }
                 ProgramWorkerMessage::Failed { code } => return Err(worker_failure(code)),
                 _ => return Err(Error::Protocol),
             }
@@ -715,13 +792,17 @@ fn wait_operation(
     generation: u64,
     sequence: u64,
     close: bool,
-    deadline: Instant,
+    mut deadline: Instant,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
     cpu: &mut ProgramCpuBudget,
-) -> Result<Vec<Vec<u8>>, Error> {
+    capabilities: &BTreeSet<crate::program::ProgramCapability>,
+    assets: &BTreeMap<String, Vec<u8>>,
+    next_host_call_id: &mut u64,
+) -> Result<OperationResponse, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
+    let mut host_wait = Duration::ZERO;
     loop {
         check_deadline(deadline, forced, fence, generation)?;
         let decoded: Option<ProgramWorkerMessage> = decoder.read(output)?;
@@ -750,21 +831,153 @@ fn wait_operation(
                 ProgramWorkerMessage::EventCompleted {
                     generation: completed_generation,
                     sequence: completed_sequence,
-                } if completed_generation == generation && completed_sequence == sequence => {
-                    return Ok(writes)
+                } if !close
+                    && completed_generation == generation
+                    && completed_sequence == sequence =>
+                {
+                    return Ok(OperationResponse {
+                        output: writes,
+                        completed: false,
+                    })
+                }
+                ProgramWorkerMessage::HostCall {
+                    generation: call_generation,
+                    call_id,
+                    request,
+                } if call_generation == generation => {
+                    expect_host_call_id(call_id, next_host_call_id)?;
+                    let admitted =
+                        admit_host_call_wait(&mut deadline, &request, close, &mut host_wait);
+                    serve_program_host_call(
+                        child,
+                        input,
+                        generation,
+                        call_id,
+                        request,
+                        capabilities,
+                        assets,
+                        forced,
+                        fence,
+                        cpu,
+                        admitted,
+                    )?
                 }
                 ProgramWorkerMessage::Finished {
                     generation: finished_generation,
-                    outcome: ProgramOutcome::Completed {} | ProgramOutcome::Cancelled {},
-                } if close && finished_generation == generation && sequence != 0 => {
-                    return Ok(writes)
+                    outcome,
+                } if finished_generation == generation && sequence != 0 => {
+                    return match outcome {
+                        ProgramOutcome::Completed {} | ProgramOutcome::Cancelled {} => {
+                            Ok(OperationResponse {
+                                output: writes,
+                                completed: true,
+                            })
+                        }
+                        _ => Err(Error::WorkerFailed("program settled unsuccessfully")),
+                    };
                 }
                 ProgramWorkerMessage::Failed { code } => return Err(worker_failure(code)),
                 _ => return Err(Error::Protocol),
             }
         }
+
         check_wait(child, deadline, forced, fence, generation, cpu)?;
     }
+}
+
+fn expect_host_call_id(call_id: u64, next_host_call_id: &mut u64) -> Result<(), Error> {
+    if call_id != *next_host_call_id {
+        return Err(Error::Protocol);
+    }
+    *next_host_call_id = (*next_host_call_id).checked_add(1).ok_or(Error::Protocol)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_program_host_call(
+    child: &mut Child,
+    input: &mut impl Write,
+    generation: u64,
+    call_id: u64,
+    request: ProgramHostRequest,
+    capabilities: &BTreeSet<crate::program::ProgramCapability>,
+    assets: &BTreeMap<String, Vec<u8>>,
+    forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    cpu: &mut ProgramCpuBudget,
+    admitted: bool,
+) -> Result<(), Error> {
+    request.validate()?;
+    if !capabilities.contains(&request.capability()) {
+        return Err(Error::Protocol);
+    }
+    let result = if !admitted {
+        ProgramHostResult::Error {
+            code: ProgramHostError::ResourceLimit,
+        }
+    } else {
+        match &request {
+            ProgramHostRequest::AssetsRead { id } => match assets.get(id) {
+                Some(bytes) => ProgramHostResult::Asset {
+                    bytes: bytes.clone(),
+                },
+                None => ProgramHostResult::Error {
+                    code: ProgramHostError::NotFound,
+                },
+            },
+            ProgramHostRequest::ClockNow {} => ProgramHostResult::Clock {
+                unix_milliseconds: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            },
+            ProgramHostRequest::ClockSleep { milliseconds } => {
+                let deadline = Instant::now() + Duration::from_millis((*milliseconds).into());
+                while Instant::now() < deadline {
+                    check_wait(child, deadline, forced, fence, generation, cpu)?;
+                }
+                ProgramHostResult::Slept {}
+            }
+        }
+    };
+    result.validate_for(&request)?;
+    let _permit = fence
+        .try_enter(generation)?
+        .ok_or(Error::DisclosureRevoked)?;
+    write_message_under_permit(
+        input,
+        &ProgramHostMessage::HostCallResult {
+            generation,
+            call_id,
+            result,
+        },
+        forced,
+    )
+}
+
+fn admit_host_call_wait(
+    deadline: &mut Instant,
+    request: &ProgramHostRequest,
+    close: bool,
+    host_wait: &mut Duration,
+) -> bool {
+    let ProgramHostRequest::ClockSleep { milliseconds } = request else {
+        return true;
+    };
+    if close {
+        return false;
+    }
+    let Some(total) = host_wait.checked_add(Duration::from_millis(u64::from(*milliseconds))) else {
+        return false;
+    };
+    if total > HOST_WAIT_TIMEOUT {
+        return false;
+    }
+    *host_wait = total;
+    *deadline = (*deadline).max(Instant::now() + total + PROGRAM_TURN_TIMEOUT);
+    true
 }
 
 fn check_wait(
@@ -1047,6 +1260,32 @@ mod delivery_race_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_sleep_budget_is_aggregate_and_close_waits_are_refused() {
+        let mut deadline = Instant::now() + OPERATION_TIMEOUT;
+        let mut host_wait = Duration::ZERO;
+        assert!(admit_host_call_wait(
+            &mut deadline,
+            &ProgramHostRequest::ClockSleep {
+                milliseconds: MAX_SLEEP_MS,
+            },
+            false,
+            &mut host_wait,
+        ));
+        assert!(!admit_host_call_wait(
+            &mut deadline,
+            &ProgramHostRequest::ClockSleep { milliseconds: 1 },
+            false,
+            &mut host_wait,
+        ));
+        assert!(!admit_host_call_wait(
+            &mut deadline,
+            &ProgramHostRequest::ClockSleep { milliseconds: 1 },
+            true,
+            &mut host_wait,
+        ));
+    }
 
     #[test]
     fn rolling_cpu_budget_expires_idle_work_and_limits_new_work() {

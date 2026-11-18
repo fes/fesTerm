@@ -523,7 +523,8 @@ route must not grow its own policy.
 ADR 0088 introduces a separate own-session execution mode; it is not an
 automation workflow target and does not inherit local-shell filesystem or other
 tab authority. The default-off `javascript-program-dev` feature currently
-exposes only a repository-owned echo program for implementation qualification.
+exposes only repository-owned echo and async host-service programs for
+implementation qualification.
 The central launch is bound to the reviewed developer digest, API/capability
 set and fresh worker generation. An application-owned privacy/lock fence cuts
 worker and queued-output delivery and is separate from automation grants.
@@ -533,7 +534,7 @@ and native lifecycle qualification remain acceptance prerequisites.
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `JSP-01` | No program → running own-session tab | Invoke the centralized JavaScript developer launch command while OS privacy is available | Exactly one reviewed program tab replaces the launcher or opens as a normal session; digest, capability set and worker generation are exact; it has no shell target, automation epoch, local-file origin or terminal-backend reply ownership | Close; never enroll as automation | P, H; repository-owned echo launch and authority-refusal coverage |
-| `JSP-02` | Running program → input/resize output | Send ordinary encoded terminal bytes or an accepted resize | Exact ordered bytes and resize-specific output reach only the application-owned terminal; chunks may split UTF-8 and escape sequences; no worker owns a `Terminal` | Cancel/close the program | P, H; strict protocol, QuickJS and app-tab tests; native keyboard/IME qualification pending |
+| `JSP-02` | Running program → ordered terminal/host-service progress | Send ordinary encoded terminal bytes or an accepted resize; await a reviewed asset, current time or bounded sleep | Exact ordered terminal bytes, resize events and host results remain on one generation-bound stream. Asset bytes are frozen by digest/length; no path, save, picker, filesystem or network authority crosses the worker; async `main` cannot complete with unsettled calls | Cancel/close the program | P, H; strict protocol, QuickJS, in-process and confined-process tests; native keyboard/IME qualification pending |
 | `JSP-03` | Running program → bounded pressure/privacy loss → stopped | Drain a full output queue, stop, revoke privacy or force a cooperative close cut | Output bytes are not dropped during ordinary pressure; stale/revoked output, including bytes already queued, is not delivered; terminal/control lifecycle events remain reachable; the worker/thread is reaped within the session bound | Reopen by explicit review; no implicit respawn | P, H, N; desktop thread/process tests; packaged lifecycle and native privacy-event evidence pending |
 | `JSP-04` | Stopped program / private universe → explicitly resumed program | Review an installed digest and private save identity, acquire the exclusive writer, load the last confirmed revision and create a fresh worker | Stale or foreign identities, conflicts, corrupt/future saves and uncertain publication refuse; resume never serializes a JS heap or workspace game state | Close; retain last confirmed checkpoint | P, N; transactional-save implementation and native filesystem evidence deferred |
 
