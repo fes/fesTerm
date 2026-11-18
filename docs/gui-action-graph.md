@@ -2274,3 +2274,12 @@ the old temporary owner/epoch/deadline and foreign/committed ticket fences;
 Busy/Unknown/OutcomeUncertain never establish absence. The `4898f407` macOS
 native18/1 producer is unknown; no retry/sleep/policy change or new native
 acceptance is implied.
+
+
+HOST-04/HOST-05/HOST-06 Windows Desktop managed revision6 binds the existing
+GUI-subsystem worker as the native execution role, while the signed HOST entry
+remains bundle authority. Shared runtime admission requires that exact running
+worker; console/default Headless and legacy2–5 behavior remain unchanged. Queries
+and pending adoption preserve old raw receipts; only supported stopped
+replacement selects the new role. Signed no-console, revocation/restart and
+durable PID/generation acceptance remain native gates.

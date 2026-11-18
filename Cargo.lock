@@ -2603,6 +2603,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "winresource",
 ]
 
 [[package]]

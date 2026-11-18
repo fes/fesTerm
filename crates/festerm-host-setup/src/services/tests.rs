@@ -766,13 +766,25 @@ fn host_process_recovery_native_policy_is_bounded_and_origin_exact() {
                         .join("state/native-manual-services")
                         .join(manager.runner.definition.file_name().unwrap());
                 }
-                let stage = trusted::fixture(root.path());
+                let worker = platform == Platform::Windows && origin == Origin::Desktop;
+                let stage = if worker {
+                    trusted::windows_fixture(root.path(), crate::VERSION)
+                } else {
+                    trusted::fixture(root.path())
+                };
                 manager
                     .install_with_recovery(&stage, snapshot.epoch)
                     .unwrap();
-                manager.require_recovery_registration().unwrap();
+                if worker {
+                    assert!(
+                        manager.require_recovery_registration().is_err(),
+                        "test executable is not the registered GUI worker"
+                    );
+                } else {
+                    manager.require_recovery_registration().unwrap();
+                }
                 let record = manager.registration().unwrap().1.unwrap();
-                assert_eq!(record.version, 4);
+                assert_eq!(record.version, if worker { 6 } else { 4 });
                 assert_eq!(
                     definitions::record_runner_verb(&record),
                     if origin == Origin::Desktop {
@@ -2385,3 +2397,7 @@ fn native_service_windows_fresh_reservation_retains_raw_snapshot_and_never_start
         }
     )));
 }
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[path = "windows_worker_tests.rs"]
+mod windows_worker_tests;

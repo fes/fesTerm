@@ -5584,3 +5584,24 @@ tests validate collection, privacy and restoration only; they do not establish
 client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
+
+
+### HOST-04/HOST-05/HOST-06 Windows Desktop managed execution revision6
+
+Portable tests use synthetic schema-2 Windows inventories and a fake native
+publisher/Scheduler. They check fixed HOST/worker bundle membership and retained
+file identity, tamper/cross-release/wrong-role refusal, exact legacy2–5
+serialization/commands, raw pending snapshot adoption, stopped4→6 selection,
+legacy pending5 continuation and rejection of invented6→5 downgrade history.
+The public native publication path still requires the actual OS/architecture
+and publisher; the portable target seam is not native Windows qualification.
+
+Native signed acceptance remains pending: perform supported stopped replacement
+of an existing Windows Desktop console HOST, verify the exact new worker Task
+and an in-process HOST with no blank console/window, then test normal startup,
+restart suppression, revoke/drain and explicit reenable. Retain original durable
+PID/birth/generation evidence across update, worker exit and managed restart;
+check that no second console HOST or custom restart/Job tree appears. Also
+qualify unchanged legacy worker routing/asInvoker and console Headless/default
+CLI operation. Native ARM64, x64 CI/emulation and native x64 OS evidence remain
+separate; a PE subsystem check or portable fixture cannot close these gates.

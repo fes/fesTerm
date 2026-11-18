@@ -1019,7 +1019,9 @@ fn authorize_run(
         return Err(refused("host.runtime_consent_changed"));
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
-    let stage = Services::current_user(store, state)?.reopen_stage(expected.epoch)?;
+    let services = Services::current_user(store, state)?;
+    let stage = services.reopen_stage(expected.epoch)?;
+    services.require_runtime_execution(&stage)?;
     stage.sessiond_path()?;
     record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
     {

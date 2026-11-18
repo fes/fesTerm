@@ -6661,7 +6661,15 @@
         "legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible",
         "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant",
         "native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_owner_only_strict",
-        "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend"
+        "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend",
+        "fixed_worker_routes_reject_arbitrary_origin_flags_and_relative_paths",
+        "windows_desktop_worker_revision6_binds_both_roles_and_retains_raw_observation",
+        "windows_desktop_worker_role_refuses_cross_release_wrong_role_and_tamper",
+        "windows_worker_legacy_v2_to_v5_bytes_and_commands_do_not_upgrade_on_status",
+        "windows_desktop_worker_pending_revision6_adopts_only_raw_snapshot_not_execution_role",
+        "windows_worker_synthetic_foreign_tuple_is_not_public_native_launch_authority",
+        "windows_stopped_update_switches_managed_desktop_to_same_bundle_worker_without_start",
+        "windows_stopped_update_existing_pending_v5_keeps_original_console_execution_intent"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

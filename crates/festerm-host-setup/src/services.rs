@@ -114,6 +114,13 @@ impl Context {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+struct WindowsManagedExecution {
+    path: PathBuf,
+    digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Registration {
     version: u8,
     installation: String,
@@ -126,6 +133,8 @@ struct Registration {
     resource: String,
     executable: PathBuf,
     digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows_managed: Option<WindowsManagedExecution>,
     #[serde(default)]
     provenance: Option<PathBuf>,
     state: PathBuf,
@@ -242,7 +251,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     fn validate_registration(&self, record: &Registration, snapshot: &Snapshot) -> io::Result<()> {
         let mut resource = definitions::resource(snapshot, record.epoch);
-        if matches!(record.version, 3 | 5) {
+        if matches!(record.version, 3 | 5) || (record.version == 6 && record.resource != resource) {
             resource = definitions::replacement_resource(
                 snapshot,
                 record.epoch,
@@ -250,7 +259,18 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 record.platform,
             )?;
         }
-        if !matches!(record.version, 2..=5)
+        if !matches!(record.version, 2..=6)
+            || (record.version == 6) != record.windows_managed.is_some()
+            || record.windows_managed.as_ref().is_some_and(|worker| {
+                record.platform != Platform::Windows
+                    || record.origin != Origin::Desktop
+                    || worker.path
+                        != record
+                            .executable
+                            .with_file_name("festerm-tunnel-worker.exe")
+                    || worker.digest.len() != 64
+                    || !worker.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
@@ -587,7 +607,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_authenticated_bundle_changed"));
         }
         self.fence(epoch, phase)?;
-        stage.revalidate()?;
+        stage.revalidate_registration(&record)?;
         Ok(stage)
     }
 
@@ -653,6 +673,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             {
                 return Err(refused("host.service_explicit_replacement_required"));
             }
+            stage.revalidate_registration(&record)?;
             record
         } else {
             let mut record = Registration {
@@ -670,6 +691,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 resource: definitions::resource(&snapshot, epoch),
                 executable: stage.path.clone(),
                 digest: stage.digest.clone(),
+                windows_managed: None,
                 provenance: Some(stage.provenance_path().to_owned()),
                 state: self.state.clone(),
                 definition: String::new(),
@@ -681,6 +703,13 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 retiring_definition: false,
                 removed: false,
             };
+            if recovery
+                && self.context.platform == Platform::Windows
+                && snapshot.origin == Origin::Desktop
+            {
+                record.version = 6;
+                record.windows_managed = Some(stage.windows_managed_execution()?);
+            }
             record.definition = definitions::render(&record)?;
             if self.context.platform == Platform::Windows {
                 let prepared =
@@ -778,13 +807,42 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(observation(&snapshot, process))
     }
 
-    pub(crate) fn require_recovery_registration(&self) -> io::Result<()> {
-        let (_, record) = self.registration()?;
-        if record.is_some_and(|record| matches!(record.version, 4 | 5) && !record.removed) {
-            Ok(())
-        } else {
-            Err(refused("host.native_recovery_registration_required"))
+    pub(crate) fn require_recovery_registration(&self) -> io::Result<Option<TrustedStage>> {
+        self.require_managed_registration(false)
+    }
+
+    pub(crate) fn require_windows_worker_registration(&self) -> io::Result<Option<TrustedStage>> {
+        self.require_managed_registration(true)
+    }
+
+    fn require_managed_registration(
+        &self,
+        worker_required: bool,
+    ) -> io::Result<Option<TrustedStage>> {
+        let (snapshot, record) = self.registration()?;
+        let record = record
+            .filter(|record| matches!(record.version, 4..=6) && !record.removed)
+            .ok_or_else(|| refused("host.native_recovery_registration_required"))?;
+        if worker_required && record.version != 6 {
+            return Err(refused("host.windows_managed_worker_registration_required"));
         }
+        if record.version == 6 {
+            let stage = self.reopen_stage(snapshot.epoch)?;
+            stage.require_running_worker(&record, &std::env::current_exe()?)?;
+            Ok(Some(stage))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(crate) fn require_runtime_execution(&self, stage: &TrustedStage) -> io::Result<()> {
+        let (_, record) = self.registration()?;
+        let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
+        stage.revalidate_registration(&record)?;
+        if record.version == 6 {
+            stage.require_running_worker(&record, &std::env::current_exe()?)?;
+        }
+        Ok(())
     }
 
     /// Explicit start requires current protected native-vault policy. A locked
@@ -843,6 +901,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         {
             return Err(refused("host.service_explicit_replacement_required"));
         }
+        stage.revalidate_registration(&record)?;
         let before = self.observe(&record)?;
         if before == ProcessState::Transitioning {
             self.fence(epoch, Phase::Provisioned)?;

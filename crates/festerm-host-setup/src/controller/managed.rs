@@ -68,17 +68,55 @@ pub async fn run_from_path(
     origin: Origin,
     cancel: CancellationToken,
 ) -> io::Result<()> {
+    run_from_path_with_entry(state, origin, RequiredEntry::LegacyCompatible, cancel).await
+}
+
+/// Fixed windowless Desktop entry only; no public role flag or fallback.
+pub async fn run_windows_desktop_worker_from_path(
+    state: &Path,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    run_from_path_with_entry(
+        state,
+        Origin::Desktop,
+        RequiredEntry::WindowsDesktopWorker,
+        cancel,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum RequiredEntry {
+    LegacyCompatible,
+    WindowsDesktopWorker,
+}
+
+async fn run_from_path_with_entry(
+    state: &Path,
+    origin: Origin,
+    entry: RequiredEntry,
+    cancel: CancellationToken,
+) -> io::Result<()> {
     let deadline = tokio::time::Instant::now() + super::INITIAL_ADMISSION_CONTENTION;
     let store = Arc::new(bootstrap_read(deadline, &cancel, || Store::open(state, origin)).await?);
     let expected = bootstrap_read(deadline, &cancel, || store.snapshot()).await?;
-    bootstrap_registration(&store, state, &expected, deadline, &cancel).await?;
+    let _execution =
+        bootstrap_registration(&store, state, &expected, deadline, &cancel, entry).await?;
     run_registered(store, state, cancel).await
 }
 
 pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> io::Result<()> {
     let deadline = tokio::time::Instant::now() + super::INITIAL_ADMISSION_CONTENTION;
     let expected = bootstrap_read(deadline, &cancel, || store.snapshot()).await?;
-    bootstrap_registration(&store, state, &expected, deadline, &cancel).await?;
+    let _execution = bootstrap_registration(
+        &store,
+        state,
+        &expected,
+        deadline,
+        &cancel,
+        RequiredEntry::LegacyCompatible,
+    )
+    .await?;
     run_registered(store, state, cancel).await
 }
 
@@ -88,16 +126,23 @@ async fn bootstrap_registration(
     expected: &crate::lifecycle::Snapshot,
     deadline: tokio::time::Instant,
     cancel: &CancellationToken,
-) -> io::Result<()> {
+    entry: RequiredEntry,
+) -> io::Result<Option<crate::services::TrustedStage>> {
     bootstrap_read(deadline, cancel, || {
         if store.snapshot()? != *expected {
             return Err(super::refused("host.runtime_consent_changed"));
         }
-        Services::current_user(store, state)?.require_recovery_registration()?;
+        let services = Services::current_user(store, state)?;
+        let execution = match entry {
+            RequiredEntry::LegacyCompatible => services.require_recovery_registration()?,
+            RequiredEntry::WindowsDesktopWorker => {
+                services.require_windows_worker_registration()?
+            }
+        };
         if store.snapshot()? != *expected {
             return Err(super::refused("host.runtime_consent_changed"));
         }
-        Ok(())
+        Ok(execution)
     })
     .await
 }
@@ -341,7 +386,7 @@ mod tests {
         );
         drop(lease);
         assert_eq!(
-            attempt.await.unwrap_err().to_string(),
+            attempt.await.err().unwrap().to_string(),
             "host.native_recovery_registration_required"
         );
         assert!(super::super::last_run(&store).unwrap().is_none());
@@ -420,7 +465,7 @@ mod tests {
         );
         cancel.cancel();
         assert_eq!(
-            attempt.await.unwrap_err().to_string(),
+            attempt.await.err().unwrap().to_string(),
             "host.cloud_cancelled"
         );
         drop(lease);
@@ -446,7 +491,14 @@ mod tests {
             let deadline = tokio::time::Instant::now() + super::super::INITIAL_ADMISSION_CONTENTION;
             let cancel = CancellationToken::new();
             let lease = held_lifecycle_lease(&store);
-            let attempt = bootstrap_registration(&store, &state, &expected, deadline, &cancel);
+            let attempt = bootstrap_registration(
+                &store,
+                &state,
+                &expected,
+                deadline,
+                &cancel,
+                RequiredEntry::LegacyCompatible,
+            );
             tokio::pin!(attempt);
             assert!(
                 tokio::time::timeout(std::time::Duration::from_millis(50), &mut attempt)
@@ -479,7 +531,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(
-                attempt.await.unwrap_err().to_string(),
+                attempt.await.err().unwrap().to_string(),
                 "host.runtime_consent_changed"
             );
             assert!(super::super::last_run(&store).unwrap().is_none());

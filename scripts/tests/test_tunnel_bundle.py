@@ -188,6 +188,15 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build(platform, output=f"current-{platform}", host=True)
                 (self.binaries / host).write_bytes(b"synthetic host")
 
+    def test_windows_legacy_worker_notices_include_composition_package_dependencies(self):
+        metadata = copy.deepcopy(self.metadata)
+        metadata["resolve"]["nodes"][0]["deps"] = []
+        metadata["resolve"]["nodes"][1]["deps"] = []
+        unix = bundle.third_party_notices(metadata, VERSION, self.root)
+        windows = bundle.third_party_notices(metadata, VERSION, self.root, windows_worker=True)
+        self.assertNotIn(b"actual upstream license", unix)
+        self.assertIn(b"actual upstream license", windows)
+
     def test_host_notices_use_actual_workspace_membership_for_app_package(self):
         notices = bundle.third_party_notices(self.metadata, VERSION, self.root, host=True)
         self.assertIn(b"actual upstream license", notices)

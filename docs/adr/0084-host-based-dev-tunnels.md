@@ -2643,3 +2643,43 @@ HOST/stub regressions cover category preservation, capture before cancellation
 and refused continuation. Queue limits, cancellation, admission and no-replay
 behavior are unchanged; native saturation cause/long-input acceptance remain
 separate evidence.
+
+### Windows managed Desktop HOST without a console
+
+Architectural decision (HOST-04/HOST-05/HOST-06): the existing GUI-subsystem
+`festerm-tunnel-worker` target moves from the bridge crate to the HOST app
+composition package. Its filename and legacy `--state-dir` setup route remain
+compatible. Exactly one additional Windows Desktop-managed route invokes the
+shared managed bootstrap/run body in that same process. Its strict fixed
+`run_windows_desktop_worker_from_path` entry requires revision6; the existing
+`run_from_path` CLI entry preserves legacy semantics. Common runtime admission
+also refuses a console process against revision6. It does not
+spawn a console HOST or introduce another binary, generic launcher, supervisor,
+restart loop, elevation or OS-policy change. The GUI route directly awaits
+shared managed revocation/drain and does not install a console Ctrl+C handler;
+the console CLI keeps its original signal wrapper. Public console CLI/default-run
+behavior remains available.
+
+A new explicit Windows Desktop execution revision binds the Task action to
+that worker while retaining the signed HOST entry as bundle authority. Both
+fixed entries/path/digests must belong to the same verified schema-2 HOST bundle;
+publisher identity or sibling location alone is insufficient. Retained file
+handles and revalidation cover both roles, and managed bootstrap verifies the
+running process against the registered execution role. Versions 2–5 retain exact
+definition/snapshot bytes and query/reconciliation/adoption behavior; status
+never upgrades an existing receipt. Existing managed installations change their
+execution route only through the supported authenticated stopped replacement.
+
+The shared managed runtime owns the existing typed result and failure history,
+native restart suppression, lease, revocation and drain behavior. Sessiond keeps
+its Windows HOST Job breakaway refusal and independent durable-child contract.
+Moving binary ownership also moves its binary integration test and updates every
+`--bins` package producer and standalone notice dependency root/features, so the
+same legacy helper filename remains complete in both package forms.
+
+Validation requires deterministic parser/legacy-route, same-bundle/role/tamper,
+old-receipt/new-definition/stopped-update and managed exit/lease/revocation
+regressions plus the affected packaging checks. Signed native no-console
+observation and durable PID/generation preservation remain separate acceptance
+gates. Native Windows ARM64, x64 CI/emulation and native x64 OS evidence are
+reported separately; source or cross-compilation establishes none of them.

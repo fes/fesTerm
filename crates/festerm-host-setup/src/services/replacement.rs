@@ -157,7 +157,24 @@ impl<R: CommandRunner> Services<'_, R> {
                 || record.epoch == 0
                 || record.epoch > snapshot.epoch
                 || version(&record.from_version)? >= version(&record.to_version)?
-                || record.new.version != if record.old.version >= 4 { 5 } else { 3 }
+                || !(record.new.version
+                    == match record.old.version {
+                        6 => 6,
+                        4 | 5 => 5,
+                        _ => 3,
+                    }
+                    || (record.new.version == 6
+                        && record.old.version >= 4
+                        && record.old.platform == super::Platform::Windows
+                        && record.old.origin == crate::lifecycle::Origin::Desktop))
+                || (record.new.version == 6
+                    && record.new.resource
+                        != definitions::replacement_resource(
+                            snapshot,
+                            record.new.epoch,
+                            &record.new.reservation,
+                            record.new.platform,
+                        )?)
                 || record.old.resource == record.new.resource
                 || record.old.settings != record.new.settings
                 || record.operation != record.new.reservation
@@ -327,6 +344,14 @@ impl<R: CommandRunner> Services<'_, R> {
                 new.executable = stage.path.clone();
                 new.digest = stage.digest.clone();
                 new.provenance = Some(stage.provenance_path().to_owned());
+                new.windows_managed = None;
+                if current.version >= 4
+                    && self.context.platform == super::Platform::Windows
+                    && snapshot.origin == crate::lifecycle::Origin::Desktop
+                {
+                    new.version = 6;
+                    new.windows_managed = Some(stage.windows_managed_execution()?);
+                }
                 new.definition = definitions::render(&new)?;
                 if self.context.platform == Platform::Windows {
                     new.native_submitted = false;
@@ -359,6 +384,7 @@ impl<R: CommandRunner> Services<'_, R> {
         if transaction.new.settings != snapshot.settings {
             return Err(refused("host.update_settings_changed_reconfirm_or_cleanup"));
         }
+        stage.revalidate_registration(&transaction.new)?;
         authenticate(&transaction.old, from_version)?;
         authenticate(&transaction.new, stage.version())?;
         self.validate_registration(&transaction.new, &snapshot)?;

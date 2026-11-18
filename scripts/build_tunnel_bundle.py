@@ -90,12 +90,12 @@ def validate_version(version, root):
         raise ValueError("workspace license changed; update the bundle license")
 
 
-def third_party_notices(metadata, version, root, *, host=False):
+def third_party_notices(metadata, version, root, *, host=False, windows_worker=False):
     """Retain dependency license/notice files, including vendored native code."""
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     pending = []
-    for name in HOST_PACKAGES if host else PACKAGES:
+    for name in HOST_PACKAGES if host or windows_worker else PACKAGES:
         matches = [p for p in packages.values() if p["name"] == name]
         if len(matches) != 1 or matches[0]["version"] != version:
             raise ValueError(f"missing or wrong-version package metadata: {name}")
@@ -230,7 +230,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
     if (metadata is None) == (notices is None):
         raise ValueError("provide exactly one of dependency metadata or staged notices")
     entries["THIRD_PARTY_NOTICES.txt"] = (
-        third_party_notices(metadata, version, root, host=host) if metadata is not None else notices
+        third_party_notices(metadata, version, root, host=host, windows_worker=platform == "windows") if metadata is not None else notices
     )
     if not entries["THIRD_PARTY_NOTICES.txt"].strip():
         raise ValueError("empty dependency notices")

@@ -247,6 +247,8 @@ jobs:
           ./scripts/stage-conpty.ps1 -Configuration Release
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
+          cargo build --locked --release -p festerm-host --bin festerm-tunnel-worker
+          if ($LASTEXITCODE -ne 0) { throw 'Windowless worker composition build failed' }
           ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           python scripts/run-cargo-packager.py --config packaging/windows.toml --formats nsis
           if ($LASTEXITCODE -ne 0) { throw 'cargo-packager failed to build the NSIS installer' }

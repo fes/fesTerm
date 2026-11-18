@@ -330,6 +330,8 @@ jobs:
           ./scripts/stage-conpty.ps1 -Configuration Release
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
+          cargo build --locked --release -p festerm-host --bin festerm-tunnel-worker
+          if ($LASTEXITCODE -ne 0) { throw 'Windowless worker composition build failed' }
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-aarch64-package-input
@@ -416,6 +418,8 @@ jobs:
           ./scripts/stage-conpty.ps1 -Configuration Release
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
+          cargo build --locked --release -p festerm-host --bin festerm-tunnel-worker
+          if ($LASTEXITCODE -ne 0) { throw 'Windowless worker composition build failed' }
       - name: Download native ARM64 package input
         if: matrix.arch == 'aarch64'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -672,13 +676,16 @@ jobs:
           host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
           test "$host" = '${{ matrix.target }}'
           packages=(-p festerm-sessiond -p festerm-tunnel-bridge)
+          features=festerm-tunnel-bridge/relay
           if [[ "$HEADLESS_HELPERS" == true ]]; then
             packages+=(-p festerm-host)
+            features+=,festerm-host/owner-routing
           else
             test "$RELEASE_RECOVERY" = true
+            if [[ '${{ matrix.platform }}' == windows ]]; then packages+=(-p festerm-host); fi
           fi
-          cargo build --locked --release "${packages[@]}" --bins
-          cargo metadata --locked --format-version 1 --filter-platform "$host" > helper-metadata.json
+          cargo build --locked --release "${packages[@]}" --no-default-features --features "$features" --bins
+          cargo metadata --locked --format-version 1 --no-default-features --features "$features" --filter-platform "$host" > helper-metadata.json
       - name: Stage native Windows signing input and dependency notices
         if: matrix.platform == 'windows'
         run: |
@@ -693,7 +700,7 @@ jobs:
           metadata = json.loads(Path("helper-metadata.json").read_text(encoding="utf-8"))
           notices = bundle.third_party_notices(
               metadata,
-              os.environ["VERSION"], root,
+              os.environ["VERSION"], root, windows_worker=True,
           )
           destination = Path("helper-input")
           destination.mkdir()

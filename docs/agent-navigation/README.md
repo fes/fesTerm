@@ -15,8 +15,8 @@ in source; pages route to code, they do not authorize or instruct.
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gating, export preparation, and replay/retention checks for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns managed Dev Tunnel discovery, host identity and receipt validation, and the enterprise/PowerShell trust boundaries for browser-to-host and local-hosted profiles. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns packaged terminal runtime behavior, real-window validation, and OS wake/privacy integration across macOS, Windows, and Linux. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns host-based dev tunnel discovery, enterprise trust boundaries, and portable profile/PowerShell recipe semantics for local-hosted sessions. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns packaged runtime behavior, native app-window integration, and OS wake/privacy monitors across macOS, Windows, and Linux. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust terminal host for iOS and Android, plus native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing. |
 | [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows around the egui application loop. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
