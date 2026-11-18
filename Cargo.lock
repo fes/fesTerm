@@ -2370,6 +2370,7 @@ dependencies = [
  "festerm-enterprise",
  "festerm-host-protocol",
  "festerm-host-setup",
+ "festerm-javascript-session",
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",
