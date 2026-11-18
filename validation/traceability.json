@@ -6307,7 +6307,12 @@
         "local_catalog_remote_off_disabled_host_create_reuse_unshare_and_restore_same_generation",
         "publication_reenable_only_clears_exact_known_off_grant",
         "unpublished_persistent_generation_keeps_local_use_and_rejects_remote_admission",
-        "local_catalog_initially_unshared_remote_off_creates_only_explicit_local_generation"
+        "local_catalog_initially_unshared_remote_off_creates_only_explicit_local_generation",
+        "ordinary_desktop_privacy_preparation_error_after_loss_survives_result_discard",
+        "ordinary_desktop_privacy_preparation_diagnostic_cannot_cross_generation_or_account",
+        "ordinary_desktop_user_cancel_does_not_report_privacy_preparation_failure",
+        "ordinary_desktop_retry_clears_preparation_diagnostic_before_new_validation",
+        "ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure"
       ],
       "manual_scenarios": [
         "DT-05",

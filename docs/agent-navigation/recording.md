@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "3f866b43f49acd127494b76a7fc98d28e6b745e6456a68a7a3b498a3f3fd9a28"} -->
+<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4379e633025cd5c9634a863baff9165f91761861e534308e10488ba08962dcc0"} -->
 # Terminal recording and export
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The recording domain owns the private capture lifecycle, privacy gating, export preparation, and replay/retention checks for terminal recordings.
+The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings.
 
 Canonical docs: [docs/terminal-recording-design.md](../../docs/terminal-recording-design.md), [docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md](../../docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md)
 
@@ -12,9 +12,8 @@ Canonical docs: [docs/terminal-recording-design.md](../../docs/terminal-recordin
 
 Use for: Need to begin capture or confirm a selected session is still eligible before private output is accepted
 
-- [`begin`](../../app/festerm/src/application/recording.rs) — Validates settings, privacy, and tab identity before PrepareTask starts.
-- [`start_capture`](../../app/festerm/src/application/recording.rs) — Accepts the prepared source and attaches live terminal streams under a privacy guard.
-- [`SessionIdentity`](../../app/festerm/src/application/recording.rs) — Captures tab and lifecycle identity so reconnects or replacements are rejected.
+- [`begin`](../../app/festerm/src/application/recording.rs) — Validates settings, privacy, and tab identity before a private source is prepared.
+- [`start_capture`](../../app/festerm/src/application/recording.rs) — Accepts the prepared source and binds live terminal streams under the privacy guard.
 
 Evidence:
 - [`consent_identity_rejects_reconnected_or_replaced_sessions`](../../app/festerm/src/application/recording_tests.rs) — Rejects stale identities before the capture source is accepted.
@@ -29,9 +28,8 @@ Caveats:
 
 Use for: Need to understand why capture stops on lock, sleep, consent loss, or opt-out
 
-- [`PrivacyGuard`](../../app/festerm/src/recording_privacy.rs) — Binds a recording to a live monitor and stops it on privacy loss.
-- [`PrivacyTask`](../../app/festerm/src/recording_privacy.rs) — Starts monitor threads and carries cancellation or ready state back to the UI.
-- [`request`](../../app/festerm/src/application/recording.rs) — Disables recording, cancels starts, and stops active capture on opt-out.
+- [`PrivacyGuard`](../../app/festerm/src/recording_privacy.rs) — Drops capture when the device privacy monitor reports loss or lifecycle cleanup.
+- [`PrivacyTask`](../../app/festerm/src/recording_privacy.rs) — Starts the native privacy monitor and carries cancellation or ready state back.
 
 Evidence:
 - [`desktop_disabling_session_recording_stops_capture_and_retains_the_source`](../../app/festerm/src/application/recording_tests.rs) — Shows opt-out stops capture while keeping the private source.
@@ -39,16 +37,15 @@ Evidence:
 
 Caveats:
 - Monitor loss must stop capture rather than continue in the background.
-- The guard binds before output is accepted or the source is rolled back.
 - Opt-out cancels both active starts and active capture without deleting retained sources.
+- The guard binds before output is accepted or the source is rolled back.
 
 ## Export stage
 
 Use for: Need to validate a finished capture before video staging and publication
 
 - [`PrepareTask`](../../crates/festerm-recording-export/src/prepare.rs) — Creates the source manifest and staging lease before capture can begin.
-- [`PreviewTask`](../../crates/festerm-recording-export/src/worker.rs) — Verifies source integrity and computes export preview metadata.
-- [`ExportCancellation`](../../crates/festerm-recording-export/src/lib.rs) — Coordinates cancellation with retention and cleanup decisions.
+- [`PreviewTask`](../../crates/festerm-recording-export/src/worker.rs) — Verifies source identity and computes export preview data before staging.
 
 Evidence:
 - [`stages_a_complete_synchronized_set_and_keeps_the_source`](../../crates/festerm-recording-export/tests/export.rs) — Proves synchronized staging writes per-stream videos while retaining the source.
@@ -63,15 +60,14 @@ Caveats:
 
 Use for: Need to inspect completion, replay timing, or storage-safety invariants
 
-- [`Completion`](../../crates/festerm-recording/src/capture.rs) — Reports complete, incomplete, and failed finalization states with paths.
-- [`PlaybackPlan`](../../crates/festerm-recording/src/playback.rs) — Validates artifact timing and derives synchronized replay frames.
-- [`RecordingLease`](../../crates/festerm-recording/src/settings_store/lease.rs) — Protects shared private storage and prevents unsafe replacement during recovery.
+- [`PlaybackPlan`](../../crates/festerm-recording/src/playback.rs) — Validates a source timeline and derives synchronized replay frames.
+- [`RecordingLease`](../../crates/festerm-recording/src/settings_store/lease.rs) — Protects shared private storage from concurrent mutation and replacement.
 
 Evidence:
-- [`lease_excludes_other_operations_and_detects_replacement`](../../crates/festerm-recording/src/settings_store/lease.rs) — Proves the lock blocks concurrent work and detects replacement.
+- [`lease_excludes_other_operations_and_detects_replacement`](../../crates/festerm-recording/src/settings_store/lease.rs) — Proves the lock blocks concurrent work and detects storage replacement.
 - [`capture_requires_private_storage_without_a_symlink`](../../crates/festerm-recording/tests/capture.rs) — Rejects unsafe storage before a source is accepted.
 
 Caveats:
-- Complete, incomplete, and failed outcomes require distinct cleanup and replay handling.
 - Timeline integrity depends on synchronized stream checkpoints; replay breaks if they diverge.
 - Storage replacements or lease changes must reject mutation rather than editing the source.
+- Complete, incomplete, and failed outcomes require distinct cleanup and replay handling.

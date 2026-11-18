@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9b42bc1ea1ddafcc627614a3ce99079e1f2753a1dfe0c335c5f8efc68650877a"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d798b72567367596166d0883e098333d19d3863c7a2c03bd4f56d49c31088c69"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -17,7 +17,7 @@ Use for: When the app boots, validates CLI mode, and creates the primary window.
 - [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions keep pumping while window lifecycle stays coherent
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions keep pumping while lifecycle stays coherent
 - [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Documents launcher startup and first-run flow
 
 Caveats:
@@ -34,7 +34,7 @@ Use for: When each frame pumps sessions, handles close requests, and renders the
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays limited to the focused pane
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling still hold under stress
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling hold under stress
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -49,7 +49,7 @@ Use for: When a user opens profile or settings screens and dispatches a connecti
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, keyboard bindings, and automation preferences
 
 Evidence:
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page sequencing and state integrity stay aligned with the documented flow
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings sequencing and state integrity stay aligned with the flow
 - [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
 
 Caveats:

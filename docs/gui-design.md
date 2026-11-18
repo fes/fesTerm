@@ -4180,3 +4180,20 @@ discovered defect.
 - Native Markdown-viewer implementation and validation against the approved
   readability-first boundary in `docs/markdown-viewer-design.md`; no current
   milestone depends on it.
+
+
+### Dev Tunnels privacy preparation diagnostics
+
+A failed selected-host connection retains a fixed privacy-preparation reason
+(unavailable, readiness timeout or unresolved cleanup) in that connection's
+Diagnostics disclosure. It remains available after account/privacy cancellation
+discards the authority result. Only the current account/request generation may
+show it; retry starts a fresh diagnostic scope. This metadata never admits a
+late connection, clears a cancelled lifetime or changes session absence. Ordinary
+user cancellation does not create a preparation-failure diagnosis.
+
+Windows Diagnostics explains that the provider requires an active, unlocked WTS
+session and running Remote Desktop Services (TermService). A generic unavailable
+result does not identify the failed OS prerequisite. fesTerm does not start
+services, change RDP policy or alter permissions. Unresolved native cleanup
+requires a normal app restart.

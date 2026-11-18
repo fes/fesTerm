@@ -2634,3 +2634,13 @@ HOST/stub regressions cover category preservation, capture before cancellation
 and refused continuation. Queue limits, cancellation, admission and no-replay
 behavior are unchanged; native saturation cause/long-input acceptance remain
 separate evidence.
+
+
+Privacy preparation diagnostics (HOST-01/HOST-02) retain only a bounded fixed
+outcome per current account/request generation, independently of authority
+result disposal. OS-loss cancellation remains immediate and fail closed; late
+results cannot install a session or infer absence. The diagnostic route changes
+no privacy-provider prerequisites, OS service state, access policy or retry
+authority. Validation includes deterministic loss-before-error, late-success,
+stale-scope and user-cancel fixtures; genuine signed native diagnosis remains
+required.

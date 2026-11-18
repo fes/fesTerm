@@ -2268,3 +2268,10 @@ the old temporary owner/epoch/deadline and foreign/committed ticket fences;
 Busy/Unknown/OutcomeUncertain never establish absence. The `4898f407` macOS
 native18/1 producer is unknown; no retry/sleep/policy change or new native
 acceptance is implied.
+
+
+HOST-01/HOST-02 selected-host privacy preparation failures remain available in
+Diagnostics after cancellation discards the authority result. Fixed unavailable,
+timeout and cleanup-unresolved outcomes are scoped to the current account and
+request generation. They neither revive admission nor admit late success;
+ordinary user cancellation is not classified as an OS preparation failure.

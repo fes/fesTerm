@@ -5570,3 +5570,21 @@ tests validate collection, privacy and restoration only; they do not establish
 client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
+
+
+### HOST-01/HOST-02 privacy preparation diagnostics
+
+Portable fixtures cover loss-before-installation-error ordering, discarded late
+success, retained fixed failure, stale generation/account refusal and ordinary
+user cancellation. Signed native rendering and real OS preparation failures for
+this diagnostic route remain pending; fixtures do not qualify a Windows privacy
+provider or authorize a connection.
+
+The controlled Windows .17.8 client campaign found TermService stopped (Manual)
+while the interactive Session1 app was otherwise available. Its existing native
+monitor requires that service running as well as an active/unlocked WTS session.
+The operator temporarily started the preinstalled service under the lab setup
+authorization, preserving Manual startup and denied RDP policy; restoration
+after monitor drain is operator-owned. This was lab preparation, not a product
+workaround or instruction to enable Remote Desktop. A generic monitor failure
+must not claim this exact service cause without separate evidence.

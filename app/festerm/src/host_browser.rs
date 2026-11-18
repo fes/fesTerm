@@ -24,7 +24,7 @@ use festerm_tunnel_client::{
     service::{self, ResolvedTunnel},
 };
 use std::{
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, OnceLock},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -162,6 +162,42 @@ fn ordinary_privacy_loss(cancel: CancellationToken) -> Arc<dyn Fn() + Send + Syn
     Arc::new(move || cancel.cancel())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrivacyPreparationFailure {
+    Unavailable,
+    Timeout,
+    CleanupUnresolved,
+}
+
+impl PrivacyPreparationFailure {
+    fn notice(self) -> &'static str {
+        match self {
+            Self::Unavailable => "Device privacy monitoring could not start. Check Diagnostics before retrying.",
+            Self::Timeout => "Device privacy monitoring did not become ready. Retry explicitly after preparation finishes.",
+            Self::CleanupUnresolved => "Device privacy cleanup is unresolved. Restart fesTerm before connecting again.",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PrivacyPreparationDiagnostic {
+    generation: u64,
+    failure: Arc<OnceLock<PrivacyPreparationFailure>>,
+}
+
+fn record_privacy_preparation_failure(
+    diagnostic: &PrivacyPreparationDiagnostic,
+    browser_cancel: &CancellationToken,
+    failure: PrivacyPreparationFailure,
+    context: &egui::Context,
+) {
+    // Browser/user cancellation is distinct from the child transport cancellation
+    // caused by privacy loss. This slot carries metadata, never authority.
+    if !browser_cancel.is_cancelled() && diagnostic.failure.set(failure).is_ok() {
+        context.request_repaint();
+    }
+}
+
 fn valid_session_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
@@ -251,6 +287,7 @@ pub(super) struct Browser {
     ordinary: Option<host_client::ordinary::OrdinaryContext>,
     ordinary_selected: bool,
     ordinary_lifetime: Option<CancellationToken>,
+    privacy_preparation: Option<PrivacyPreparationDiagnostic>,
     #[cfg(test)]
     ordinary_service: Option<OrdinaryService>,
     #[cfg(test)]
@@ -354,6 +391,7 @@ impl FesTermApp {
             ordinary: None,
             ordinary_selected: false,
             ordinary_lifetime: None,
+            privacy_preparation: None,
             #[cfg(test)]
             ordinary_service: None,
             #[cfg(test)]
@@ -504,6 +542,24 @@ impl FesTermApp {
 }
 
 impl Browser {
+    fn privacy_preparation_failure(&self) -> Option<PrivacyPreparationFailure> {
+        self.privacy_preparation
+            .as_ref()
+            .filter(|diagnostic| diagnostic.generation == self.generation)
+            .and_then(|diagnostic| diagnostic.failure.get().copied())
+    }
+
+    fn privacy_diagnostics(&self, ui: &mut egui::Ui) {
+        if let Some(failure) = self.privacy_preparation_failure() {
+            ui.collapsing("Diagnostics", |ui| {
+                ui.label(failure.notice());
+                ui.label("Connection admission remains closed. No session result or absence was accepted.");
+                #[cfg(windows)]
+                ui.label("Windows requires an active, unlocked WTS session and a running Remote Desktop Services (TermService) service for lock and sleep monitoring. fesTerm does not start services or enable Remote Desktop. Unavailable does not identify which prerequisite failed.");
+            });
+        }
+    }
+
     fn current(&self, state: &AppState, context: &egui::Context) -> bool {
         let origin_current = state.tabs().iter().any(|tab| {
             tab.id == self.tab
@@ -563,6 +619,7 @@ impl Browser {
         self.discovered = true;
         self.ordinary = None;
         self.ordinary_lifetime = None;
+        self.privacy_preparation = None;
         self.receipt = None;
         self.resolved = None;
         self.inventory = None;
@@ -867,6 +924,7 @@ impl FesTermApp {
             ordinary: None,
             ordinary_selected: true,
             ordinary_lifetime: None,
+            privacy_preparation: None,
             #[cfg(test)]
             ordinary_service: None,
             #[cfg(test)]
@@ -1313,6 +1371,7 @@ impl FesTermApp {
             ordinary: None,
             ordinary_selected: true,
             ordinary_lifetime: None,
+            privacy_preparation: None,
             #[cfg(test)]
             ordinary_service: None,
             #[cfg(test)]
@@ -1381,6 +1440,7 @@ impl FesTermApp {
         let browser = self.host_browser.as_mut().expect("checked browser");
         browser.ordinary_selected = true;
         browser.ordinary_lifetime = Some(account_cancel.clone());
+        browser.privacy_preparation = None;
         browser.ordinary = None;
         browser.receipt = None;
         browser.resolved = None;
@@ -1415,6 +1475,13 @@ impl FesTermApp {
             return;
         };
         browser.generation = generation;
+        let preparation = PrivacyPreparationDiagnostic {
+            generation,
+            failure: Arc::new(OnceLock::new()),
+        };
+        browser.privacy_preparation = Some(preparation.clone());
+        #[cfg(not(test))]
+        let browser_cancel = browser.cancel.clone();
         let locator = browser.locator.clone();
         #[cfg(not(test))]
         let budgets = self.state.host_client_budgets.clone();
@@ -1432,15 +1499,55 @@ impl FesTermApp {
                     let on_loss = ordinary_privacy_loss(account_cancel.clone());
                     #[cfg(not(test))]
                     let privacy = {
+                        let report = |failure| {
+                            record_privacy_preparation_failure(
+                                &preparation,
+                                &browser_cancel,
+                                failure,
+                                &wake,
+                            )
+                        };
+                        let observed = preparation.clone();
+                        let observed_cancel = browser_cancel.clone();
+                        let observed_wake = wake.clone();
                         let task = crate::recording_privacy::PrivacyTask::start_with_loss(
                             Arc::new(|| {}),
                             on_loss,
                             permit.clone(),
+                            Arc::new(move |cleanup_unresolved| {
+                                record_privacy_preparation_failure(
+                                    &observed,
+                                    &observed_cancel,
+                                    if cleanup_unresolved {
+                                        PrivacyPreparationFailure::CleanupUnresolved
+                                    } else {
+                                        PrivacyPreparationFailure::Unavailable
+                                    },
+                                    &observed_wake,
+                                );
+                            }),
                         )
-                        .map_err(RequestFailure::from)?;
-                        task.wait(Duration::from_secs(30))
-                            .ok_or("OS privacy monitoring did not become ready. Retry explicitly.")?
-                            .map_err(RequestFailure::from)?
+                        .map_err(|_| {
+                            report(PrivacyPreparationFailure::Unavailable);
+                            RequestFailure::from(PrivacyPreparationFailure::Unavailable.notice())
+                        })?;
+                        match task.wait(Duration::from_secs(30)) {
+                            Some(Ok(guard)) => guard,
+                            Some(Err(_)) => {
+                                report(PrivacyPreparationFailure::Unavailable);
+                                return Err(preparation
+                                    .failure
+                                    .get()
+                                    .copied()
+                                    .unwrap_or(PrivacyPreparationFailure::Unavailable)
+                                    .notice()
+                                    .into());
+                            }
+                            None => {
+                                report(PrivacyPreparationFailure::Timeout);
+                                return Err(PrivacyPreparationFailure::Timeout.notice().into());
+                            }
+                        }
                     };
                     #[cfg(test)]
                     let privacy = {
@@ -1569,7 +1676,7 @@ impl FesTermApp {
             }
             browser.ordinary = None;
             browser.inventory = None;
-            browser.feedback = Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.".into());
+            browser.feedback = Some(browser.privacy_preparation_failure().map(PrivacyPreparationFailure::notice).unwrap_or("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.").into());
             return;
         }
         browser.expire_pending(Instant::now());
@@ -1875,6 +1982,7 @@ impl FesTermApp {
                     ui.label("Advanced enrolled-owner connection. Public recipe metadata grants no authority.");
                 }
                 if let Some(message) = &browser.feedback { ui.label(message); }
+                browser.privacy_diagnostics(ui);
                 if browser.needs_sign_in && !browser.busy() && ui.button("Sign in again").clicked() { action = Some(Action::Reauthenticate); }
                 if browser.busy() { ui.spinner(); ui.label("Working on the selected host only…"); }
                 ui.add_enabled_ui(!browser.busy(), |ui| {
@@ -2102,6 +2210,7 @@ impl FesTermApp {
                         if message.len() > 140 { "The connection needs attention." } else { message });
                     if message.len() > 140 { ui.collapsing("Details", |ui| { ui.add(egui::Label::new(message).wrap()); }); }
                 }
+                browser.privacy_diagnostics(ui);
                 ui.add_enabled_ui(!browser.busy(), |ui| {
                     if browser.ordinary_selected && browser.inventory.is_none() {
                         if !browser.busy() && action_button(ui, ActionButtonRole::Accent, "Retry host connection").clicked() {
@@ -2482,6 +2591,7 @@ impl FesTermApp {
             let browser = self.host_browser.as_mut().expect("current browser");
             browser.ordinary_selected = false;
             browser.ordinary_lifetime = None;
+            browser.privacy_preparation = None;
             browser.ordinary = None;
             browser.inventory = None;
             browser.host_approved = false;
