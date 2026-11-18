@@ -11,14 +11,14 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns the typed app command bus, tab lifecycle, and keyboard shortcut routing for app-wide actions and singleton surfaces. |
+| [Application commands, tabs, and input routing](app-commands.md) | Application commands, tab ownership, and keyboard routing are centralized in AppState and dispatch so widgets cannot mutate app policy directly. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gating, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns managed Dev Tunnel discovery, host identity and receipt validation, and the enterprise/PowerShell trust boundaries for browser-to-host and local-hosted profiles. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Owns packaged terminal runtime behavior, native real-window validation, and OS wake/privacy integration across macOS, Windows, and Linux. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns the packaged desktop release path, native real-window validation, and OS wake/privacy integration for macOS, Windows, and Linux. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust terminal host for iOS and Android, plus native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing. |
-| [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows around the egui application loop. |
+| [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access around the egui app loop. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

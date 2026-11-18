@@ -2268,3 +2268,11 @@ the old temporary owner/epoch/deadline and foreign/committed ticket fences;
 Busy/Unknown/OutcomeUncertain never establish absence. The `4898f407` macOS
 native18/1 producer is unknown; no retry/sleep/policy change or new native
 acceptance is implied.
+
+HOST-01/02 native OFF matrix evidence additionally requires an authenticated
+stopped-shared-profile `EnsureProfile` denial with exact unchanged catalog
+revision and no session/uncertain target before or after. The opt-in campaign
+emits a separate negative marker only when this check runs; its wrapper refuses
+an OFF success using only the older ordinary marker. This is test evidence, not
+a new GUI action or creation permission. Generic OFF uses server-routed Ensure
+and a no-session/no-uncertainty postcondition.

@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACCOUNT = "fes-festerm1"
 TEST = "controlled_github_host_service_client_workflow"
 MARKER = b"FESTERM_DEV_TUNNEL_LAB_ORDINARY_CLIENT_PASS"
+STOPPED_MARKER = b"FESTERM_DEV_TUNNEL_LAB_STOPPED_PROFILE_DENIED_PASS"
 RECORD = Path.home() / ".festerm-lab" / "dev-tunnel-workflow.json"
 
 
@@ -41,13 +42,19 @@ def fixture_record(path=RECORD):
                 "shared_profile_name", "private_profile_name", "generic_logical",
                 "private_logical", "private_revision", "denied_logical", "creation_allowed",
                 "allow_shell_input", "shell"}
-    if (not isinstance(record, dict) or set(record) != required
+    if (not isinstance(record, dict) or set(record) not in (required, required | {"stopped_shared_profile_name"})
             or type(record["schema_version"]) is not int or record["schema_version"] != 2
             or record["account"] != ACCOUNT
             or record["allow_shell_input"] is not True
             or not isinstance(record["creation_allowed"], bool)
             or record["shell"] not in ("posix", "powershell", "cmd")):
         raise Blocked("operator-record-does-not-authorize-campaign")
+    stopped = record.get("stopped_shared_profile_name")
+    if (record["creation_allowed"] and stopped is not None
+            or not record["creation_allowed"] and (
+                not isinstance(stopped, str) or not stopped.strip() or len(stopped.encode()) > 128
+                or stopped in (record["shared_profile_name"], record["private_profile_name"]))):
+        raise Blocked("stopped-profile-negative-fixture-required-for-off")
     # The normal fixture identifies a provider resource, never a manually trusted
     # app-host ID/owner receipt. Unknown old pairing fields are rejected above.
     identifier = r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?"
@@ -456,7 +463,8 @@ def main(argv=None):
     if b"FESTERM_DEV_TUNNEL_LAB_BLOCKED" in output:
         evidence(args.result, "blocked", "native-account-ordinary-host-or-fixture-prerequisite")
         return 2
-    if code != 0 or MARKER not in output or b"1 passed; 0 failed" not in output:
+    if (code != 0 or MARKER not in output or b"1 passed; 0 failed" not in output
+            or not record["creation_allowed"] and STOPPED_MARKER not in output):
         evidence(args.result, "fail", "service-client-timeout" if code is None else "service-client-failed")
         return 1
     evidence(args.result, "pass", "scoped-fixtures-retained-detached-no-global-cleanup")

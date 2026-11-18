@@ -378,3 +378,10 @@ ancestors: automatic host expansion must reach the server without changing
 existing data or directory permissions. Portable fixtures cover native-root
 identity, symlink/ACL/permission refusal and the documented `/var` alias; they
 do not establish Simulator or physical-device acceptance.
+
+The opt-in service-client fixture adds an optional stopped shared-profile name.
+Creation OFF native acceptance requires its exact server Denied and complete
+pre/post NotStarted inventory, plus a separate completion marker; legacy
+ordinary-only markers do not qualify this negative gate. Fixture/inventory and
+wrapper marker tests are automated; real provider/native-vault/GUI cases remain
+unqualified until executed. No product authorization or protocol is changed.
