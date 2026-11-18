@@ -21,6 +21,10 @@ pub const MAX_OUTPUT_QUEUE_BYTES: usize = 32 * 1024;
 pub const MAX_PENDING_WRITES: usize = 16;
 pub const MAX_PENDING_EVENTS: usize = 16;
 pub const MAX_PENDING_FRAMES: usize = 64;
+pub const MAX_PENDING_HOST_CALLS: usize = 8;
+pub const MAX_ASSET_BYTES: usize = 12 * 1024;
+pub const MAX_ASSETS: usize = 32;
+pub const MAX_SLEEP_MS: u32 = 60_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +38,17 @@ pub enum ProgramCapability {
     TerminalInput,
     TerminalOutput,
     TerminalResize,
+    AssetsRead,
+    ClockNow,
+    ClockSleep,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramAsset {
+    pub id: String,
+    pub length: u32,
+    pub digest: String,
 }
 
 /// A reviewed terminal-program launch.
@@ -52,6 +67,7 @@ impl JavaScriptProgramLaunch {
         if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
             return Err(Error::Protocol);
         }
+
         let program = developer_echo_program()?;
         let capabilities = BTreeSet::from([
             ProgramCapability::TerminalInput,
@@ -64,6 +80,17 @@ impl JavaScriptProgramLaunch {
         {
             return Err(Error::Snapshot);
         }
+        Ok(Self {
+            program,
+            worker_generation,
+        })
+    }
+
+    pub fn reviewed_developer_host_services(worker_generation: u64) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+        let program = developer_host_services_program()?;
         Ok(Self {
             program,
             worker_generation,
@@ -118,6 +145,8 @@ pub struct ProgramManifest {
     /// Exact sorted canonical paths, equal to the supplied module keys.
     pub modules: Vec<String>,
     pub capabilities: BTreeSet<ProgramCapability>,
+    #[serde(default)]
+    pub assets: Vec<ProgramAsset>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -128,10 +157,20 @@ pub struct ProgramSourceSnapshot {
     pub modules: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenProgramSnapshot {
+    #[serde(flatten)]
+    source: ProgramSourceSnapshot,
+    #[serde(deserialize_with = "unique_map")]
+    assets: BTreeMap<String, Vec<u8>>,
+}
+
 /// An immutable validated source set. Only in-memory bytes are accepted.
 #[derive(Clone)]
 pub struct ApprovedProgram {
     snapshot: ProgramSourceSnapshot,
+    assets: BTreeMap<String, Vec<u8>>,
     digest: String,
 }
 
@@ -146,14 +185,29 @@ impl std::fmt::Debug for ApprovedProgram {
 
 impl ApprovedProgram {
     pub fn new(snapshot: ProgramSourceSnapshot) -> Result<Self, Error> {
-        validate_manifest(&snapshot)?;
+        Self::with_assets(snapshot, BTreeMap::new())
+    }
+
+    pub fn with_assets(
+        snapshot: ProgramSourceSnapshot,
+        assets: BTreeMap<String, Vec<u8>>,
+    ) -> Result<Self, Error> {
+        validate_manifest(&snapshot, &assets)?;
         ApprovedBundle::new(snapshot_as_workflow(&snapshot))?;
-        let canonical = serde_json::to_vec(&snapshot).map_err(|_| Error::Snapshot)?;
+        let frozen = FrozenProgramSnapshot {
+            source: snapshot.clone(),
+            assets: assets.clone(),
+        };
+        let canonical = serde_json::to_vec(&frozen).map_err(|_| Error::Snapshot)?;
         if canonical.len() > MAX_SNAPSHOT_BYTES {
             return Err(Error::Snapshot);
         }
         let digest = format!("{:x}", Sha256::digest(&canonical));
-        Ok(Self { snapshot, digest })
+        Ok(Self {
+            snapshot,
+            assets,
+            digest,
+        })
     }
 
     pub fn digest(&self) -> &str {
@@ -169,18 +223,61 @@ impl ApprovedProgram {
     }
 
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, Error> {
-        serde_json::to_vec(&self.snapshot).map_err(|_| Error::Snapshot)
+        serde_json::to_vec(&FrozenProgramSnapshot {
+            source: self.snapshot.clone(),
+            assets: self.assets.clone(),
+        })
+        .map_err(|_| Error::Snapshot)
+    }
+
+    pub fn asset(&self, id: &str) -> Option<&[u8]> {
+        self.assets.get(id).map(Vec::as_slice)
+    }
+
+    pub fn assets(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.assets
     }
 }
 
-fn validate_manifest(snapshot: &ProgramSourceSnapshot) -> Result<(), Error> {
+fn validate_manifest(
+    snapshot: &ProgramSourceSnapshot,
+    assets: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), Error> {
     let manifest = &snapshot.manifest;
     if manifest.version != PROGRAM_PROTOCOL_VERSION
         || manifest.api_version != PROGRAM_API_VERSION
         || manifest.kind != ProgramKind::TerminalProgram
         || !token(&manifest.name)
         || manifest.capabilities.is_empty()
-        || manifest.capabilities.len() > 3
+        || manifest.capabilities.len() > 6
+        || manifest.assets.len() > MAX_ASSETS
+    {
+        return Err(Error::Snapshot);
+    }
+    let mut ids = BTreeSet::new();
+    for asset in &manifest.assets {
+        if !token(&asset.id)
+            || !ids.insert(asset.id.as_str())
+            || asset.digest.len() != 64
+            || !asset.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || asset.length == 0
+            || asset.length as usize > MAX_ASSET_BYTES
+        {
+            return Err(Error::Snapshot);
+        }
+        let bytes = assets.get(&asset.id).ok_or(Error::Snapshot)?;
+        if bytes.len() != asset.length as usize
+            || format!("{:x}", Sha256::digest(bytes)) != asset.digest
+        {
+            return Err(Error::Snapshot);
+        }
+    }
+    if assets.len() != manifest.assets.len()
+        || assets.keys().any(|id| !ids.contains(id.as_str()))
+        || (assets.is_empty()
+            != !manifest
+                .capabilities
+                .contains(&ProgramCapability::AssetsRead))
     {
         return Err(Error::Snapshot);
     }
@@ -244,9 +341,9 @@ impl ProgramBundleLoader {
         if self.source.len() != self.expected_bytes {
             return Err(Error::Protocol);
         }
-        let snapshot: ProgramSourceSnapshot =
+        let frozen: FrozenProgramSnapshot =
             serde_json::from_slice(&self.source).map_err(|_| Error::Snapshot)?;
-        let program = ApprovedProgram::new(snapshot)?;
+        let program = ApprovedProgram::with_assets(frozen.source, frozen.assets)?;
         if program.digest() != self.digest {
             return Err(Error::Snapshot);
         }
@@ -264,6 +361,7 @@ pub fn developer_echo_program() -> Result<ApprovedProgram, Error> {
             name: "developer-echo".into(),
             entry: "main.js".into(),
             modules: vec!["main.js".into()],
+            assets: Vec::new(),
             capabilities: BTreeSet::from([
                 ProgramCapability::TerminalInput,
                 ProgramCapability::TerminalOutput,
@@ -331,6 +429,69 @@ pub fn developer_echo_program() -> Result<ApprovedProgram, Error> {
     })
 }
 
+pub fn developer_host_services_program() -> Result<ApprovedProgram, Error> {
+    let greeting = b"asset:ready\n".to_vec();
+    ApprovedProgram::with_assets(
+        ProgramSourceSnapshot {
+            manifest: ProgramManifest {
+                version: PROGRAM_PROTOCOL_VERSION,
+                api_version: PROGRAM_API_VERSION,
+                kind: ProgramKind::TerminalProgram,
+                name: "developer-host-services".into(),
+                entry: "main.js".into(),
+                modules: vec!["main.js".into()],
+                capabilities: BTreeSet::from([
+                    ProgramCapability::TerminalInput,
+                    ProgramCapability::TerminalOutput,
+                    ProgramCapability::TerminalResize,
+                    ProgramCapability::AssetsRead,
+                    ProgramCapability::ClockNow,
+                    ProgramCapability::ClockSleep,
+                ]),
+                assets: vec![ProgramAsset {
+                    id: "greeting".into(),
+                    length: greeting.len() as u32,
+                    digest: format!("{:x}", Sha256::digest(&greeting)),
+                }],
+            },
+            modules: BTreeMap::from([(
+                "main.js".into(),
+                r#"export async function main({terminal, assets, clock, params}) {
+    let pending = [];
+    terminal.write(String.fromCharCode(...await assets.read("greeting")));
+    const started = await clock.now();
+    await clock.sleep(1);
+    if (typeof started !== "number" || Object.keys(params).length !== 0) throw new Error("params");
+    const events = terminal.events();
+    while (true) {
+        const event = await events.next();
+        if (event.done) return;
+        if (event.value.type === "close") return;
+        if (event.value.type === "input") {
+            pending.push(...event.value.bytes);
+            while (pending.length > 0) {
+                const size = pending[0] <= 0x7f ? 1 :
+                    pending[0] >= 0xc2 && pending[0] <= 0xdf ? 2 :
+                    pending[0] >= 0xe0 && pending[0] <= 0xef ? 3 : 1;
+                if (pending.length < size) break;
+                const bytes = Uint8Array.from(pending.splice(0, size));
+                if (bytes.length === 1) terminal.write(String.fromCharCode(bytes[0]));
+                else {
+                    let point = bytes[0] & (0x7f >> bytes.length);
+                    for (let i = 1; i < bytes.length; ++i) point = (point << 6) | (bytes[i] & 0x3f);
+                    terminal.write(String.fromCodePoint(point));
+                }
+            }
+        }
+    }
+}"#
+                .into(),
+            )]),
+        },
+        BTreeMap::from([("greeting".into(), greeting)]),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminalSize {
@@ -381,6 +542,11 @@ pub enum ProgramHostMessage {
         write_id: u64,
         acceptance: WriteAcceptance,
     },
+    HostCallResult {
+        generation: u64,
+        call_id: u64,
+        result: ProgramHostResult,
+    },
     Cancel {
         generation: u64,
     },
@@ -428,6 +594,11 @@ impl ProgramHostMessage {
                 write_id,
                 ..
             } => safe(generation) && safe(write_id),
+            Self::HostCallResult {
+                generation,
+                call_id,
+                ..
+            } => safe(generation) && safe(call_id),
             Self::Cancel { generation } => safe(generation),
         };
         if valid {
@@ -511,6 +682,15 @@ pub enum ProgramWorkerMessage {
         generation: u64,
         sequence: u64,
     },
+    HostCall {
+        generation: u64,
+        call_id: u64,
+        request: ProgramHostRequest,
+    },
+    HostCallCancelled {
+        generation: u64,
+        call_id: u64,
+    },
     Finished {
         generation: u64,
         outcome: ProgramOutcome,
@@ -547,6 +727,30 @@ impl ProgramWorkerMessage {
             {
                 Ok(())
             }
+            Self::HostCall {
+                generation,
+                call_id,
+                request,
+            } => {
+                if *generation == 0
+                    || *generation > MAX_SAFE_INTEGER
+                    || *call_id == 0
+                    || *call_id > MAX_SAFE_INTEGER
+                {
+                    return Err(Error::Protocol);
+                }
+                request.validate()
+            }
+            Self::HostCallCancelled {
+                generation,
+                call_id,
+            } if *generation > 0
+                && *generation <= MAX_SAFE_INTEGER
+                && *call_id > 0
+                && *call_id <= MAX_SAFE_INTEGER =>
+            {
+                Ok(())
+            }
             Self::Finished { generation, .. }
                 if *generation > 0 && *generation <= MAX_SAFE_INTEGER =>
             {
@@ -555,8 +759,85 @@ impl ProgramWorkerMessage {
             Self::Failed { .. } => Ok(()),
             Self::Ready { .. }
             | Self::Started { .. }
+            | Self::HostCallCancelled { .. }
             | Self::EventCompleted { .. }
             | Self::Finished { .. } => Err(Error::Protocol),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "method",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramHostRequest {
+    AssetsRead { id: String },
+    ClockNow {},
+    ClockSleep { milliseconds: u32 },
+}
+
+impl ProgramHostRequest {
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::AssetsRead { id } if token(id) => Ok(()),
+            Self::ClockNow {} => Ok(()),
+            Self::ClockSleep { milliseconds } if *milliseconds <= MAX_SLEEP_MS => Ok(()),
+            _ => Err(Error::Protocol),
+        }
+    }
+
+    pub fn capability(&self) -> ProgramCapability {
+        match self {
+            Self::AssetsRead { .. } => ProgramCapability::AssetsRead,
+            Self::ClockNow {} => ProgramCapability::ClockNow,
+            Self::ClockSleep { .. } => ProgramCapability::ClockSleep,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramHostError {
+    Closed,
+    NotFound,
+    Revoked,
+    Cancelled,
+    ResourceLimit,
+    Invalid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramHostResult {
+    Asset { bytes: Vec<u8> },
+    Clock { unix_milliseconds: u64 },
+    Slept {},
+    Error { code: ProgramHostError },
+}
+
+impl ProgramHostResult {
+    pub fn validate_for(&self, request: &ProgramHostRequest) -> Result<(), Error> {
+        let valid = match (self, request) {
+            (Self::Asset { bytes }, ProgramHostRequest::AssetsRead { .. }) => {
+                !bytes.is_empty() && bytes.len() <= MAX_ASSET_BYTES
+            }
+            (Self::Clock { .. }, ProgramHostRequest::ClockNow {}) => true,
+            (Self::Slept {}, ProgramHostRequest::ClockSleep { .. }) => true,
+            (Self::Error { .. }, _) => true,
+            _ => false,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Protocol)
         }
     }
 }
@@ -811,6 +1092,7 @@ impl InProcessProgramRunner {
                 acceptance,
                 ..
             } => self.resolve_write(*write_id, *acceptance),
+            ProgramHostMessage::HostCallResult { .. } => Err(Error::Protocol),
             ProgramHostMessage::Cancel { .. } => {
                 self.pending_writes.clear();
                 self.pending_bytes = 0;
@@ -861,7 +1143,7 @@ impl InProcessProgramRunner {
     pub fn begin_host_call(&mut self, id: u64) -> Result<(), Error> {
         if id == 0
             || id > MAX_SAFE_INTEGER
-            || self.unsettled_host_calls.len() >= MAX_PENDING_WRITES
+            || self.unsettled_host_calls.len() >= MAX_PENDING_HOST_CALLS
             || !self.unsettled_host_calls.insert(id)
         {
             return Err(Error::Protocol);
@@ -970,6 +1252,7 @@ fn generation(message: &ProgramHostMessage) -> u64 {
         | ProgramHostMessage::Resize { generation, .. }
         | ProgramHostMessage::Close { generation, .. }
         | ProgramHostMessage::WriteResult { generation, .. }
+        | ProgramHostMessage::HostCallResult { generation, .. }
         | ProgramHostMessage::Cancel { generation } => *generation,
     }
 }
@@ -1069,6 +1352,78 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn asset_inventory_is_frozen_and_covers_exact_bytes() {
+        let program = developer_host_services_program().unwrap();
+        let inventory = &program.manifest().assets[0];
+        assert_eq!(inventory.id, "greeting");
+        assert_eq!(inventory.length, b"asset:ready\n".len() as u32);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(program.asset("greeting").unwrap())),
+            inventory.digest
+        );
+        let mut substituted = program.snapshot().clone();
+        substituted.manifest.assets[0].length = 1;
+        assert!(ApprovedProgram::with_assets(
+            substituted,
+            BTreeMap::from([("greeting".into(), b"x".to_vec())])
+        )
+        .is_err());
+        assert_eq!(program.asset("greeting").unwrap(), b"asset:ready\n");
+    }
+
+    #[test]
+    fn oversized_assets_and_sleep_are_rejected() {
+        let mut snapshot = developer_host_services_program()
+            .unwrap()
+            .snapshot()
+            .clone();
+        snapshot.manifest.assets[0].length = MAX_ASSET_BYTES as u32 + 1;
+        assert!(ApprovedProgram::with_assets(
+            snapshot,
+            BTreeMap::from([("greeting".into(), vec![b'x'; MAX_ASSET_BYTES + 1])])
+        )
+        .is_err());
+        assert!(ProgramHostRequest::ClockSleep {
+            milliseconds: MAX_SLEEP_MS + 1
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn unsettled_host_calls_are_bounded_by_the_host_call_ceiling() {
+        let mut runner = runner();
+        for id in 1..=MAX_PENDING_HOST_CALLS as u64 {
+            runner.begin_host_call(id).unwrap();
+        }
+        assert!(runner
+            .begin_host_call(MAX_PENDING_HOST_CALLS as u64 + 1)
+            .is_err());
+    }
+
+    #[test]
+    fn typed_host_results_must_match_the_original_request() {
+        let request = ProgramHostRequest::AssetsRead {
+            id: "greeting".into(),
+        };
+        assert!(ProgramHostResult::Clock {
+            unix_milliseconds: 1
+        }
+        .validate_for(&request)
+        .is_err());
+        assert!(ProgramHostResult::Asset { bytes: vec![1] }
+            .validate_for(&request)
+            .is_ok());
+        assert!(ProgramHostMessage::HostCallResult {
+            generation: 7,
+            call_id: 1,
+            result: ProgramHostResult::Slept {},
+        }
+        .validate()
+        .is_ok());
     }
 
     #[test]
