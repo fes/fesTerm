@@ -33,6 +33,14 @@ interoperability, sandbox or mobile qualification evidence.
 The controller presentation tools report unavailable on every platform. A
 queued focus request is not success.
 
+ADR 0088's JavaScript **terminal-program developer slice** is separate from
+those workflows: it is disabled by default and exposes only a repository-owned
+echo program through the `javascript-program-dev` feature. The program owns one
+terminal tab without shell, local-file, or automation-target authority.
+Portable and confined-process tests do not qualify long-lived native resource
+policy, transactional saves, packaged lifecycle, mobile execution or a
+TradeWars port; see `JSP-01`–`JSP-04`.
+
 The experimental iOS terminal keyboards include an on-device-only dictation
 spike with explicit bounded review/Insert (no implicit Return or cloud fallback).
 Portable tests and Simulator launch are not physical-device speech/privacy
