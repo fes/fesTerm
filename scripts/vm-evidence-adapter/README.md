@@ -88,6 +88,25 @@ first failure instead of retrying it, so an intermediate blank command-echo row
 cannot be hidden by a later pass. The fixed VM mode replaces agent-authored
 Cargo loops and accepts no cycle count or other payload.
 
+For an explicitly reviewed already-running macOS window, the same evidence driver
+also supports the operator-only command (not a relay job payload):
+
+```sh
+scripts/run-macos-os-input-smoke.sh --scroll-existing PID X Y DETENTS /absolute/result.txt
+```
+
+This compiles/signs the existing `com.festerm.vm-evidence-driver` bundle if needed,
+but skips Cargo, candidate launch, AXRaise, resize and terminal input. The original
+PID start time is captured before compilation and checked in the driver. Only
+`dev.fes.festerm` or `dev.fes.festerm.development`, the foreground single owned
+window and an unoccluded interior point are accepted. Nonzero detents are bounded
+to -12..12. Accessibility and event-posting preflight are **nonprompting**; missing
+trust blocks with zero events. No permission is granted or requested by this mode.
+The driver moves the pointer, waits 200ms, rechecks the same window, and sends one
+line-scroll event. `status=sent` proves sending only: retain before/after native
+screenshots to establish actual content movement. The existing isolated smoke and
+physical corner-drag modes remain separate and retain their original prerequisites.
+
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
 exact-source bundles, locks, result records, and manifests.
 

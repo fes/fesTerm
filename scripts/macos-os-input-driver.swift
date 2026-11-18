@@ -2,7 +2,7 @@ import ApplicationServices
 import Cocoa
 import Foundation
 
-guard CommandLine.arguments.count == 4,
+guard CommandLine.arguments.count >= 4,
       let parsedPID = Int32(CommandLine.arguments[1]) else {
     fputs("usage: macos-os-input-driver <pid> <os-input|rapid-live-resize> <driver-result-path>\n", stderr)
     exit(2)
@@ -10,6 +10,17 @@ guard CommandLine.arguments.count == 4,
 let pid = pid_t(parsedPID)
 let mode = CommandLine.arguments[2]
 let driverResultPath = CommandLine.arguments[3]
+
+// Existing-window scrolling is deliberately nonprompting and does not enter the
+// isolated smoke setup (AXRaise, resize, keyboard input or candidate launch).
+if mode == "scroll-existing" {
+    runExistingScroll()
+    exit(0)
+}
+guard CommandLine.arguments.count == 4 else {
+    fputs("invalid smoke arguments\n", stderr)
+    exit(2)
+}
 
 let trustOptions = [
     kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
@@ -206,4 +217,76 @@ case "rapid-live-resize":
 default:
     fputs("unsupported macOS OS-input smoke mode: \(mode)\n", stderr)
     exit(2)
+}
+
+
+// One operator-selected scroll, not a new adapter job mode or a scroll-success oracle.
+func runExistingScroll() {
+    func blocked(_ reason: String) -> Never {
+        fputs("status=blocked\nreason=\(reason)\nevents_posted=0\n", stderr)
+        exit(2)
+    }
+    guard CommandLine.arguments.count == 8,
+          let x = Double(CommandLine.arguments[4]), x.isFinite,
+          let y = Double(CommandLine.arguments[5]), y.isFinite,
+          let detents = Int32(CommandLine.arguments[6]), (-12...12).contains(detents), detents != 0,
+          pid > 0 else { blocked("invalid-arguments") }
+    let expectedStart = CommandLine.arguments[7]
+    guard !expectedStart.isEmpty, expectedStart.count <= 64 else { blocked("invalid-start-binding") }
+    guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else { blocked("access-missing") }
+    guard let app = NSRunningApplication(processIdentifier: pid),
+          let birth = app.launchDate,
+          let identity = app.bundleIdentifier,
+          ["dev.fes.festerm", "dev.fes.festerm.development"].contains(identity),
+          let bundle = app.bundleURL, let executable = app.executableURL,
+          executable.standardizedFileURL == bundle.appendingPathComponent("Contents/MacOS/festerm").standardizedFileURL
+    else { blocked("not-festerm") }
+    let query = Process(); query.executableURL = URL(fileURLWithPath: "/bin/ps")
+    query.arguments = ["-p", String(pid), "-o", "lstart="]
+    query.environment = ["LC_ALL": "C", "PATH": "/usr/bin:/bin"]
+    let output = Pipe(); query.standardOutput = output; query.standardError = FileHandle.nullDevice
+    do { try query.run() } catch { blocked("start-unavailable") }
+    let queryDeadline = ProcessInfo.processInfo.systemUptime + 2
+    while query.isRunning && ProcessInfo.processInfo.systemUptime < queryDeadline { Thread.sleep(forTimeInterval: 0.01) }
+    if query.isRunning { query.terminate(); blocked("start-unavailable") }
+    guard query.terminationStatus == 0,
+          String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == expectedStart
+    else { blocked("process-replaced") }
+    let point = CGPoint(x: x, y: y)
+    func frame(_ row: [String: Any]) -> CGRect? {
+        guard let b = row[kCGWindowBounds as String] as? [String: Double],
+              let x=b["X"], let y=b["Y"], let w=b["Width"], let h=b["Height"],
+              [x,y,w,h].allSatisfy({$0.isFinite}) else { return nil }
+        return CGRect(x:x,y:y,width:w,height:h)
+    }
+    func selectedWindow() -> Int? {
+        guard !app.isTerminated, app.launchDate == birth,
+              let current = NSRunningApplication(processIdentifier: pid), current.launchDate == birth,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let owned = rows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid) && ($0[kCGWindowLayer as String] as? Int) == 0 }
+        guard owned.count == 1, let window = frame(owned[0]), window.insetBy(dx:4,dy:4).contains(point),
+              let number = owned[0][kCGWindowNumber as String] as? Int,
+              let hit = rows.first(where: { frame($0)?.contains(point) == true }),
+              (hit[kCGWindowOwnerPID as String] as? Int) == Int(pid),
+              (hit[kCGWindowNumber as String] as? Int) == number else { return nil }
+        return number
+    }
+    guard let window = selectedWindow() else { blocked("foreign-or-occluded-window") }
+    guard let move = CGEvent(mouseEventSource:nil, mouseType:.mouseMoved, mouseCursorPosition:point, mouseButton:.left),
+          let scroll = CGEvent(scrollWheelEvent2Source:nil, units:.line, wheelCount:1, wheel1:detents, wheel2:0, wheel3:0)
+    else { blocked("event-unavailable") }
+    // Construct everything and revalidate before the first event. No mouse button is pressed.
+    guard AXIsProcessTrusted(), CGPreflightPostEventAccess(), selectedWindow() == window else { blocked("target-or-access-changed") }
+    let deadline = ProcessInfo.processInfo.systemUptime + 1
+    move.post(tap:.cghidEventTap)
+    Thread.sleep(forTimeInterval:0.2)
+    guard ProcessInfo.processInfo.systemUptime < deadline, AXIsProcessTrusted(), CGPreflightPostEventAccess(), selectedWindow() == window else {
+        fputs("status=blocked\nreason=target-or-access-changed\nevents_posted=1\n", stderr)
+        exit(2)
+    }
+    scroll.location = point; scroll.post(tap:.cghidEventTap)
+    // Sending is not proof the content moved; operator before/after native captures decide that.
+    do { try "status=sent\nevents_posted=2\n".write(toFile:driverResultPath, atomically:true, encoding:.utf8) }
+    catch { fputs("status=sent-result-write-failed\nevents_posted=2\n", stderr); exit(1) }
 }
