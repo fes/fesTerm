@@ -557,6 +557,7 @@ impl Child {
         Ok(Some(code))
     }
 
+    #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
     pub(crate) fn cpu_time(&self) -> Result<std::time::Duration, Error> {
         process_cpu_time(self.process.as_raw_handle()).ok_or(Error::Unavailable(
             "worker process CPU evidence unavailable",
