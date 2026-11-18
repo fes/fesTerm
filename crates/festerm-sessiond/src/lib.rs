@@ -20,12 +20,13 @@ pub use detached::{
 };
 pub use remote::{RemoteSessionInventory, RemoteSessionTarget, RemoteSshEndpoint};
 
-/// Detects a known Windows launch restriction before reserving a new hosted
-/// generation. This does not establish that a later independent start succeeds.
+/// Queries Windows Job state before reservation, failing closed on query error.
+/// Initial Job membership uses the bounded WMI starter route. A false result
+/// is not readiness or evidence that the later independent start succeeds.
 pub fn independent_host_start_blocked() -> std::io::Result<bool> {
     #[cfg(windows)]
     {
-        festerm_windows_job::current_process_blocks_breakaway()
+        festerm_windows_job::current_process_child_job_policy().map(|_| false)
     }
     #[cfg(not(windows))]
     {

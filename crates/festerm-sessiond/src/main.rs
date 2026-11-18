@@ -994,6 +994,60 @@ fn default_shell() -> ShellSpec {
         })
 }
 
+#[cfg(any(windows, test))]
+fn finish_wmi_observation(
+    observation: io::Result<Option<bool>>,
+    ready: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match observation {
+        Ok(Some(true)) => Ok(()),
+        Ok(None) => ready(), // One successful Create, lost short-lived PID handoff only.
+        Ok(Some(false)) => Err("independent starter failed; retain reserved generation".into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(windows)]
+fn await_exact_wmi_ready(name: &str, deadline: Instant) -> Result<(), Box<dyn std::error::Error>> {
+    let generation = env::var("FESTERM_SESSIOND_GENERATION")?.parse::<u128>()?;
+    let request = env::var("FESTERM_SESSIOND_LAUNCH_REQUEST")?;
+    let fingerprint = env::var("FESTERM_SESSIOND_EXPECTED_SPAWN")?;
+    loop {
+        let registry = load_registry()?;
+        if let Some(record) = registry.sessions.get(name) {
+            if record.name == name
+                && record.created_at_unix_ms == generation
+                && record.launch_request.as_deref() == Some(request.as_str())
+                && record.spawn_fingerprint.as_deref() == Some(fingerprint.as_str())
+                && record_is_live(record)?
+                && festerm_sessiond::protocol_is_supported(record.protocol_version)
+                && festerm_sessiond::snapshot_schema_is_supported(record.snapshot_schema_version)
+            {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "independent starter outcome unavailable; retain reserved generation".into(),
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(any(windows, test))]
+fn use_wmi_starter(has_job: bool, blocked: bool, successor: bool) -> io::Result<bool> {
+    if successor && blocked {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "independent starter context still prevents breakaway",
+        ));
+    }
+    // A permissive inner Job can still have a restrictive caller-owned ancestor.
+    // Only the locally WMI-created, context-verified successor uses direct spawn.
+    Ok(has_job && !successor)
+}
+
 fn run_start(
     name: String,
     shell: ShellSpec,
@@ -1026,6 +1080,26 @@ fn run_start_prepared(
     runtime_root: PathBuf,
     diagnostic: &StartupDiagnostic,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    if env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some() {
+        use festerm_windows_job::ChildJobPolicy;
+        diagnostic.stage.set(FailureStage::IndependentSpawn);
+        let successor = festerm_windows_security::independent_start::verify_successor()?;
+        let policy = festerm_windows_job::current_process_child_job_policy()?;
+        if use_wmi_starter(
+            policy != ChildJobPolicy::NoJob,
+            policy == ChildJobPolicy::Blocked,
+            successor,
+        )? {
+            let deadline = Instant::now() + Duration::from_secs(7);
+            return finish_wmi_observation(
+                festerm_windows_security::independent_start::relaunch_current_starter(
+                    Duration::from_secs(7),
+                ),
+                || await_exact_wmi_ready(&name, deadline),
+            );
+        }
+    }
     if !runtime_root.exists() {
         festerm_sessiond::prepare_native_runtime(&runtime_root)?;
     }
@@ -1134,26 +1208,31 @@ fn run_start_prepared(
 
     #[cfg(windows)]
     let mut daemon = {
-        // `CREATE_BREAKAWAY_FROM_JOB` fails with `ERROR_ACCESS_DENIED` (os
-        // error 5) whenever our own process is already a member of a job
-        // object that does not grant `JOB_OBJECT_LIMIT_BREAKAWAY_OK`. That is
-        // not a hypothetical: Cargo places `cargo run`/`cargo test` child
-        // processes in exactly such a job on Windows, and other launchers
-        // (sandboxes, some IDEs/service managers) do the same. Without a
-        // fallback, starting a persistent session from any of those contexts
-        // would fail outright instead of degrading gracefully. So: try to
-        // break away first (the common case, e.g. launched from the fesTerm
-        // GUI or an ordinary shell), and if that specific error occurs,
-        // retry without the flag — the daemon will then share our job and
-        // may die when it closes, but that is strictly better than refusing
-        // to start at all.
+        // Explicit breakaway requires BREAKAWAY_OK; SILENT_BREAKAWAY_OK
+        // instead permits child creation without that flag. OS-owned Jobs may
+        // remain; durability is independence from the caller's shutdown Job,
+        // established separately by the native lifecycle regression.
+        let host_controlled = env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some();
+        let flags = if host_controlled {
+            use festerm_windows_job::ChildJobPolicy;
+            match festerm_windows_job::current_process_child_job_policy()? {
+                ChildJobPolicy::NoJob | ChildJobPolicy::SilentBreakaway => 0,
+                ChildJobPolicy::ExplicitBreakaway => CREATE_BREAKAWAY_FROM_JOB,
+                ChildJobPolicy::Blocked => {
+                    return Err(io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32).into())
+                }
+            }
+        } else {
+            CREATE_BREAKAWAY_FROM_JOB
+        };
         let build_command = |creation_flags: u32| {
             let mut command = Command::new(&exe);
             command
                 .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
+                .env_remove(festerm_windows_security::independent_start::HOP_ENV)
                 .env(
                     "FESTERM_SESSIOND_BREAKAWAY",
-                    if creation_flags & CREATE_BREAKAWAY_FROM_JOB != 0 {
+                    if host_controlled || creation_flags & CREATE_BREAKAWAY_FROM_JOB != 0 {
                         "granted"
                     } else {
                         "denied"
@@ -1183,14 +1262,12 @@ fn run_start_prepared(
             command
         };
 
-        match build_command(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
-            .spawn()
-        {
+        match build_command(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | flags).spawn() {
             Ok(child) => child,
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                if env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some() {
+                if host_controlled {
                     diagnostic.os_code.set(error.raw_os_error());
-                    return Err("host session requires independent Windows job ownership; breakaway was denied".into());
+                    return Err("host session requires independent Windows job ownership; daemon process creation was denied".into());
                 }
                 eprintln!(
                     "festerm-sessiond: could not break away from the current job object \
@@ -5371,6 +5448,47 @@ mod tests {
         let bytes = std::fs::read(root.join("lifecycle/diagnostic.json")).unwrap();
         assert!(!String::from_utf8(bytes).unwrap().contains("PRIVATE"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fast_wmi_successor_uses_only_exact_existing_ready_after_lost_pid() {
+        let read = std::cell::Cell::new(0);
+        assert!(finish_wmi_observation(Ok(None), || {
+            read.set(read.get() + 1);
+            Ok(())
+        })
+        .is_ok());
+        assert_eq!(read.get(), 1);
+        assert!(
+            finish_wmi_observation(Ok(None), || Err("wrong reserved generation".into())).is_err()
+        );
+        assert!(finish_wmi_observation(Ok(Some(false)), || panic!(
+            "explicit failure cannot reconcile"
+        ))
+        .is_err());
+        assert!(finish_wmi_observation(
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "context mismatch"
+            )),
+            || panic!("mismatch cannot reconcile")
+        )
+        .is_err());
+        assert!(finish_wmi_observation(Ok(Some(true)), || panic!(
+            "normal helper result uses existing SDK binding checks"
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn wmi_routing_never_repeats_a_successor_or_changes_direct_launch() {
+        assert!(!use_wmi_starter(false, false, false).unwrap());
+        assert!(use_wmi_starter(true, true, false).unwrap());
+        // Permissive immediate / restrictive ancestor still takes WMI.
+        assert!(use_wmi_starter(true, false, false).unwrap());
+        assert!(!use_wmi_starter(false, false, true).unwrap());
+        assert!(!use_wmi_starter(true, false, true).unwrap());
+        assert!(use_wmi_starter(true, true, true).is_err());
     }
 
     #[test]

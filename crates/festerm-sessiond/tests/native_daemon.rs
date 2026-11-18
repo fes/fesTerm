@@ -129,6 +129,202 @@ fn native_start_with_long_runtime_uses_cache_socket_and_cleans_generation() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "real local WMI + owned Job + ConPTY; required exact Windows CI step"]
+fn native_windows_wmi_starter_survives_calling_job_with_same_generation_io() {
+    for with_inner in [false, true] {
+        assert_native_wmi_job_survival(with_inner);
+    }
+}
+
+#[cfg(windows)]
+fn assert_native_wmi_job_survival(with_inner: bool) {
+    use festerm_session::{noop_session_event_notifier, Session};
+    use std::os::windows::io::AsRawHandle;
+    let private = festerm_sessiond::private_storage::private_test_directory();
+    let root = private.path().join("fesTerm");
+    festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+    let root = root.join("sessiond");
+    festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+    let helper = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let _cleanup = BatchCleanup {
+        executable: helper.clone(),
+        runtime: private.path().into(),
+        names: vec!["hs-slot-00".into()],
+    };
+    // Drop order: caller Job first, then its maximum late-successor window,
+    // then ordinary exact-generation cleanup. No delay on a successful test.
+    struct LateSuccessorOnFailure;
+    impl Drop for LateSuccessorOnFailure {
+        fn drop(&mut self) {
+            if std::thread::panicking() {
+                std::thread::sleep(Duration::from_secs(7));
+            }
+        }
+    }
+    let _late_successor = LateSuccessorOnFailure;
+    let mut launcher = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "native_windows_wmi_owned_launcher_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("FESTERM_WMI_TEST_ROOT", &root)
+        .env("FESTERM_WMI_TEST_INNER", with_inner.to_string())
+        .spawn()
+        .unwrap();
+    let job = festerm_windows_job::WindowsJob::assign_to_process(launcher.as_raw_handle()).unwrap();
+    assert!(job.contains_process(launcher.id()).unwrap());
+    let inner = with_inner.then(|| {
+        festerm_windows_job::WindowsJob::assign_test_breakaway_inner(launcher.as_raw_handle())
+            .unwrap()
+    });
+    if let Some(inner) = &inner {
+        assert!(inner.contains_process(launcher.id()).unwrap());
+    }
+    fs::write(root.join("fixture-admitted"), b"owned fixture only").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !root.join("fixture-ready.json").exists() {
+        if let Some(status) = launcher.try_wait().unwrap() {
+            panic!("WMI production route failed before Ready: {status}; missing WMI is a failure, never skip");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "WMI production fixture exceeded bounded startup"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("fixture-ready.json")).unwrap()).unwrap();
+    let selected = festerm_sessiond::list_unattached_sessions_in(&root)
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "hs-slot-00")
+        .expect("actual protected Ready generation");
+    assert_eq!(selected.pid, receipt["pid"].as_u64().unwrap() as u32);
+    assert_eq!(
+        selected.created_at_unix_ms.to_string(),
+        receipt["generation"].as_str().unwrap()
+    );
+    assert!(
+        !job.contains_process(selected.pid).unwrap(),
+        "daemon must escape this caller-owned Job, regardless of other OS Jobs"
+    );
+    if let Some(inner) = &inner {
+        assert!(
+            !inner.contains_process(selected.pid).unwrap(),
+            "daemon must escape both caller-owned ancestor and immediate Jobs"
+        );
+    }
+    job.terminate().unwrap();
+    let end = std::time::Instant::now() + Duration::from_secs(3);
+    while launcher.try_wait().unwrap().is_none() {
+        assert!(std::time::Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Real terminal I/O after the actual caller Job has ended proves more than
+    // a PID remaining alive. No second ensure/create/replacement is performed.
+    let session = festerm_sessiond::PersistentSession::resume_discovered_in(
+        &selected,
+        &root,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    bounded_poll(
+        || session.take_recovered_terminal().is_some(),
+        "same-generation recovery",
+    );
+    session.acknowledge_recovery_adoption();
+    session
+        .try_send_input(b"set probe=WMI_\r\necho %probe%INDEPENDENT_OK\r\n")
+        .unwrap();
+    read_session_until(&session, "WMI_INDEPENDENT_OK");
+    let after = festerm_sessiond::list_running_sessions_in(&root)
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == selected.name)
+        .unwrap();
+    assert_eq!(after.pid, selected.pid);
+    assert_eq!(after.created_at_unix_ms, selected.created_at_unix_ms);
+    drop(session);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "owned subprocess entry; only the exact parent test establishes a Job and authorizes its fixture"]
+fn native_windows_wmi_owned_launcher_fixture() {
+    use festerm_host_protocol::{
+        AttachmentId, Creation, IssuedOperation, Lifetime, LogicalSessionId, PrincipalId, Recipe,
+    };
+    use festerm_sessiond::host_control::SessionControl;
+    use std::sync::atomic::AtomicBool;
+    let Some(root) = std::env::var_os("FESTERM_WMI_TEST_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    bounded_poll(
+        || root.join("fixture-admitted").exists(),
+        "caller Job assignment",
+    );
+    let with_inner = std::env::var("FESTERM_WMI_TEST_INNER").unwrap() == "true";
+    assert_eq!(
+        festerm_windows_job::current_process_child_job_policy().unwrap(),
+        if with_inner {
+            festerm_windows_job::ChildJobPolicy::ExplicitBreakaway
+        } else {
+            festerm_windows_job::ChildJobPolicy::Blocked
+        }
+    );
+    let helper = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let control = SessionControl::with_helper(&root, &helper).unwrap();
+    let owner = PrincipalId::new();
+    let allow = |_: &festerm_sessiond::host_control::AdmissionState| Ok(());
+    let issued = IssuedOperation::new(control.issuance_epoch(&owner, allow).unwrap());
+    let creation = Creation {
+        logical: LogicalSessionId::new(),
+        attachment: AttachmentId::new(),
+        name: Some("owned-wmi-fixture".into()),
+        recipe: Recipe {
+            shell: Some(
+                PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                    .join("System32/cmd.exe")
+                    .to_str()
+                    .unwrap()
+                    .into(),
+            ),
+            args: vec!["/Q".into()],
+            cwd: root.to_str().map(str::to_owned),
+        },
+        lifetime: Lifetime::Persistent {},
+    };
+    let created = control
+        .ensure(
+            &owner,
+            &issued,
+            &creation,
+            true,
+            &AtomicBool::new(false),
+            allow,
+        )
+        .expect("one actual WMI production creation; unavailable provider fails");
+    assert!(created.created);
+    assert!(!created.recreated);
+    let receipt = serde_json::json!({"pid":created.identity.pid,"generation":created.target.generation.get().to_string()});
+    let directory = festerm_sessiond::private_storage::private_directory(&root, false).unwrap();
+    festerm_sessiond::private_storage::write_new_private(
+        &directory,
+        Path::new("fixture-ready.json"),
+        &serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    // The parent terminates this exact test-owned Job after observing Ready.
+    loop {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
 fn native_windows_default_shell_stays_interactive_in_the_requested_directory() {
     use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
@@ -1484,7 +1680,7 @@ fn read_session_until(session: &festerm_sessiond::PersistentSession, marker: &st
         }
         assert!(output.len() <= 1024 * 1024);
         #[cfg(windows)]
-        if marker == "PID:" {
+        if matches!(marker, "PID:" | "WMI_INDEPENDENT_OK") {
             reply_to_cursor_queries(&output, &mut replied_through, |reply| {
                 session.try_send_input(reply).unwrap()
             });

@@ -2707,16 +2707,13 @@ authority. Validation includes deterministic loss-before-error, late-success,
 stale-scope and user-cancel fixtures; genuine signed native diagnosis remains
 required.
 
-The DT-02 desktop-local profile route checks known Windows Job restrictions
-only after exact Running lookup and explicit-start gating, before resolving a
-helper or reserving a generation. Neither breakaway mode permitted gives a
-specific local refusal; query failure is unavailable. Existing Running access
-and Unknown reservations retain their original behavior. Immediate-Job flags
-cannot establish complete escape from nested ancestor Jobs, and later launch
-uncertainty still preserves the reservation. Validation covers unchanged
-catalog/journal/lease/operation bytes on refusal, query errors, retained Unknown
-and real owned-fixture Running reuse. Windows API cross-compilation and native
-acceptance are separate; this does not diagnose or repair an earlier incident.
+The DT-02 desktop-local profile route queries Windows Job state after exact
+Running lookup and explicit-start gating, before resolving a helper or reserving
+a generation. Query failure is unavailable. An initially Job-contained hosted start now has a
+supported local WMI starter route; a successful query is not native readiness.
+Existing Running access, Unknown reservations and their no-replay semantics are
+unchanged. Validation retains unchanged catalog/journal/lease/operation bytes on
+preflight refusal and query errors, retained Unknown and owned Running reuse.
 
 Pre-Ready native-session startup failures use the existing private lifecycle
 ring (64 entries, 32 KiB and bounded try-lock acquisition). Closed failure
@@ -2730,3 +2727,34 @@ No raw errors, command arguments, paths, environment or terminal input are added
 Portable stage/privacy/non-interference fixtures do not prove the cause of any
 prior native failure; the next signed native attempt remains required. No new
 pane or control protocol is introduced.
+
+Windows host-controlled startup uses one local WMI re-launch of the existing
+short-lived `start` helper whenever the initial process is in any Job, before
+startup/registry locks. Even permissive inner Jobs can retain restrictive
+caller-owned ancestors; only a context-verified successor takes direct spawn.
+No-Job initial starts remain direct. A blocked successor refuses without a third
+hop. The successor must match the live
+parent executable, user, logon session, process session, elevation and integrity;
+a bounded nonce marker restricts recursion and is removed before daemon spawn.
+The marker grants no creation authority: protected launch/generation, spawn
+fingerprint, binding and host lease checks remain unchanged. Arguments and the
+Unicode environment stay in memory. No remote WMI, credentials, privilege or Job
+policy changes, shell shim, custom broker or new service are introduced.
+
+The SDK's existing eight-second owned helper bound remains. WMI/PID/timeout
+ambiguity retains Unknown without retry/fallback. Only a known successful Create
+with lost short-lived PID handoff may observe an already-Ready exact generation,
+launch request and fingerprint; final native-binding verification remains in
+the existing SDK. Explicit refusal, context mismatch and timeout are not turned
+into success. Parent observation of a WMI PID does not authorize termination; the successor has its own finite deadline.
+Direct host-controlled process-creation failure still refuses rather than
+inheriting a caller Job as a fallback. Ordinary non-host legacy behavior remains.
+OS-owned Job membership alone is not failure: ADR0025/this ADR require survival
+of caller/GUI/HOST shutdown, not identical process ancestry. Permissive flags are
+not proof of independence. The required Windows CI fixture creates a real PTY,
+covers a blocked Job and a permissive inner Job with a restrictive ancestor,
+checks exclusion from both exact caller-owned Jobs, terminates the caller Job,
+then reattaches the same generation and verifies shell execution. Signed native
+normal HOST Disable/Task stop/GUI close and reconnect remain separate gates.
+Validation impact: DT-02 / HOST-02 / ADR0084; command/marker bounds, one-hop
+routing and native lifecycle tests do not repair an earlier Unknown operation.

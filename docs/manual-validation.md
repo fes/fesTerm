@@ -5132,17 +5132,21 @@ development wrapper, not installed or production services:
    per-profile tunnel state must be explicitly disabled and saved before enabling
    the new shared catalog; it is never adopted from portable configuration.
 
-   On Windows, a caller in a Job that permits neither explicit nor silent
-   breakaway must refuse a new shared local-profile start before helper
-   resolution or catalog/launch/lease/operation reservation. A failed Job query
-   is unavailable, not permission to start. Verify the specific local message,
-   unchanged protected records, and that the same context can still attach an
-   exact Running generation. An existing Unknown reservation must remain
-   Unknown. Permissive immediate-Job flags do not prove escape from all ancestor
-   Jobs; later ambiguous launch failures retain their reservation. These checks
-   prevent a known unsupported start, not repair an earlier uncertain launch or
-   establish its cause. Native Windows coverage is separate from unit fixtures
-   and cross-compilation.
+   On Windows, Job query failure must refuse before helper resolution or
+   catalog/launch/lease/operation reservation. A caller Job that prevents direct
+   breakaway, or a permissive inner Job with a restrictive caller ancestor,
+   uses the bounded local WMI starter route. All initial Job membership takes
+   this route; a verified successor never takes another hop. Verify exact parent/
+   successor user, logon/session, elevation/integrity and executable context;
+   one-hop recursion refusal and expiry; no environment/argument logging; and
+   no retry or replacement on WMI/PID/timeout uncertainty. Existing Running and
+   Unknown behavior must remain intact. The native CI test excludes the daemon
+   from its exact caller-owned Job and performs real same-generation PTY I/O
+   after terminating that Job. OS-owned Job membership or permissive flags alone
+   supplies no durability proof. Separately qualify signed native GUI close,
+   normal HOST Disable/Task stop and reconnect while preserving the same shell.
+   Do not classify the earlier uncertain native operation as repaired or infer
+   its cause from a later successful attempt.
 
 The opt-in service-client OFF campaign additionally requires a separate shared
 profile that is NotStarted in a complete authenticated inventory: no session and

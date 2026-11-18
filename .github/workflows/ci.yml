@@ -298,6 +298,20 @@ jobs:
         run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: '1'
+      - name: Require the native Windows WMI starter lifecycle regression
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $selector = 'native_windows_wmi_starter_survives_calling_job_with_same_generation_io'
+          $arguments = @('test', '--locked', '-p', 'festerm-sessiond', '--test', 'native_daemon', $selector, '--', '--exact', '--ignored')
+          $listing = @(& .\scripts\run-windows-tests.ps1 -CargoArguments ($arguments + @('--list')))
+          if ($LASTEXITCODE -ne 0) { throw 'WMI regression listing failed.' }
+          $listing | ForEach-Object { Write-Host $_ }
+          if (@($listing | Where-Object { $_ -eq ($selector + ': test') }).Count -ne 1) {
+            throw 'Required WMI regression must select exactly one test.'
+          }
+          & .\scripts\run-windows-tests.ps1 -CargoArguments ($arguments + @('--nocapture'))
+          if ($LASTEXITCODE -ne 0) { throw 'Required WMI starter lifecycle regression failed.' }
       - if: always() && matrix.os != 'windows-latest'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:

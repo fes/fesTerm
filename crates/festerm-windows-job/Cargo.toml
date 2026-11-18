@@ -7,6 +7,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Narrow Windows Job Object ownership support for fesTerm."
 
+[features]
+test-support = []
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

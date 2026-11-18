@@ -37,20 +37,40 @@ mod imp {
         }
     }
 
-    fn blocks_breakaway(flags: u32) -> bool {
-        flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) == 0
+    /// Child creation mode allowed by the immediate Job. This is only a launch
+    /// choice: nested ancestor Jobs may still retain the child.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum ChildJobPolicy {
+        NoJob,
+        ExplicitBreakaway,
+        SilentBreakaway,
+        Blocked,
     }
 
-    /// Reports a known restriction on independently starting a child process.
-    /// A false result is not proof of independence: only the immediate Job is
-    /// queried, and an ancestor or a later process-creation failure may refuse it.
-    pub fn current_process_blocks_breakaway() -> io::Result<bool> {
+    fn child_job_policy(flags: u32) -> ChildJobPolicy {
+        if flags & JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0 {
+            ChildJobPolicy::ExplicitBreakaway
+        } else if flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0 {
+            ChildJobPolicy::SilentBreakaway
+        } else {
+            ChildJobPolicy::Blocked
+        }
+    }
+
+    /// Checks membership in any Job, including all inherited ancestor Jobs.
+    pub fn current_process_is_in_job() -> io::Result<bool> {
         let mut in_job = 0;
         if unsafe { IsProcessInJob(GetCurrentProcess(), ptr::null_mut(), &raw mut in_job) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        if in_job == 0 {
-            return Ok(false);
+        Ok(in_job != 0)
+    }
+
+    /// Reads the immediate Job's child creation policy without changing it.
+    /// Neither permissive result proves escape from every ancestor Job.
+    pub fn current_process_child_job_policy() -> io::Result<ChildJobPolicy> {
+        if !current_process_is_in_job()? {
+            return Ok(ChildJobPolicy::NoJob);
         }
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         let queried = unsafe {
@@ -66,7 +86,12 @@ mod imp {
         if queried == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(blocks_breakaway(limits.BasicLimitInformation.LimitFlags))
+        Ok(child_job_policy(limits.BasicLimitInformation.LimitFlags))
+    }
+
+    /// Reports a known restriction, not proof that a later start will succeed.
+    pub fn current_process_blocks_breakaway() -> io::Result<bool> {
+        Ok(current_process_child_job_policy()? == ChildJobPolicy::Blocked)
     }
 
     impl Drop for ProcessHandle {
@@ -110,13 +135,27 @@ mod imp {
     impl WindowsJob {
         /// Creates a job and assigns an already-started process to it.
         pub fn assign_to_process(process: RawHandle) -> io::Result<Self> {
+            Self::assign_with_limits(process, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+        }
+
+        /// Controlled native-test fixture only: permits an inner breakaway
+        /// while a separately owned outer Job still prevents complete escape.
+        #[cfg(feature = "test-support")]
+        pub fn assign_test_breakaway_inner(process: RawHandle) -> io::Result<Self> {
+            Self::assign_with_limits(
+                process,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+            )
+        }
+
+        fn assign_with_limits(process: RawHandle, flags: u32) -> io::Result<Self> {
             let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
             if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
             let job = Self { handle };
             let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            limits.BasicLimitInformation.LimitFlags = flags;
             let configured = unsafe {
                 SetInformationJobObject(
                     job.handle,
@@ -134,6 +173,16 @@ mod imp {
                 return Err(io::Error::last_os_error());
             }
             Ok(job)
+        }
+
+        /// Queries this exact owned Job, not merely membership in any OS Job.
+        pub fn contains_process(&self, pid: u32) -> io::Result<bool> {
+            let process = ProcessHandle::open(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+            let mut member = 0;
+            if unsafe { IsProcessInJob(process.0, self.handle, &raw mut member) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(member != 0)
         }
 
         /// Terminates every process currently assigned to this job.
@@ -158,21 +207,46 @@ mod imp {
         use super::*;
 
         #[test]
+        fn silent_job_does_not_request_explicit_breakaway() {
+            assert_eq!(
+                child_job_policy(JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK),
+                ChildJobPolicy::SilentBreakaway
+            );
+            assert_eq!(
+                child_job_policy(JOB_OBJECT_LIMIT_BREAKAWAY_OK),
+                ChildJobPolicy::ExplicitBreakaway
+            );
+            assert_eq!(
+                child_job_policy(
+                    JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
+                ),
+                ChildJobPolicy::ExplicitBreakaway
+            );
+        }
+
+        #[test]
         fn immediate_job_only_refuses_when_both_breakaway_modes_are_absent() {
-            assert!(blocks_breakaway(0));
-            assert!(blocks_breakaway(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE));
+            assert_eq!(child_job_policy(0), ChildJobPolicy::Blocked);
+            assert_eq!(
+                child_job_policy(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE),
+                ChildJobPolicy::Blocked
+            );
             for permitted in [
                 JOB_OBJECT_LIMIT_BREAKAWAY_OK,
                 JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
                 JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
             ] {
-                assert!(!blocks_breakaway(
-                    permitted | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                ));
+                assert_ne!(
+                    child_job_policy(permitted | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE),
+                    ChildJobPolicy::Blocked
+                );
             }
         }
     }
 }
 
 #[cfg(windows)]
-pub use imp::{current_process_blocks_breakaway, process_is_alive, terminate_process, WindowsJob};
+pub use imp::{
+    current_process_blocks_breakaway, current_process_child_job_policy, current_process_is_in_job,
+    process_is_alive, terminate_process, ChildJobPolicy, WindowsJob,
+};

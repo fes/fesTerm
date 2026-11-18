@@ -6,6 +6,8 @@
 pub mod host_publisher;
 #[cfg(all(windows, feature = "host-service"))]
 pub mod host_service;
+#[cfg(all(feature = "independent-start", any(windows, test)))]
+pub mod independent_start;
 #[cfg(windows)]
 pub mod named_pipe;
 
@@ -2107,6 +2109,59 @@ mod imp {
         // SAFETY: OpenProcessToken returned one owned valid handle.
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
         token_information(token.as_raw_handle(), TokenUser)
+    }
+
+    #[cfg(feature = "independent-start")]
+    pub(crate) fn same_start_context(process: HANDLE) -> io::Result<bool> {
+        use windows_sys::Win32::Security::{
+            TokenElevation, TokenIntegrityLevel, TokenSessionId, TokenStatistics, TOKEN_ELEVATION,
+            TOKEN_MANDATORY_LABEL, TOKEN_STATISTICS,
+        };
+        let user = process_user(process)?;
+        let own_user = process_user(unsafe { GetCurrentProcess() })?;
+        let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        let own_user = unsafe { &*own_user.as_ptr().cast::<TOKEN_USER>() };
+        if unsafe { EqualSid(user.User.Sid, own_user.User.Sid) } == 0 {
+            return Ok(false);
+        }
+        fn token(process: HANDLE) -> io::Result<OwnedHandle> {
+            let mut token = ptr::null_mut();
+            if unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(unsafe { OwnedHandle::from_raw_handle(token) })
+        }
+        let own = token(unsafe { GetCurrentProcess() })?;
+        let other = token(process)?;
+        let a = own.as_raw_handle();
+        let b = other.as_raw_handle();
+        let ae = token_information(a, TokenElevation)?;
+        let be = token_information(b, TokenElevation)?;
+        if unsafe {
+            (*ae.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated
+                != (*be.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated
+        } {
+            return Ok(false);
+        }
+        let ass = token_information(a, TokenSessionId)?;
+        let bs = token_information(b, TokenSessionId)?;
+        if unsafe { *ass.as_ptr().cast::<u32>() != *bs.as_ptr().cast::<u32>() } {
+            return Ok(false);
+        }
+        let at = token_information(a, TokenStatistics)?;
+        let bt = token_information(b, TokenStatistics)?;
+        let at = unsafe { &*at.as_ptr().cast::<TOKEN_STATISTICS>() };
+        let bt = unsafe { &*bt.as_ptr().cast::<TOKEN_STATISTICS>() };
+        if at.AuthenticationId.LowPart != bt.AuthenticationId.LowPart
+            || at.AuthenticationId.HighPart != bt.AuthenticationId.HighPart
+        {
+            return Ok(false);
+        }
+        let ai = token_information(a, TokenIntegrityLevel)?;
+        let bi = token_information(b, TokenIntegrityLevel)?;
+        let ai = unsafe { &*ai.as_ptr().cast::<TOKEN_MANDATORY_LABEL>() };
+        let bi = unsafe { &*bi.as_ptr().cast::<TOKEN_MANDATORY_LABEL>() };
+        Ok(unsafe { EqualSid(ai.Label.Sid, bi.Label.Sid) } != 0)
     }
 
     fn set_token_default_dacl(
