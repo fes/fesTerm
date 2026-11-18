@@ -3255,6 +3255,10 @@ fn target_label(apps: &[&FesTermApp], reference: TargetRef) -> Option<String> {
             crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
                 format!("tunnel {}:{}", approval_label(host), port)
             }
+            #[cfg(feature = "javascript-program-dev")]
+            crate::tabs::InspectorTransport::JavaScript { name } => {
+                format!("JavaScript program {}", approval_label(name))
+            }
         };
         Some(format!(
             "Window {}: {} - {} (tab {}, attachment {})",

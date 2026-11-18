@@ -47,6 +47,12 @@ use festerm_core::{
     TerminalTextSnapshotScreen,
 };
 use festerm_document::{DocumentId, RemoteOrigin, SaveOutcome, TextDocument};
+#[cfg(feature = "javascript-program-dev")]
+use festerm_javascript_session::JavaScriptSession;
+#[cfg(all(feature = "javascript-program-dev", not(test)))]
+use festerm_javascript_session::ProcessJavaScriptRuntime;
+#[cfg(all(feature = "javascript-program-dev", test))]
+use festerm_javascript_session::QuickJsJavaScriptRuntime;
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
     default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
@@ -173,6 +179,8 @@ pub enum ApplicationSession {
     Ssh(SshSession),
     Sftp(SftpTerminalSession),
     Serial(SerialSession),
+    #[cfg(feature = "javascript-program-dev")]
+    JavaScript(JavaScriptSession),
     #[cfg(test)]
     TestSsh(crate::session_controller::fake::FakeSshSession),
     #[cfg(test)]
@@ -305,6 +313,8 @@ impl ApplicationSession {
                 session.take_recovered_terminal_deferred()
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.take_recovered_terminal(),
             #[cfg(test)]
@@ -326,6 +336,8 @@ impl ApplicationSession {
                 session.recovery_protocol_is_authoritative()
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => false,
             #[cfg(test)]
             Self::TestSsh(session) => session.recovery_protocol_is_authoritative(),
             #[cfg(test)]
@@ -348,6 +360,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
             }
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
@@ -374,6 +388,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(PasswordResolutionError::NotRemoteSession)
             }
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => return Err(PasswordResolutionError::NotRemoteSession),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => {
                 return Err(PasswordResolutionError::NotRemoteSession)
@@ -428,6 +444,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Ok(()),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Ok(()),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => Ok(()),
         }
@@ -448,6 +466,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => false,
         }
     }
 
@@ -469,6 +489,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -495,6 +517,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -513,6 +537,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -531,6 +557,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Ssh(_)
             | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
             #[cfg(test)]
@@ -545,6 +573,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.verified_host_key_fingerprint(),
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_fingerprint(),
             #[cfg(test)]
@@ -559,6 +589,8 @@ impl ApplicationSession {
             Self::Ssh(session) => Some(session.remote_file_requestor()),
             Self::Sftp(session) => Some(session.remote_file_requestor()),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
@@ -579,6 +611,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.id(),
             Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.id(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.id(),
         }
@@ -593,6 +627,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.lifecycle(),
             Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.lifecycle(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.lifecycle(),
         }
@@ -607,6 +643,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.automation_epoch(),
             Self::Sftp(session) => session.automation_epoch(),
             Self::Serial(session) => session.automation_epoch(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.automation_epoch(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.automation_epoch(),
         }
@@ -621,6 +659,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.metrics(),
             Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.metrics(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.metrics(),
         }
@@ -635,6 +675,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_send_input(bytes),
             Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_send_input(bytes),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_send_input(bytes),
         }
@@ -664,6 +706,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_resize(size),
             Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_resize(size),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_resize(size),
         }
@@ -678,6 +722,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_shutdown(),
             Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_shutdown(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_shutdown(),
         }
@@ -713,6 +759,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_recv_event(),
             Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_recv_event(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_recv_event(),
         }
@@ -727,6 +775,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.shutdown(timeout),
             Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.shutdown(timeout),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.shutdown(timeout),
         }
@@ -803,6 +853,7 @@ pub struct SessionTab {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LiveSessionCounts {
     pub local: usize,
+    pub javascript: usize,
     pub ssh: usize,
     pub serial: usize,
     pub powershell: usize,
@@ -810,7 +861,7 @@ pub struct LiveSessionCounts {
 
 impl LiveSessionCounts {
     pub const fn total(&self) -> usize {
-        self.local + self.ssh + self.serial + self.powershell
+        self.local + self.javascript + self.ssh + self.serial + self.powershell
     }
 }
 
@@ -854,6 +905,8 @@ pub enum InspectorTransport {
         stop_bits: festerm_config::SerialStopBits,
         flow_control: festerm_config::SerialFlowControl,
     },
+    #[cfg(feature = "javascript-program-dev")]
+    JavaScript { name: String },
 }
 
 /// Non-secret durable-session facts surfaced to application chrome.
@@ -877,6 +930,8 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
         InspectorTransport::Sftp { .. }
         | InspectorTransport::Serial { .. }
         | InspectorTransport::DevTunnel { .. } => None,
+        #[cfg(feature = "javascript-program-dev")]
+        InspectorTransport::JavaScript { .. } => None,
     }?;
     Some(format!(
         "{} · {}",
@@ -1334,6 +1389,38 @@ impl SessionTab {
             launch_secondary,
             None,
             None,
+        )
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_program(
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+    ) -> Self {
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let size = terminal_size(dimensions).expect("default dimensions fit terminal limits");
+        #[cfg(test)]
+        let runtime = QuickJsJavaScriptRuntime::developer_echo();
+        #[cfg(not(test))]
+        let runtime = ProcessJavaScriptRuntime::current_executable_developer_echo();
+        let result = runtime.and_then(|runtime| {
+            JavaScriptSession::start_with_notifier(runtime, size, make_notifier(context))
+        });
+        let result = result.map(ApplicationSession::JavaScript);
+        Self::from_session_result(
+            result,
+            dimensions,
+            SessionResultMeta {
+                label: "JavaScript Echo (developer)",
+                launch_secondary: Some("JavaScript terminal program · developer".into()),
+                profile_identifier: None,
+                session_name: "JavaScript program",
+                inspector_transport: InspectorTransport::JavaScript {
+                    name: "developer-echo".into(),
+                },
+                ssh_password_retry: None,
+            },
         )
     }
 
@@ -2135,6 +2222,8 @@ impl SessionTab {
                     .map(|(remote, _)| remote),
             })),
             InspectorTransport::Serial { .. } => None,
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => None,
         }
     }
 
@@ -2213,6 +2302,8 @@ impl SessionTab {
             InspectorTransport::Local { .. } if cfg!(windows) => "Local · Windows",
             InspectorTransport::Local { .. } if cfg!(target_os = "macos") => "Local · macOS",
             InspectorTransport::Local { .. } => "Local · Linux",
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => "JavaScript · Developer",
         }
     }
 
@@ -2245,6 +2336,8 @@ impl SessionTab {
             (_, ChipStatus::Failed) => "Failed",
             (_, ChipStatus::Exited) => "Exited",
             (InspectorTransport::Local { .. }, ChipStatus::Connected) => "Running",
+            #[cfg(feature = "javascript-program-dev")]
+            (InspectorTransport::JavaScript { .. }, ChipStatus::Connected) => "Running",
             (
                 InspectorTransport::Ssh { .. }
                 | InspectorTransport::Sftp { .. }
@@ -2417,6 +2510,8 @@ impl SessionTab {
             | Some(ApplicationSession::Sftp(_))
             | Some(ApplicationSession::Serial(_))
             | None => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Some(ApplicationSession::JavaScript(_)) => false,
         }
     }
 
@@ -2862,6 +2957,8 @@ pub enum AppCommand {
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
+    #[cfg(feature = "javascript-program-dev")]
+    StartJavaScriptProgram,
     /// Starts one transient local session from explicit launcher metadata
     /// without creating or recording a saved profile.
     StartLocalSessionWithProfile {
@@ -4135,6 +4232,8 @@ impl AppState {
                         | InspectorTransport::Sftp { .. }
                         | InspectorTransport::DevTunnel { .. } => counts.ssh += 1,
                         InspectorTransport::Serial { .. } => counts.serial += 1,
+                        #[cfg(feature = "javascript-program-dev")]
+                        InspectorTransport::JavaScript { .. } => counts.javascript += 1,
                     }
                 }
                 TabContent::PowerShell(powershell) if powershell.close_requires_confirmation() => {
@@ -4990,6 +5089,8 @@ impl AppState {
             }
             AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
             AppCommand::StartLocalSession => self.start_local_session(context),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartJavaScriptProgram => self.start_javascript_program(context),
             AppCommand::StartLocalSessionWithProfile { profile } => {
                 self.start_local_session_with_profile(profile, context)
             }
@@ -6529,6 +6630,12 @@ impl AppState {
             dimensions,
             self.prefer_powershell,
         ));
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_program(&mut self, context: &egui::Context) {
+        let dimensions = self.current_session_dimensions();
+        self.place_user_session(SessionTab::start_javascript_program(context, dimensions));
     }
 
     fn start_local_session_with_profile(&mut self, profile: LocalProfile, context: &egui::Context) {
@@ -13946,6 +14053,80 @@ mod tests {
         }
         assert!(state.resume_error.is_none());
         assert_eq!(state.tabs().len(), 1);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_launches_without_shell_or_automation_authority() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher = state.active();
+
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher);
+        let session = state.session_tab_mut(launcher).unwrap();
+        assert!(matches!(
+            session.controller.session(),
+            Some(ApplicationSession::JavaScript(_))
+        ));
+        assert!(matches!(
+            session.inspector_transport,
+            InspectorTransport::JavaScript { .. }
+        ));
+        assert!(session
+            .controller
+            .session()
+            .unwrap()
+            .automation_epoch()
+            .is_none());
+        assert_eq!(session.system_label(), "JavaScript · Developer");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while session.controller.lifecycle() != Some(SessionLifecycle::Running) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript start deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+        session
+            .controller
+            .session()
+            .unwrap()
+            .try_send_input(b"hello")
+            .unwrap();
+        while !session.terminal.text_snapshot().text().contains("hello") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript input deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+        session
+            .controller
+            .session()
+            .unwrap()
+            .try_resize(TerminalSize::new(100, 30).unwrap())
+            .unwrap();
+        while !session
+            .terminal
+            .text_snapshot()
+            .text()
+            .contains("resize:100x30")
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript resize deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+
+        state.dispatch(AppCommand::CloseTab(launcher), &context);
     }
 
     #[test]
