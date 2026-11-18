@@ -12,7 +12,7 @@ use crate::{
 /// supervisor's PID-named pipe, which verifies this process as its client.
 pub fn worker_stdio() -> Result<(), Error> {
     #[cfg(windows)]
-    let pipe = crate::windows::WorkerPipe::connect()?;
+    let pipe = crate::windows::WorkerPipe::connect(false)?;
     #[cfg(windows)]
     let (input, mut output) = (&pipe, &pipe);
     #[cfg(not(windows))]
@@ -41,7 +41,7 @@ pub fn program_worker_stdio() -> Result<(), Error> {
     #[cfg(not(target_os = "ios"))]
     {
         #[cfg(windows)]
-        let pipe = crate::windows::WorkerPipe::connect()?;
+        let pipe = crate::windows::WorkerPipe::connect(true)?;
         #[cfg(windows)]
         let (input, output) = (&pipe, &pipe);
         #[cfg(not(windows))]

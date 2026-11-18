@@ -3,6 +3,8 @@
 //! No application/session authority is held here. Every host operation must be
 //! authorized by the caller's broker, including observation and result release.
 
+use std::time::Duration;
+
 #[cfg(not(target_os = "ios"))]
 mod engine;
 pub mod platform;
@@ -73,6 +75,15 @@ pub const STACK_BYTES: usize = 1024 * 1024;
 pub const STACK_BYTES: usize = 512 * 1024;
 pub const PROCESS_BYTES: u64 = 128 * 1024 * 1024;
 pub const CPU_SECONDS: u64 = 5;
+/// Last-resort native process CPU ceiling for the interactive program mode.
+/// The supervisor and engine normally terminate much earlier through the
+/// rolling and per-turn budgets; this exists so confinement always remains
+/// finite even if their accounting fails.
+pub const PROGRAM_HARD_CPU_SECONDS: u64 = 3_600;
+pub const PROGRAM_CPU_WINDOW: Duration = Duration::from_secs(1);
+pub const PROGRAM_CPU_WINDOW_LIMIT: Duration = Duration::from_millis(250);
+pub const PROGRAM_TURN_TIMEOUT: Duration = Duration::from_secs(1);
+pub const PROGRAM_TURN_CPU_LIMIT: Duration = Duration::from_millis(200);
 pub const MAX_RUN_MS: u64 = 300_000;
 
 /// Content-free errors, safe for ordinary diagnostics.

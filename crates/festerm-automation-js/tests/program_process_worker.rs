@@ -60,7 +60,7 @@ fn initial_size() -> TerminalSize {
 #[test]
 #[cfg(not(windows))]
 fn program_worker_is_ready_before_source_is_sent() {
-    if platform::availability().is_err() {
+    if platform::program_availability().is_err() {
         return;
     }
     let mut command = Command::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"));
@@ -83,7 +83,7 @@ fn program_worker_is_ready_before_source_is_sent() {
     assert!(matches!(
         message,
         ProgramWorkerMessage::Ready { ref profile }
-            if profile == platform::availability().unwrap()
+            if profile == platform::program_availability().unwrap()
     ));
     // No Begin/source frame has been sent. The worker must remain confined and
     // waiting rather than constructing or executing a source snapshot.
@@ -94,8 +94,49 @@ fn program_worker_is_ready_before_source_is_sent() {
 }
 
 #[test]
+fn automation_and_program_native_profiles_are_separate() {
+    if platform::availability().is_err() || platform::program_availability().is_err() {
+        return;
+    }
+    for (argument, expected) in [
+        ("--automation-worker", platform::availability().unwrap()),
+        (
+            "--javascript-program-worker",
+            platform::program_availability().unwrap(),
+        ),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"));
+        command
+            .arg(argument)
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "linux")]
+        command.env("MALLOC_ARENA_MAX", "1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command.spawn().unwrap();
+        let message =
+            read_frame::<_, ProgramWorkerMessage>(&mut child.stdout.take().unwrap()).unwrap();
+        match message {
+            ProgramWorkerMessage::Ready { profile } => assert_eq!(profile, expected),
+            other if argument == "--automation-worker" => {
+                panic!("unexpected automation worker frame: {other:?}")
+            }
+            other => panic!("unexpected program worker frame: {other:?}"),
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
+#[test]
 fn confined_program_worker_echoes_normal_output_and_closes() {
-    if platform::availability().is_err() {
+    if platform::program_availability().is_err() {
         return;
     }
     let mut program = ProgramSupervisor::spawn(
@@ -125,8 +166,29 @@ fn confined_program_worker_echoes_normal_output_and_closes() {
 }
 
 #[test]
+fn confined_program_worker_idle_wait_survives_and_reuses_budget() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        developer_echo_program().unwrap(),
+        8,
+        initial_size(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(1_100));
+    assert_eq!(
+        program.input(b"still-live").unwrap(),
+        vec![b"still-live".to_vec()]
+    );
+    program.close().unwrap();
+    program.shutdown().unwrap();
+}
+
+#[test]
 fn confined_program_worker_refuses_stale_generation_without_advancing() {
-    if platform::availability().is_err() {
+    if platform::program_availability().is_err() {
         return;
     }
     let mut program = ProgramSupervisor::spawn(
@@ -152,7 +214,7 @@ fn confined_program_worker_refuses_stale_generation_without_advancing() {
 
 #[test]
 fn confined_program_worker_close_is_force_bounded() {
-    if platform::availability().is_err() {
+    if platform::program_availability().is_err() {
         return;
     }
     let source = ProgramSourceSnapshot {
@@ -239,6 +301,53 @@ fn confined_program_worker_is_reaped_after_privacy_revocation() {
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "revoked worker must be reaped within the bounded cleanup interval"
+    );
+}
+
+#[test]
+fn confined_program_worker_hostile_input_is_force_bounded() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let source = ProgramSourceSnapshot {
+        manifest: ProgramManifest {
+            version: 1,
+            api_version: 1,
+            kind: ProgramKind::TerminalProgram,
+            name: "hostile-input".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            capabilities: BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ]),
+        },
+        modules: BTreeMap::from([(
+            "main.js".into(),
+            r#"export function main({terminal}) {
+                terminal.events(event => { if (event.type === "input") while (true) {} });
+            }"#
+            .into(),
+        )]),
+    };
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        ApprovedProgram::new(source).unwrap(),
+        10,
+        initial_size(),
+    )
+    .unwrap();
+    let started = Instant::now();
+    assert!(program.input(b"loop").is_err());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let cleanup = program.shutdown();
+    assert!(
+        matches!(
+            cleanup,
+            Err(Error::Protocol | Error::Deadline | Error::WorkerFailed(_))
+        ),
+        "hostile turn failure is retained after bounded reaping: {cleanup:?}"
     );
 }
 
