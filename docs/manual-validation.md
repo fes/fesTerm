@@ -47,6 +47,18 @@ reviewer using the eight-question rubric, including icon-only versus text
 action presentation. Findings and any follow-up usability study remain
 separate work. These screenshots do not upgrade milestone acceptance.
 
+## Existing-window macOS evidence scroll
+
+The operator-only `--scroll-existing` path in the existing macOS OS-input runner
+has automated invalid-argument/zero-event refusal and no-Cargo/no-GUI-launch
+routing coverage (`scripts/tests/test_macos_evidence_scroll.py`). Native trust,
+foreground/topmost point validation and actual scroll delivery remain
+**manual/native**. Use the adapter README procedure, verify the exact existing
+supervised PID, and preserve before/after screenshots; `status=sent` is not a
+scroll-success or product acceptance result. Missing Accessibility/event-posting
+trust is blocked without a permission prompt. This tooling change adds no GUI
+workflow edge, relay payload mode, product authority or milestone acceptance.
+
 ## HOST relay recovery
 
 HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery has focused
