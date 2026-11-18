@@ -1,23 +1,23 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0dbda70986932c3279f6672d1c34e21b60fecff10d46b5a0fc831fffc17688ff"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "c77e14114a03472f9b776efac0780d09fc3d5cd6662850383a4d95da3838c7af"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control.
+This domain owns the automation authority kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control.
 
 Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
 ## Authority kernel
 
-Use for: Who may observe or control a target, and how are grant state and revocation tracked?
+Use for: When deciding who may observe or control a target and how grant state survives review, expiry, and revocation.
 
-- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns grants, controller enrollment, run state, and revocation
+- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns grants, enrollment, run state, and revocation for exact targets
 - [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — binds exact scope, targets, deadlines, and invocation parameters
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — proves approvals and starts are bounded and cannot replay stale state
-- [`docs/automation-design.md`](../../docs/automation-design.md) — defines grant semantics, principal binding, and the core ownership model
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — proves approval and start quotas cannot replay stale state
+- [`docs/automation-design.md`](../../docs/automation-design.md) — defines grant semantics, principal binding, and the ownership model
 
 Caveats:
 - A connection is not a grant; only broker-owned approval yields authority.
@@ -26,9 +26,9 @@ Caveats:
 
 ## Workflow intake
 
-Use for: How is a selected workflow bundle, input mapping, and native approval validated before a run starts?
+Use for: When validating a workflow bundle, input mapping, and native approval before a run starts.
 
-- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — binds app bundle, parameter digest, target map, and manifest-scoped scope
+- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — binds bundle hash, mapped targets, and manifest-scoped parameters
 - [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — routes native review, workflow start, and input approval commands
 
 Evidence:
@@ -42,10 +42,10 @@ Caveats:
 
 ## MCP protocol state
 
-Use for: How are tool calls, lifecycle negotiation, and completion semantics validated for MCP observation and control?
+Use for: When checking tool-call lifecycle, negotiation, and completion semantics for terminal observation and control.
 
-- [`Machine`](../../crates/festerm-automation-mcp/src/lib.rs) — owns protocol lifecycle, in-flight IDs, and completion or refusal logic
-- [`Operation`](../../crates/festerm-automation-mcp/src/lib.rs) — defines typed MCP operations like pairing, registration, and terminal reads
+- [`Machine`](../../crates/festerm-automation-mcp/src/lib.rs) — owns protocol lifecycle, in-flight IDs, and refusal logic
+- [`Operation`](../../crates/festerm-automation-mcp/src/lib.rs) — defines typed tooling for pairing, registration, and terminal reads
 
 Evidence:
 - [`handshake_sequence_negotiation_and_ping`](../../crates/festerm-automation-mcp/tests/protocol.rs) — proves initialize, negotiation, and lifecycle transitions across protocol versions
@@ -58,14 +58,14 @@ Caveats:
 
 ## App IPC flow
 
-Use for: How do adapter channels, privacy gates, and controller enrollment flow into terminal actions?
+Use for: When tracing adapter channels, privacy gates, and controller enrollment into terminal actions.
 
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — enqueues adapter messages under admission and privacy checks before delivery
+- [`Connection`](../../app/festerm/src/automation/ipc.rs) — enqueues adapter messages under admission and privacy checks
 - [`freeze_association`](../../app/festerm/src/automation/controller.rs) — locks a reviewed controller enrollment to its exact target and window
 
 Evidence:
 - [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — shows privacy and disconnect cuts revoke grants without restoring them
-- [`docs/automation-design.md`](../../docs/automation-design.md) — covers private channel binding, native review, and failed-closed privacy revocation
+- [`docs/automation-design.md`](../../docs/automation-design.md) — covers private channel binding and failed-closed privacy revocation
 
 Caveats:
 - The shared privacy gate must close before grant admission or output can proceed.
