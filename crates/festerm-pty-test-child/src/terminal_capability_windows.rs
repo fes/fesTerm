@@ -458,13 +458,19 @@ mod tests {
     #[test]
     fn private_result_file_is_current_user_only_and_never_replaces_existing() {
         use festerm_windows_security::{
-            is_current_user_only, lock_directory_path_without_delete_sharing,
-            restrict_to_current_user,
+            create_current_user_only_directory, is_current_user_only,
+            lock_directory_path_without_delete_sharing,
         };
         let temporary = tempfile::tempdir().unwrap();
         let parent = lock_directory_path_without_delete_sharing(temporary.path()).unwrap();
-        restrict_to_current_user(&parent).unwrap();
-        let path = temporary.path().join("result.json");
+        // The retained parent is read-only, so it cannot mutate its DACL.
+        // Create a private child through the existing capability-based helper.
+        let private = create_current_user_only_directory(&parent, Path::new("private")).unwrap();
+        assert!(is_current_user_only(&private).unwrap());
+        // The creation handle has DELETE access; retire it before destination
+        // pins the same directory without delete sharing.
+        drop(private);
+        let path = temporary.path().join("private").join("result.json");
         let mut file = destination(&path).unwrap();
         assert!(is_current_user_only(&file).unwrap());
         file.write_all(b"retained").unwrap();

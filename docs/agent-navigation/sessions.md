@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "59daa6c59333bf252ccbe3c2abeb49937d0db435dabec5ca3c1c7cc5e9ff1eee"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "3f09aa7c883f789aa08ea186c012496886b49910145ed8dfa011af12d0428705"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the shared session lifecycle, PTY and serial backends, and the persistent daemon that recovers and hosts named sessions.
+This domain owns the shared session lifecycle, PTY and serial backends, and the daemon-backed named-session runtime that recovers and hosts terminal sessions.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
@@ -12,9 +12,8 @@ Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 Use for: Need the shared lifecycle, event ordering, and backend reply ownership rules.
 
-- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle states and terminal vs nonterminal transitions.
-- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Backend events for output, recovery sync, resize, and control prompts.
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Input, resize, shutdown, and terminal_reply ownership boundary.
+- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle and terminal vs nonterminal transitions.
+- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Output, recovery sync, resize, and prompt events from backends.
 
 Evidence:
 - [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered through transitions.
@@ -22,14 +21,14 @@ Evidence:
 Caveats:
 - Events never mutate Terminal directly.
 - SessionLifecycle::Disconnected is not terminal.
-- Backend reply ownership is gated by terminal_replies_owned_by_backend.
+- terminal_replies_owned_by_backend gates backend reply ownership.
 
 ## Local PTY
 
 Use for: Need a local child process or PTY started, resized, or shut down reliably.
 
 - [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup.
-- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated shell launch config before spawn.
+- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated shell launch configuration before spawn.
 
 Evidence:
 - [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion.
@@ -56,10 +55,9 @@ Caveats:
 
 ## Terminal flow
 
-Use for: Need session output pumped into the terminal while suppressing duplicate backend replies.
+Use for: Need output pumped into the terminal while suppressing duplicate backend replies.
 
 - [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input and resize tracking.
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while respecting byte budgets and reply ownership.
 
 Evidence:
 - [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize order while suppressing duplicate backend replies.
@@ -75,7 +73,6 @@ Caveats:
 Use for: Need daemon admission, attach, resume, and lease authority decisions for named sessions.
 
 - [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Host-owned create, attach, and lease authority for native session admission.
-- [`with_helper`](../../crates/festerm-sessiond/src/host_control.rs) — Explicit helper path used to open a protected native control namespace.
 
 Evidence:
 - [`persistent_host_shell_accepts_ordinary_local_unticketed_attachment`](../../crates/festerm-sessiond/tests/host_control.rs) — Proves local host-shell attachment is admitted without a temporary lease.
