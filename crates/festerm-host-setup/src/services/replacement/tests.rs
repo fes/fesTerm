@@ -1134,3 +1134,80 @@ fn host_update_missing_mutex_or_corrupt_journal_never_recreates_execution_author
     );
     assert!(!state.join(LOCK).exists());
 }
+
+#[test]
+fn host_update_release_metadata_is_read_only_old_version_and_not_execution_authority() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    fixture.installed(&services);
+    let scope = fixture.store.snapshot().unwrap();
+    let calls = services.runner.calls.borrow().len();
+    let before = std::fs::read(services.state.join(RECORD)).unwrap();
+    let metadata = services.release_metadata().unwrap().unwrap();
+    assert_eq!(metadata.recorded_version, "0.15.0");
+    assert!(metadata.replacement.is_none());
+    assert!(metadata.update_available(crate::VERSION));
+    assert!(!metadata.update_available("0.15.0"));
+    assert_eq!(services.runner.calls.borrow().len(), calls);
+    assert_eq!(fixture.store.snapshot().unwrap(), scope);
+    assert_eq!(std::fs::read(services.state.join(RECORD)).unwrap(), before);
+    // Even plausible recorded metadata is not a signature, launch or update grant.
+    let manifest_path = fixture.old.provenance_path().join(".manifest.json");
+    let original = std::fs::read(&manifest_path).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    manifest["version"] = serde_json::json!("0.14.0");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(
+        services
+            .release_metadata()
+            .unwrap()
+            .unwrap()
+            .recorded_version,
+        "0.14.0"
+    );
+    assert!(fixture.update(&services).is_err());
+    assert_eq!(services.runner.calls.borrow().len(), calls);
+    assert_eq!(fixture.store.snapshot().unwrap(), scope);
+}
+
+#[test]
+fn host_update_release_metadata_preserves_pending_original_and_refuses_other_target() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    fixture.installed(&services);
+    *services.runner.fail_reload.borrow_mut() = Some(*services.runner.reloads.borrow() + 1);
+    assert!(fixture.update(&services).is_err());
+    let calls = services.runner.calls.borrow().len();
+    let metadata = services.release_metadata().unwrap().unwrap();
+    let pending = metadata.replacement.as_ref().unwrap();
+    assert!(matches!(
+        pending.state,
+        ReplacementState::Prepared | ReplacementState::Applying
+    ));
+    assert_eq!(metadata.from_version(), "0.15.0");
+    assert!(metadata.update_available(crate::VERSION));
+    assert!(!metadata.update_available("99.0.0"));
+    assert!(!metadata.update_available("0.15.0"));
+    assert_eq!(services.runner.calls.borrow().len(), calls);
+    assert_eq!(
+        services.replacement_status().unwrap().unwrap().operation,
+        pending.operation
+    );
+}
+
+#[test]
+fn host_update_release_metadata_rejects_malformed_or_missing_manifest_without_manager_calls() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    assert!(services.release_metadata().unwrap().is_none());
+    fixture.installed(&services);
+    let calls = services.runner.calls.borrow().len();
+    let path = fixture.old.provenance_path().join(".manifest.json");
+    for bytes in [b"{".as_slice(), b"{}".as_slice()] {
+        std::fs::write(&path, bytes).unwrap();
+        assert!(services.release_metadata().is_err());
+    }
+    std::fs::remove_file(path).unwrap();
+    assert!(services.release_metadata().is_err());
+    assert_eq!(services.runner.calls.borrow().len(), calls);
+}

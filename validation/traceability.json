@@ -6673,7 +6673,18 @@
         "windows_desktop_worker_pending_revision6_adopts_only_raw_snapshot_not_execution_role",
         "windows_worker_synthetic_foreign_tuple_is_not_public_native_launch_authority",
         "windows_stopped_update_switches_managed_desktop_to_same_bundle_worker_without_start",
-        "windows_stopped_update_existing_pending_v5_keeps_original_console_execution_intent"
+        "windows_stopped_update_existing_pending_v5_keeps_original_console_execution_intent",
+        "host_update_release_metadata_is_read_only_old_version_and_not_execution_authority",
+        "host_update_release_metadata_preserves_pending_original_and_refuses_other_target",
+        "host_update_release_metadata_rejects_malformed_or_missing_manifest_without_manager_calls",
+        "host_update_reviewed_snapshot_refuses_changes_before_shared_admission",
+        "desktop_remote_access_update_requires_explicit_review_and_keeps_host_disabled",
+        "desktop_remote_access_update_blocks_live_unknown_equal_and_older_target_without_worker",
+        "desktop_remote_access_update_cancel_retains_admission_without_start_or_automatic_rollback",
+        "desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation",
+        "desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition",
+        "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
+        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
@@ -6706,7 +6717,8 @@
         "Managed bootstrap source regression proves real lifecycle-lock preflight contention and separates service-only contention. Managed CLI Store::open and registration preflight share one fixed2s typedBusy/cancellation wait budget; every phase attempts its first read even after expiry, only actualBusy allows wait/retry, originalBusy and nonBusy outcomes are preserved, and full captured-snapshot changes are rejected, and preserve missing/foreign-registration refusal. Existing later2s initial service-lease admission remains separate. No native manager Start, runtime invocation, reservation, first persistence or final history write is retried. Corrected source evidence does not identify or resolve the preserved signed Linux0.17.3 second-Start native failure; no new native execution/Windows/platform/owner/vault qualification is claimed.",
         "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
         "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
-        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority."
+        "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority.",
+        "HOST-04/HOST-06 Desktop Update is explicit Disable\u2192reviewed exact old/current-build signed replacement\u2192Disabled\u2192separate Enable. Recorded bounded provenance version is display metadata only; old/new signatures, native publisher, origin/current-version launch and original pending intent remain enforced. Core/model/render tests are not actual signed Desktop old\u2192new native update or daemon survival acceptance."
       ]
     },
     {
@@ -6814,7 +6826,18 @@
         "macos_long_generation_socket_computation_fits_without_creating_children",
         "macos_long_generation_main_lifecycle_binds_and_cleans_exact_socket",
         "native_start_with_long_runtime_uses_cache_socket_and_cleans_generation",
-        "empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement"
+        "empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement",
+        "host_update_release_metadata_is_read_only_old_version_and_not_execution_authority",
+        "host_update_release_metadata_preserves_pending_original_and_refuses_other_target",
+        "host_update_release_metadata_rejects_malformed_or_missing_manifest_without_manager_calls",
+        "host_update_reviewed_snapshot_refuses_changes_before_shared_admission",
+        "desktop_remote_access_update_requires_explicit_review_and_keeps_host_disabled",
+        "desktop_remote_access_update_blocks_live_unknown_equal_and_older_target_without_worker",
+        "desktop_remote_access_update_cancel_retains_admission_without_start_or_automatic_rollback",
+        "desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation",
+        "desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition",
+        "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
+        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback"
       ],
       "manual_scenarios": [
         "DT-05",
