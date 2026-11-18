@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6738a254adcd03eeb7199c82dc094297b9a8e77d1010a628f18b965488763e15"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "429fb676fa78c2fe506e3a3b0ca522341fd12becfda1bc960fe0719fbca14008"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -27,7 +27,7 @@ Caveats:
 Use for: When a selected bundle, parameter mapping, and native approval are validated before a workflow run starts.
 
 - [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — Binds the approved bundle, parameter digest, target map, and requested scope.
-- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and input approval commands.
+- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and approval or denial commands.
 
 Evidence:
 - [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves workflow approvals and starts are bounded and cannot replay stale input.
@@ -35,6 +35,20 @@ Evidence:
 Caveats:
 - Manifest and parameter digests must match; stale or mismatched workflow input is rejected.
 - Scopes are capped by exact target refs and capability checks, not bundle name or path.
+
+## App controller flow
+
+Use for: When adapter channels, privacy gates, and controller enrollment are checked before terminal actions are sent.
+
+- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery.
+- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and valid window.
+
+Evidence:
+- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy and disconnect cuts revoke grants without restoring them.
+
+Caveats:
+- The shared privacy gate must close before grant admission or output can proceed.
+- Disconnect, privacy loss, and takeover cut old reservations without replaying uncertain actions.
 
 ## MCP protocol state
 
@@ -49,17 +63,3 @@ Evidence:
 Caveats:
 - The machine owns protocol state, not transport authentication or authorization.
 - Client metadata and JSON-RPC IDs are never treated as identity or grant.
-
-## App IPC flow
-
-Use for: When adapter channels, privacy gates, and controller enrollment flow into terminal actions.
-
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery.
-- [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and valid window.
-
-Evidence:
-- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy and disconnect cuts revoke grants without restoring them.
-
-Caveats:
-- The shared privacy gate must close before grant admission or output can proceed.
-- Disconnect, privacy loss, and takeover cut old reservations without replaying uncertain actions.
