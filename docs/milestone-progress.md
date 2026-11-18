@@ -15787,8 +15787,20 @@ prove real QuickJS state plus the normal-tab route. A direct in-process runtime
 remains test-only so application tests do not need to spawn the test harness as
 a worker.
 
+The authority slice now makes launch review a typed application-owned boundary:
+`JavaScriptProgramLaunch` carries the reviewed developer digest, API and exact
+terminal-only capability set plus a fresh worker generation. A central launch
+waits for OS privacy monitoring and passes one application-owned fence through
+the process runtime and session. Every process write, worker result, session
+queue publication and terminal delivery rechecks it. Privacy loss cancels and
+reaps the worker and discards output already waiting in session queues; the
+game path does not borrow an automation target, recording grant or local-file
+origin. The owned macOS development launcher exposes this only through an
+explicit `--feature javascript-program-dev` build choice while keeping its
+isolated profile directories.
+
 This is not production enablement. Interactive native CPU policy, packaged
-confinement, privacy/revocation fencing, keyboard/IME/paste usability,
+confinement, native privacy-event timing, keyboard/IME/paste usability,
 multi-window lifecycle, private transactional saves and explicit resume remain
 JSP-01/JSP-04 qualification work. TradeWars rules, assets and provenance are a
 separate game implementation, not evidence supplied by the terminal host.

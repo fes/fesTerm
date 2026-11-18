@@ -70,6 +70,17 @@ class MacOSDevelopmentTests(unittest.TestCase):
             "FESTERM_INSTALLATION_KIND": "development",
         })
 
+    def test_frontend_build_command_keeps_javascript_program_opt_in(self):
+        self.assertEqual(launcher.frontend_build_command(), [
+            "cargo", "build", "--locked", "--message-format=json-render-diagnostics",
+            "-p", "festerm", "-p", "festerm-sessiond",
+        ])
+        self.assertEqual(
+            launcher.frontend_build_command(("javascript-program-dev",)),
+            launcher.frontend_build_command()
+            + ["--features", "javascript-program-dev"],
+        )
+
     def test_application_environment_is_private_and_does_not_inherit_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

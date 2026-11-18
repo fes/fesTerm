@@ -3,9 +3,9 @@ use crate::windows::Child;
 use crate::{
     platform,
     program::{
-        encode_program_frame, ApprovedProgram, ProgramBundleMessage, ProgramHostMessage,
-        ProgramOutcome, ProgramWorkerMessage, Submission, WriteAcceptance, MAX_OUTPUT_QUEUE_BYTES,
-        MAX_PENDING_WRITES, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
+        encode_program_frame, ApprovedProgram, ProgramBundleMessage, ProgramDeliveryFence,
+        ProgramHostMessage, ProgramOutcome, ProgramWorkerMessage, Submission, WriteAcceptance,
+        MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
     },
     protocol::{encode_frame, Decoder, CHUNK_BYTES, MAX_SAFE_INTEGER},
     Error, WorkerProgram,
@@ -55,6 +55,7 @@ pub struct ProgramSupervisor {
     startup_output: Vec<Vec<u8>>,
     commands: SyncSender<CommandRequest>,
     forced: Arc<AtomicBool>,
+    fence: Arc<dyn ProgramDeliveryFence>,
     join: Mutex<Option<JoinHandle<Result<(), Error>>>>,
 }
 
@@ -65,21 +66,44 @@ impl ProgramSupervisor {
         generation: u64,
         initial_size: crate::program::TerminalSize,
     ) -> Result<Self, Error> {
-        Self::spawn_with_cancellation(
+        struct TestFence {
+            cancelled: Arc<AtomicBool>,
+        }
+        impl ProgramDeliveryFence for TestFence {
+            fn is_live(&self, _worker_generation: u64) -> bool {
+                !self.cancelled.load(Ordering::Acquire)
+            }
+
+            fn try_enter(
+                &self,
+                _worker_generation: u64,
+            ) -> Result<Option<Box<dyn crate::program::ProgramDeliveryPermit + '_>>, Error>
+            {
+                if self.cancelled.load(Ordering::Acquire) {
+                    Err(Error::DisclosureRevoked)
+                } else {
+                    Ok(Some(Box::new(())))
+                }
+            }
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        Self::spawn_with_authority(
             worker,
             program,
             generation,
             initial_size,
             Arc::new(AtomicBool::new(false)),
+            Arc::new(TestFence { cancelled }),
         )
     }
 
-    pub fn spawn_with_cancellation(
+    pub fn spawn_with_authority(
         worker: &WorkerProgram,
         program: ApprovedProgram,
         generation: u64,
         initial_size: crate::program::TerminalSize,
         forced: Arc<AtomicBool>,
+        fence: Arc<dyn ProgramDeliveryFence>,
     ) -> Result<Self, Error> {
         platform::availability()?;
         if crate::cleanup_failed() {
@@ -95,6 +119,7 @@ impl ProgramSupervisor {
         let (commands, receive) = mpsc::sync_channel(4);
         let (startup, ready) = mpsc::sync_channel(1);
         let supervisor_forced = forced.clone();
+        let supervisor_fence = fence.clone();
         let join = thread::Builder::new()
             .name("festerm-javascript-program-supervisor".into())
             .spawn(move || {
@@ -107,6 +132,7 @@ impl ProgramSupervisor {
                     receive,
                     startup,
                     supervisor_forced,
+                    supervisor_fence,
                 )
             })
             .map_err(|_| Error::Unavailable("program supervisor thread unavailable"))?;
@@ -117,6 +143,7 @@ impl ProgramSupervisor {
                 startup_output,
                 commands,
                 forced,
+                fence,
                 join: Mutex::new(Some(join)),
             }),
             Ok(Err(error)) => {
@@ -188,6 +215,9 @@ impl ProgramSupervisor {
         if message_generation(message) != self.generation {
             return Ok((Submission::StaleGeneration, Vec::new()));
         }
+        if !self.fence.is_live(self.generation) {
+            return Err(Error::DisclosureRevoked);
+        }
         let (reply, result) = mpsc::sync_channel(1);
         let request = match message {
             ProgramHostMessage::Input {
@@ -236,7 +266,16 @@ impl ProgramSupervisor {
 
     pub fn shutdown(mut self) -> Result<(), Error> {
         self.force();
-        self.join()
+        let revoked = !self.fence.is_live(self.generation);
+        let result = self.join();
+        if revoked {
+            match result {
+                Err(error @ Error::Cleanup) => Err(error),
+                _ => Err(Error::DisclosureRevoked),
+            }
+        } else {
+            result
+        }
     }
 
     fn join(&mut self) -> Result<(), Error> {
@@ -290,6 +329,7 @@ fn supervise_process(
     commands: mpsc::Receiver<CommandRequest>,
     startup: SyncSender<Result<Vec<Vec<u8>>, Error>>,
     forced: Arc<AtomicBool>,
+    fence: Arc<dyn ProgramDeliveryFence>,
 ) -> Result<(), Error> {
     let mut child =
         crate::supervisor::spawn_worker_with_argument(&path, "--javascript-program-worker")?;
@@ -303,6 +343,7 @@ fn supervise_process(
             commands,
             &startup,
             &forced,
+            fence.as_ref(),
         )
     }))
     .unwrap_or(Err(Error::Cleanup));
@@ -311,8 +352,7 @@ fn supervise_process(
             "program worker failed before startup qualification",
         )));
     }
-    let cleanup = crate::supervisor::reap_worker(&mut child);
-    cleanup?;
+    crate::supervisor::reap_worker(&mut child).map_err(|_| Error::Cleanup)?;
     result
 }
 
@@ -326,6 +366,7 @@ fn supervise_child(
     commands: mpsc::Receiver<CommandRequest>,
     startup: &SyncSender<Result<Vec<Vec<u8>>, Error>>,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
 ) -> Result<(), Error> {
     #[cfg(windows)]
     {
@@ -353,6 +394,8 @@ fn supervise_child(
         startup,
         forced,
         STARTUP_TIMEOUT,
+        fence,
+        generation,
     )?;
     write_program_bundle(
         &mut input,
@@ -365,6 +408,7 @@ fn supervise_child(
             snapshot_bytes: source.len().try_into().map_err(|_| Error::Protocol)?,
         },
         forced,
+        fence,
     )?;
     let launch = ProgramHostMessage::Launch {
         version: PROGRAM_PROTOCOL_VERSION,
@@ -373,7 +417,7 @@ fn supervise_child(
         bundle_digest: digest,
         initial_size,
     };
-    write_message(&mut input, &launch, forced)?;
+    write_message(&mut input, &launch, forced, fence, generation)?;
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let startup_output = wait_started(
         child,
@@ -383,12 +427,16 @@ fn supervise_child(
         generation,
         deadline,
         forced,
+        fence,
     )?;
     startup
         .try_send(Ok(startup_output))
         .map_err(|_| Error::Protocol)?;
 
     while !forced.load(Ordering::Acquire) {
+        if !fence.is_live(generation) {
+            return Err(Error::DisclosureRevoked);
+        }
         #[cfg(target_os = "macos")]
         if platform::footprint_exceeded(child.id())? {
             return Err(Error::WorkerFailed("native memory ceiling exceeded"));
@@ -439,26 +487,33 @@ fn supervise_child(
                 true,
             ),
         };
-        write_message(&mut input, &message, forced)?;
         let deadline = Instant::now()
             + if close {
                 CLOSE_TIMEOUT
             } else {
                 OPERATION_TIMEOUT
             };
-        let operation = wait_operation(
-            child,
-            &mut decoder,
-            &mut output,
-            &mut input,
-            generation,
-            message_sequence(&message),
-            close,
-            deadline,
-            forced,
-        );
+        let operation =
+            write_message(&mut input, &message, forced, fence, generation).and_then(|_| {
+                wait_operation(
+                    child,
+                    &mut decoder,
+                    &mut output,
+                    &mut input,
+                    generation,
+                    message_sequence(&message),
+                    close,
+                    deadline,
+                    forced,
+                    fence,
+                )
+            });
         let finished = close;
+        let failed = operation.is_err();
         let _ = reply.try_send(operation);
+        if failed {
+            return Err(Error::Protocol);
+        }
         if finished {
             return Ok(());
         }
@@ -466,6 +521,7 @@ fn supervise_child(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expect_ready(
     child: &mut Child,
     decoder: &mut Decoder,
@@ -473,11 +529,16 @@ fn expect_ready(
     startup: &SyncSender<Result<Vec<Vec<u8>>, Error>>,
     forced: &AtomicBool,
     timeout: Duration,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
 ) -> Result<(), Error> {
     let deadline = Instant::now() + timeout;
     loop {
         if forced.load(Ordering::Acquire) {
             return Err(Error::Deadline);
+        }
+        if !fence.is_live(generation) {
+            return Err(Error::DisclosureRevoked);
         }
         let message: Option<ProgramWorkerMessage> = decoder.read(output)?;
         if let Some(message) = message {
@@ -504,9 +565,10 @@ fn write_program_bundle(
     generation: u64,
     begin: &ProgramBundleMessage,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
 ) -> Result<(), Error> {
     begin.validate()?;
-    write_frame(writer, begin, forced)?;
+    write_frame(writer, begin, forced, fence, generation)?;
     for bytes in source.chunks(CHUNK_BYTES) {
         write_frame(
             writer,
@@ -515,11 +577,14 @@ fn write_program_bundle(
                 bytes: bytes.to_vec(),
             },
             forced,
+            fence,
+            generation,
         )?;
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wait_started(
     child: &mut Child,
     decoder: &mut Decoder,
@@ -528,11 +593,12 @@ fn wait_started(
     generation: u64,
     deadline: Instant,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
     loop {
-        check_deadline(deadline, forced)?;
+        check_deadline(deadline, forced, fence, generation)?;
         let message: Option<ProgramWorkerMessage> = decoder.read(output)?;
         if let Some(message) = message {
             message.validate()?;
@@ -542,7 +608,10 @@ fn wait_started(
                     write_id,
                     bytes,
                 } if message_generation == generation => {
-                    write_message(
+                    let _permit = fence
+                        .try_enter(generation)?
+                        .ok_or(Error::DisclosureRevoked)?;
+                    write_message_under_permit(
                         input,
                         &ProgramHostMessage::WriteResult {
                             generation,
@@ -560,7 +629,7 @@ fn wait_started(
                 _ => return Err(Error::Protocol),
             }
         }
-        check_wait(child, deadline, forced)?;
+        check_wait(child, deadline, forced, fence, generation)?;
     }
 }
 
@@ -575,11 +644,12 @@ fn wait_operation(
     close: bool,
     deadline: Instant,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
     loop {
-        check_deadline(deadline, forced)?;
+        check_deadline(deadline, forced, fence, generation)?;
         let decoded: Option<ProgramWorkerMessage> = decoder.read(output)?;
         if let Some(message) = decoded {
             message.validate()?;
@@ -589,7 +659,10 @@ fn wait_operation(
                     write_id,
                     bytes,
                 } if message_generation == generation => {
-                    write_message(
+                    let _permit = fence
+                        .try_enter(generation)?
+                        .ok_or(Error::DisclosureRevoked)?;
+                    write_message_under_permit(
                         input,
                         &ProgramHostMessage::WriteResult {
                             generation,
@@ -616,12 +689,18 @@ fn wait_operation(
                 _ => return Err(Error::Protocol),
             }
         }
-        check_wait(child, deadline, forced)?;
+        check_wait(child, deadline, forced, fence, generation)?;
     }
 }
 
-fn check_wait(child: &mut Child, deadline: Instant, forced: &AtomicBool) -> Result<(), Error> {
-    check_deadline(deadline, forced)?;
+fn check_wait(
+    child: &mut Child,
+    deadline: Instant,
+    forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
+) -> Result<(), Error> {
+    check_deadline(deadline, forced, fence, generation)?;
     if child.try_wait()?.is_some() {
         return Err(Error::Protocol);
     }
@@ -648,8 +727,19 @@ fn worker_failure(code: crate::program::ProgramWorkerFailure) -> Error {
     }
 }
 
-fn check_deadline(deadline: Instant, forced: &AtomicBool) -> Result<(), Error> {
-    if forced.load(Ordering::Acquire) || Instant::now() >= deadline {
+fn check_deadline(
+    deadline: Instant,
+    forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
+) -> Result<(), Error> {
+    if forced.load(Ordering::Acquire) {
+        return Err(Error::DisclosureRevoked);
+    }
+    if !fence.is_live(generation) {
+        return Err(Error::DisclosureRevoked);
+    }
+    if Instant::now() >= deadline {
         return Err(Error::Deadline);
     }
     Ok(())
@@ -684,27 +774,75 @@ fn write_message(
     writer: &mut impl Write,
     message: &ProgramHostMessage,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
 ) -> Result<(), Error> {
-    write_frame_bytes(writer, encode_program_frame(message)?, forced)
+    write_frame_bytes(
+        writer,
+        encode_program_frame(message)?,
+        forced,
+        fence,
+        generation,
+    )
+}
+
+fn write_message_under_permit(
+    writer: &mut impl Write,
+    message: &ProgramHostMessage,
+    forced: &AtomicBool,
+) -> Result<(), Error> {
+    write_frame_bytes_physical(writer, encode_program_frame(message)?, forced)
 }
 
 fn write_frame<T: serde::Serialize>(
     writer: &mut impl Write,
     message: &T,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
 ) -> Result<(), Error> {
-    write_frame_bytes(writer, encode_frame(message)?, forced)
+    write_frame_bytes(writer, encode_frame(message)?, forced, fence, generation)
 }
 
 fn write_frame_bytes(
     writer: &mut impl Write,
     bytes: Vec<u8>,
     forced: &AtomicBool,
+    fence: &dyn ProgramDeliveryFence,
+    generation: u64,
 ) -> Result<(), Error> {
     let deadline = Instant::now() + Duration::from_millis(250);
+    let _permit = fence
+        .try_enter(generation)?
+        .ok_or(Error::DisclosureRevoked)?;
+    write_frame_bytes_physical_with_deadline(writer, bytes, forced, deadline)
+}
+
+fn write_frame_bytes_physical(
+    writer: &mut impl Write,
+    bytes: Vec<u8>,
+    forced: &AtomicBool,
+) -> Result<(), Error> {
+    write_frame_bytes_physical_with_deadline(
+        writer,
+        bytes,
+        forced,
+        Instant::now() + Duration::from_millis(250),
+    )
+}
+
+fn write_frame_bytes_physical_with_deadline(
+    writer: &mut impl Write,
+    bytes: Vec<u8>,
+    forced: &AtomicBool,
+    deadline: Instant,
+) -> Result<(), Error> {
     let mut sent = 0;
     while sent < bytes.len() {
-        if forced.load(Ordering::Acquire) || Instant::now() >= deadline {
+        if forced.load(Ordering::Acquire) {
+            return Err(Error::DisclosureRevoked);
+        }
+        if Instant::now() >= deadline {
             return Err(Error::Deadline);
         }
         match writer.write(&bytes[sent..]) {
@@ -718,4 +856,103 @@ fn write_frame_bytes(
         thread::yield_now();
     }
     writer.flush().map_err(Error::from)
+}
+
+#[cfg(test)]
+mod delivery_race_tests {
+    use super::*;
+    use std::io;
+    use std::sync::mpsc;
+
+    struct GateFence {
+        generation: u64,
+        gate: Arc<Mutex<()>>,
+        revoked: Arc<AtomicBool>,
+    }
+
+    impl ProgramDeliveryFence for GateFence {
+        fn is_live(&self, generation: u64) -> bool {
+            generation == self.generation && !self.revoked.load(Ordering::Acquire)
+        }
+
+        fn try_enter(
+            &self,
+            generation: u64,
+        ) -> Result<Option<Box<dyn crate::program::ProgramDeliveryPermit + '_>>, Error> {
+            let permit = self.gate.lock().map_err(|_| Error::DisclosureRevoked)?;
+            if generation != self.generation || self.revoked.load(Ordering::Acquire) {
+                Err(Error::DisclosureRevoked)
+            } else {
+                Ok(Some(Box::new(permit)))
+            }
+        }
+    }
+
+    struct BlockingWriter {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        calls: usize,
+    }
+
+    impl Write for BlockingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(1)
+            } else {
+                Ok(bytes.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn revocation_waits_for_the_actual_ipc_write_permit() {
+        let fence = Arc::new(GateFence {
+            generation: 7,
+            gate: Arc::new(Mutex::new(())),
+            revoked: Arc::new(AtomicBool::new(false)),
+        });
+        let forced = Arc::new(AtomicBool::new(false));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        let mut writer = BlockingWriter {
+            entered: entered_send,
+            release: release_receive,
+            calls: 0,
+        };
+        let (write_done_send, write_done_receive) = mpsc::channel();
+        let (revoke_done_send, revoke_done_receive) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let result =
+                    write_frame_bytes(&mut writer, vec![b'x'; 8], &forced, fence.as_ref(), 7);
+                write_done_send.send(result).unwrap();
+            });
+            entered_receive.recv().unwrap();
+            let revoke_fence = fence.clone();
+            scope.spawn(move || {
+                let _permit = revoke_fence.gate.lock().unwrap();
+                revoke_fence.revoked.store(true, Ordering::Release);
+                revoke_done_send.send(()).unwrap();
+            });
+            assert!(matches!(
+                revoke_done_receive.recv_timeout(Duration::from_millis(20)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            release_send.send(()).unwrap();
+            assert!(write_done_receive
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_ok());
+            revoke_done_receive
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap();
+        });
+    }
 }

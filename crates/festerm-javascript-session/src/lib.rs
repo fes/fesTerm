@@ -6,9 +6,9 @@
 
 use festerm_session::{
     noop_session_event_notifier, Session, SessionError, SessionErrorKind, SessionEvent,
-    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionOperation,
-    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
-    DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    SessionEventDelivery, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
+    SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
+    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use std::{
     collections::VecDeque,
@@ -21,6 +21,10 @@ use std::{
     },
     thread,
     time::Duration,
+};
+
+pub use festerm_automation_js::{
+    JavaScriptProgramLaunch, ProgramDeliveryFence, ProgramDeliveryPermit,
 };
 
 const MAX_RUNTIME_OUTPUT_BYTES: usize = DEFAULT_EVENT_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
@@ -54,6 +58,10 @@ pub trait JavaScriptRuntime: Send + 'static {
         None
     }
 
+    fn worker_generation(&self) -> u64 {
+        1
+    }
+
     fn start(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn resize(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
@@ -84,27 +92,32 @@ impl JavaScriptRuntime for EchoJavaScriptRuntime {
 #[cfg(not(target_os = "ios"))]
 pub struct QuickJsJavaScriptRuntime {
     runtime: festerm_automation_js::QuickJsProgramRuntime,
+    worker_generation: u64,
 }
 
 #[cfg(not(target_os = "ios"))]
 impl QuickJsJavaScriptRuntime {
-    pub fn developer_echo() -> Result<Self, JavaScriptSessionError> {
-        let program = festerm_automation_js::program::developer_echo_program().map_err(|_| {
-            JavaScriptSessionError::Runtime(JavaScriptRuntimeError::new(
-                "JavaScript program source is invalid",
-            ))
-        })?;
-        let runtime = festerm_automation_js::QuickJsProgramRuntime::new(program).map_err(|_| {
+    pub fn reviewed(launch: JavaScriptProgramLaunch) -> Result<Self, JavaScriptSessionError> {
+        let worker_generation = launch.worker_generation();
+        let runtime = festerm_automation_js::QuickJsProgramRuntime::new(launch.program().clone())
+            .map_err(|_| {
             JavaScriptSessionError::Runtime(JavaScriptRuntimeError::new(
                 "JavaScript runtime could not start",
             ))
         })?;
-        Ok(Self { runtime })
+        Ok(Self {
+            runtime,
+            worker_generation,
+        })
     }
 }
 
 #[cfg(not(target_os = "ios"))]
 impl JavaScriptRuntime for QuickJsJavaScriptRuntime {
+    fn worker_generation(&self) -> u64 {
+        self.worker_generation
+    }
+
     fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
         Some(self.runtime.cancellation_flag())
     }
@@ -137,15 +150,19 @@ impl JavaScriptRuntime for QuickJsJavaScriptRuntime {
 #[cfg(not(target_os = "ios"))]
 pub struct ProcessJavaScriptRuntime {
     worker: festerm_automation_js::WorkerProgram,
-    program: Option<festerm_automation_js::program::ApprovedProgram>,
+    launch: Option<JavaScriptProgramLaunch>,
     supervisor: Option<festerm_automation_js::ProgramSupervisor>,
-    generation: u64,
-    cancellation: Arc<AtomicBool>,
+    fence: Arc<dyn ProgramDeliveryFence>,
+    forced: Arc<AtomicBool>,
+    worker_generation: u64,
 }
 
 #[cfg(not(target_os = "ios"))]
 impl ProcessJavaScriptRuntime {
-    pub fn current_executable_developer_echo() -> Result<Self, JavaScriptSessionError> {
+    pub fn current_executable_reviewed(
+        launch: JavaScriptProgramLaunch,
+        fence: Arc<dyn ProgramDeliveryFence>,
+    ) -> Result<Self, JavaScriptSessionError> {
         let executable = std::env::current_exe().map_err(|_| {
             JavaScriptSessionError::Runtime(JavaScriptRuntimeError::new(
                 "JavaScript worker executable could not be resolved",
@@ -157,23 +174,22 @@ impl ProcessJavaScriptRuntime {
                     "JavaScript worker executable is not trusted",
                 ))
             })?;
-        Self::developer_echo(worker)
+        Self::reviewed(worker, launch, fence)
     }
 
-    pub fn developer_echo(
+    pub fn reviewed(
         worker: festerm_automation_js::WorkerProgram,
+        launch: JavaScriptProgramLaunch,
+        fence: Arc<dyn ProgramDeliveryFence>,
     ) -> Result<Self, JavaScriptSessionError> {
-        let program = festerm_automation_js::program::developer_echo_program().map_err(|_| {
-            JavaScriptSessionError::Runtime(JavaScriptRuntimeError::new(
-                "JavaScript program source is invalid",
-            ))
-        })?;
+        let worker_generation = launch.worker_generation();
         Ok(Self {
             worker,
-            program: Some(program),
+            launch: Some(launch),
             supervisor: None,
-            generation: 1,
-            cancellation: Arc::new(AtomicBool::new(false)),
+            fence,
+            forced: Arc::new(AtomicBool::new(false)),
+            worker_generation,
         })
     }
 }
@@ -181,19 +197,30 @@ impl ProcessJavaScriptRuntime {
 #[cfg(not(target_os = "ios"))]
 impl JavaScriptRuntime for ProcessJavaScriptRuntime {
     fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
-        Some(self.cancellation.clone())
+        Some(self.forced.clone())
+    }
+
+    fn worker_generation(&self) -> u64 {
+        self.worker_generation
     }
 
     fn start(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
-        let program = self.program.take().ok_or_else(|| {
+        let launch = self.launch.take().ok_or_else(|| {
             JavaScriptRuntimeError::new("JavaScript program has already been started")
         })?;
-        let mut supervisor = festerm_automation_js::ProgramSupervisor::spawn_with_cancellation(
+        if !self.fence.is_live(launch.worker_generation()) {
+            return Err(JavaScriptRuntimeError::new(
+                "JavaScript program launch is stale or revoked",
+            ));
+        }
+        let generation = launch.worker_generation();
+        let mut supervisor = festerm_automation_js::ProgramSupervisor::spawn_with_authority(
             &self.worker,
-            program,
-            self.generation,
+            launch.program().clone(),
+            generation,
             program_size(size),
-            self.cancellation.clone(),
+            self.forced.clone(),
+            self.fence.clone(),
         )
         .map_err(|_| JavaScriptRuntimeError::new("JavaScript program worker could not start"))?;
         let output = supervisor.take_start_output();
@@ -282,6 +309,8 @@ struct Shared {
     control_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
     cancellation: Option<Arc<AtomicBool>>,
+    fence: Option<Arc<dyn ProgramDeliveryFence>>,
+    worker_generation: u64,
 }
 
 impl Shared {
@@ -304,7 +333,15 @@ impl Shared {
     }
 
     fn is_current(&self, generation: u64) -> bool {
-        !self.stopping.load(Ordering::Acquire) && generation == self.current_generation()
+        !self.stopping.load(Ordering::Acquire)
+            && generation == self.current_generation()
+            && self.fence_live()
+    }
+
+    fn fence_live(&self) -> bool {
+        self.fence
+            .as_ref()
+            .is_none_or(|fence| fence.is_live(self.worker_generation))
     }
 
     fn record_event(&self) {
@@ -445,12 +482,46 @@ impl JavaScriptSession {
         )
     }
 
+    pub fn start_with_authority(
+        runtime: impl JavaScriptRuntime,
+        size: TerminalSize,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+        fence: Arc<dyn ProgramDeliveryFence>,
+    ) -> Result<Self, JavaScriptSessionError> {
+        Self::start_with_capacities_and_fence(
+            runtime,
+            size,
+            event_notifier,
+            DEFAULT_EVENT_QUEUE_CAPACITY,
+            DEFAULT_COMMAND_QUEUE_CAPACITY,
+            Some(fence),
+        )
+    }
+
     fn start_with_capacities(
+        runtime: impl JavaScriptRuntime,
+        size: TerminalSize,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+        event_capacity: usize,
+        command_capacity: usize,
+    ) -> Result<Self, JavaScriptSessionError> {
+        Self::start_with_capacities_and_fence(
+            runtime,
+            size,
+            event_notifier,
+            event_capacity,
+            command_capacity,
+            None,
+        )
+    }
+
+    fn start_with_capacities_and_fence(
         mut runtime: impl JavaScriptRuntime,
         size: TerminalSize,
         event_notifier: Arc<dyn SessionEventNotifier>,
         event_capacity: usize,
         command_capacity: usize,
+        fence: Option<Arc<dyn ProgramDeliveryFence>>,
     ) -> Result<Self, JavaScriptSessionError> {
         if event_capacity == 0 || command_capacity == 0 {
             return Err(JavaScriptSessionError::InvalidQueueCapacity);
@@ -459,6 +530,15 @@ impl JavaScriptSession {
         let (control_sender, control_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
         let cancellation = runtime.cancellation_flag();
+        let worker_generation = runtime.worker_generation();
+        if fence
+            .as_ref()
+            .is_some_and(|fence| !fence.is_live(worker_generation))
+        {
+            return Err(JavaScriptSessionError::Runtime(
+                JavaScriptRuntimeError::new("JavaScript program launch is stale or revoked"),
+            ));
+        }
         let shared = Arc::new(Shared {
             id: SessionId::next(),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
@@ -478,6 +558,8 @@ impl JavaScriptSession {
             control_sender,
             event_notifier,
             cancellation,
+            fence,
+            worker_generation,
         });
         let _ = shared.emit_control(SessionEvent::Lifecycle(SessionLifecycle::Starting));
         let worker_shared = Arc::clone(&shared);
@@ -558,24 +640,64 @@ impl Session for JavaScriptSession {
     }
 
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
-        let _space = self
-            .shared
-            .output_space
-            .lock()
-            .expect("JavaScript session output space lock is not poisoned");
-        match self
-            .event_receiver
-            .lock()
-            .expect("JavaScript session event receiver lock is not poisoned")
-            .try_recv()
-        {
-            Ok(event) => {
+        self.try_recv_event_with_permit()
+            .map(|delivery| delivery.event().clone())
+    }
+
+    fn try_recv_event_with_permit(
+        &self,
+    ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+        struct DeliveryPermit<'a> {
+            _permit: Box<dyn ProgramDeliveryPermit + 'a>,
+        }
+
+        let live = self.shared.fence_live();
+        if !live {
+            self.shared.request_stop();
+            self.shared.force_cancellation();
+            let receiver = self
+                .event_receiver
+                .lock()
+                .expect("JavaScript session event receiver lock is not poisoned");
+            let discarded = receiver.try_iter().count();
+            for _ in 0..discarded {
                 self.shared.event_received();
-                self.shared.output_ready.notify_all();
-                return Ok(event);
             }
-            Err(TryRecvError::Disconnected) => return Err(SessionTryReceiveError::Closed),
-            Err(TryRecvError::Empty) => {}
+            self.shared.output_ready.notify_all();
+        } else {
+            let fence_permit = match &self.shared.fence {
+                Some(fence) => match fence.try_enter(self.shared.worker_generation) {
+                    Ok(Some(permit)) => Some(DeliveryPermit { _permit: permit }),
+                    Ok(None) | Err(_) => {
+                        self.shared.request_stop();
+                        self.shared.force_cancellation();
+                        return Err(SessionTryReceiveError::Empty);
+                    }
+                },
+                None => None,
+            };
+            let _space = self
+                .shared
+                .output_space
+                .lock()
+                .expect("JavaScript session output space lock is not poisoned");
+            match self
+                .event_receiver
+                .lock()
+                .expect("JavaScript session event receiver lock is not poisoned")
+                .try_recv()
+            {
+                Ok(event) => {
+                    self.shared.event_received();
+                    self.shared.output_ready.notify_all();
+                    return Ok(match fence_permit {
+                        Some(permit) => SessionEventDelivery::protected(event, Box::new(permit)),
+                        None => SessionEventDelivery::new(event),
+                    });
+                }
+                Err(TryRecvError::Disconnected) => return Err(SessionTryReceiveError::Closed),
+                Err(TryRecvError::Empty) => {}
+            }
         }
         match self
             .control_receiver
@@ -583,7 +705,7 @@ impl Session for JavaScriptSession {
             .expect("JavaScript session control receiver lock is not poisoned")
             .try_recv()
         {
-            Ok(event) => Ok(event),
+            Ok(event) => Ok(SessionEventDelivery::new(event)),
             Err(TryRecvError::Empty) => Err(SessionTryReceiveError::Empty),
             Err(TryRecvError::Disconnected) => Err(SessionTryReceiveError::Closed),
         }
@@ -843,6 +965,13 @@ fn runtime_worker(
 
 fn deliver_closing_output(shared: &Shared, bytes: Vec<u8>) -> bool {
     loop {
+        let permit = match &shared.fence {
+            Some(fence) => match fence.try_enter(shared.worker_generation) {
+                Ok(Some(permit)) => Some(permit),
+                Ok(None) | Err(_) => return false,
+            },
+            None => None,
+        };
         let admission = shared
             .admission
             .lock()
@@ -851,7 +980,11 @@ fn deliver_closing_output(shared: &Shared, bytes: Vec<u8>) -> bool {
             .output_space
             .lock()
             .expect("JavaScript session output space lock is not poisoned");
-        if !matches!(shared.lifecycle(), SessionLifecycle::Stopping) {
+        if !matches!(shared.lifecycle(), SessionLifecycle::Stopping)
+            || shared.fence.as_ref().is_some_and(|fence| {
+                !matches!(fence.try_enter(shared.worker_generation), Ok(Some(_)))
+            })
+        {
             return false;
         }
         match shared
@@ -859,6 +992,7 @@ fn deliver_closing_output(shared: &Shared, bytes: Vec<u8>) -> bool {
             .try_send(SessionEvent::Output(bytes.clone()))
         {
             Ok(()) => {
+                let _ = permit;
                 shared.record_event();
                 let mut metrics = shared
                     .metrics
@@ -895,6 +1029,13 @@ fn validate_output(chunks: &[Vec<u8>]) -> bool {
 
 fn deliver_output(shared: &Shared, generation: u64, bytes: Vec<u8>) -> bool {
     loop {
+        let permit = match &shared.fence {
+            Some(fence) => match fence.try_enter(shared.worker_generation) {
+                Ok(Some(permit)) => Some(permit),
+                Ok(None) | Err(_) => return false,
+            },
+            None => None,
+        };
         let admission = shared
             .admission
             .lock()
@@ -911,6 +1052,7 @@ fn deliver_output(shared: &Shared, generation: u64, bytes: Vec<u8>) -> bool {
             .try_send(SessionEvent::Output(bytes.clone()))
         {
             Ok(()) => {
+                let _ = permit;
                 shared.record_event();
                 {
                     let mut metrics = shared
@@ -964,6 +1106,221 @@ mod tests {
         fn notify(&self) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    struct TestFence {
+        generation: u64,
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl ProgramDeliveryFence for TestFence {
+        fn is_live(&self, worker_generation: u64) -> bool {
+            worker_generation == self.generation && !self.cancelled.load(Ordering::Acquire)
+        }
+
+        fn try_enter(
+            &self,
+            worker_generation: u64,
+        ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, festerm_automation_js::Error>
+        {
+            if worker_generation != self.generation || self.cancelled.load(Ordering::Acquire) {
+                Err(festerm_automation_js::Error::DisclosureRevoked)
+            } else {
+                Ok(Some(Box::new(())))
+            }
+        }
+    }
+
+    #[test]
+    fn stale_launch_is_refused_before_runtime_start() {
+        struct RuntimeStarted(Arc<AtomicBool>);
+        impl JavaScriptRuntime for RuntimeStarted {
+            fn worker_generation(&self) -> u64 {
+                2
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.0.store(true, Ordering::Release);
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let fence: Arc<dyn ProgramDeliveryFence> = Arc::new(TestFence {
+            generation: 1,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        });
+        assert!(JavaScriptSession::start_with_authority(
+            RuntimeStarted(started.clone()),
+            size(),
+            noop_session_event_notifier(),
+            fence,
+        )
+        .is_err());
+        assert!(!started.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn privacy_revocation_suppresses_output_already_queued_for_delivery() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let fence: Arc<dyn ProgramDeliveryFence> = Arc::new(TestFence {
+            generation: 7,
+            cancelled: cancelled.clone(),
+        });
+        struct GenerationSevenEcho;
+        impl JavaScriptRuntime for GenerationSevenEcho {
+            fn worker_generation(&self) -> u64 {
+                7
+            }
+            fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(vec![bytes.to_vec()])
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let session = JavaScriptSession::start_with_authority(
+            GenerationSevenEcho,
+            size(),
+            noop_session_event_notifier(),
+            fence,
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session.try_send_input(b"private").unwrap();
+        wait_for(|| session.metrics().event_queue_depth == 1);
+        cancelled.store(true, Ordering::Release);
+        loop {
+            match session.try_recv_event() {
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Stopping)) => break,
+                Ok(SessionEvent::Lifecycle(_)) => {}
+                Ok(event) => panic!("revoked data escaped before stop: {event:?}"),
+                Err(SessionTryReceiveError::Empty) => {
+                    panic!("revocation did not publish stopping")
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("control stream closed"),
+            }
+        }
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+        while let Ok(event) = session.try_recv_event() {
+            if matches!(event, SessionEvent::Lifecycle(SessionLifecycle::Stopped)) {
+                return;
+            }
+            assert!(
+                !matches!(event, SessionEvent::Output(_)),
+                "revoked data must stay discarded: {event:?}"
+            );
+        }
+        panic!("stopped lifecycle was not drained");
+    }
+
+    #[test]
+    fn revocation_waits_until_queued_output_permit_releases() {
+        struct SerializedFence {
+            generation: u64,
+            gate: Arc<Mutex<()>>,
+            revoked: Arc<AtomicBool>,
+        }
+        impl ProgramDeliveryFence for SerializedFence {
+            fn is_live(&self, generation: u64) -> bool {
+                generation == self.generation && !self.revoked.load(Ordering::Acquire)
+            }
+
+            fn try_enter(
+                &self,
+                generation: u64,
+            ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, festerm_automation_js::Error>
+            {
+                let permit = self
+                    .gate
+                    .lock()
+                    .map_err(|_| festerm_automation_js::Error::DisclosureRevoked)?;
+                if generation != self.generation || self.revoked.load(Ordering::Acquire) {
+                    Err(festerm_automation_js::Error::DisclosureRevoked)
+                } else {
+                    Ok(Some(Box::new(permit)))
+                }
+            }
+        }
+        let gate = Arc::new(Mutex::new(()));
+        let revoked = Arc::new(AtomicBool::new(false));
+        let fence: Arc<dyn ProgramDeliveryFence> = Arc::new(SerializedFence {
+            generation: 7,
+            gate: gate.clone(),
+            revoked: revoked.clone(),
+        });
+        struct Echo;
+        impl JavaScriptRuntime for Echo {
+            fn worker_generation(&self) -> u64 {
+                7
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(vec![bytes.to_vec()])
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let session = JavaScriptSession::start_with_authority(
+            Echo,
+            size(),
+            noop_session_event_notifier(),
+            fence,
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        while matches!(session.try_recv_event(), Ok(SessionEvent::Lifecycle(_))) {}
+        session.try_send_input(b"permitted").unwrap();
+        wait_for(|| session.metrics().event_queue_depth == 1);
+        let delivery = session.try_recv_event_with_permit().unwrap();
+        assert!(matches!(delivery.event(), SessionEvent::Output(bytes) if bytes == b"permitted"));
+        let (started_send, started_receive) = mpsc::channel();
+        let (revoked_send, revoked_receive) = mpsc::channel();
+        let revoke = thread::spawn(move || {
+            started_send.send(()).unwrap();
+            let _permit = gate.lock().unwrap();
+            revoked.store(true, Ordering::Release);
+            revoked_send.send(()).unwrap();
+        });
+        started_receive.recv().unwrap();
+        assert!(matches!(
+            revoked_receive.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(delivery);
+        revoked_receive
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        revoke.join().unwrap();
+        assert_eq!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Stopping))
+        );
     }
 
     #[test]

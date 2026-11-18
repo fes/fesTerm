@@ -4,6 +4,14 @@
 
 This document defines how user-visible application actions are represented and dispatched in fesTerm. It complements `ARCHITECTURE.md` and `docs/gui-design.md`.
 
+Under the default-off ADR 0088 developer feature, `StartJavaScriptProgram`
+converges on application policy that creates a typed reviewed launch for the
+repository-owned developer echo. The launch binds the exact digest, API,
+terminal-only capability set and fresh worker generation. Program tabs own no
+automation target or filesystem authority, and launch waits for an
+application-owned OS-privacy fence rather than borrowing a recording or
+automation grant.
+
 ## Principle
 
 A user-visible application action should have one semantic command regardless of where the user invokes it.
