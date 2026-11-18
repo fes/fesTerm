@@ -15792,3 +15792,11 @@ confinement, privacy/revocation fencing, keyboard/IME/paste usability,
 multi-window lifecycle, private transactional saves and explicit resume remain
 JSP-01/JSP-04 qualification work. TradeWars rules, assets and provenance are a
 separate game implementation, not evidence supplied by the terminal host.
+
+The save-storage prerequisite now has a bounded core implementation. It owns
+opaque program, universe and slot identities; one exclusive writer lease; a
+single versioned envelope; revision and operation checks; payload digests; and
+atomic private publication with explicit uncertain-outcome recovery. Fault
+tests cover the publication cut. This layer intentionally does not expose a
+worker save API, infer a dirty heap, bind an installed program identity, or
+resume a universe; those authority and protocol decisions remain JSP-04 work.
