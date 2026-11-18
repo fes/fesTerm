@@ -3745,11 +3745,13 @@ struct JavaScriptProgramFence {
     _lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
 }
 
+#[cfg(feature = "javascript-program-dev")]
 struct JavaScriptProgramPermit<'a> {
     permit: Option<std::sync::MutexGuard<'a, ()>>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
+#[cfg(feature = "javascript-program-dev")]
 impl Drop for JavaScriptProgramPermit<'_> {
     fn drop(&mut self) {
         drop(self.permit.take());
