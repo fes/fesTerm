@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "16ac241a67fdc5d5a6968c56befbf30fdb60a369bfd78611f3376ba365fd22a2"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "825b766203746054b7ed2b9feadcc2294f43a56d54a7f03b791767e82cf6ec33"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns packaged update gating, native window/input smoke checks, macOS Finder/AppKit plumbing, and platform wake/privacy hooks that reach the app.
+This domain owns packaged update gating, native desktop smoke checks, Finder/AppKit plumbing, and wake/privacy hooks that connect native platform signals to the app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,7 +12,7 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: A packaged build decides whether self-update is allowed
 
-- [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps build markers to package installability and update checks
+- [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps build markers to installability and update checks
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Owns update status, install-kind gating, and background checks
 
 Evidence:
@@ -29,7 +29,7 @@ Caveats:
 Use for: CI must run a real native PTY smoke pass
 
 - [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the production PTY smoke flow inside the app event loop
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Selects exactly one smoke mode and resolves the output path
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Selects exactly one smoke mode and resolves the result path
 
 Evidence:
 - [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the single-env-var smoke mode contract

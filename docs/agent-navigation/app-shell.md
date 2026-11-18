@@ -1,20 +1,20 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "50965d29bf3af386ee747e81649404ea5260891a52a6df1b7f40b11905a13696"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "021e9b0a72d3e9ada22b5b78ee5cd053fd8c2e154f687ba96a7f3d8439622f75"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the desktop shell lifecycle, frame-loop rendering, and route handling for fesTerm’s desktop app and automation surfaces.
+Desktop shell lifecycle, frame-loop rendering, and screen routing for fesTerm's app windows and session surfaces.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## Startup flow
 
-Use for: Use for launch, restore windows, or recover a saved workspace
+Use for: Use to launch the app, restore windows, or recover a saved workspace.
 
-- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap for worker modes and GUI launch
-- [`new`](../../app/festerm/src/application.rs) — Builds primary window and automation state
-- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after primary exists
+- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and worker-mode exits before GUI creation
+- [`new`](../../app/festerm/src/application.rs) — Builds the primary window and automation coordinator
+- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary is live
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn
@@ -26,13 +26,13 @@ Caveats:
 
 ## Frame loop
 
-Use for: Use for each egui frame, handle close requests, geometry, and pane render
+Use for: Use for each egui frame, handle close requests, geometry, and pane rendering.
 
-- [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests and pumps sessions each frame
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome and renders the active pane set
+- [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and writes geometry
+- [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome, installs fonts, and renders the active pane set
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on focused pane while both terminals render
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Focused pane gets input while both terminals render
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -41,11 +41,11 @@ Caveats:
 
 ## Screen routing
 
-Use for: Use for launcher, profiles, settings, and app commands
+Use for: Use to open the launcher, profile editor, settings screen, and command-driven screens.
 
 - [`show_launcher`](../../app/festerm/src/screens.rs) — Launcher entry points and saved profile selection
 - [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect/save command flow
-- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, bindings, and automation prefs
+- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, bindings, and automation preferences
 
 Evidence:
 - [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
@@ -58,26 +58,26 @@ Caveats:
 
 ## Host access
 
-Use for: Use for host discovery, inventory, attach, and review before connection
+Use for: Use to review a discovered host before approval or connection.
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, review, and explicit host approval
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, review, consent, and explicit host approval
 
 Evidence:
 - [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and bounded registry state
-- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Confirmation state is preserved without claiming readiness
+- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Confirmation state stays truthful without claiming readiness
 
 Caveats:
-- Discovery requires no manual fingerprint or JSON; uncertain state requires Refresh.
+- Discovery requires no manual fingerprint or JSON; uncertain state needs Refresh.
 - Review is not a direct session mutation; it emits review actions.
 - Ownership and approval states are separate from runtime session state.
 
 ## Automation workers
 
-Use for: Use for JavaScript worker startup and persisted program saves
+Use for: Use to start JavaScript worker processes and persist checked saves.
 
-- [`main`](../../app/festerm/src/main.rs) — Accepts automation worker and JavaScript-program worker modes
-- [`open`](../../app/festerm/src/javascript_program_storage.rs) — Opens storage namespace and lock-safe save space
-- [`SaveCommit`](../../app/festerm/src/javascript_program_storage.rs) — Captures revision conflict and uncertain-save semantics
+- [`main`](../../app/festerm/src/main.rs) — Accepts worker modes before GUI boot
+- [`JavaScriptProgramCoordinator`](../../app/festerm/src/javascript_program_lifecycle.rs) — Bounds live JavaScript programs by count and memory
+- [`ReviewedDeveloperStorageHost`](../../app/festerm/src/javascript_program_storage.rs) — Provides host-owned save lifecycle and reconciliation
 
 Evidence:
 - [`javascript_program_commit_is_atomic_revision_checked_and_recoverable`](../../app/festerm/src/javascript_program_storage.rs) — Revision checks and restart recovery are enforced
