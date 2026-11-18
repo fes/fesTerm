@@ -4168,6 +4168,12 @@ installed/upgrade/uninstall registration while preserving a sentinel default.
 This is not a claim about Finder menu presentation or Windows/Linux foreground
 behavior, and does not close CP-19.
 
+## JavaScript terminal program vertical slice (JSP-01)
+
+| ID | Scenario | Evidence class | Current evidence / remaining acceptance |
+| --- | --- | --- | --- |
+| JSP-01 | Build fesTerm with `javascript-program-dev`, open the command palette, and choose **Start JavaScript Echo (developer)**. Type text including a split multibyte/escape sequence, resize the window, fill the output path, switch panes/windows, then close the tab and the app. Repeat under a cold native start. Confirm one ordinary terminal tab, exact echo and resize output, no local-shell process or automation target, no local-file link authority, bounded close after pressure, no stale output, and no surviving worker. | Automated desktop + native lifecycle + usability | Portable protocol/QuickJS/session/app tests cover launch, exact echo, resize ordering, backpressure and generation cuts. The capability remains default-off; packaged confined-process, stuck-worker, privacy-lock, keyboard/IME/paste, multi-window, visual and native lifecycle evidence remains required before enablement. Transactional saves/resume are a separate JSP-04 gate. |
+
 ## Staged MCP and JavaScript automation (AUTO-01 through AUTO-08)
 
 Native acceptance remains **deferred**, except for the partial probes explicitly

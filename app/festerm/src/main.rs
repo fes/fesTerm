@@ -30,6 +30,9 @@ mod enterprise;
 mod environment;
 mod font_downloads;
 mod inspector;
+#[cfg(feature = "javascript-program-dev")]
+#[allow(dead_code)]
+mod javascript_program_storage;
 mod keyboard;
 mod local_bind;
 mod local_command;
@@ -143,6 +146,19 @@ fn primary_viewport_builder(
 
 fn main() -> eframe::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(feature = "javascript-program-dev")]
+    if args
+        .first()
+        .is_some_and(|argument| argument == "--javascript-program-worker")
+    {
+        if args.len() != 1 {
+            std::process::exit(64);
+        }
+        if festerm_automation_js::program_worker_stdio().is_err() {
+            std::process::exit(70);
+        }
+        return Ok(());
+    }
     if args
         .first()
         .is_some_and(|argument| argument == "--automation-worker")

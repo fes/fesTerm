@@ -5,6 +5,26 @@ connects to sessions, starts MCP/HTTP, watches files, or schedules jobs.
 The application owns approval, authorization, concurrency, recipients, privacy
 events, result retention, packaging/provenance, and default-off settings.
 
+## Developer-only terminal program runtime
+
+`QuickJsProgramRuntime::new(ApprovedProgram)` exposes a bounded, long-lived
+in-process slice behind a dedicated worker thread on non-iOS targets. `start`,
+`input`, `resize` and `close` synchronously return ordered terminal output
+chunks and content-free errors. The QuickJS `Runtime` and `Context` stay on that
+one thread between events. `main({ terminal })` receives synchronous
+`terminal.events(callback)`, `terminal.write(text)`, and current
+`terminal.size`; input reaches JavaScript as an exact `Uint8Array`. A write is
+accepted only as bounded strict UTF-8 text.
+
+This runtime is developer-only and default-off. It is not a qualified
+subprocess, production confinement boundary, GUI process, or enablement of a
+JavaScript session. Callers remain responsible for all approval, lifetime and
+authority policy. The engine heap remains 64 MiB and the JavaScript stack
+remains 1 MiB (512 KiB on Windows); commands, replies and output are bounded,
+and close interrupts a stalled callback after a 250 ms cooperation window.
+The runtime has no workflow host API, `eval`/constructor escape, process, fetch,
+network or filesystem surface.
+
 ## Stable integration API
 
 Public paths/signatures:

@@ -100,6 +100,10 @@ impl FesTermApp {
                                         InspectorTransport::Serial { .. } => {
                                             CloseConsequence::TerminateLocalProcess
                                         }
+                                        #[cfg(feature = "javascript-program-dev")]
+                                        InspectorTransport::JavaScript { .. } => {
+                                            CloseConsequence::TerminateLocalProcess
+                                        }
                                     }
                                 },
                                 lifecycle_generation: session.controller.lifecycle_generation(),
