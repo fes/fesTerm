@@ -1,19 +1,20 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27b5cf556d8c524b84d34f1dea63e80e3e14facc894773163eb3a680828479fe"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "59daa6c59333bf252ccbe3c2abeb49937d0db435dabec5ca3c1c7cc5e9ff1eee"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission.
+This domain owns the shared session lifecycle, PTY and serial backends, and the persistent daemon that recovers and hosts named sessions.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 ## Session contract
 
-Use for: When a backend or UI path needs the shared lifecycle, queue semantics, and reply ownership rules.
+Use for: Need the shared lifecycle, event ordering, and backend reply ownership rules.
 
-- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle from start through terminal exit or failure.
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Backend contract for input, resize, shutdown, and reply ownership.
+- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle states and terminal vs nonterminal transitions.
+- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Backend events for output, recovery sync, resize, and control prompts.
+- [`Session`](../../crates/festerm-session/src/lib.rs) — Input, resize, shutdown, and terminal_reply ownership boundary.
 
 Evidence:
 - [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered through transitions.
@@ -25,9 +26,10 @@ Caveats:
 
 ## Local PTY
 
-Use for: When a local child process or PTY must be started, resized, or shut down reliably.
+Use for: Need a local child process or PTY started, resized, or shut down reliably.
 
 - [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup.
+- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated shell launch config before spawn.
 
 Evidence:
 - [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion.
@@ -39,7 +41,7 @@ Caveats:
 
 ## Persistent daemon
 
-Use for: When a named, recoverable session must be resumed, reconnected, or mirrored for persistence.
+Use for: Need a named, recoverable session resumed, reconnected, or mirrored for persistence.
 
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery sync.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains replies while ingesting bytes.
@@ -54,13 +56,13 @@ Caveats:
 
 ## Terminal flow
 
-Use for: When session output is pumped into the terminal or reply flow must be coordinated with backend-owned replies.
+Use for: Need session output pumped into the terminal while suppressing duplicate backend replies.
 
-- [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input, resize, and generation tracking.
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while suppressing duplicate backend replies and respecting byte budgets.
+- [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input and resize tracking.
+- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while respecting byte budgets and reply ownership.
 
 Evidence:
-- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize ordering while suppressing duplicate backend replies.
+- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize order while suppressing duplicate backend replies.
 - [`recording_observes_applied_output_resize_and_recovery_without_local_input`](../../app/festerm/src/session_controller.rs) — Proves recovery sync and resize integrate with recording without local input leakage.
 
 Caveats:
@@ -70,9 +72,10 @@ Caveats:
 
 ## Host control
 
-Use for: When a daemon must decide creation, attach, resume, and lease authority for named sessions.
+Use for: Need daemon admission, attach, resume, and lease authority decisions for named sessions.
 
 - [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Host-owned create, attach, and lease authority for native session admission.
+- [`with_helper`](../../crates/festerm-sessiond/src/host_control.rs) — Explicit helper path used to open a protected native control namespace.
 
 Evidence:
 - [`persistent_host_shell_accepts_ordinary_local_unticketed_attachment`](../../crates/festerm-sessiond/tests/host_control.rs) — Proves local host-shell attachment is admitted without a temporary lease.

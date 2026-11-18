@@ -1091,6 +1091,13 @@ screens do not establish a fresh Copilot result. Mobile must flush its pending
 viewport before input or explicitly report input not sent and disconnect on
 persistent resize refusal, preserving the existing no-replay policy.
 
+The opt-in [Windows console collector](native-terminal-capability-probe.md#windows-console-collector)
+adds bounded application-visible query observations, selected environment and
+actual grid capture. Parser/dispatch tests and cross-compilation are automated;
+actual Windows reply-record encoding, deadline cancellation, exact console-mode
+restoration/private output and paired local/remote Copilot captures remain native
+gates. Conhost-mediated replies must not be described as direct client answers.
+
 DT-02 also checks the first attached viewport without requiring a second window
 resize: the actual PTY grid must match the client before the fresh program starts.
 Portable bound framed-stream regressions now hold HOST activation after snapshot
