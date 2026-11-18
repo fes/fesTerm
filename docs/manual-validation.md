@@ -5519,7 +5519,9 @@ verify both XML fields are atomically recorded and an existing raw snapshot is
 unchanged. Exercise the previously released helper against the resulting v4
 receipt, then perform ordinary explicit Start and service/session checks.
 Changed command, arguments, principal, URI, settings, reservation or ACL and
-concurrent receipt changes must refuse. Portable models and Windows compilation
+concurrent receipt changes must refuse. Check that `D:PAI` metadata retains
+exactly two explicit ACEs with zero flags; inherited/inheritable ACEs, `AR` or
+a missing protected bit remain refused. Portable models and Windows compilation
 do not establish these native or older-helper passes.
 
 Linux native screenshots exposed pending setup presented as On, unrelated host

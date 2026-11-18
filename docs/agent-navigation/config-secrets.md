@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9852e52274064da1f38397e8b4aa3e9a67042783f0e095a85663916d5b59667e"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b576aca6cd13f1671c56f5f7fe3495ae109a9c5817421f33480ebf0dec55b590"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/
 
 ## Config startup
 
-Use for: Startup chooses the config source and persists workspace or profile updates.
+Use for: Which config file is selected and when does startup persist workspace or profile updates?
 
 - [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — chooses the explicit override or native config path and keeps it private
 - [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — private loader and save gate for startup writes and reconciliation
@@ -26,14 +26,14 @@ Caveats:
 
 ## Config schema
 
-Use for: Parsing, validating, or serializing a config document or workspace snapshot.
+Use for: How are documents parsed, validated, and saved, including workspace restore metadata?
 
 - [`Configuration`](../../crates/festerm-config/src/lib.rs) — versioned TOML document holding profiles, workspace, settings, and accounts
-- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — metadata-only restore state with profile validation
+- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — metadata-only restore state with tab and window validation
 
 Evidence:
 - [`saves_and_loads_a_complete_configuration`](../../crates/festerm-config/src/lib.rs) — round-trips a valid document through file save and load
-- [`without_profile_deletes_an_unreferenced_profile_but_rejects_a_workspace_reference`](../../crates/festerm-config/src/lib.rs) — rejects invalid workspace references after profile deletion
+- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — confirms workspace validation and profile reference checks
 
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
@@ -42,7 +42,7 @@ Caveats:
 
 ## Secret boundary
 
-Use for: A profile password, refresh token, or credential is created, rotated, or loaded from native storage.
+Use for: When is a profile password, refresh token, or credential created, rotated, or loaded from native storage?
 
 - [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — stores a UUID string without exposing secret material in debug output
 - [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — native store contract for create, get, update, and delete of secret bytes
@@ -58,7 +58,7 @@ Caveats:
 
 ## File security
 
-Use for: Creating or preserving a private config directory or staging file on Unix or Windows.
+Use for: How are config directories and save payloads kept private before publication on Unix or Windows?
 
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — ensures a directory is owned and restricted to the current user
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — creates a file with a current-user-only DACL and safe publication flow

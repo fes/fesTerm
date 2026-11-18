@@ -6590,6 +6590,7 @@
         "native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive_fallback",
         "native_service_exhausted_operation_budget_refuses_effect_before_spawn",
         "task_recovery_security_requires_exact_owner_system_protected_dacl",
+        "task_recovery_security_accepts_only_exact_auto_inherited_metadata",
         "task_preparation_embedded_security_accepts_only_absence_or_exact_policy",
         "native_service_windows_pending_descriptor_promotes_raw_v4_snapshot_without_recreate",
         "native_service_windows_fresh_reservation_retains_raw_snapshot_and_never_starts",

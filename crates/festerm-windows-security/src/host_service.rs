@@ -287,6 +287,10 @@ fn checked_task_security(sddl: &str, user: &str) -> io::Result<String> {
         let expected = [
             format!("O:{user}D:P(A;;GA;;;SY)(A;;GA;;;{user})"),
             format!("O:{user}D:P(A;;GA;;;{user})(A;;GA;;;SY)"),
+            // Scheduler may mark the protected DACL as auto-inherited while
+            // retaining these two explicit ACEs. AceFlags must still be zero.
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;{user})(A;;GA;;;SY)"),
         ];
         if !expected.contains(&canonical_text) {
             return Err(refused());
@@ -393,6 +397,37 @@ mod tests {
             VARIANT::from(format!("O:{user}D:P(A;;FR;;;SY)(A;;GA;;;{user})").as_str()),
         ] {
             assert!(check_embedded_task_security(&value, user).is_err());
+        }
+    }
+
+    #[test]
+    fn task_recovery_security_accepts_only_exact_auto_inherited_metadata() {
+        let user = "S-1-5-21-1-2-3-1001";
+        for mask in ["GA", "FA"] {
+            for (first, second) in [("SY", user), (user, "SY")] {
+                assert_eq!(
+                    checked_task_security(
+                        &format!("O:{user}D:PAI(A;;{mask};;;{first})(A;;{mask};;;{second})"),
+                        user,
+                    )
+                    .unwrap(),
+                    task_security_policy(user),
+                );
+            }
+        }
+        for sddl in [
+            format!("O:{user}D:AI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAR(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PARAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;ID;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;OI;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;CI;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;WD)"),
+            format!("O:SYD:PAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;FR;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;WD)"),
+        ] {
+            assert!(checked_task_security(&sddl, user).is_err());
         }
     }
 }

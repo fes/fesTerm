@@ -377,6 +377,10 @@ Task Scheduler publishes the registration security descriptor in task XML.
 Preparation sets the checked current-user/SYSTEM protected full-control policy
 on an **unregistered** definition. Create, Query and stored snapshots retain raw
 native XML; an existing observed snapshot is never normalized or rewritten.
+The native policy accepts the exact protected `D:P` or `D:PAI` descriptor
+forms with the same two explicit allow ACEs. Auto-inherited DACL metadata does
+not permit inherited or inheritable ACEs, partial rights, another owner,
+additional ACEs or other descriptor normalization.
 
 For a submitted reservation whose snapshot was not recorded, recovery may
 prepare its original expected XML again. Adoption requires that complete result
@@ -386,8 +390,11 @@ snapshot together. The command, arguments, principal, URI, settings, reservation
 and all other receipt fields remain exact. Recovery neither creates nor starts
 a task. Pending stopped replacements use the same proof. Missing, changed,
 unsubmitted or concurrently replaced intent remains refused. The v4 raw XML
-equality contract is retained for older helpers; native interoperability still
-requires qualification.
+equality contract is retained for older helpers. This is serialization
+compatibility, not a fix to an older binary's native security checker: its
+service-status/stop/cleanup paths still refuse `D:PAI`. Managed startup after a
+snapshot is recorded uses a different path and remains natively unqualified.
+Updated signed HOST bytes are required to fix those management paths.
 
 ### Windows stopped replacement contract (design before implementation)
 
