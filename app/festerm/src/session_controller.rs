@@ -1626,6 +1626,21 @@ impl<S: Session> SessionController<S> {
     }
 }
 
+#[cfg(feature = "javascript-program-dev")]
+impl SessionController<crate::tabs::ApplicationSession> {
+    pub(crate) fn javascript_cleanup_complete(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_none_or(crate::tabs::ApplicationSession::javascript_cleanup_complete)
+    }
+
+    pub(crate) fn force_javascript_shutdown(&self) {
+        if let Some(session) = &self.session {
+            session.force_javascript_shutdown();
+        }
+    }
+}
+
 impl<S: Session> EncodedInputSink for SessionController<S> {
     fn terminal_resizes_owned_by_backend(&self) -> bool {
         self.session
