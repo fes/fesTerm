@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e1fe3813f8491b9c782ef43c1bb78f592a7ca12aaddedc4c0ec9b38c661ba4ef"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e2e2ea73c257b8e16e73bc080452ed33788cbdc795b80ccf8a89bbc31603c337"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,12 +10,12 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 
 ## Command route
 
-Use for: A widget, launcher, or tab action needs to mutate app state.
+Use for: A widget, launcher, or tab action needs to mutate app state from a typed command.
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed product intents for launcher, settings, tabs, and sessions
 - [`AppState`](../../app/festerm/src/tabs.rs) — window coordinator owning tabs, documents, and UI state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for AppCommand values
-- [`with_primary_session`](../../app/festerm/src/tabs.rs) — builds the normal startup shell tab
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from an AppCommand to state
+- [`with_primary_session`](../../app/festerm/src/tabs.rs) — default startup shell tab for a fresh window
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the opening tab rather than a neighbor
@@ -28,9 +28,9 @@ Caveats:
 
 ## Tab close flow
 
-Use for: A tab is closing or a fallback focus choice is being selected.
+Use for: A tab is closing or the fallback focus target is being selected.
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread state for the newly active tab
+- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread state on the newly active tab
 - [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — tracks the most recent still-open tab in last-left order
 - [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab that is still open
 - [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and picks a fallback

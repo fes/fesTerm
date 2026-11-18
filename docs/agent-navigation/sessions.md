@@ -1,44 +1,39 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5c390745909f41a6e823b1c1a41964adc6bac168d2ea8a183e8a3c4c1eceae22"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4d7833fd50142bb305b6a3abb4f8f0946dfb7703852b2e9c4617ba7b70c59455"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns session lifecycle, native PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping.
+This domain owns session lifecycle, PTY startup, daemon-backed persistence, and the event flow that keeps terminal state consistent across backends.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 ## Session contract
 
-Use for: Which lifecycle, queue, and reply rules apply to every session backend?
+Use for: Which lifecycle, queue, and reply rules apply to every backend?
 
-- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — State machine plus disconnected-but-not-terminal semantics
-- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Backend output, resize, recovery, and lifecycle events
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Runtime-independent backend API and reply ownership contract
-- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Backend handles terminal replies while recovery mirror owns them
+- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — state machine and terminal vs disconnected boundaries
+- [`Session`](../../crates/festerm-session/src/lib.rs) — backend API and reply ownership contract
 
 Evidence:
-- [`automation_epoch_invalidates_on_every_transition`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered
-- [`lifecycle_terminal_states_are_explicit`](../../crates/festerm-session/src/lib.rs) — Demonstrates terminal vs disconnected lifecycle boundaries
+- [`automation_epoch_invalidates_on_every_transition`](../../crates/festerm-session/src/lib.rs) — proves lifecycle and admission epochs stay ordered
 
 Caveats:
 - Events never mutate Terminal directly.
-- SessionLifecycle::Disconnected is not terminal.
-- terminal_replies_owned_by_backend gates backend-owned replies.
+- Disconnected is not terminal.
+- terminal_replies_owned_by_backend gates backend-owned terminal replies.
 
 ## Local PTY
 
 Use for: How does a local shell get started, resized, and shut down safely?
 
-- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated local shell bootstrap with explicit env and cwd
-- [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Canonical Windows cwd normalization at spawn boundary
-- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and cleanup
+- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — native PTY worker with bounded queues and cleanup
 
 Evidence:
-- [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion
+- [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — proves PTY-controlled input sequencing and completion
 
 Caveats:
-- Local shell startup is validated before spawn.
+- Startup validation happens before spawn.
 - Resize and shutdown must preserve queue ordering and bounds.
 - Process-tree cleanup differs by OS.
 
@@ -46,13 +41,10 @@ Caveats:
 
 Use for: How is a named session resumed, reconnected, or mirrored for persistence?
 
-- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery
-- [`resume_discovered_in`](../../crates/festerm-sessiond/src/lib.rs) — Attach to discovered generation without creation or takeover
-- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned mirror drains replies while ingesting terminal bytes
+- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — daemon-backed client for resume, reconnect, and recovery
 
 Evidence:
-- [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect semantics, and attach rules
-- [`recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged`](../../crates/festerm-sessiond/src/main.rs) — Recovery faults do not adopt or mutate output
+- [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — proves generation pinning, reconnect semantics, and attach rules
 
 Caveats:
 - Daemon protocol and recovery schema versions must stay compatible.
@@ -63,14 +55,26 @@ Caveats:
 
 Use for: How are backend bytes and resize events turned into terminal updates without duplicate replies?
 
-- [`SessionController`](../../app/festerm/src/session_controller.rs) — App-owned terminal writer with pending input and generation tracking
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Applies output, resize, recovery, and lifecycle events in wire order
-- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Suppresses duplicate terminal replies when backend owns mirror
+- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — applies output, resize, recovery, and lifecycle events in wire order
 
 Evidence:
-- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize ordering while suppressing backend duplicates
+- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — proves output and resize ordering while suppressing backend duplicates
 
 Caveats:
 - terminal_replies_owned_by_backend blocks duplicate forwarding.
 - pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Controller shutdown and reconnect preserve generation and recovery invariants.
+
+## JavaScript runtime
+
+Use for: Which adapter isolates an embedded JavaScript worker from the shared session contract?
+
+- [`JavaScriptSession`](../../crates/festerm-javascript-session/src/lib.rs) — bounded worker adapter for injected JavaScript runtimes
+
+Evidence:
+- [`privacy_revocation_suppresses_output_already_queued_for_delivery`](../../crates/festerm-javascript-session/src/lib.rs) — proves queued output is suppressed when runtime authority is revoked
+
+Caveats:
+- Runtime ownership and terminal state are intentionally separate.
+- Worker generation and cancellation must stay monotonic.
+- Queued output must be dropped before delivery once revoked.

@@ -8,15 +8,15 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal presentation, bounded viewport caches, and native/software rendering while keeping session I/O in the application layer. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns session lifecycle, native PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns session lifecycle, PTY startup, daemon-backed persistence, and the event flow that keeps terminal state consistent across backends. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal input and global actions. |
-| [Automation, workflows, and MCP](automation.md) | Automation owns brokered terminal authority, validated workflow intake, and MCP protocol state for exact observation and control. |
+| [Automation, workflows, and MCP](automation.md) | Automation owns brokered terminal authority, validated workflow intake, and protocol state for exact observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | This domain owns private terminal capture, privacy enforcement, synchronized export preparation, and source-safe replay/recovery for recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns the desktop app's packaged-update gate, native smoke proof, macOS Finder/AppKit event plumbing, and platform wake/privacy hooks. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Owns the desktop app's packaged-update gate, native smoke proof, Finder/AppKit event plumbing, and platform wake/privacy hooks. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, per-frame pane rendering, screen routing, and automation bootstraps for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
