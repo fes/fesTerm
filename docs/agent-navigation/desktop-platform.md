@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "feb0f6a1998de72a91328db18f72ba9b4fb18b1eb9effcd10d924b48f7eeb205"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "7eb147f70588280453164564b0e12f00773d456784adce1ab19c84bb469e9527"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns desktop app packaging gates, native smoke validation, and OS wake/privacy bridges for native desktop runtime integration.
+Routes desktop packaging and updater gates, native window checks, wake/privacy integration, and hosted Windows process-lifetime separation.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -51,7 +51,7 @@ Evidence:
 - [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — End-to-end AppleEvent test covers queued Finder open-document behavior.
 
 Caveats:
-- Finder open-document events must be drained before UI attaches or they can be lost.
+- The installed bridge queues Finder events until the application drains and routes them.
 - Menu semantics are app policy; the bridge emits commands, not app state.
 - Oversized or malformed file URLs are rejected instead of retained.
 
@@ -72,3 +72,18 @@ Caveats:
 - These monitors treat only the resume edge as wake and ignore suspend transitions.
 - Linux privacy depends on systemd-logind and a compatible GNOME session and shell.
 - Fail-closed is required: unknown or broken bus state counts as privacy loss.
+
+## Hosted Windows startup
+
+Use for: A persistent hosted shell must outlive the GUI, bridge and HOST worker on Windows.
+
+- [`run_start_prepared`](../../crates/festerm-sessiond/src/main.rs) — Selects one WMI hop for an initial hosted starter in any Job, before taking start locks.
+- [`relaunch_current_starter`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Uses local WMI with bounded successor observation and preserved Unicode arguments and environment.
+- [`current_process_child_job_policy`](../../crates/festerm-windows-job/src/lib.rs) — Distinguishes no Job, explicit breakaway, silent breakaway and a blocked immediate Job.
+
+Evidence:
+- [`native_windows_wmi_starter_survives_calling_job_with_same_generation_io`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Exercises blocked and nested caller Jobs, then same-generation terminal I/O after terminating the caller Job.
+
+Caveats:
+- A permissive immediate Job does not establish independence from caller-owned ancestors.
+- The successor marker bounds routing; it does not bypass protected creation or Ready checks.

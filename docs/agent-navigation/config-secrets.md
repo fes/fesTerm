@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "76d5da9ac8248bba33b4c698e43c3e351fbded8a6c0e0d91d4fa3e44145987b2"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-agent", "sources": "ffbdbfcd7656c5ae4ba86cc6825e3b169b04b368bc407f52da8fa9df38a36f8e"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns versioned TOML configuration, workspace restore metadata, opaque secret references, and user-private file protections for native config and secret storage.
+Owns validated configuration and workspace metadata, native credential references, and current-user file and process-context security boundaries.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
@@ -44,7 +44,7 @@ Caveats:
 
 Use for: When is a profile password, refresh token, or credential created, rotated, or loaded from native storage?
 
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Stores a UUID string without exposing secret material in debug output.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than a password or token value.
 - [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
 
 Evidence:
@@ -68,6 +68,21 @@ Evidence:
 - [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Shows private creation and publication preserve the current-user-only DACL.
 
 Caveats:
-- Private file creation rejects inherited or foreign ACLs before publication.
-- Directory ancestry and ownership must remain trusted; otherwise the secure path is rejected.
-- Publication is gated on verified security metadata, not just a successful create call.
+- New private objects are secured and verified; unsafe existing roots refuse access.
+- Configuration and workspace files contain metadata, never credential or terminal content.
+- Successful file creation alone does not prove private ownership or safe publication.
+
+## Windows starter context
+
+Use for: A hosted Windows start moves between an application-owned Job and a locally created WMI successor.
+
+- [`same_start_context`](../../crates/festerm-windows-security/src/lib.rs) — Compares user, logon identity, session, integrity and elevation between processes.
+- [`verify_successor`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Validates a live same-image parent and bounds the short-lived successor lifetime.
+
+Evidence:
+- [`unicode_environment_safearray_preserves_drive_entries_and_wide_values`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Checks native BSTR-array preservation of drive entries and UTF-16 values.
+
+Caveats:
+- Context equality is routing evidence, not creation consent or session authority.
+- A WMI-returned PID is observed without granting process-termination authority.
+- Generation, launch request, host lease and native binding remain separate checks.

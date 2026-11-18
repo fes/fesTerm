@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4e75d80dba59119f49c0590f0c9273a11a076ac3ecb742ff3a9c5175bb1c748e"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-agent", "sources": "8d5a090b9f05e9db5da49be53c067739fcb63b73c82d1e293c00d49e819307e2"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The mobile domain owns the shared Rust terminal host for iOS and Android, along with native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing.
+Owns shared iOS/Android application lifecycle, terminal and form input, protected local state, and feature-selected SSH and HOST client workflows.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
@@ -19,23 +19,23 @@ Evidence:
 - [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Proves content stays hidden until auth succeeds and relock hides it again.
 
 Caveats:
-- Offline stays default; live SSH is prototype-only.
-- Lock and suspend flows cancel stale work without replaying input.
-- Only content-free lifecycle data crosses the UI seam.
+- Build features select offline fixtures, transient SSH or HOST clients; build success is not native qualification.
+- Lock and suspension fence stale input and completions without replaying terminal input.
+- Lifecycle counters contain no terminal or credential content.
 
 ## Host client flow
 
-Use for: When a task needs account-scoped discovery, inventory, profile review, or explicit owner approval.
+Use for: Account-scoped host discovery expands into session inventory, explicit new-shell creation, attachment and local-profile saving.
 
-- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Tracks inventory, approvals, originals, and attach actions.
+- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns discovered hosts, session selection, creation review and local profile metadata.
 
 Evidence:
 - [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Proves adoption before running and lock fencing for installed HOST sessions.
 
 Caveats:
-- Ordinary discovery binds the provider route automatically; owner pairing is advanced-only.
-- Protected history and creation remain local metadata unless explicitly approved.
-- Host work is canceled on lock and suspension rather than silently continuing.
+- Ordinary discovery uses the provider-authorized route; manual owner pairing remains advanced administration.
+- Saving a local profile grants neither server creation authority nor filesystem or observation access.
+- Lock and suspension fence input while committed operations retain their original identity.
 
 ## Documents and files
 
@@ -62,7 +62,7 @@ Evidence:
 
 Caveats:
 - Pins and credentials are memory-only; no persisted trust or saved credentials.
-- Fresh shell on reconnect; stale input is dropped, not replayed.
+- Transient SSH reconnect starts a fresh shell; durable HOST attachment follows its own generation contract.
 - Suspension and disconnect are explicit; no background remote continuity is promised.
 
 ## Android JNI bridge
@@ -75,7 +75,7 @@ Evidence:
 - [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording service boundaries.
 
 Caveats:
-- Rust owns the UI and session policy; Java stays service glue.
+- Java forwards platform input and services; shared Rust retains UI and session policy.
 - JNI must not persist app state outside the model.
 - Android-only services are bounded to the current lifecycle and app context.
 

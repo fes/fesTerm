@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1438fa8a923971fe4a5068589eac6bdcfdf7ebaec6eaec716389a592037b4950"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "789dd634cbd644fadbbefd0e32573a4f689781e5856b28c2e2035e7cbec68ba6"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the shared terminal-session lifecycle, local PTY and daemon backends, and the app-side event pump that applies output without duplicate terminal replies.
+Owns session lifecycle and byte transport, local PTYs, detached daemon recovery, protected hosted creation and caller-independent process lifetime.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
@@ -69,3 +69,19 @@ Caveats:
 - terminal_replies_owned_by_backend prevents double forwarding.
 - pump_session_events is bounded by MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Controller shutdown and reconnect preserve generation and recovery invariants.
+
+## Hosted session control
+
+Use for: A host creates or resumes a durable generation, or a Windows launch remains uncertain.
+
+- [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Serializes protected logical sessions, issuance and generation-bound creation or attachment.
+- [`ensure_host_reserved`](../../crates/festerm-sessiond/src/detached.rs) — Uses the existing reserved generation and launch journal instead of authorizing replacement.
+- [`use_wmi_starter`](../../crates/festerm-sessiond/src/main.rs) — Routes initial hosted starts in any Job through one successor while refusing recursive or blocked successor launch.
+
+Evidence:
+- [`native_windows_wmi_starter_survives_calling_job_with_same_generation_io`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Exercises blocked and nested caller Jobs, then same-generation terminal I/O after terminating the caller Job.
+
+Caveats:
+- An unavailable launch remains Unknown; no alternate mechanism or fresh generation is tried automatically.
+- Only a known successful Create with a lost short-lived PID handoff can reconcile an exact protected Ready record.
+- Persistent shell lifetime is independent from client, bridge and HOST worker exit, not guaranteed through OS logoff or reboot.
