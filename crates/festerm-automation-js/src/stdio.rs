@@ -30,3 +30,22 @@ pub fn worker_stdio() -> Result<(), Error> {
     }
     result
 }
+
+/// Run the distinct terminal-program worker mode on inherited stdio.
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub fn program_worker_stdio() -> Result<(), Error> {
+    #[cfg(target_os = "ios")]
+    return Err(Error::Unavailable(
+        "iOS has no qualified separate JavaScript program worker",
+    ));
+    #[cfg(not(target_os = "ios"))]
+    {
+        #[cfg(windows)]
+        let pipe = crate::windows::WorkerPipe::connect()?;
+        #[cfg(windows)]
+        let (input, output) = (&pipe, &pipe);
+        #[cfg(not(windows))]
+        let (input, output) = (std::io::stdin().lock(), std::io::stdout().lock());
+        crate::program_worker::program_worker_entry(input, output)
+    }
+}

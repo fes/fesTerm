@@ -47,6 +47,11 @@ impl WorkerProgram {
         }
         Ok(Self(path.to_owned()))
     }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn as_path(&self) -> &Path {
+        &self.0
+    }
 }
 
 pub enum Event {
@@ -348,10 +353,10 @@ impl Drop for OwnedChild {
 }
 
 #[cfg(not(windows))]
-fn spawn_worker(program: &Path) -> Result<Child, Error> {
+pub(crate) fn spawn_worker_with_argument(program: &Path, argument: &str) -> Result<Child, Error> {
     let mut command = Command::new(program);
     command
-        .arg("--automation-worker")
+        .arg(argument)
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -367,8 +372,12 @@ fn spawn_worker(program: &Path) -> Result<Child, Error> {
 }
 
 #[cfg(windows)]
+pub(crate) fn spawn_worker_with_argument(program: &Path, argument: &str) -> Result<Child, Error> {
+    Child::spawn_with_argument(program, argument)
+}
+
 fn spawn_worker(program: &Path) -> Result<Child, Error> {
-    Child::spawn(program)
+    spawn_worker_with_argument(program, "--automation-worker")
 }
 
 /// Any unreaped owned worker poisons execution for this application process.
@@ -619,6 +628,7 @@ fn reap(child: &mut Child) -> Result<(), Error> {
     if child.try_wait()?.is_some() {
         return Ok(());
     }
+
     if let Err(error) = child.kill() {
         if child.try_wait()?.is_some() {
             return Ok(());
@@ -635,6 +645,15 @@ fn reap(child: &mut Child) -> Result<(), Error> {
         }
         thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[cfg(feature = "javascript-program-dev")]
+pub(crate) fn reap_worker(child: &mut Child) -> Result<(), Error> {
+    let result = reap(child);
+    if result.is_err() {
+        CLEANUP_FAILED.store(true, Ordering::SeqCst);
+    }
+    result
 }
 
 fn poll_worker_output(

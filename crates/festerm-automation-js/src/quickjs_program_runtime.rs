@@ -1,7 +1,7 @@
 use crate::{
     program::{
-        ApprovedProgram, ProgramCapability, TerminalSize, MAX_INPUT_CHUNK_BYTES,
-        MAX_OUTPUT_CHUNK_BYTES, MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES,
+        ApprovedProgram, ProgramCapability, ProgramHostMessage, ProgramOutcome, TerminalSize,
+        MAX_INPUT_CHUNK_BYTES, MAX_OUTPUT_CHUNK_BYTES, MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES,
     },
     HEAP_BYTES, STACK_BYTES,
 };
@@ -499,6 +499,124 @@ fn send_reply(reply: Reply, result: Result<Output, QuickJsProgramRuntimeError>) 
     let _ = reply.try_send(result);
 }
 
+pub(crate) trait InlineProgramTransport {
+    fn started(&mut self, generation: u64) -> rquickjs::Result<()>;
+    fn receive(&mut self) -> rquickjs::Result<ProgramHostMessage>;
+    fn output(&mut self, output: Output) -> rquickjs::Result<()>;
+    fn completed(&mut self, generation: u64, sequence: u64) -> rquickjs::Result<()>;
+    fn finished(&mut self, generation: u64, outcome: ProgramOutcome) -> rquickjs::Result<()>;
+}
+
+/// Executes the program on the already-confined worker's original thread.
+///
+/// A native program worker cannot create a nested thread after Linux
+/// confinement. The desktop development adapter above keeps its own thread;
+/// packaged worker entry uses this inline path so process confinement remains
+/// the authority boundary.
+pub(crate) fn run_inline_program(
+    program: ApprovedProgram,
+    generation: u64,
+    initial_size: TerminalSize,
+    transport: &mut impl InlineProgramTransport,
+) -> Result<(), crate::Error> {
+    let runtime = Runtime::new().map_err(|_| crate::Error::WorkerFailed("QuickJS runtime"))?;
+    runtime.set_memory_limit(HEAP_BYTES);
+    runtime.set_max_stack_size(STACK_BYTES);
+    runtime.set_loader(
+        Names(program.snapshot().modules.keys().cloned().collect()),
+        Sources(program.snapshot().modules.clone()),
+    );
+    let context =
+        Context::full(&runtime).map_err(|_| crate::Error::WorkerFailed("QuickJS context"))?;
+    context
+        .with(|ctx| -> rquickjs::Result<()> {
+            let output = Rc::new(RefCell::new(Output::new()));
+            let output_bytes = Rc::new(RefCell::new(0usize));
+            install_program_writer(ctx.clone(), output.clone(), output_bytes.clone())?;
+            let bootstrap: Object = ctx.eval(BOOTSTRAP)?;
+            let module = Module::declare(
+                ctx.clone(),
+                program.manifest().entry.as_str(),
+                program.snapshot().modules[&program.manifest().entry].as_bytes(),
+            )?;
+            let (module, evaluated) = module.eval()?;
+            for _ in 0..1_024 {
+                if evaluated.state() != PromiseState::Pending || !ctx.execute_pending_job() {
+                    break;
+                }
+            }
+            evaluated
+                .result::<()>()
+                .ok_or(rquickjs::Error::Exception)??;
+
+            let start: Function = bootstrap.get("start")?;
+            let dispatch: Function = bootstrap.get("dispatch")?;
+            let set_size: Function = bootstrap.get("setSize")?;
+            let main: Function = module.get("main")?;
+            start.call::<_, ()>((main, size_object(&ctx, initial_size)?))?;
+            transport.output(take_inline_output(&output, &output_bytes)?)?;
+            transport.started(generation)?;
+
+            let mut sequence = 1_u64;
+            loop {
+                let message = transport.receive()?;
+                if inline_message_generation(&message) != generation {
+                    return Err(rquickjs::Error::Exception);
+                }
+                match message {
+                    ProgramHostMessage::Input {
+                        sequence: event_sequence,
+                        bytes,
+                        ..
+                    } => {
+                        if event_sequence != sequence {
+                            return Err(rquickjs::Error::Exception);
+                        }
+                        sequence = sequence.checked_add(1).ok_or(rquickjs::Error::Exception)?;
+                        let event = Object::new(ctx.clone())?;
+                        event.set("type", "input")?;
+                        event.set("bytes", TypedArray::<u8>::new(ctx.clone(), bytes)?)?;
+                        dispatch.call::<_, ()>((event,))?;
+                        transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        transport.completed(generation, event_sequence)?;
+                    }
+                    ProgramHostMessage::Resize {
+                        sequence: event_sequence,
+                        size,
+                        ..
+                    } => {
+                        if event_sequence != sequence {
+                            return Err(rquickjs::Error::Exception);
+                        }
+                        sequence = sequence.checked_add(1).ok_or(rquickjs::Error::Exception)?;
+                        set_size.call::<_, ()>((size_object(&ctx, size)?,))?;
+                        let event = Object::new(ctx.clone())?;
+                        event.set("type", "resize")?;
+                        event.set("size", size_object(&ctx, size)?)?;
+                        dispatch.call::<_, ()>((event,))?;
+                        transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        transport.completed(generation, event_sequence)?;
+                    }
+                    ProgramHostMessage::Close {
+                        sequence: event_sequence,
+                        ..
+                    } if event_sequence == sequence => {
+                        let event = Object::new(ctx.clone())?;
+                        event.set("type", "close")?;
+                        dispatch.call::<_, ()>((event,))?;
+                        transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        return transport.finished(generation, ProgramOutcome::Completed {});
+                    }
+                    ProgramHostMessage::Cancel { .. } => {
+                        return transport.finished(generation, ProgramOutcome::Cancelled {});
+                    }
+                    _ => return Err(rquickjs::Error::Exception),
+                }
+            }
+        })
+        .map_err(|_| crate::Error::WorkerFailed("JavaScript program failed"))
+}
+
 fn install_program_writer<'js>(
     ctx: Ctx<'js>,
     output: Rc<RefCell<Output>>,
@@ -528,6 +646,24 @@ fn queue_program_output(
     *output_bytes.borrow_mut() += bytes.len();
     output.borrow_mut().push(bytes);
     Ok::<_, rquickjs::Error>(())
+}
+
+fn take_inline_output(
+    output: &Rc<RefCell<Output>>,
+    bytes: &Rc<RefCell<usize>>,
+) -> rquickjs::Result<Output> {
+    take_output(output, bytes).map_err(|_| rquickjs::Error::Exception)
+}
+
+fn inline_message_generation(message: &ProgramHostMessage) -> u64 {
+    match message {
+        ProgramHostMessage::Launch { generation, .. }
+        | ProgramHostMessage::Input { generation, .. }
+        | ProgramHostMessage::Resize { generation, .. }
+        | ProgramHostMessage::Close { generation, .. }
+        | ProgramHostMessage::WriteResult { generation, .. }
+        | ProgramHostMessage::Cancel { generation } => *generation,
+    }
 }
 
 #[cfg(test)]
@@ -581,6 +717,60 @@ mod tests {
             vec!["é".as_bytes().to_vec()]
         );
         runtime.close().unwrap();
+    }
+
+    #[test]
+    fn inline_worker_decodes_non_ascii_bytes() {
+        use std::collections::VecDeque;
+
+        #[derive(Default)]
+        struct Transport {
+            input: VecDeque<ProgramHostMessage>,
+            output: Vec<Vec<u8>>,
+        }
+        impl InlineProgramTransport for Transport {
+            fn started(&mut self, _: u64) -> rquickjs::Result<()> {
+                Ok(())
+            }
+            fn receive(&mut self) -> rquickjs::Result<ProgramHostMessage> {
+                self.input.pop_front().ok_or(rquickjs::Error::Exception)
+            }
+            fn output(&mut self, output: Output) -> rquickjs::Result<()> {
+                self.output.extend(output);
+                Ok(())
+            }
+            fn completed(&mut self, _: u64, _: u64) -> rquickjs::Result<()> {
+                Ok(())
+            }
+            fn finished(&mut self, _: u64, _: ProgramOutcome) -> rquickjs::Result<()> {
+                Ok(())
+            }
+        }
+        let mut transport = Transport {
+            input: VecDeque::from([
+                ProgramHostMessage::Input {
+                    generation: 7,
+                    sequence: 1,
+                    bytes: vec![0xc3],
+                },
+                ProgramHostMessage::Close {
+                    generation: 7,
+                    sequence: 2,
+                },
+            ]),
+            output: Vec::new(),
+        };
+        run_inline_program(
+            developer_echo_program().unwrap(),
+            7,
+            TerminalSize {
+                columns: 80,
+                rows: 24,
+            },
+            &mut transport,
+        )
+        .unwrap();
+        assert_eq!(transport.output, vec![b"closed".to_vec()]);
     }
 
     #[test]
