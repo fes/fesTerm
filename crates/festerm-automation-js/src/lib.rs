@@ -6,7 +6,11 @@
 #[cfg(not(target_os = "ios"))]
 mod engine;
 pub mod platform;
+#[cfg(feature = "javascript-program-dev")]
+pub mod program;
 pub mod protocol;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+mod quickjs_program_runtime;
 pub mod snapshot;
 mod stdio;
 mod supervisor;
@@ -15,6 +19,10 @@ mod windows;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use quickjs_program_runtime::QuickJsProgramRuntime;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use quickjs_program_runtime::QuickJsProgramRuntimeError;
 pub use stdio::worker_stdio;
 pub use supervisor::{
     cleanup_failed, event_wake_channel, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event,
