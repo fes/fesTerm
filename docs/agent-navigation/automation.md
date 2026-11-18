@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a10cd2462d563a67ebb44e11fe4c960f5df19996dc0ec918f930330753d606e6"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0dda47f0fb0f23dec3388e570b226ced9eae6087e38eda023aa42c285e7d43f8"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the automation authority, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control.
+This domain owns automation authority, workflow intake, and the MCP protocol boundary that gate exact terminal observation and control.
 
 Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
@@ -12,12 +12,12 @@ Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
 Use for: Who may observe or control a target, and how are grant state and revocation tracked?
 
-- [`Broker`](../../crates/festerm-automation/src/broker.rs) — Owns grants, controller enrollment, run state, and revocation.
-- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds exact scope, targets, deadlines, and invocation parameters.
+- [`Broker`](../../crates/festerm-automation/src/broker.rs) — Owns grant state, controller enrollment, and revocation.
+- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds exact scope, targets, deadline, and invocation parameters.
 
 Evidence:
 - [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves approvals and starts are bounded and stale state cannot replay.
-- [`docs/automation-design.md`](../../docs/automation-design.md) — Defines grant semantics, principal binding, and the core ownership model.
+- [`docs/automation-design.md`](../../docs/automation-design.md) — Defines grant semantics, principal binding, and core ownership model.
 
 Caveats:
 - A connection is not a grant; only broker-owned approval yields authority.
