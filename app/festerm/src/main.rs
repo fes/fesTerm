@@ -30,6 +30,9 @@ mod enterprise;
 mod environment;
 mod font_downloads;
 mod inspector;
+#[cfg(feature = "javascript-program-dev")]
+#[allow(dead_code)]
+mod javascript_program_storage;
 mod keyboard;
 mod local_bind;
 mod local_command;
