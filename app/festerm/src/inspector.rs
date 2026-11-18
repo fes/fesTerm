@@ -22,6 +22,10 @@ pub enum TransportFacts<'a> {
         account: Option<(u64, &'a str)>,
     },
     Local,
+    #[cfg(feature = "javascript-program-dev")]
+    JavaScript {
+        name: &'a str,
+    },
     Ssh {
         username: &'a str,
         host: &'a str,
@@ -221,6 +225,12 @@ pub fn show(
                                 TransportFacts::Local => {
                                     section_heading(ui, "Process");
                                     fact(ui, "Type", "Local shell", false);
+                                }
+                                #[cfg(feature = "javascript-program-dev")]
+                                TransportFacts::JavaScript { name } => {
+                                    section_heading(ui, "Program");
+                                    fact(ui, "Type", "JavaScript terminal program", false);
+                                    fact(ui, "Identity", name, true);
                                 }
                                 TransportFacts::Ssh {
                                     username,

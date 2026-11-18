@@ -3481,6 +3481,15 @@ impl FesTermApp {
                 shortcut_label: None,
             },
         ];
+        #[cfg(feature = "javascript-program-dev")]
+        items.push(PaletteItem {
+            id: 4,
+            category: C::Sessions,
+            label: "Start JavaScript Echo (developer)".to_owned(),
+            hint: None,
+            is_tab: false,
+            shortcut_label: None,
+        });
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.extend([
                 PaletteItem {
@@ -3906,6 +3915,10 @@ impl FesTermApp {
                 .dispatch(AppCommand::EqualizePanes(self.state.active()), context),
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
+            #[cfg(feature = "javascript-program-dev")]
+            4 => self
+                .state
+                .dispatch(AppCommand::StartJavaScriptProgram, context),
             23 => self.state.dispatch(AppCommand::OpenWindow, context),
             30 => self
                 .state
@@ -6244,6 +6257,8 @@ impl FesTermApp {
                                         InspectorTransport::Sftp { .. } => "SFTP",
                                         InspectorTransport::Serial { .. } => "Serial",
                                         InspectorTransport::DevTunnel { .. } => "Dev Tunnel",
+                                        #[cfg(feature = "javascript-program-dev")]
+                                        InspectorTransport::JavaScript { .. } => "JavaScript",
                                     }
                                 }
                                 TabContent::TextEditor(_) => "Document",
@@ -6327,6 +6342,8 @@ impl FesTermApp {
                 account: account.as_ref().map(|(id, login)| (*id, login.as_str())),
             },
             InspectorTransport::Local { .. } => TransportFacts::Local,
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { name } => TransportFacts::JavaScript { name },
             InspectorTransport::Ssh {
                 username,
                 host,
@@ -6379,6 +6396,8 @@ impl FesTermApp {
             | InspectorTransport::Sftp { .. }
             | InspectorTransport::Serial { .. } => None,
             InspectorTransport::DevTunnel { .. } => None,
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => None,
         };
         let type_label = match session.inspector_transport {
             InspectorTransport::DevTunnel { .. } => "Experimental Dev Tunnel",
@@ -6386,6 +6405,8 @@ impl FesTermApp {
             InspectorTransport::Ssh { .. } => "SSH",
             InspectorTransport::Sftp { .. } => "SFTP",
             InspectorTransport::Serial { .. } => "Serial",
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => "JavaScript terminal program",
         };
         let state_message = match chip_status {
             ChipStatus::Failed => Some(match session.inspector_transport {
@@ -6401,6 +6422,10 @@ impl FesTermApp {
                 }
                 InspectorTransport::Serial { .. } => {
                     "The serial session could not start. Review Diagnostics for the failure detail."
+                }
+                #[cfg(feature = "javascript-program-dev")]
+                InspectorTransport::JavaScript { .. } => {
+                    "The JavaScript program could not start. Review Diagnostics for the failure detail."
                 }
             }),
             ChipStatus::Disconnected => session
