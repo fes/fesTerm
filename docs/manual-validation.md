@@ -5120,6 +5120,17 @@ development wrapper, not installed or production services:
    per-profile tunnel state must be explicitly disabled and saved before enabling
    the new shared catalog; it is never adopted from portable configuration.
 
+The opt-in service-client OFF campaign additionally requires a separate shared
+profile that is NotStarted in a complete authenticated inventory: no session and
+no uncertain target for its exact logical identity. One actual `EnsureProfile`
+RPC must return exact `Denied`, and the same catalog identity/revision must still
+have neither a session nor uncertainty afterward. Require its distinct stopped
+negative marker as well as the ordinary marker. Older optional fixtures without
+this check do not satisfy the full OFF matrix. The generic OFF `Ensure` likewise
+requires server `Denied` and post-inventory absence without uncertainty; client
+button disabling or locally refused explicit Create is insufficient. Pure
+fixture/marker regressions do not qualify native service execution.
+
 These are pending native/manual checks, not results from the headless recipe
 button, memory-vault/protected-file or framed-session fixtures.
 The authenticated stopped-update slice adds deterministic transaction-core

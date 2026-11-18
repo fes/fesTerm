@@ -2283,3 +2283,10 @@ worker; console/default Headless and legacy2–5 behavior remain unchanged. Quer
 and pending adoption preserve old raw receipts; only supported stopped
 replacement selects the new role. Signed no-console, revocation/restart and
 durable PID/generation acceptance remain native gates.
+HOST-01/02 native OFF matrix evidence additionally requires an authenticated
+stopped-shared-profile `EnsureProfile` denial with exact unchanged catalog
+revision and no session/uncertain target before or after. The opt-in campaign
+emits a separate negative marker only when this check runs; its wrapper refuses
+an OFF success using only the older ordinary marker. This is test evidence, not
+a new GUI action or creation permission. Generic OFF uses server-routed Ensure
+and a no-session/no-uncertainty postcondition.
