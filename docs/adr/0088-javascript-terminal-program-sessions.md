@@ -114,13 +114,22 @@ methods or final wire schemas:
 | API | Proposed semantics |
 | --- | --- |
 | `terminal.write(text)` | UTF-8 text including supported ANSI sequences; resolves when accepted into the bounded output path, not when painted |
-| `terminal.events()` | One ordered async consumer of input bytes, accepted resize events and cooperative close requests |
+| `terminal.events()` | One ordered async consumer (`next()`) of input bytes, accepted resize events and cooperative close requests; the repository-owned synchronous callback fixture remains compatible |
 | `terminal.size` | Immutable initial columns/rows; subsequent size changes arrive as ordered resize events |
-| `assets.read(id)` | Bounded read of an exact read-only asset included in the reviewed bundle |
+| `assets.read(id)` | Bounded read of an exact read-only asset included in the reviewed bundle; rejects unknown or oversize inventory entries |
 | `storage.load(slot)` | Load a private save with schema metadata and an opaque revision |
 | `storage.commit(slot, expectedRevision, value, operationId)` | Atomically publish one bounded save envelope with conflict detection and recoverable outcome |
-| `clock.now()` | Host wall-clock value with documented units for game calendar decisions |
-| `clock.sleep(ms)` | Bounded, cancellable monotonic delay with no busy loop |
+| `clock.now()` | Host wall-clock Unix milliseconds |
+| `clock.sleep(ms)` | Monotonic delay bounded to 60,000 ms; cancellation/fence revocation cuts the wait |
+
+The accepted host-services slice implements only `assets.read`, `clock.now`
+and `clock.sleep`. `params` is currently an empty frozen compatibility object;
+reviewed launch payloads are deferred. The ambient `Date` API is unavailable,
+so wall time crosses only the explicitly reviewed `clock.now` capability. It does **not**
+implement saves, a file picker, arbitrary paths, network/filesystem access or
+general host timers. The repository-owned async fixture uses the same
+terminal/event ordering as the synchronous echo fixture while exercising a
+frozen asset, one sleep and split UTF-8 input.
 
 Input is a byte stream after the existing keyboard/IME/paste encoding path,
 not raw OS keydown events. Chunks may split UTF-8, escape sequences and pasted
@@ -176,6 +185,15 @@ event capacities, and completion/error semantics before implementation.
 Large assets and saves require bounded streaming or an explicit smaller limit;
 they cannot bypass the existing 65,536-byte automation framing ceiling by
 being embedded in oversized JSON messages.
+
+The current implementation accepts at most eight program host calls
+outstanding. Asset inventory and bytes are frozen before review, bounded to
+12 KiB per asset, and covered by the bundle digest. Typed host requests/results
+carry the exact worker generation and call ID. Mismatched, duplicate or late
+results are protocol failures. Genuine host wait time does not consume the
+JavaScript computation deadline, while cancellation, child exit and native CPU
+evidence remain actively monitored. Result delivery re-enters the
+application-owned generation/privilege fence at the physical IPC write.
 
 `write` backpressure must suspend its Promise or reject with a typed error,
 never drop arbitrary bytes from an ANSI sequence. Preserve order across

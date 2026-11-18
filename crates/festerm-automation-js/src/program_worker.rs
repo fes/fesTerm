@@ -2,8 +2,8 @@ use crate::{
     platform,
     program::{
         encode_program_worker_frame, ProgramBundleLoader, ProgramBundleMessage, ProgramHostMessage,
-        ProgramOutcome, ProgramWorkerFailure, ProgramWorkerMessage, WriteAcceptance,
-        PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
+        ProgramHostRequest, ProgramHostResult, ProgramOutcome, ProgramWorkerFailure,
+        ProgramWorkerMessage, WriteAcceptance, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
     },
     protocol::Decoder,
     quickjs_program_runtime::{run_inline_program, InlineProgramTransport},
@@ -139,6 +139,7 @@ fn message_generation(message: &ProgramHostMessage) -> u64 {
         | ProgramHostMessage::Resize { generation, .. }
         | ProgramHostMessage::Close { generation, .. }
         | ProgramHostMessage::WriteResult { generation, .. }
+        | ProgramHostMessage::HostCallResult { generation, .. }
         | ProgramHostMessage::Cancel { generation } => *generation,
     }
 }
@@ -174,6 +175,42 @@ impl<R: Read, W: Write> InlineProgramTransport for InlinePipe<'_, R, W> {
     fn output(&mut self, output: Vec<Vec<u8>>) -> rquickjs::Result<()> {
         publish_output(self.pipe, self.generation, output, &mut self.next_write_id)
             .map_err(|_| rquickjs::Error::Exception)
+    }
+
+    fn host_call(
+        &mut self,
+        generation: u64,
+        call_id: u64,
+        request: &ProgramHostRequest,
+    ) -> rquickjs::Result<ProgramHostResult> {
+        self.pipe
+            .write(&ProgramWorkerMessage::HostCall {
+                generation,
+                call_id,
+                request: request.clone(),
+            })
+            .map_err(|_| rquickjs::Error::Exception)?;
+        let message = self
+            .pipe
+            .wait_idle::<ProgramHostMessage>()
+            .map_err(|_| rquickjs::Error::Exception)?;
+        message.validate().map_err(|_| rquickjs::Error::Exception)?;
+        match message {
+            ProgramHostMessage::HostCallResult {
+                generation: result_generation,
+                call_id: result_id,
+                result,
+            } if result_generation == generation && result_id == call_id => {
+                result
+                    .validate_for(request)
+                    .map_err(|_| rquickjs::Error::Exception)?;
+                Ok(result)
+            }
+            ProgramHostMessage::Cancel {
+                generation: cancelled,
+            } if cancelled == generation => Err(rquickjs::Error::Exception),
+            _ => Err(rquickjs::Error::Exception),
+        }
     }
 
     fn completed(&mut self, generation: u64, sequence: u64) -> rquickjs::Result<()> {
@@ -244,6 +281,7 @@ impl<R: Read, W: Write> ProgramPipe<R, W> {
 mod tests {
     use super::*;
     use crate::program::{developer_echo_program, TerminalSize};
+    use crate::program::{encode_program_frame, ProgramHostRequest, ProgramHostResult};
 
     #[test]
     fn worker_protocol_rejects_unknown_and_cross_generation_frames() {
@@ -267,5 +305,36 @@ mod tests {
         }
         .validate()
         .is_ok());
+    }
+
+    #[test]
+    fn worker_rejects_late_or_duplicate_host_results() {
+        let request = ProgramHostRequest::ClockNow {};
+        let result = ProgramHostResult::Clock {
+            unix_milliseconds: 1,
+        };
+        let mut input = Vec::new();
+        for _ in 0..2 {
+            input.extend(
+                encode_program_frame(&ProgramHostMessage::HostCallResult {
+                    generation: 7,
+                    call_id: 1,
+                    result: result.clone(),
+                })
+                .unwrap(),
+            );
+        }
+        let mut framed = ProgramPipe {
+            input: std::io::Cursor::new(input),
+            output: Vec::new(),
+            decoder: Decoder::default(),
+        };
+        let mut pipe = InlinePipe {
+            pipe: &mut framed,
+            generation: 7,
+            next_write_id: 1,
+        };
+        pipe.host_call(7, 1, &request).unwrap();
+        assert!(pipe.host_call(7, 2, &request).is_err());
     }
 }

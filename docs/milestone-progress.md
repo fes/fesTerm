@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Adding the narrow JavaScript host-services boundary
+
+Terminal programs now keep the synchronous developer echo entry compatible
+while supporting an async `main` with one ordered terminal event stream. A
+reviewed manifest freezes opaque asset IDs together with byte length, digest and
+the actual bytes, so later path reads cannot substitute content. The worker can
+use only bounded `assets.read`, wall-clock `clock.now` and cancellable monotonic
+`clock.sleep`; typed, generation-bound host calls have bounded outstanding
+state and fence-checked result delivery. Saves, pickers and arbitrary
+filesystem/network authority remain explicitly absent. The repository-owned
+async fixture and confined-process test cover asset access, sleep, split UTF-8
+input, cancellation, late results, sleeps longer than a JavaScript turn,
+ambient-clock denial and normal completion without a false running state.
+
 ## Restoring mobile HOST review routes
 
 The post-redesign screenshot inventory omitted several older HOST review
