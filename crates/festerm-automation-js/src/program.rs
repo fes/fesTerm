@@ -36,6 +36,77 @@ pub enum ProgramCapability {
     TerminalResize,
 }
 
+/// A reviewed terminal-program launch.
+///
+/// The application creates this value only from the reviewed developer
+/// program constructor below. It carries the immutable source digest, exact
+/// terminal-only capability set and the one worker generation that may use it.
+#[derive(Clone)]
+pub struct JavaScriptProgramLaunch {
+    program: ApprovedProgram,
+    worker_generation: u64,
+}
+
+impl JavaScriptProgramLaunch {
+    pub fn reviewed_developer_echo(worker_generation: u64) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+        let program = developer_echo_program()?;
+        let capabilities = BTreeSet::from([
+            ProgramCapability::TerminalInput,
+            ProgramCapability::TerminalOutput,
+            ProgramCapability::TerminalResize,
+        ]);
+        if program.manifest().version != PROGRAM_PROTOCOL_VERSION
+            || program.manifest().api_version != PROGRAM_API_VERSION
+            || program.manifest().capabilities != capabilities
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+        })
+    }
+
+    pub fn program(&self) -> &ApprovedProgram {
+        &self.program
+    }
+
+    pub fn digest(&self) -> &str {
+        self.program.digest()
+    }
+
+    pub fn worker_generation(&self) -> u64 {
+        self.worker_generation
+    }
+
+    pub fn capabilities(&self) -> &BTreeSet<ProgramCapability> {
+        &self.program.manifest().capabilities
+    }
+}
+
+/// Application-owned, non-blocking revocation boundary for one worker.
+///
+/// This object is checked immediately before process IPC, session-queue
+/// delivery and event consumption. It is not an authority grant; the reviewed
+/// launch remains the sole grant description.
+pub trait ProgramDeliveryPermit {}
+
+impl<T: ?Sized> ProgramDeliveryPermit for T {}
+
+pub trait ProgramDeliveryFence: Send + Sync {
+    /// Fast advisory check. Physical IPC and event use must hold `try_enter`.
+    fn is_live(&self, worker_generation: u64) -> bool;
+
+    /// Acquires the exclusive authority epoch through the physical use.
+    fn try_enter(
+        &self,
+        worker_generation: u64,
+    ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, Error>;
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProgramManifest {
@@ -947,6 +1018,28 @@ mod tests {
             serde_json::from_str::<ProgramWorkerMessage>(&json).unwrap(),
             write
         );
+    }
+
+    #[test]
+    fn reviewed_developer_launch_binds_exact_digest_api_and_capabilities() {
+        let launch = JavaScriptProgramLaunch::reviewed_developer_echo(19).unwrap();
+        let reviewed = developer_echo_program().unwrap();
+        assert_eq!(launch.worker_generation(), 19);
+        assert_eq!(launch.digest(), reviewed.digest());
+        assert_eq!(
+            launch.capabilities(),
+            &BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ])
+        );
+        assert_eq!(
+            launch.program().manifest().version,
+            PROGRAM_PROTOCOL_VERSION
+        );
+        assert_eq!(launch.program().manifest().api_version, PROGRAM_API_VERSION);
+        assert!(JavaScriptProgramLaunch::reviewed_developer_echo(0).is_err());
     }
 
     #[test]

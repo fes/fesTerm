@@ -21,6 +21,8 @@ mod host_tests;
 mod remote_tests;
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "javascript-program-dev")]
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc::{self, Receiver, TryRecvError},
@@ -61,10 +63,10 @@ use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
     AutomationEpoch, HostKeyPrompt, PasswordPrompt, ReserveAutomationInputError,
-    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
-    SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
-    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
-    SshPortForwardState, TerminalSize,
+    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventDelivery,
+    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionSendError,
+    SessionTryReceiveError, ShutdownError, ShutdownResult, SshPortForwardDirection,
+    SshPortForwardRuntime, SshPortForwardState, TerminalSize,
 };
 use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
@@ -766,6 +768,16 @@ impl Session for ApplicationSession {
         }
     }
 
+    fn try_recv_event_with_permit(
+        &self,
+    ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+        #[cfg(feature = "javascript-program-dev")]
+        if let Self::JavaScript(session) = self {
+            return session.try_recv_event_with_permit();
+        }
+        self.try_recv_event().map(SessionEventDelivery::new)
+    }
+
     fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
         match self {
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -1396,16 +1408,19 @@ impl SessionTab {
     fn start_javascript_program(
         context: &egui::Context,
         window_dimensions: Option<Dimensions>,
+        launch: festerm_javascript_session::JavaScriptProgramLaunch,
+        fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence>,
     ) -> Self {
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit terminal limits");
         #[cfg(test)]
-        let runtime = QuickJsJavaScriptRuntime::developer_echo();
+        let runtime = QuickJsJavaScriptRuntime::reviewed(launch.clone());
         #[cfg(not(test))]
-        let runtime = ProcessJavaScriptRuntime::current_executable_developer_echo();
+        let runtime =
+            ProcessJavaScriptRuntime::current_executable_reviewed(launch.clone(), fence.clone());
         let result = runtime.and_then(|runtime| {
-            JavaScriptSession::start_with_notifier(runtime, size, make_notifier(context))
+            JavaScriptSession::start_with_authority(runtime, size, make_notifier(context), fence)
         });
         let result = result.map(ApplicationSession::JavaScript);
         Self::from_session_result(
@@ -3641,6 +3656,55 @@ struct PendingNativeTermination {
     handle: std::thread::JoinHandle<()>,
 }
 
+#[cfg(feature = "javascript-program-dev")]
+struct PendingJavaScriptProgram {
+    target: TabId,
+    launch_generation: u64,
+    launch: festerm_javascript_session::JavaScriptProgramLaunch,
+    dimensions: Option<Dimensions>,
+    privacy_task: crate::recording_privacy::PrivacyTask,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    delivery_gate: Arc<Mutex<()>>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+struct JavaScriptProgramFence {
+    launch_generation: u64,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    delivery_gate: Arc<Mutex<()>>,
+    _privacy: crate::recording_privacy::PrivacyGuard,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+impl festerm_javascript_session::ProgramDeliveryFence for JavaScriptProgramFence {
+    fn is_live(&self, worker_generation: u64) -> bool {
+        worker_generation == self.launch_generation
+            && !self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            && !self._privacy.is_lost()
+    }
+
+    fn try_enter(
+        &self,
+        worker_generation: u64,
+    ) -> Result<
+        Option<Box<dyn festerm_javascript_session::ProgramDeliveryPermit + '_>>,
+        festerm_automation_js::Error,
+    > {
+        let permit = self
+            .delivery_gate
+            .lock()
+            .map_err(|_| festerm_automation_js::Error::DisclosureRevoked)?;
+        if worker_generation != self.launch_generation
+            || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            || self._privacy.is_lost()
+        {
+            Err(festerm_automation_js::Error::DisclosureRevoked)
+        } else {
+            Ok(Some(Box::new(permit)))
+        }
+    }
+}
+
 pub struct AppState {
     keyboard_bindings: festerm_config::KeyboardBindings,
     #[cfg(test)]
@@ -3648,6 +3712,10 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
+    #[cfg(feature = "javascript-program-dev")]
+    pending_javascript_program: Option<PendingJavaScriptProgram>,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_launch_generation: u64,
     #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -3835,6 +3903,10 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            #[cfg(feature = "javascript-program-dev")]
+            pending_javascript_program: None,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_launch_generation: 0,
             #[cfg(feature = "experimental-dev-tunnels")]
             host_client_budgets: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -6634,8 +6706,78 @@ impl AppState {
 
     #[cfg(feature = "javascript-program-dev")]
     fn start_javascript_program(&mut self, context: &egui::Context) {
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_echo(
+                launch_generation,
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed JavaScript developer program is invalid.".into());
+                    return;
+                }
+            };
         let dimensions = self.current_session_dimensions();
-        self.place_user_session(SessionTab::start_javascript_program(context, dimensions));
+        let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let delivery_gate = Arc::new(Mutex::new(()));
+        #[cfg(test)]
+        {
+            let privacy = crate::recording_privacy::PrivacyGuard::for_test(cancellation.clone());
+            let fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence> =
+                Arc::new(JavaScriptProgramFence {
+                    launch_generation,
+                    cancellation,
+                    delivery_gate: delivery_gate.clone(),
+                    _privacy: privacy,
+                });
+            self.place_user_session(SessionTab::start_javascript_program(
+                context, dimensions, launch, fence,
+            ));
+        }
+        #[cfg(not(test))]
+        {
+            let wake = {
+                let repaint = context.clone();
+                Arc::new(move || repaint.request_repaint()) as Arc<dyn Fn() + Send + Sync>
+            };
+            let on_loss = {
+                let cancellation = cancellation.clone();
+                let delivery_gate = delivery_gate.clone();
+                Arc::new(move || {
+                    let _permit = delivery_gate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    cancellation.store(true, std::sync::atomic::Ordering::Release);
+                }) as Arc<dyn Fn() + Send + Sync>
+            };
+            let task = match crate::recording_privacy::PrivacyTask::start_javascript_with_loss(
+                wake,
+                on_loss,
+                (),
+            ) {
+                Ok(task) => task,
+                Err(error) => {
+                    self.resume_error =
+                        Some(format!("JavaScript program could not start: {error}"));
+                    return;
+                }
+            };
+            self.pending_javascript_program = Some(PendingJavaScriptProgram {
+                target: self.active,
+                launch_generation,
+                launch,
+                dimensions,
+                privacy_task: task,
+                cancellation,
+                delivery_gate,
+            });
+        }
     }
 
     fn start_local_session_with_profile(&mut self, profile: LocalProfile, context: &egui::Context) {
@@ -6957,6 +7099,55 @@ impl AppState {
     }
 
     pub fn update_running_sessions(&mut self, context: &egui::Context) {
+        #[cfg(feature = "javascript-program-dev")]
+        let javascript_privacy = self
+            .pending_javascript_program
+            .as_ref()
+            .and_then(|pending| pending.privacy_task.poll());
+        #[cfg(feature = "javascript-program-dev")]
+        if let Some(privacy_result) = javascript_privacy {
+            let pending = self
+                .pending_javascript_program
+                .take()
+                .expect("pending JavaScript program was present");
+            let current = pending.launch_generation == self.javascript_launch_generation
+                && pending.target == self.active
+                && matches!(
+                    self.active_tab().content,
+                    TabContent::Launcher | TabContent::Session(_)
+                );
+            match privacy_result {
+                Ok(privacy)
+                    if current
+                        && pending.launch.worker_generation() == pending.launch_generation
+                        && !pending
+                            .cancellation
+                            .load(std::sync::atomic::Ordering::Acquire) =>
+                {
+                    let fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence> =
+                        Arc::new(JavaScriptProgramFence {
+                            launch_generation: pending.launch_generation,
+                            cancellation: pending.cancellation,
+                            delivery_gate: pending.delivery_gate,
+                            _privacy: privacy,
+                        });
+                    self.place_user_session(SessionTab::start_javascript_program(
+                        context,
+                        pending.dimensions,
+                        pending.launch,
+                        fence,
+                    ));
+                }
+                Ok(privacy) => {
+                    drop(privacy);
+                }
+                Err(error) if current => {
+                    self.resume_error =
+                        Some(format!("JavaScript program could not start: {error}"));
+                }
+                Err(_) => {}
+            }
+        }
         #[cfg(feature = "experimental-dev-tunnels")]
         self.invalidate_removed_host_accounts();
         // Only the Launcher shows Running Sessions, and discovery costs a
@@ -14081,6 +14272,10 @@ mod tests {
             .unwrap()
             .automation_epoch()
             .is_none());
+        assert!(
+            session.terminal_filesystem_origin().is_none(),
+            "a JavaScript tab must not manufacture local or remote file authority"
+        );
         assert_eq!(session.system_label(), "JavaScript · Developer");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);

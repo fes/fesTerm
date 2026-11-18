@@ -343,6 +343,11 @@ existing static module/source review machinery where useful, but do not make
 Settings' local-PTY workflow selector the game-playing surface. First delivery
 can be explicit local-bundle launch; a download catalog is not a prerequisite.
 Keep the feature opt-in and show an actionable unsupported-platform error.
+The developer slice binds a `JavaScriptProgramLaunch` to the repository-owned
+program's exact immutable digest, API version, exact terminal capability set
+and one fresh worker generation. The central `StartJavaScriptProgram` command
+creates that reviewed value; UI code cannot select a path, import a bundle or
+convert an automation grant into program authority.
 
 Use ordinary tab identity, title, status indicators and focus behavior. Move
 between panes/windows transfers presentation without creating a second worker
@@ -459,16 +464,21 @@ schedules, package acquisition and public game discovery are outside this ADR.
 The current implementation branch closes none of the delivery gates. It
 contains only a default-off developer vertical slice: one repository-owned
 QuickJS echo program, ordinary session-tab composition, exact encoded
-input/resize/output checks, bounded control and generation-fenced shutdown.
-The branch does not make the mode generally enabled or qualify a production
-worker. Keep transactional state, packaged/native confinement, launch review,
+input/resize/output checks, bounded control and a typed reviewed launch.
+An application-owned delivery fence binds OS privacy/lock monitoring, launch
+generation and cancellation. It is checked before worker IPC, before session
+queue publication and when queued output is consumed; revocation stops and
+reaps the process and suppresses queued terminal bytes. The branch does not
+make the mode generally enabled or qualify a production worker. Keep
+transactional state, packaged/native confinement, general launch review,
 TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** Own-session capabilities,
-  generation-fenced worker messages, independent developer-runtime budgets and
-  explicit close. A later accepted slice adds private transactional save
+  digest/capability-bound reviewed launches, generation-fenced worker
+  messages, independent developer-runtime budgets, application-owned privacy
+  delivery fencing and explicit close. A later accepted slice adds private transactional save
   ownership and explicit resume. The developer slice preserves the single app
   terminal writer, core-owned protocol semantics, bounded queues, event-driven
   wakes, restricted host API, centralized commands and metadata-only workspaces.
@@ -480,7 +490,8 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
   applicable move/window/input edges without reinterpreting them as game policy.
 - **Automated tests required:** The developer slice includes strict manifest
   and protocol bounds, stale-generation refusal, ordered QuickJS echo/resize,
-  bounded backpressure and the app-level
+  bounded backpressure, the reviewed-launch exact digest/capability/generation
+  binding, worker reaping after revocation, queued-output suppression and the app-level
   `javascript_program_launches_without_shell_or_automation_authority` route.
   Add the following concrete paths to the trace relationships as the remaining
   delivery slices land:

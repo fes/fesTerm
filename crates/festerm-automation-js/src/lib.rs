@@ -23,6 +23,8 @@ mod windows;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 
+#[cfg(feature = "javascript-program-dev")]
+pub use program::{JavaScriptProgramLaunch, ProgramDeliveryFence, ProgramDeliveryPermit};
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
 pub use program_supervisor::ProgramSupervisor;
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]

@@ -483,6 +483,10 @@
         "accepted_large_input_is_split_at_program_protocol_boundaries",
         "shutdown_between_input_fragments_cuts_the_remainder",
         "close_output_drains_before_terminal_stop",
+        "reviewed_developer_launch_binds_exact_digest_api_and_capabilities",
+        "stale_launch_is_refused_before_runtime_start",
+        "privacy_revocation_suppresses_output_already_queued_for_delivery",
+        "confined_program_worker_is_reaped_after_privacy_revocation",
         "javascript_program_launches_without_shell_or_automation_authority",
         "javascript_program_commit_is_atomic_revision_checked_and_recoverable",
         "javascript_program_save_faults_preserve_or_report_real_publication",
@@ -493,7 +497,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "Qualify the feature-gated confined-process path's rolling interactive CPU policy, privacy/revocation fence, packaged provenance and forceable lifecycle before enablement",
+        "Qualify the feature-gated confined-process path's rolling interactive CPU policy, packaged provenance, native privacy-event timing and forceable lifecycle before enablement",
         "Bind the implemented private save core to reviewed program/universe authority and add worker protocol integration and explicit resume evidence for JSP-04",
         "Qualify packaged macOS, Windows and Linux input/resize/output ordering, privacy loss, pressure, keyboard/IME/paste, multi-window and usability behavior",
         "Keep TradeWars gameplay/assets/provenance, multiplayer, networking and mobile execution outside this slice"
