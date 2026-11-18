@@ -356,6 +356,13 @@ graph/manual/trace updates in the implementation change. `HOST-03` recipe and
 `HOST-05`/`HOST-06` signed package/lifecycle checks remain applicable. No draft test
 name above is registered as completed evidence by this ADR.
 
+Desktop HOST-01 includes the first New Session tile entry, before any host is
+selected: the same account/host sidebar and scoped discovery must lead into the
+selected-host workspace. Signed-out/empty/error states and account replacement
+must not construct execution authority. CPU route, selected-account discovery,
+late-result and reauthentication-witness regressions complement the existing
+selected-host tests; native first-entry layout and keyboard evidence remain open.
+
 The existing 24-case Desktop/iOS/Android native campaign must exercise the normal
 account flow with the correct source-current signed HOST and clients, then the
 existing same-grid PTY/query and fresh Copilot **initial-screen** comparison.

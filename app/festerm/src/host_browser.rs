@@ -1243,19 +1243,6 @@ impl FesTermApp {
         self.start_workspace_host(tab, request, recipe, true, unbound, false, context);
     }
 
-    pub(super) fn review_workspace_recipe(
-        &mut self,
-        tab: TabId,
-        request: egui::Id,
-        recipe: PublicRecipe,
-        context: &egui::Context,
-    ) {
-        if self.state.configuration().host_recipes().get(&recipe.id) != Some(&recipe) {
-            return;
-        }
-        self.start_workspace_host(tab, request, recipe, false, false, true, context);
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn start_workspace_host(
         &mut self,

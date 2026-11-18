@@ -739,7 +739,7 @@ fn automatic_host_discovery_ready_worker_is_cancelled_before_adoption_after_acco
     use egui_kittest::kittest::Queryable;
     for change_account in [false, true] {
         let (mut app, mut harness) = discovery_failure_fixture("Offline".into());
-        harness.get_by_label("Refresh hosts · @user").click();
+        harness.get_by_label("Refresh hosts").click();
         harness.run_steps(1);
         let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take()
         else {
@@ -848,7 +848,7 @@ fn host_auth_recovery_discovery_rejects_replaced_removed_switched_cancelled_and_
                     .replace_configuration(configuration.with_account(replacement).unwrap().0);
             }
             3 => {
-                harness.get_by_label("Refresh hosts · @user").click();
+                harness.get_by_label("Refresh hosts").click();
                 harness.run_steps(1);
             }
             4 => crate::screens::host_workspace::cancel(&harness.ctx, app.state.active()),
