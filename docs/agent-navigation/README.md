@@ -12,7 +12,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal input and global actions. |
-| [Automation, workflows, and MCP](automation.md) | Automation owns brokered grant authority, exact workflow binding, and MCP lifecycle state for terminal observation and control. |
+| [Automation, workflows, and MCP](automation.md) | Automation owns brokered grant authority, frozen workflow inputs, and protocol lifecycle state for terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | This domain owns private terminal capture, privacy enforcement, synchronized export preparation, and source-safe replay/recovery for recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
