@@ -62,9 +62,9 @@ pub use port_forward::{
 };
 use sftp::GuiSftpConnectionKeepAlive;
 pub use sftp::{
-    parse_sftp_command, read_local_directory_snapshot_sync, SftpCommand, SftpCommandOutcome,
-    SftpCommandParseError, SftpDirectoryEntry, SftpEntryType, SftpSession, SftpSessionError,
-    SftpTransportKeepAlive, SFTP_CANCELLATION_CLEANUP_TIMEOUT,
+    parse_sftp_command, read_local_directory_snapshot_sync, validate_sftp_child_name, SftpCommand,
+    SftpCommandOutcome, SftpCommandParseError, SftpDirectoryEntry, SftpEntryType, SftpSession,
+    SftpSessionError, SftpTransportKeepAlive, SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
 use sftp_input::{SftpInputAction, SftpInputBuffer};
 pub use sftp_transfer::{

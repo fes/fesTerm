@@ -498,3 +498,14 @@ See [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md).
 Do not design a generalized plugin command API before plugin or scripting work is accepted. The initial command model should solve first-party application actions cleanly while preserving enough typing and separation to expose selected commands later if justified.
 
 A material change that bypasses these rules or moves product policy into individual GUI widgets requires architectural review and, during the 0.1 architecture-stability period, an ADR.
+
+### Graphical file-manager mutations
+
+Local/Remote New directory and Delete translate to one pane-owned review and
+one typed bounded worker request, independent of the invocation surface.
+Widgets never perform filesystem/server mutations. The review retains exact
+side/parent/selection and the connection scope attached to the displayed listing;
+confirmation and worker dispatch recheck scope. Queue refusal retains review,
+Cancel is inert, and uncertain outcomes require a new explicit review rather
+than automatic replay. Existing SFTP Mkdir/Rm/Rmdir and ordinary Local operations
+provide the effects; transfer authority and recursive deletion are not added.
