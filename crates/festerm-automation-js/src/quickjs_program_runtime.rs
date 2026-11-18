@@ -1,9 +1,10 @@
 use crate::{
+    platform,
     program::{
         ApprovedProgram, ProgramCapability, ProgramHostMessage, ProgramOutcome, TerminalSize,
         MAX_INPUT_CHUNK_BYTES, MAX_OUTPUT_CHUNK_BYTES, MAX_OUTPUT_QUEUE_BYTES, MAX_PENDING_WRITES,
     },
-    HEAP_BYTES, STACK_BYTES,
+    HEAP_BYTES, PROGRAM_TURN_CPU_LIMIT, PROGRAM_TURN_TIMEOUT, STACK_BYTES,
 };
 use rquickjs::{
     loader::{ImportAttributes, Loader, Resolver},
@@ -12,7 +13,7 @@ use rquickjs::{
     Context, Ctx, Function, Module, Object, Runtime, TypedArray,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
     sync::{
@@ -21,7 +22,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const COMMAND_CAPACITY: usize = 16;
@@ -522,6 +523,16 @@ pub(crate) fn run_inline_program(
     let runtime = Runtime::new().map_err(|_| crate::Error::WorkerFailed("QuickJS runtime"))?;
     runtime.set_memory_limit(HEAP_BYTES);
     runtime.set_max_stack_size(STACK_BYTES);
+    let active_turn = Rc::new(Cell::new(None::<(Duration, Instant)>));
+    let interrupt_turn = active_turn.clone();
+    runtime.set_interrupt_handler(Some(Box::new(move || {
+        let Some((cpu_start, wall_start)) = interrupt_turn.get() else {
+            return false;
+        };
+        platform::cpu_time().is_none_or(|cpu_now| {
+            turn_budget_exhausted(cpu_start, cpu_now, wall_start, Instant::now())
+        })
+    })));
     runtime.set_loader(
         Names(program.snapshot().modules.keys().cloned().collect()),
         Sources(program.snapshot().modules.clone()),
@@ -530,6 +541,7 @@ pub(crate) fn run_inline_program(
         Context::full(&runtime).map_err(|_| crate::Error::WorkerFailed("QuickJS context"))?;
     context
         .with(|ctx| -> rquickjs::Result<()> {
+            begin_inline_turn(&active_turn)?;
             let output = Rc::new(RefCell::new(Output::new()));
             let output_bytes = Rc::new(RefCell::new(0usize));
             install_program_writer(ctx.clone(), output.clone(), output_bytes.clone())?;
@@ -555,6 +567,7 @@ pub(crate) fn run_inline_program(
             let main: Function = module.get("main")?;
             start.call::<_, ()>((main, size_object(&ctx, initial_size)?))?;
             transport.output(take_inline_output(&output, &output_bytes)?)?;
+            active_turn.set(None);
             transport.started(generation)?;
 
             let mut sequence = 1_u64;
@@ -572,12 +585,14 @@ pub(crate) fn run_inline_program(
                         if event_sequence != sequence {
                             return Err(rquickjs::Error::Exception);
                         }
+                        begin_inline_turn(&active_turn)?;
                         sequence = sequence.checked_add(1).ok_or(rquickjs::Error::Exception)?;
                         let event = Object::new(ctx.clone())?;
                         event.set("type", "input")?;
                         event.set("bytes", TypedArray::<u8>::new(ctx.clone(), bytes)?)?;
                         dispatch.call::<_, ()>((event,))?;
                         transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        active_turn.set(None);
                         transport.completed(generation, event_sequence)?;
                     }
                     ProgramHostMessage::Resize {
@@ -585,6 +600,7 @@ pub(crate) fn run_inline_program(
                         size,
                         ..
                     } => {
+                        begin_inline_turn(&active_turn)?;
                         if event_sequence != sequence {
                             return Err(rquickjs::Error::Exception);
                         }
@@ -595,16 +611,19 @@ pub(crate) fn run_inline_program(
                         event.set("size", size_object(&ctx, size)?)?;
                         dispatch.call::<_, ()>((event,))?;
                         transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        active_turn.set(None);
                         transport.completed(generation, event_sequence)?;
                     }
                     ProgramHostMessage::Close {
                         sequence: event_sequence,
                         ..
                     } if event_sequence == sequence => {
+                        begin_inline_turn(&active_turn)?;
                         let event = Object::new(ctx.clone())?;
                         event.set("type", "close")?;
                         dispatch.call::<_, ()>((event,))?;
                         transport.output(take_inline_output(&output, &output_bytes)?)?;
+                        active_turn.set(None);
                         return transport.finished(generation, ProgramOutcome::Completed {});
                     }
                     ProgramHostMessage::Cancel { .. } => {
@@ -615,6 +634,24 @@ pub(crate) fn run_inline_program(
             }
         })
         .map_err(|_| crate::Error::WorkerFailed("JavaScript program failed"))
+}
+
+fn begin_inline_turn(turn: &Cell<Option<(Duration, Instant)>>) -> rquickjs::Result<()> {
+    turn.set(Some((
+        platform::cpu_time().ok_or(rquickjs::Error::Exception)?,
+        Instant::now(),
+    )));
+    Ok(())
+}
+
+fn turn_budget_exhausted(
+    cpu_start: Duration,
+    cpu_now: Duration,
+    wall_start: Instant,
+    wall_now: Instant,
+) -> bool {
+    cpu_now.saturating_sub(cpu_start) >= PROGRAM_TURN_CPU_LIMIT
+        || wall_now.saturating_duration_since(wall_start) >= PROGRAM_TURN_TIMEOUT
 }
 
 fn install_program_writer<'js>(
@@ -670,6 +707,30 @@ fn inline_message_generation(message: &ProgramHostMessage) -> u64 {
 mod tests {
     use super::*;
     use crate::program::developer_echo_program;
+
+    #[test]
+    fn active_turn_interrupts_at_controlled_cpu_budget_boundary() {
+        let wall = Instant::now();
+        let cpu = Duration::from_secs(10);
+        assert!(!turn_budget_exhausted(
+            cpu,
+            cpu + PROGRAM_TURN_CPU_LIMIT - Duration::from_millis(1),
+            wall,
+            wall + Duration::from_millis(100)
+        ));
+        assert!(turn_budget_exhausted(
+            cpu,
+            cpu + PROGRAM_TURN_CPU_LIMIT,
+            wall,
+            wall + Duration::from_millis(100)
+        ));
+        assert!(turn_budget_exhausted(
+            cpu,
+            cpu,
+            wall,
+            wall + PROGRAM_TURN_TIMEOUT
+        ));
+    }
 
     #[test]
     fn developer_echo_program_runs_and_preserves_event_order() {

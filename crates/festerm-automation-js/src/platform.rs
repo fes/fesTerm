@@ -4,25 +4,58 @@
 use crate::Error;
 
 pub const LINUX_PROFILE: &str = "linux-seccomp-stdio-rlimit-v1";
+pub const LINUX_PROGRAM_PROFILE: &str = "linux-seccomp-stdio-program-rolling-v1";
 /// Seatbelt deny-default sandbox, CPU/core/file rlimits, and a supervisor
 /// physical-footprint kill at [`crate::PROCESS_BYTES`]. macOS has no
 /// enforceable per-process address-space rlimit, so the memory ceiling is a
 /// supervisor kill (polled), backed by QuickJS's own heap limit.
 pub const MACOS_PROFILE: &str = "macos-seatbelt-footprint-watchdog-v1";
+pub const MACOS_PROGRAM_PROFILE: &str = "macos-seatbelt-program-rolling-v1";
 /// Zero-capability AppContainer in a kill-on-close Job Object with hard
 /// commit, process-count, and CPU-time limits; no inherited handles.
 pub const WINDOWS_PROFILE: &str = "windows-appcontainer-job-v1";
+pub const WINDOWS_PROGRAM_PROFILE: &str = "windows-appcontainer-program-job-v1";
+
+#[derive(Clone, Copy)]
+enum Mode {
+    Automation,
+    Program,
+}
+
+const fn cpu_limit_seconds(program: bool) -> u64 {
+    if program {
+        crate::PROGRAM_HARD_CPU_SECONDS
+    } else {
+        crate::CPU_SECONDS
+    }
+}
 
 pub fn availability() -> Result<&'static str, Error> {
+    availability_for(Mode::Automation)
+}
+
+pub fn program_availability() -> Result<&'static str, Error> {
+    availability_for(Mode::Program)
+}
+
+fn availability_for(mode: Mode) -> Result<&'static str, Error> {
     if cfg!(all(
         target_os = "linux",
         any(target_arch = "aarch64", target_arch = "x86_64")
     )) {
         // Actual kernel/rlimit qualification occurs inside the fresh child,
         // before Ready; this is only an architecture support check.
-        Ok(LINUX_PROFILE)
+        Ok(if matches!(mode, Mode::Automation) {
+            LINUX_PROFILE
+        } else {
+            LINUX_PROGRAM_PROFILE
+        })
     } else if cfg!(target_os = "macos") {
-        Ok(MACOS_PROFILE)
+        Ok(if matches!(mode, Mode::Automation) {
+            MACOS_PROFILE
+        } else {
+            MACOS_PROGRAM_PROFILE
+        })
     } else if cfg!(target_os = "ios") {
         Err(Error::Unavailable(
             "iOS has no qualified separate helper/stdio transport",
@@ -31,7 +64,11 @@ pub fn availability() -> Result<&'static str, Error> {
         target_os = "windows",
         any(target_arch = "aarch64", target_arch = "x86_64")
     )) {
-        Ok(WINDOWS_PROFILE)
+        Ok(if matches!(mode, Mode::Automation) {
+            WINDOWS_PROFILE
+        } else {
+            WINDOWS_PROGRAM_PROFILE
+        })
     } else {
         Err(Error::Unavailable(
             "no qualified native confinement implementation",
@@ -39,17 +76,30 @@ pub fn availability() -> Result<&'static str, Error> {
     }
 }
 
+fn mode_program(mode: Mode) -> bool {
+    matches!(mode, Mode::Program)
+}
+
 pub(crate) fn confine() -> Result<(), Error> {
-    availability()?;
+    confine_for(Mode::Automation)
+}
+
+pub(crate) fn confine_program() -> Result<(), Error> {
+    confine_for(Mode::Program)
+}
+
+fn confine_for(mode: Mode) -> Result<(), Error> {
+    availability_for(mode)?;
+    let program = mode_program(mode);
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "aarch64", target_arch = "x86_64")
     ))]
-    return linux::confine();
+    return linux::confine(program);
     #[cfg(target_os = "macos")]
-    return macos::confine();
+    return macos::confine(program);
     #[cfg(windows)]
-    return crate::windows::confine();
+    return crate::windows::confine(program);
     #[allow(unreachable_code)]
     Err(Error::Unavailable("native confinement unavailable"))
 }
@@ -90,13 +140,74 @@ pub(crate) fn cpu_time() -> Option<std::time::Duration> {
     None
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn child_cpu_time(pid: u32) -> Result<std::time::Duration, Error> {
+    use std::io::Read;
+
+    let mut stat = String::new();
+    std::fs::File::open(format!("/proc/{pid}/stat"))
+        .and_then(|file| file.take(256).read_to_string(&mut stat))
+        .map_err(|_| Error::Unavailable("worker process CPU evidence unavailable"))?;
+    let close = stat
+        .rfind(')')
+        .ok_or(Error::Unavailable("worker process CPU evidence invalid"))?;
+    let fields: Vec<_> = stat[close + 1..].split_ascii_whitespace().collect();
+    let ticks = fields
+        .get(11)
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|user| {
+            fields
+                .get(12)
+                .and_then(|value| value.parse::<u64>().ok())
+                .and_then(|system| user.checked_add(system))
+        })
+        .ok_or(Error::Unavailable("worker process CPU evidence invalid"))?;
+    // SAFETY: sysconf takes a constant clock-tick query.
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if hz <= 0 {
+        return Err(Error::Unavailable(
+            "worker process CPU clock evidence unavailable",
+        ));
+    }
+    let nanos = ticks
+        .checked_mul(1_000_000_000)
+        .ok_or(Error::Unavailable("worker process CPU evidence invalid"))?
+        / hz as u64;
+    Ok(std::time::Duration::from_nanos(nanos))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn child_cpu_time(pid: u32) -> Result<std::time::Duration, Error> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
+    // SAFETY: `info` is writable for the complete v2 structure.
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            pid as libc::pid_t,
+            libc::RUSAGE_INFO_V2,
+            info.as_mut_ptr().cast(),
+        )
+    };
+    if status != 0 {
+        return Err(Error::Unavailable(
+            "worker process CPU evidence unavailable",
+        ));
+    }
+    // SAFETY: a successful proc_pid_rusage initialized the v2 structure.
+    let info = unsafe { info.assume_init() };
+    let total = info
+        .ri_user_time
+        .checked_add(info.ri_system_time)
+        .ok_or(Error::Unavailable("worker process CPU evidence invalid"))?;
+    Ok(std::time::Duration::from_nanos(total))
+}
+
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "aarch64", target_arch = "x86_64")
 ))]
 mod linux {
     use super::*;
-    use crate::{CPU_SECONDS, PROCESS_BYTES};
+    use crate::PROCESS_BYTES;
 
     #[cfg(test)]
     pub(super) static TEST_ALLOWED_SYSCALL: std::sync::atomic::AtomicI64 =
@@ -155,7 +266,7 @@ mod linux {
         } // BPF_JMP|JEQ|K
     }
 
-    pub(super) fn confine() -> Result<(), Error> {
+    pub(super) fn confine(program: bool) -> Result<(), Error> {
         if std::env::vars_os().any(|(key, value)| key != "MALLOC_ARENA_MAX" || value != "1") {
             return Err(Error::Unavailable(
                 "worker environment was not cleared by its supervisor",
@@ -214,11 +325,13 @@ mod linux {
             }
         }
         limit(libc::RLIMIT_AS, PROCESS_BYTES)?;
-        limit(libc::RLIMIT_CPU, CPU_SECONDS)?;
+        limit(libc::RLIMIT_CPU, cpu_limit_seconds(program))?;
         limit(libc::RLIMIT_CORE, 0)?;
         limit(libc::RLIMIT_FSIZE, 0)?;
         limit(libc::RLIMIT_NOFILE, 2)?;
-        nonblocking(0)?;
+        if !program {
+            nonblocking(0)?;
+        }
         nonblocking(1)?;
         #[cfg(target_arch = "x86_64")]
         const ARCH: u32 = 0xc000003e;
@@ -551,7 +664,6 @@ pub(crate) fn footprint_exceeded(pid: u32) -> Result<bool, Error> {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
-    use crate::CPU_SECONDS;
 
     // Deny everything, including file, network, IPC, Mach service lookup,
     // signals, sysctl, fork, and exec. Reads and writes on the already-open
@@ -666,7 +778,7 @@ mod macos {
         })
     }
 
-    pub(super) fn confine() -> Result<(), Error> {
+    pub(super) fn confine(program: bool) -> Result<(), Error> {
         if !cleared_environment(std::env::vars_os()) {
             return Err(Error::Unavailable(
                 "worker environment was not cleared by its supervisor",
@@ -696,10 +808,12 @@ mod macos {
                 "native descriptor/parent isolation failed",
             ));
         }
-        limit(libc::RLIMIT_CPU, CPU_SECONDS)?;
+        limit(libc::RLIMIT_CPU, cpu_limit_seconds(program))?;
         limit(libc::RLIMIT_CORE, 0)?;
         limit(libc::RLIMIT_FSIZE, 0)?;
-        nonblocking(0)?;
+        if !program {
+            nonblocking(0)?;
+        }
         nonblocking(1)?;
         let mut error = std::ptr::null_mut();
         // SAFETY: POLICY is a NUL-terminated SBPL string; error is a valid
@@ -827,14 +941,29 @@ mod tests {
             any(target_arch = "aarch64", target_arch = "x86_64")
         )) {
             assert_eq!(availability().unwrap(), LINUX_PROFILE);
+            assert_eq!(program_availability().unwrap(), LINUX_PROGRAM_PROFILE);
         } else if cfg!(target_os = "macos") {
             assert_eq!(availability().unwrap(), MACOS_PROFILE);
+            assert_eq!(program_availability().unwrap(), MACOS_PROGRAM_PROFILE);
         } else if cfg!(target_os = "windows") {
             assert_eq!(availability().unwrap(), WINDOWS_PROFILE);
+            assert_eq!(program_availability().unwrap(), WINDOWS_PROGRAM_PROFILE);
         } else {
             assert!(matches!(availability(), Err(Error::Unavailable(_))));
             assert!(matches!(confine(), Err(Error::Unavailable(_))));
+            assert!(matches!(program_availability(), Err(Error::Unavailable(_))));
+            assert!(matches!(confine_program(), Err(Error::Unavailable(_))));
         }
+        if let Ok(automation) = availability() {
+            assert_ne!(automation, program_availability().unwrap());
+        }
+    }
+
+    #[test]
+    fn native_program_profile_does_not_retain_automation_cpu_limit() {
+        assert_eq!(cpu_limit_seconds(false), crate::CPU_SECONDS);
+        assert_eq!(cpu_limit_seconds(true), crate::PROGRAM_HARD_CPU_SECONDS);
+        assert!(cpu_limit_seconds(true) > cpu_limit_seconds(false));
     }
 
     #[cfg(all(
@@ -996,7 +1125,12 @@ mod tests {
             assert!(matches!(confine(), Err(Error::Unavailable(_))));
             std::process::exit(77);
         }
-        if let Err(error) = confine() {
+        let qualification = if mode == "program-profile" {
+            confine_program()
+        } else {
+            confine()
+        };
+        if let Err(error) = qualification {
             println!("{error}");
             std::process::exit(78);
         }
@@ -1064,6 +1198,7 @@ mod tests {
 
         for (mode, code) in [
             ("deny-probes", Some(0)),
+            ("program-profile", Some(0)),
             ("fail-setup", Some(77)),
             ("cpu", None),
         ] {

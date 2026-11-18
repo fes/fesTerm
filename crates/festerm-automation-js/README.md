@@ -50,6 +50,7 @@ Supervisor::shutdown(self) -> Result<(), Error>
 worker_entry(input: impl Read, output: impl Write) -> Result<(), Error>
 worker_stdio() -> Result<(), Error>
 platform::availability() -> Result<&'static str, Error>
+platform::program_availability() -> Result<&'static str, Error>
 cleanup_failed() -> bool
 ```
 
@@ -247,6 +248,23 @@ Process and signal probes target the worker itself or use invalid arguments.
 A native mmap probe must fail with `ENOMEM` beyond the hard ceiling. Probes do
 not modify files, contact services, or spawn grandchildren.
 
+Interactive terminal programs use a distinct confinement/profile negotiation:
+`linux-seccomp-stdio-program-rolling-v1`,
+`macos-seatbelt-program-rolling-v1`, or
+`windows-appcontainer-program-job-v1`. They retain the same filesystem,
+network, process, descriptor, memory and single-process restrictions as
+automation mode. Automation keeps its original 5-second cumulative CPU
+ceiling; only program mode uses a finite 3,600-second native last-resort
+ceiling. Program mode independently enforces 200 ms CPU and 1 second wall time
+per active turn, plus 250 ms process CPU in each rolling 1-second window. The
+worker engine checks active CPU/wall time, while its parent samples Linux
+`/proc`, macOS `proc_pid_rusage`, or Windows `GetProcessTimes` every 10 ms and
+force-terminates/reaps a worker that exceeds the rolling quota. Program-mode
+input waits block in the inherited pipe (while output remains bounded and
+nonblocking), so idle waits add no polling work to the active CPU window.
+Child/supervisor CPU-evidence regressions fail closed. A 500 ms close cut
+remains separately bounded.
+
 Fault-injection tests require an unfiltered test thread and the expected inert
 kernel results before installing the worker filter. They verify the exact
 syscall and result that failed, and report a filtered or unsupported environment
@@ -269,7 +287,7 @@ ownership protocol is race-free. The Linux launcher and application startup
 remain blocked pending separately qualified ownership, executable provenance,
 and lifecycle evidence.
 
-Limits: 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
+Limits: automation remains 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
 5s cumulative process CPU, at most 5 minutes/run. Engine interrupt callbacks
 also check process CPU and wall deadlines. The native ceiling/watchdog covers
 uncooperative regex/native calls. Frames are big-endian u32 length plus JSON,
