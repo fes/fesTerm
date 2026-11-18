@@ -3536,12 +3536,7 @@ impl SftpFileManagerTab {
                     );
                 }
                 if let Some(progress) = summary.progress {
-                    ui.add(
-                        egui::ProgressBar::new(progress)
-                            .desired_width(f32::INFINITY)
-                            .fill(transfer_state_color(&summary.current_state))
-                            .show_percentage(),
-                    );
+                    show_transfer_progress(ui, progress, &summary.current_state, None);
                 }
                 ScrollArea::vertical()
                     .id_salt("sftp_transfer_history")
@@ -3585,15 +3580,15 @@ impl SftpFileManagerTab {
                                 } else {
                                     item.bytes_transferred as f32 / total as f32
                                 };
-                                ui.add(
-                                    egui::ProgressBar::new(progress)
-                                        .desired_width(f32::INFINITY)
-                                        .fill(transfer_state_color(&item.state))
-                                        .text(format!(
-                                            "{} / {}",
-                                            format_size(Some(item.bytes_transferred)),
-                                            format_size(Some(total))
-                                        )),
+                                show_transfer_progress(
+                                    ui,
+                                    progress,
+                                    &item.state,
+                                    Some(format!(
+                                        "{} / {}",
+                                        format_size(Some(item.bytes_transferred)),
+                                        format_size(Some(total))
+                                    )),
                                 );
                             }
                             if let Some(details) = &item.details {
@@ -4297,13 +4292,32 @@ enum WorkerEvent {
     Transfer(SftpTransferEvent),
 }
 
+fn show_transfer_progress(
+    ui: &mut Ui,
+    progress: f32,
+    state: &SftpTransferState,
+    text: Option<String>,
+) {
+    ui.scope(|ui| {
+        ui.visuals_mut().extreme_bg_color = theme::SURFACE_TAB_INACTIVE;
+        let bar = egui::ProgressBar::new(progress)
+            .desired_width(ui.available_width())
+            .corner_radius(0)
+            .fill(transfer_state_color(state));
+        ui.add(match text {
+            Some(text) => bar.text(text),
+            None => bar.show_percentage(),
+        });
+    });
+}
+
 fn show_transfer_drawer_heading<Id: Copy + Eq + std::hash::Hash>(
     ui: &mut Ui,
     history: &mut TransferDrawerState<Id>,
     summary: &TransferDrawerSummary,
 ) -> Option<WorkerCommand> {
     let mut command = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             RichText::new("Transfers")
                 .font(FontId::new(12.0, FontFamily::Proportional))
@@ -7194,6 +7208,102 @@ pub(crate) mod tests {
         assert_eq!(history.retired_finished, 384);
         assert!(history.item_mut(0).is_none());
         assert!(history.item_mut(511).is_some());
+    }
+
+    #[test]
+    fn gui_sftp_transfer_drawer_fits_and_paints_proportional_progress() {
+        fn rectangles(shape: &egui::Shape, out: &mut Vec<egui::epaint::RectShape>) {
+            match shape {
+                egui::Shape::Rect(rect) => out.push(rect.clone()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        rectangles(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for width in [320.0, 640.0, 1180.0] {
+            for progress in [0, 25, 50, 100] {
+                let mut tab = test_tab();
+                for event in festerm_ssh::gallery_transfer_events(false) {
+                    tab.apply_transfer_event(event);
+                }
+                let id = tab.transfer_drawer.items[0].transfer_id;
+                tab.transfer_drawer = TransferDrawerState::default();
+                let mut request = history_request();
+                request.source = SftpPath::local(PathBuf::from(format!(
+                    "/controlled/{}/input.dat",
+                    "long-file-name".repeat(12)
+                )));
+                let item = tab.transfer_drawer.upsert(id, request);
+                item.state = if progress == 100 {
+                    SftpTransferState::Completed
+                } else {
+                    SftpTransferState::Running
+                };
+                let fill_color = transfer_state_color(&item.state);
+                item.total_bytes = Some(100);
+                item.bytes_transferred = progress;
+                let context = egui::Context::default();
+                context.set_visuals(theme::default_visuals());
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 500.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::Frame::new().inner_margin(16).show(ui, |ui| {
+                            let available = ui.available_rect_before_wrap();
+                            tab.show_transfer_drawer(ui);
+                            assert!(ui.min_rect().is_finite(), "drawer geometry must be finite");
+                            assert!(
+                                ui.min_rect().right() <= available.right() + 1.0,
+                                "drawer exceeds {width}px window: {:?} vs {available:?}",
+                                ui.min_rect()
+                            );
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                let mut rects = Vec::new();
+                for clipped in &output.shapes {
+                    rectangles(&clipped.shape, &mut rects);
+                }
+                let tracks: Vec<_> = rects
+                    .iter()
+                    .filter(|r| {
+                        r.fill == theme::SURFACE_TAB_INACTIVE && r.rect.width() > width / 2.0
+                    })
+                    .collect();
+                let fills: Vec<_> = rects.iter().filter(|r| r.fill == fill_color).collect();
+                assert_eq!(
+                    tracks.len(),
+                    2,
+                    "aggregate and byte bars have visible remaining tracks"
+                );
+                assert_eq!(
+                    fills.len(),
+                    2,
+                    "aggregate and byte bars have separate progress fill"
+                );
+                for (track, fill) in tracks.iter().zip(fills) {
+                    assert!(
+                        track.rect.left() >= 28.0 && track.rect.right() <= width - 28.0 + 1.0,
+                        "progress preserves panel padding at {width}px: {:?}",
+                        track.rect
+                    );
+                    assert!(
+                        (fill.rect.width() - track.rect.width() * progress as f32 / 100.0).abs()
+                            < 0.1,
+                        "painted fill must match {progress}% of the actual track"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

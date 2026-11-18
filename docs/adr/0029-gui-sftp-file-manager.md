@@ -559,3 +559,13 @@ core transfer workflow.
 - **Coverage superseded:** None yet. `validation/traceability.json` should be
   updated in the implementing change that wires the new GUI SFTP edges and test
   relationships into real coverage.
+
+For SFTPG-02, progress widgets use finite available content width rather than
+an infinite desired width. The existing drawer margin remains the padding
+boundary; its heading wraps when needed. State-colored fills represent actual
+aggregate/per-item byte fractions against a distinct palette track, including
+zero and completed progress. The production paint regression
+`gui_sftp_transfer_drawer_fits_and_paints_proportional_progress` checks finite
+panel bounds, padding and both painted fill ratios at narrow and desktop widths.
+Headless gallery captures complement those geometry checks; native DPI and
+live-transfer usability remain manual.

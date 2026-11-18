@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9b42bc1ea1ddafcc627614a3ce99079e1f2753a1dfe0c335c5f8efc68650877a"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "faab0d402c800232551b27c3c6f6a059697bc5ed962f0f3a037f961a01fe7424"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows around the egui application loop.
+This domain owns the desktop egui shell: startup, window lifecycle, pane/session routing, profile and settings screen flows, consent-gated host authorization, and durable diagnostics around the main application loop.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -17,7 +17,7 @@ Use for: When the app boots, validates CLI mode, and creates the primary window.
 - [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions keep pumping while window lifecycle stays coherent
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions stay alive while window lifecycle remains coherent
 - [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Documents launcher startup and first-run flow
 
 Caveats:
@@ -34,7 +34,7 @@ Use for: When each frame pumps sessions, handles close requests, and renders the
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays limited to the focused pane
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling still hold under stress
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling remain stable under stress
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -49,7 +49,7 @@ Use for: When a user opens profile or settings screens and dispatches a connecti
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, keyboard bindings, and automation preferences
 
 Evidence:
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page sequencing and state integrity stay aligned with the documented flow
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page sequencing and state integrity stay aligned with the flow
 - [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
 
 Caveats:
