@@ -12,6 +12,15 @@ automation target or filesystem authority, and launch waits for an
 application-owned OS-privacy fence rather than borrowing a recording or
 automation grant.
 
+The same coordinator owns pending/live/closing program admission across every
+window. `StartJavaScriptProgram` and save Start/Resume refuse above the explicit
+four-program/512 MiB accounted developer limit before worker spawn. A live tab
+move only changes presentation ownership. Close/quit cuts new admission and
+uses bounded cooperative save settlement followed by force/reap; privacy loss
+skips close checkpointing and suppresses queued delivery. Crash termination is
+not Resume: a later explicit command creates a fresh generation and reads only
+the confirmed save.
+
 ## Principle
 
 A user-visible application action should have one semantic command regardless of where the user invokes it.

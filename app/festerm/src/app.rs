@@ -533,6 +533,8 @@ pub struct FesTermApp {
     /// (`docs/gui-action-graph.md` `QUIT-03`).
     quit_confirmed: bool,
     powershell_shutdown_started: Option<Instant>,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_shutdown_settled: bool,
     /// Which window this is (ADR 0032). The primary window owns the native
     /// menu bar, the wake monitor, native window chrome, workspace
     /// persistence, and the application quit path; a secondary window owns
@@ -1022,6 +1024,8 @@ impl FesTermApp {
             update_restart_declined: false,
             quit_confirmed: false,
             powershell_shutdown_started: None,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_shutdown_settled: false,
             role: WindowRole::Primary,
             application_live_session_counts: None,
             pending_configuration_broadcast: None,
@@ -1687,6 +1691,32 @@ impl FesTermApp {
         self.state.live_session_counts()
     }
 
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_program_coordinator(
+        &self,
+    ) -> crate::javascript_program_lifecycle::JavaScriptProgramCoordinator {
+        self.state.javascript_program_coordinator()
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn set_javascript_program_coordinator(
+        &mut self,
+        coordinator: crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
+    ) {
+        self.state.set_javascript_program_coordinator(coordinator);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn force_javascript_program_shutdown(&self) {
+        self.state.force_javascript_program_shutdown();
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn report_javascript_program_cleanup_failure(&mut self, programs: usize) {
+        self.state
+            .report_javascript_program_cleanup_failure(programs);
+    }
+
     pub(crate) fn set_application_live_session_counts(
         &mut self,
         counts: crate::tabs::LiveSessionCounts,
@@ -1736,6 +1766,18 @@ impl FesTermApp {
     pub(crate) fn window_close_accepted(&self) -> bool {
         (self.window_close_accepted || self.quit_confirmed)
             && (self.state.background_worker_count() == 0
+                || {
+                    #[cfg(feature = "javascript-program-dev")]
+                    {
+                        self.javascript_shutdown_settled
+                            && self.state.background_worker_count()
+                                == self.state.javascript_program_worker_count()
+                    }
+                    #[cfg(not(feature = "javascript-program-dev"))]
+                    {
+                        false
+                    }
+                }
                 || self
                     .powershell_shutdown_started
                     .is_some_and(|started| started.elapsed() >= Duration::from_secs(45)))
@@ -1760,6 +1802,24 @@ impl FesTermApp {
             .get_or_insert_with(Instant::now);
         self.state.request_background_shutdown();
         self.state.drain_background_tabs(context);
+        #[cfg(feature = "javascript-program-dev")]
+        {
+            let programs = self.state.javascript_program_worker_count();
+            if programs == 0 {
+                self.javascript_shutdown_settled = true;
+            } else if started.elapsed() >= Duration::from_millis(500) {
+                self.state.force_javascript_program_shutdown();
+                if started.elapsed() >= Duration::from_millis(2_500) {
+                    self.state
+                        .report_javascript_program_cleanup_failure(programs);
+                    self.javascript_shutdown_settled = true;
+                }
+            }
+            if self.javascript_shutdown_settled && self.state.background_worker_count() == programs
+            {
+                return true;
+            }
+        }
         if self.state.background_worker_count() == 0 {
             return true;
         }
@@ -8820,6 +8880,17 @@ impl FesTermApp {
         self.state.active()
     }
 
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn begin_javascript_cleanup_for_test(&mut self, context: &egui::Context) {
+        self.state.request_background_shutdown();
+        self.state.drain_background_tabs(context);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn drain_javascript_cleanup_for_test(&mut self, context: &egui::Context) {
+        self.state.drain_background_tabs(context);
+    }
+
     pub(crate) fn active_tab_is_launcher_for_test(&self) -> bool {
         matches!(self.state.active_tab().content, TabContent::Launcher)
     }
@@ -9150,6 +9221,8 @@ impl FesTermApp {
             update_restart_declined: false,
             quit_confirmed: false,
             powershell_shutdown_started: None,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_shutdown_settled: false,
             role: WindowRole::Primary,
             application_live_session_counts: None,
             pending_configuration_broadcast: None,

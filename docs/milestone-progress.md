@@ -15840,3 +15840,17 @@ tests cover the publication cut. The save-integration layer above it now binds
 that core to one reviewed developer fixture, explicit Start/Resume launch
 parameters, opaque worker calls and recoverable schema migration. It still
 does not expose a general storage registry or infer a dirty heap.
+
+The lifecycle layer completes the portable ownership chain. One application
+coordinator is shared by every window and counts pending, running and closing
+programs against a four-program/512 MiB developer proxy; an independent
+supervisor quota refuses before process spawn while leaving automation
+unchanged. Tabs move by identity rather than creating a generation or writer.
+Normal close has bounded cooperative save settlement and force/reap; aggregate
+quit uses one deadline. Privacy loss is intentionally harsher: it suppresses
+queued delivery, skips checkpointing and releases the writer only after
+termination. A modeled runtime-exit wake proves session cleanup starts without
+input, and a separate storage fixture proves release/reopen retains confirmed
+data. These are not yet a single process-crash→fresh-runtime Resume proof;
+real process crash and power-loss behavior remain unqualified. Remaining packaged, real-OS timing,
+actual-memory/CPU and GUI/native usability evidence stays unaccepted.
