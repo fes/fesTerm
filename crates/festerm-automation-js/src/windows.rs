@@ -921,7 +921,9 @@ fn native_probes() -> Result<(), Error> {
 }
 
 pub(crate) fn cpu_time() -> Option<std::time::Duration> {
-    process_cpu_time(GetCurrentProcess())
+    // SAFETY: GetCurrentProcess returns a pseudo-handle for the current process;
+    // it is not retained or closed by the CPU-time query.
+    process_cpu_time(unsafe { GetCurrentProcess() })
 }
 
 fn process_cpu_time(process: HANDLE) -> Option<std::time::Duration> {
