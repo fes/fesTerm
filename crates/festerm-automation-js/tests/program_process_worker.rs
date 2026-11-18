@@ -14,10 +14,18 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
+
+static PROGRAM_PROCESS_TEST: Mutex<()> = Mutex::new(());
+
+fn serialize_process_test() -> std::sync::MutexGuard<'static, ()> {
+    PROGRAM_PROCESS_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn worker() -> WorkerProgram {
     let path = Path::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"))
@@ -60,6 +68,7 @@ fn initial_size() -> TerminalSize {
 #[test]
 #[cfg(not(windows))]
 fn program_worker_is_ready_before_source_is_sent() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -94,7 +103,9 @@ fn program_worker_is_ready_before_source_is_sent() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn automation_and_program_native_profiles_are_separate() {
+    let _serial = serialize_process_test();
     if platform::availability().is_err() || platform::program_availability().is_err() {
         return;
     }
@@ -136,6 +147,7 @@ fn automation_and_program_native_profiles_are_separate() {
 
 #[test]
 fn confined_program_worker_echoes_normal_output_and_closes() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -167,6 +179,7 @@ fn confined_program_worker_echoes_normal_output_and_closes() {
 
 #[test]
 fn confined_program_worker_idle_wait_survives_and_reuses_budget() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -188,6 +201,7 @@ fn confined_program_worker_idle_wait_survives_and_reuses_budget() {
 
 #[test]
 fn confined_program_worker_refuses_stale_generation_without_advancing() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -214,6 +228,7 @@ fn confined_program_worker_refuses_stale_generation_without_advancing() {
 
 #[test]
 fn confined_program_worker_close_is_force_bounded() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -260,6 +275,7 @@ fn confined_program_worker_close_is_force_bounded() {
 
 #[test]
 fn confined_program_worker_is_reaped_after_privacy_revocation() {
+    let _serial = serialize_process_test();
     if platform::availability().is_err() {
         return;
     }
@@ -306,6 +322,7 @@ fn confined_program_worker_is_reaped_after_privacy_revocation() {
 
 #[test]
 fn confined_program_worker_hostile_input_is_force_bounded() {
+    let _serial = serialize_process_test();
     if platform::program_availability().is_err() {
         return;
     }
@@ -353,6 +370,7 @@ fn confined_program_worker_hostile_input_is_force_bounded() {
 
 #[test]
 fn javascript_program_worker_refuses_extra_arguments_exactly() {
+    let _serial = serialize_process_test();
     let output = Command::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"))
         .args(["--javascript-program-worker", "unexpected"])
         .stdin(Stdio::null())
