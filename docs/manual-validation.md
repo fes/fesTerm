@@ -5570,3 +5570,25 @@ tests validate collection, privacy and restoration only; they do not establish
 client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
+
+
+### HOST-04/HOST-06 Desktop stopped component update
+
+Automated coverage exercises recorded version without native side effects,
+strict old/new signed authentication, stale reviewed snapshot/metadata and
+pending-target refusal, explicit review/confirm, disabled/newer controls and
+cancelled-worker drain. The same shared transaction preserves identity, binding,
+grants, original cache/helper and independent durable state.
+
+Pending native acceptance: install an older genuine signed Desktop-owned HOST
+and retain a running durable shell. Open the newer signed Desktop, inspect the
+recorded/target versions, explicitly Disable and wait for native stop, then
+review/confirm Update using its exact current-build signed bundle. Verify the
+original account/identity/sharing/settings and daemon PID/generation survive,
+new registration is the exact reserved target, and access stays Disabled.
+Enable separately; verify local hosted-profile launch and remote attach. Test
+wrong-version/signature/publisher, foreign origin/state, interrupted update,
+same-intent retry, changed target, unavailable bundle and cancellation while a
+native operation drains. No cache edits, CLI origin switch, automatic rollback,
+reenable or replacement shell qualifies recovery. Model/render/compilation and
+metadata projection are not genuine native publisher/service/vault evidence.

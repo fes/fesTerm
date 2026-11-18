@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9b42bc1ea1ddafcc627614a3ce99079e1f2753a1dfe0c335c5f8efc68650877a"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e82aab8ca0d19df496fc1655cc138937f4424d3b8113e6891dfa1ba59b72e93d"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows around the egui application loop.
+The app shell owns desktop window lifecycle, pane routing, and consent-gated host and remote-access flows around the egui app loop.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -13,12 +13,12 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 Use for: When the app boots, validates CLI mode, and creates the primary window.
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap, activation parsing, and eframe startup
-- [`new`](../../app/festerm/src/application.rs) — Creates the primary window and wires automation state
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns windows and cross-window policy for the app
 - [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions keep pumping while window lifecycle stays coherent
-- [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Documents launcher startup and first-run flow
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned sessions keep pumping while lifecycle stays coherent
+- [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Documents startup and first-run flow
 
 Caveats:
 - Primary window owns quit, wake, and secret-store policy.
@@ -33,8 +33,8 @@ Use for: When each frame pumps sessions, handles close requests, and renders the
 - [`ui_content`](../../app/festerm/src/app.rs) — Draws chrome, overlays, and the active pane surface
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays limited to the focused pane
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling still hold under stress
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays scoped to the focused pane
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Session pumping and close handling remain coherent under stress
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -45,12 +45,12 @@ Caveats:
 
 Use for: When a user opens profile or settings screens and dispatches a connection or preference action.
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile forms and connect/save dispatch for profile flows
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile forms and connect/save dispatch
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, keyboard bindings, and automation preferences
 
 Evidence:
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page sequencing and state integrity stay aligned with the documented flow
 - [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings sequencing matches the documented flow
 
 Caveats:
 - Profile and settings actions are dispatched as AppCommand events, not direct mutation.
@@ -62,18 +62,17 @@ Caveats:
 Use for: When a user reviews host recipes, tests discovery, or authorizes a remote session launch.
 
 - [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Foreground host review, consent gate, and workspace attach flow
-- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Desktop remote-access consent screen and review actions
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Host creation requires explicit consent and a bounded registry
-- [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional and only activate after review
+- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Explicit consent and a bounded registry are required
+- [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional until review completes
 
 Caveats:
 - Host approvals remain request-bound and exact locator matching must stay unambiguous.
 - Remote-access actions require fresh review before any worker can act.
 - Desktop creation stays consent-gated, with only one free permit.
 
-## Diagnostics
+## Lifecycle diagnostics
 
 Use for: When startup or shutdown fails and a lifecycle journal must persist exit intent or recovery artifacts.
 
@@ -81,8 +80,8 @@ Use for: When startup or shutdown fails and a lifecycle journal must persist exi
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the application exit reason and shutdown context
 
 Evidence:
-- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes
-- [`native_smoke_exit_is_clean_and_finishing_twice_is_idempotent`](../../app/festerm/src/diagnostics.rs) — Exit records stay coherent across repeated smoke finishes
+- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Recovery preserves the last valid artifact
+- [`native_smoke_exit_is_clean_and_finishing_twice_is_idempotent`](../../app/festerm/src/diagnostics.rs) — Repeated finish calls remain idempotent
 
 Caveats:
 - Diagnostics preserve evidence but cannot fix runtime logic or app state.

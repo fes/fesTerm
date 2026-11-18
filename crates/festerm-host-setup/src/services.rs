@@ -6,7 +6,7 @@ pub mod native;
 mod reconfiguration;
 mod replacement;
 mod trusted;
-pub use replacement::{ReplacementReport, ReplacementState};
+pub use replacement::{ReleaseMetadata, ReplacementReport, ReplacementState};
 pub use trusted::TrustedStage;
 
 #[cfg(all(test, feature = "cloud", feature = "host-runtime"))]

@@ -498,3 +498,11 @@ See [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md).
 Do not design a generalized plugin command API before plugin or scripting work is accepted. The initial command model should solve first-party application actions cleanly while preserving enough typing and separation to expose selected commands later if justified.
 
 A material change that bypasses these rules or moves product policy into individual GUI widgets requires architectural review and, during the 0.1 architecture-stability period, an ADR.
+
+
+Desktop Remote access **Update host…** routes through the existing
+`LocalRemoteAccess` Review/Confirm controller and its owned worker, alongside
+Enable/Disable. It binds the reviewed disabled snapshot and recorded release
+intent, reuses signed acquisition and the production stopped updater with
+Desktop origin, and returns Disabled. It adds no parallel button-owned updater,
+CLI origin override, automatic Enable, rollback or background upgrade.

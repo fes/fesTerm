@@ -170,7 +170,7 @@ pub(super) fn execute(
         }
         Err(error) => Some(error),
     };
-    let mut observed = report(Some(&store))?;
+    let mut observed = report(Some(&store), &request.root)?;
     if let Ok(owner) = store.owner_enrollment().and_then(|owner| owner.snapshot()) {
         if matches!(&observed.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
         {

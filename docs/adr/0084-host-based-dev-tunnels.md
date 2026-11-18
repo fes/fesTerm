@@ -2634,3 +2634,18 @@ HOST/stub regressions cover category preservation, capture before cancellation
 and refused continuation. Queue limits, cancellation, admission and no-replay
 behavior are unchanged; native saturation cause/long-input acceptance remain
 separate evidence.
+
+
+### Validation impact: Desktop stopped HOST update surface
+
+GUI `HOST-04`/`HOST-06` now compose the existing stopped updater through Desktop's
+typed Settings Review/Confirm worker. A bounded private recorded-version query
+is display metadata only and makes no native manager/publisher/vault calls;
+strict old/new signature and current-version launch policies stay unchanged.
+`update_if_current` binds the reviewed Snapshot while sharing the existing
+transaction, original intent, cancellation and exact native replacement rules.
+Version/disabled gating, stale metadata/scope, pending target, explicit review,
+cancel/drain, rendering and no-side-effect metadata tests are automated.
+Actual signed old→new Desktop/native switching and durable-shell survival remain
+HOSTSETUP-01 acceptance. This adds no origin override, replacement policy,
+automatic migration, rollback or Enable and does not accept this ADR.

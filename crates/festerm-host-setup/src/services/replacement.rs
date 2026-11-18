@@ -30,7 +30,7 @@ struct Replacement {
     state: ReplacementState,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ReplacementReport {
     pub operation: String,
     pub from_version: String,
@@ -41,6 +41,45 @@ pub struct ReplacementReport {
     pub candidate_executable: PathBuf,
     pub candidate_bundle_sha256: String,
     pub meaning: &'static str,
+}
+
+/// Read-only recorded metadata. It grants no execution or replacement authority;
+/// the updater independently authenticates the complete signed old/new bundles.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReleaseMetadata {
+    pub recorded_version: String,
+    pub replacement: Option<ReplacementReport>,
+}
+
+impl ReleaseMetadata {
+    pub fn from_version(&self) -> &str {
+        match &self.replacement {
+            Some(update)
+                if matches!(
+                    update.state,
+                    ReplacementState::Prepared | ReplacementState::Applying
+                ) =>
+            {
+                &update.from_version
+            }
+            _ => &self.recorded_version,
+        }
+    }
+
+    /// Version/UI eligibility only. Actual stop, signatures, scope and same-intent
+    /// replacement admission are still checked by the production updater.
+    pub fn update_available(&self, target: &str) -> bool {
+        let (Ok(from), Ok(to)) = (version(self.from_version()), version(target)) else {
+            return false;
+        };
+        from < to
+            && self.replacement.as_ref().is_none_or(|update| {
+                !matches!(
+                    update.state,
+                    ReplacementState::Prepared | ReplacementState::Applying
+                ) || update.to_version == target
+            })
+    }
 }
 
 fn version(value: &str) -> io::Result<[u64; 3]> {
@@ -207,6 +246,40 @@ impl<R: CommandRunner> Services<'_, R> {
             return Err(refused("host.update_recovery_required"));
         }
         Ok(())
+    }
+
+    /// Read only bounded, private release metadata; never calls a native manager,
+    /// publisher, vault, current-version launcher or a replacement operation.
+    pub fn release_metadata(&self) -> io::Result<Option<ReleaseMetadata>> {
+        let (before, record) = self.registration()?;
+        let Some(record) = record.filter(|record| !record.removed) else {
+            return Ok(None);
+        };
+        let provenance = record
+            .provenance
+            .as_ref()
+            .ok_or_else(|| refused("host.service_signed_provenance_required"))?;
+        let directory = storage::private_directory(provenance, false)?;
+        let bytes = storage::read_private(
+            &directory,
+            Path::new(".manifest.json"),
+            crate::artifacts::MAX_MANIFEST_BYTES,
+        )?;
+        let manifest: crate::artifacts::Manifest = serde_json::from_slice(&bytes)
+            .map_err(|_| refused("host.update_recorded_release_metadata_invalid"))?;
+        if manifest.schema != 2 || manifest.package != crate::artifacts::Package::Host {
+            return Err(refused("host.update_recorded_release_metadata_invalid"));
+        }
+        version(&manifest.version)?;
+        let replacement = self.replacement()?.map(|update| update.report());
+        let (after, current) = self.registration()?;
+        if before != after || current.as_ref() != Some(&record) {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        Ok(Some(ReleaseMetadata {
+            recorded_version: manifest.version,
+            replacement,
+        }))
     }
 
     pub fn replacement_status(&self) -> io::Result<Option<ReplacementReport>> {
