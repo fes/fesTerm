@@ -307,6 +307,26 @@ impl std::fmt::Display for ConfiguredSshProfileLaunchError {
 impl std::error::Error for ConfiguredSshProfileLaunchError {}
 
 impl ApplicationSession {
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn is_javascript(&self) -> bool {
+        matches!(self, Self::JavaScript(_))
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_cleanup_complete(&self) -> bool {
+        match self {
+            Self::JavaScript(session) => session.cleanup_complete(),
+            _ => true,
+        }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn force_javascript_shutdown(&self) {
+        if let Self::JavaScript(session) = self {
+            session.force_shutdown();
+        }
+    }
+
     fn take_recovered_terminal_deferred(&self) -> Option<Terminal> {
         match self {
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -3711,6 +3731,8 @@ struct PendingJavaScriptProgram {
     privacy_task: crate::recording_privacy::PrivacyTask,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
     delivery_gate: Arc<Mutex<()>>,
+    delivery_wake: Arc<dyn Fn() + Send + Sync>,
+    lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
 }
 
 #[cfg(feature = "javascript-program-dev")]
@@ -3718,14 +3740,39 @@ struct JavaScriptProgramFence {
     launch_generation: u64,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
     delivery_gate: Arc<Mutex<()>>,
+    delivery_wake: Arc<dyn Fn() + Send + Sync>,
     _privacy: crate::recording_privacy::PrivacyGuard,
+    _lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
+}
+
+struct JavaScriptProgramPermit<'a> {
+    permit: Option<std::sync::MutexGuard<'a, ()>>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl Drop for JavaScriptProgramPermit<'_> {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        (self.wake)();
+    }
+}
+
+#[cfg(feature = "javascript-program-dev")]
+struct RetiringJavaScriptProgram {
+    controller: SessionController<ApplicationSession>,
 }
 
 #[cfg(feature = "javascript-program-dev")]
 impl festerm_javascript_session::ProgramDeliveryFence for JavaScriptProgramFence {
+    fn release(&self) {
+        self._lease.release();
+        (self.delivery_wake)();
+    }
+
     fn is_live(&self, worker_generation: u64) -> bool {
         worker_generation == self.launch_generation
             && !self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            && self._lease.is_live()
             && !self._privacy.is_lost()
     }
 
@@ -3742,11 +3789,51 @@ impl festerm_javascript_session::ProgramDeliveryFence for JavaScriptProgramFence
             .map_err(|_| festerm_automation_js::Error::DisclosureRevoked)?;
         if worker_generation != self.launch_generation
             || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            || !self._lease.is_live()
             || self._privacy.is_lost()
         {
             Err(festerm_automation_js::Error::DisclosureRevoked)
         } else {
-            Ok(Some(Box::new(permit)))
+            Ok(Some(Box::new(JavaScriptProgramPermit {
+                permit: Some(permit),
+                wake: self.delivery_wake.clone(),
+            })))
+        }
+    }
+
+    fn try_enter_now(
+        &self,
+        worker_generation: u64,
+    ) -> Result<
+        Option<Box<dyn festerm_javascript_session::ProgramDeliveryPermit + '_>>,
+        festerm_automation_js::Error,
+    > {
+        if worker_generation != self.launch_generation
+            || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            || !self._lease.is_live()
+            || self._privacy.is_lost()
+        {
+            return Err(festerm_automation_js::Error::DisclosureRevoked);
+        }
+        match self.delivery_gate.try_lock() {
+            Ok(permit) => {
+                if worker_generation != self.launch_generation
+                    || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+                    || !self._lease.is_live()
+                    || self._privacy.is_lost()
+                {
+                    Err(festerm_automation_js::Error::DisclosureRevoked)
+                } else {
+                    Ok(Some(Box::new(JavaScriptProgramPermit {
+                        permit: Some(permit),
+                        wake: self.delivery_wake.clone(),
+                    })))
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                Err(festerm_automation_js::Error::DisclosureRevoked)
+            }
         }
     }
 }
@@ -3762,6 +3849,9 @@ pub struct AppState {
     pending_javascript_program: Option<PendingJavaScriptProgram>,
     #[cfg(feature = "javascript-program-dev")]
     javascript_launch_generation: u64,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_program_coordinator:
+        crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
     #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -3801,6 +3891,8 @@ pub struct AppState {
     retiring_powershell_workers: Vec<crate::powershell::PowerShellShutdownHandle>,
     retiring_enterprise_workers: Vec<crate::enterprise::EnterpriseShutdownHandle>,
     retiring_remote_workers: Vec<crate::remote_sessions::RemoteSessionsShutdownHandle>,
+    #[cfg(feature = "javascript-program-dev")]
+    retiring_javascript_programs: Vec<RetiringJavaScriptProgram>,
     active: TabId,
     presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -3935,6 +4027,21 @@ impl Drop for AppState {
 }
 
 impl AppState {
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_program_coordinator(
+        &self,
+    ) -> crate::javascript_program_lifecycle::JavaScriptProgramCoordinator {
+        self.javascript_program_coordinator.clone()
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn set_javascript_program_coordinator(
+        &mut self,
+        coordinator: crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
+    ) {
+        self.javascript_program_coordinator = coordinator;
+    }
+
     /// Builds the `AppState` fields derived purely from `Configuration`'s
     /// interface settings (chip layout, toggles, keyboard bindings, ...),
     /// leaving only the tab payload and active selection to the caller.
@@ -3953,6 +4060,8 @@ impl AppState {
             pending_javascript_program: None,
             #[cfg(feature = "javascript-program-dev")]
             javascript_launch_generation: 0,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_program_coordinator: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_client_budgets: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -3981,6 +4090,8 @@ impl AppState {
             retiring_powershell_workers: Vec::new(),
             retiring_enterprise_workers: Vec::new(),
             retiring_remote_workers: Vec::new(),
+            #[cfg(feature = "javascript-program-dev")]
+            retiring_javascript_programs: Vec::new(),
             active,
             presentation_workspace: None,
             activation_history: Vec::new(),
@@ -4963,6 +5074,9 @@ impl AppState {
     }
 
     pub fn drain_background_tabs(&mut self, context: &egui::Context) {
+        #[cfg(feature = "javascript-program-dev")]
+        self.retiring_javascript_programs
+            .retain(|retiring| !retiring.controller.javascript_cleanup_complete());
         self.retiring_powershell_workers
             .retain(|handle| !handle.is_finished());
         self.retiring_enterprise_workers
@@ -4994,6 +5108,32 @@ impl AppState {
                 .iter()
                 .filter(|handle| !handle.is_finished())
                 .count()
+            + {
+                #[cfg(feature = "javascript-program-dev")]
+                {
+                    self.retiring_javascript_programs
+                        .iter()
+                        .filter(|retiring| !retiring.controller.javascript_cleanup_complete())
+                        .count()
+                        + self
+                            .tabs
+                            .iter()
+                            .filter(|tab| {
+                                matches!(
+                                    &tab.content,
+                                    TabContent::Session(session)
+                                        if session.controller.session().is_some_and(
+                                            ApplicationSession::is_javascript
+                                        ) && !session.controller.javascript_cleanup_complete()
+                                )
+                            })
+                            .count()
+                }
+                #[cfg(not(feature = "javascript-program-dev"))]
+                {
+                    0
+                }
+            }
             + self
                 .tabs
                 .iter()
@@ -5026,6 +5166,27 @@ impl AppState {
         for handle in &self.retiring_remote_workers {
             handle.request_shutdown();
         }
+        #[cfg(feature = "javascript-program-dev")]
+        {
+            if let Some(pending) = &self.pending_javascript_program {
+                pending
+                    .cancellation
+                    .store(true, std::sync::atomic::Ordering::Release);
+                pending.lease.cancel();
+                pending.privacy_task.cancel();
+            }
+            for tab in &self.tabs {
+                if let TabContent::Session(session) = &tab.content {
+                    if session
+                        .controller
+                        .session()
+                        .is_some_and(ApplicationSession::is_javascript)
+                    {
+                        session.controller.shutdown();
+                    }
+                }
+            }
+        }
         for tab in &mut self.tabs {
             match &mut tab.content {
                 TabContent::PowerShell(tab) => tab.request_close(),
@@ -5034,6 +5195,46 @@ impl AppState {
                 _ => {}
             }
         }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn force_javascript_program_shutdown(&self) {
+        for retiring in &self.retiring_javascript_programs {
+            retiring.controller.force_javascript_shutdown();
+        }
+        for tab in &self.tabs {
+            if let TabContent::Session(session) = &tab.content {
+                session.controller.force_javascript_shutdown();
+            }
+        }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_program_worker_count(&self) -> usize {
+        self.retiring_javascript_programs
+            .iter()
+            .filter(|retiring| !retiring.controller.javascript_cleanup_complete())
+            .count()
+            + self
+                .tabs
+                .iter()
+                .filter(|tab| {
+                    matches!(
+                        &tab.content,
+                        TabContent::Session(session)
+                            if session.controller.session().is_some_and(
+                                ApplicationSession::is_javascript
+                            ) && !session.controller.javascript_cleanup_complete()
+                    )
+                })
+                .count()
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn report_javascript_program_cleanup_failure(&mut self, programs: usize) {
+        self.resume_error = Some(format!(
+            "JavaScript cleanup did not settle for {programs} program(s); worker reaping or writer release is unconfirmed. Restart fesTerm before another launch."
+        ));
     }
 
     #[cfg(test)]
@@ -6808,9 +7009,20 @@ impl AppState {
         launch_generation: u64,
         launch: festerm_javascript_session::JavaScriptProgramLaunch,
     ) {
+        let lease = match self.javascript_program_coordinator.try_admit() {
+            Ok(lease) => Arc::new(lease),
+            Err(error) => {
+                self.resume_error = Some(error.to_string());
+                return;
+            }
+        };
         let dimensions = self.current_session_dimensions();
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delivery_gate = Arc::new(Mutex::new(()));
+        let delivery_wake: Arc<dyn Fn() + Send + Sync> = {
+            let repaint = context.clone();
+            Arc::new(move || repaint.request_repaint())
+        };
         #[cfg(test)]
         {
             let privacy = crate::recording_privacy::PrivacyGuard::for_test(cancellation.clone());
@@ -6819,7 +7031,9 @@ impl AppState {
                     launch_generation,
                     cancellation,
                     delivery_gate: delivery_gate.clone(),
+                    delivery_wake: delivery_wake.clone(),
                     _privacy: privacy,
+                    _lease: lease,
                 });
             self.place_user_session(SessionTab::start_javascript_program(
                 context, dimensions, launch, fence,
@@ -6834,11 +7048,13 @@ impl AppState {
             let on_loss = {
                 let cancellation = cancellation.clone();
                 let delivery_gate = delivery_gate.clone();
+                let lease = lease.clone();
                 Arc::new(move || {
                     let _permit = delivery_gate
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     cancellation.store(true, std::sync::atomic::Ordering::Release);
+                    lease.cancel();
                 }) as Arc<dyn Fn() + Send + Sync>
             };
             let task = match crate::recording_privacy::PrivacyTask::start_javascript_with_loss(
@@ -6861,6 +7077,8 @@ impl AppState {
                 privacy_task: task,
                 cancellation,
                 delivery_gate,
+                delivery_wake,
+                lease,
             });
         }
     }
@@ -7214,7 +7432,9 @@ impl AppState {
                             launch_generation: pending.launch_generation,
                             cancellation: pending.cancellation,
                             delivery_gate: pending.delivery_gate,
+                            delivery_wake: pending.delivery_wake,
                             _privacy: privacy,
+                            _lease: pending.lease,
                         });
                     self.place_user_session(SessionTab::start_javascript_program(
                         context,
@@ -8683,7 +8903,24 @@ impl AppState {
             self.documents.borrow_mut().release(document);
         }
         match removed.content {
-            TabContent::Session(session) => session.controller.shutdown(),
+            TabContent::Session(session) => {
+                #[cfg(feature = "javascript-program-dev")]
+                if session
+                    .controller
+                    .session()
+                    .is_some_and(ApplicationSession::is_javascript)
+                {
+                    session.controller.shutdown();
+                    self.retiring_javascript_programs
+                        .push(RetiringJavaScriptProgram {
+                            controller: session.controller,
+                        });
+                } else {
+                    session.controller.shutdown();
+                }
+                #[cfg(not(feature = "javascript-program-dev"))]
+                session.controller.shutdown();
+            }
             TabContent::PowerShell(mut tab) => {
                 tab.request_close();
                 if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
@@ -8827,6 +9064,28 @@ mod tests {
         recording: festerm_recording::SharedRecording,
         ready: std::sync::mpsc::Receiver<()>,
         _directory: tempfile::TempDir,
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_permit_wakes_only_after_unlocking() {
+        let gate = Arc::new(Mutex::new(()));
+        let woke_unlocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let wake_gate = gate.clone();
+        let wake_result = woke_unlocked.clone();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let permit = wake_gate
+                .try_lock()
+                .expect("delivery wake ran before unlocking");
+            drop(permit);
+            wake_result.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let permit = JavaScriptProgramPermit {
+            permit: Some(gate.lock().unwrap()),
+            wake,
+        };
+        drop(permit);
+        assert!(woke_unlocked.load(std::sync::atomic::Ordering::Acquire));
     }
 
     impl RecordingFixture {
@@ -14407,6 +14666,45 @@ mod tests {
         }
 
         state.dispatch(AppCommand::CloseTab(launcher), &context);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_quota_refuses_before_a_second_session_and_releases_after_reap() {
+        let context = egui::Context::default();
+        let coordinator = crate::javascript_program_lifecycle::JavaScriptProgramCoordinator::new(
+            crate::javascript_program_lifecycle::JavaScriptProgramLimits {
+                programs: 1,
+                memory_bytes: crate::javascript_program_lifecycle::PROGRAM_MEMORY_BYTES,
+            },
+        );
+        let mut state = AppState::for_test();
+        state.set_javascript_program_coordinator(coordinator.clone());
+
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        let first = state.active();
+        assert_eq!(coordinator.active_programs(), 1);
+        state.dispatch(AppCommand::OpenLauncher, &context);
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
+        assert!(state
+            .resume_error
+            .as_deref()
+            .is_some_and(|message| message.contains("limit reached (1 programs")));
+        state.dispatch(AppCommand::CloseTab(first), &context);
+        state.request_background_shutdown();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while coordinator.active_programs() != 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript reap deadline"
+            );
+            state.drain_background_tabs(&context);
+            std::thread::yield_now();
+        }
+        state.resume_error = None;
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        assert_eq!(coordinator.active_programs(), 1);
     }
 
     #[test]

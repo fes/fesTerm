@@ -481,7 +481,7 @@
         "sleep_rejects_when_worker_is_cancelled",
         "async_main_rejects_completion_with_unsettled_host_work",
         "async_main_settles_before_event_admission",
-        "host_sleep_budget_is_aggregate_and_close_waits_are_refused",
+        "host_sleep_budget_is_aggregate_and_only_checkpoint_survives_close",
         "confined_program_worker_serves_assets_clock_and_async_stream",
         "confined_program_worker_completes_a_long_bounded_sleep",
         "confined_program_worker_cancels_a_long_pending_sleep",
@@ -530,15 +530,27 @@
         "reviewed_save_host_distinguishes_new_resume_and_exclusive_writer",
         "reviewed_save_host_refuses_missing_resume",
         "confined_program_worker_uses_injected_storage_only",
-        "reviewed_save_host_refuses_future_schema_without_publication"
+        "reviewed_save_host_refuses_future_schema_without_publication",
+        "aggregate_program_quota_is_thread_safe_and_released_on_all_paths",
+        "program_quota_memory_refusal_happens_before_spawn_and_does_not_touch_automation",
+        "aggregate_quota_counts_pending_live_and_closing_programs",
+        "quit_and_privacy_cut_admission_and_reuse_only_after_release",
+        "terminal_failure_is_not_cleanup_complete_before_runtime_and_fence_drop",
+        "javascript_program_permit_wakes_only_after_unlocking",
+        "ui_admission_backpressures_without_waiting_for_storage_fence",
+        "idle_runtime_exit_wakes_session_cleanup_without_an_input",
+        "javascript_program_quota_refuses_before_a_second_session_and_releases_after_reap",
+        "javascript_program_move_adopts_one_runtime_and_source_window_close_preserves_it",
+        "javascript_program_app_quit_settles_every_runtime_and_refuses_new_admission",
+        "javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume"
       ],
       "manual_scenarios": [
         "JSP-01"
       ],
       "status": "partial",
       "prerequisites": [
-        "Qualify the feature-gated confined-process path's rolling interactive CPU policy, packaged provenance, native privacy-event timing and forceable lifecycle before enablement",
-        "Qualify packaged macOS, Windows and Linux input/resize/output ordering, privacy loss, pressure, keyboard/IME/paste, multi-window and usability behavior",
+        "Qualify the feature-gated confined-process path's rolling interactive CPU policy, packaged provenance, native privacy-event timing, real aggregate RSS/CPU behavior and forceable lifecycle before enablement",
+        "Qualify packaged macOS, Windows and Linux input/resize/output ordering, privacy loss, pressure, keyboard/IME/paste, multi-window and GUI/native usability behavior",
         "Keep TradeWars gameplay/assets/provenance, multiplayer, networking and mobile execution outside this slice"
       ]
     },

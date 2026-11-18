@@ -1309,6 +1309,63 @@ mod tests {
     }
 
     #[test]
+    fn javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume() {
+        let root = PrivateFixture::new();
+        let identities = (
+            ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+            UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+            SlotId::from_host(DEVELOPER_SLOT_ID),
+        );
+        let initial = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                identities.0,
+                identities.1,
+                identities.2,
+            )
+            .unwrap(),
+            ProgramLaunchMode::New,
+        );
+        initial.prepare().unwrap();
+        for (expected_revision, value) in [(None, b"confirmed-1"), (Some(1), b"confirmed-2")] {
+            assert!(matches!(
+                initial.commit(
+                    DEVELOPER_SLOT,
+                    ProgramStorageCommitRequest {
+                        expected_revision,
+                        schema_version: CURRENT_SAVE_SCHEMA,
+                        value: value.to_vec(),
+                        operation_id: OperationId::new().0.hyphenated().to_string(),
+                    },
+                ),
+                ProgramStorageCommit::Committed { .. }
+            ));
+        }
+        drop(initial);
+
+        let fresh = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                identities.0,
+                identities.1,
+                identities.2,
+            )
+            .expect("termination must make the universe writer available"),
+            ProgramLaunchMode::Resume,
+        );
+        fresh.prepare().unwrap();
+        assert_eq!(
+            fresh.load(DEVELOPER_SLOT),
+            ProgramStorageLoad::Present {
+                schema_version: CURRENT_SAVE_SCHEMA,
+                revision: 2,
+                value: b"confirmed-2".to_vec(),
+            },
+            "fresh Resume sees only the last confirmed checkpoint, never prior in-memory state"
+        );
+    }
+
+    #[test]
     fn reviewed_save_host_refuses_missing_resume() {
         let root = PrivateFixture::new();
         let host = ReviewedDeveloperStorageHost::from_test(
