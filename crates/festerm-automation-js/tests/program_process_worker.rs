@@ -30,6 +30,7 @@ fn initial_size() -> TerminalSize {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn program_worker_is_ready_before_source_is_sent() {
     if platform::availability().is_err() {
         return;
