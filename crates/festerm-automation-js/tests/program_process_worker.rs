@@ -1,8 +1,9 @@
 use festerm_automation_js::{
     platform,
     program::{
-        developer_echo_program, ApprovedProgram, ProgramCapability, ProgramHostMessage,
-        ProgramKind, ProgramManifest, ProgramSourceSnapshot, Submission, TerminalSize,
+        developer_echo_program, developer_host_services_program, ApprovedProgram,
+        ProgramCapability, ProgramHostMessage, ProgramKind, ProgramManifest, ProgramSourceSnapshot,
+        Submission, TerminalSize,
     },
     Error, ProgramDeliveryFence, ProgramSupervisor, WorkerProgram,
 };
@@ -174,6 +175,183 @@ fn confined_program_worker_echoes_normal_output_and_closes() {
         vec![b"resize:100x30".to_vec()]
     );
     assert_eq!(program.close().unwrap(), vec![b"closed".to_vec()]);
+    assert!(program.close().unwrap().is_empty());
+    program.shutdown().unwrap();
+}
+
+#[test]
+fn confined_program_worker_serves_assets_clock_and_async_stream() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        developer_host_services_program().unwrap(),
+        7,
+        initial_size(),
+    )
+    .unwrap();
+    assert_eq!(program.take_start_output(), vec![b"asset:ready\n".to_vec()]);
+    assert!(program.input(&[0xc3]).unwrap().is_empty());
+    assert_eq!(
+        program.input(&[0xa9]).unwrap(),
+        vec!["é".as_bytes().to_vec()]
+    );
+    assert!(program.close().unwrap().is_empty());
+    program.shutdown().unwrap();
+}
+
+#[test]
+fn confined_program_worker_completes_a_long_bounded_sleep() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let approved = developer_host_services_program().unwrap();
+    let mut source = approved.snapshot().clone();
+    source.modules.insert(
+        "main.js".into(),
+        r#"export async function main({terminal, clock}) {
+    terminal.write("before");
+    await clock.sleep(1100);
+    terminal.write("after");
+}"#
+        .into(),
+    );
+    let started = Instant::now();
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        ApprovedProgram::with_assets(source, approved.assets().clone()).unwrap(),
+        7,
+        initial_size(),
+    )
+    .unwrap();
+    assert_eq!(
+        program.take_start_output(),
+        vec![b"before".to_vec(), b"after".to_vec()]
+    );
+    assert!(program.is_completed());
+    assert!(started.elapsed() >= Duration::from_millis(1_000));
+    program.shutdown().unwrap();
+}
+
+#[test]
+fn confined_program_worker_cancels_a_long_pending_sleep() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let approved = developer_host_services_program().unwrap();
+    let mut source = approved.snapshot().clone();
+    source.modules.insert(
+        "main.js".into(),
+        r#"export async function main({terminal, clock}) {
+    const event = await terminal.events().next();
+    if (event.value.type === "input") await clock.sleep(60000);
+    terminal.write("late");
+}"#
+        .into(),
+    );
+    let forced = Arc::new(AtomicBool::new(false));
+    let program = ProgramSupervisor::spawn_with_authority(
+        &worker(),
+        ApprovedProgram::with_assets(source, approved.assets().clone()).unwrap(),
+        11,
+        initial_size(),
+        forced.clone(),
+        Arc::new(Fence {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }),
+    )
+    .unwrap();
+    let pending = std::thread::spawn(move || {
+        let mut program = program;
+        let result = program.input(b"x");
+        (program, result)
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    forced.store(true, Ordering::Release);
+    let (program, result) = pending.join().unwrap();
+    assert!(result.is_err());
+    assert!(program.shutdown().is_err());
+}
+
+#[test]
+fn confined_program_worker_close_does_not_wait_for_clock_sleep() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let approved = developer_host_services_program().unwrap();
+    let mut source = approved.snapshot().clone();
+    source.modules.insert(
+        "main.js".into(),
+        r#"export async function main({terminal, clock}) {
+    const event = await terminal.events().next();
+    if (event.value.type === "close") {
+        try { await clock.sleep(60000); } catch (_) {}
+        terminal.write("closed");
+    }
+}"#
+        .into(),
+    );
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        ApprovedProgram::with_assets(source, approved.assets().clone()).unwrap(),
+        7,
+        initial_size(),
+    )
+    .unwrap();
+    let started = Instant::now();
+    assert_eq!(program.close().unwrap(), vec![b"closed".to_vec()]);
+    assert!(started.elapsed() < Duration::from_millis(500));
+    program.shutdown().unwrap();
+}
+
+#[test]
+fn confined_program_worker_closes_admission_when_async_main_settles() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let mut source = developer_echo_program().unwrap().snapshot().clone();
+    source.modules.insert(
+        "main.js".into(),
+        "export async function main({terminal}) { terminal.write('done'); }".into(),
+    );
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        ApprovedProgram::new(source).unwrap(),
+        7,
+        initial_size(),
+    )
+    .unwrap();
+    assert_eq!(program.take_start_output(), vec![b"done".to_vec()]);
+    assert!(program.input(b"late").is_err());
+    assert!(program.close().unwrap().is_empty());
+    program.shutdown().unwrap();
+}
+
+#[test]
+fn confined_program_worker_latches_async_main_completion_after_input() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let mut source = developer_echo_program().unwrap().snapshot().clone();
+    source.modules.insert(
+        "main.js".into(),
+        r#"export async function main({terminal}) {
+    const event = await terminal.events().next();
+    if (event.value.type === "input") terminal.write("done");
+}"#
+        .into(),
+    );
+    let mut program = ProgramSupervisor::spawn(
+        &worker(),
+        ApprovedProgram::new(source).unwrap(),
+        7,
+        initial_size(),
+    )
+    .unwrap();
+    assert_eq!(program.input(b"x").unwrap(), vec![b"done".to_vec()]);
+    assert!(program.close().unwrap().is_empty());
+    assert!(program.close().unwrap().is_empty());
     program.shutdown().unwrap();
 }
 
@@ -245,6 +423,7 @@ fn confined_program_worker_close_is_force_bounded() {
                 ProgramCapability::TerminalOutput,
                 ProgramCapability::TerminalResize,
             ]),
+            assets: Vec::new(),
         },
         modules: BTreeMap::from([(
             "main.js".into(),
@@ -339,6 +518,7 @@ fn confined_program_worker_hostile_input_is_force_bounded() {
                 ProgramCapability::TerminalOutput,
                 ProgramCapability::TerminalResize,
             ]),
+            assets: Vec::new(),
         },
         modules: BTreeMap::from([(
             "main.js".into(),

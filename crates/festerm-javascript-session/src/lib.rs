@@ -62,6 +62,10 @@ pub trait JavaScriptRuntime: Send + 'static {
         1
     }
 
+    fn is_completed(&self) -> bool {
+        false
+    }
+
     fn start(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn resize(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
@@ -116,6 +120,10 @@ impl QuickJsJavaScriptRuntime {
 impl JavaScriptRuntime for QuickJsJavaScriptRuntime {
     fn worker_generation(&self) -> u64 {
         self.worker_generation
+    }
+
+    fn is_completed(&self) -> bool {
+        self.runtime.is_completed()
     }
 
     fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
@@ -202,6 +210,12 @@ impl JavaScriptRuntime for ProcessJavaScriptRuntime {
 
     fn worker_generation(&self) -> u64 {
         self.worker_generation
+    }
+
+    fn is_completed(&self) -> bool {
+        self.supervisor
+            .as_ref()
+            .is_some_and(festerm_automation_js::ProgramSupervisor::is_completed)
     }
 
     fn start(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
@@ -304,6 +318,7 @@ struct Shared {
     output_space: Mutex<()>,
     output_ready: Condvar,
     generation: AtomicU64,
+    accepting: AtomicBool,
     stopping: AtomicBool,
     event_sender: SyncSender<SessionEvent>,
     control_sender: SyncSender<SessionEvent>,
@@ -399,6 +414,7 @@ impl Shared {
             }
         };
         if should_stop {
+            self.accepting.store(false, Ordering::Release);
             self.stopping.store(true, Ordering::Release);
             self.generation.fetch_add(1, Ordering::AcqRel);
             self.commands
@@ -428,8 +444,38 @@ impl Shared {
                 .expect("JavaScript session lifecycle lock is not poisoned");
             *current = lifecycle.clone();
         }
-        self.stopping.store(true, Ordering::Release);
+        self.close_command_admission();
         let _ = self.emit_control(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn close_command_admission(&self) {
+        let _admission = self
+            .admission
+            .lock()
+            .expect("JavaScript session admission lock is not poisoned");
+        let was_stopping = self.stopping.swap(true, Ordering::AcqRel);
+        self.accepting.store(false, Ordering::Release);
+        if !was_stopping {
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        self.commands
+            .lock()
+            .expect("JavaScript session command lock is not poisoned")
+            .clear();
+        self.command_ready.notify_all();
+    }
+
+    fn close_runtime_admission(&self) {
+        let _admission = self
+            .admission
+            .lock()
+            .expect("JavaScript session admission lock is not poisoned");
+        self.accepting.store(false, Ordering::Release);
+        self.commands
+            .lock()
+            .expect("JavaScript session command lock is not poisoned")
+            .clear();
+        self.command_ready.notify_all();
     }
 
     fn force_cancellation(&self) {
@@ -441,8 +487,7 @@ impl Shared {
 
     fn fail(&self, message: &'static str) {
         let error = SessionError::new(SessionErrorKind::Internal, message);
-        self.stopping.store(true, Ordering::Release);
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.close_command_admission();
         let _ = self.emit_control(SessionEvent::Error(error.clone()));
         self.set_terminal(SessionLifecycle::Failed(error));
     }
@@ -553,6 +598,7 @@ impl JavaScriptSession {
             output_space: Mutex::new(()),
             output_ready: Condvar::new(),
             generation: AtomicU64::new(1),
+            accepting: AtomicBool::new(true),
             stopping: AtomicBool::new(false),
             event_sender,
             control_sender,
@@ -770,7 +816,7 @@ impl Shared {
             .admission
             .lock()
             .expect("JavaScript session admission lock is not poisoned");
-        if self.stopping.load(Ordering::Acquire) {
+        if !self.accepting.load(Ordering::Acquire) {
             return Err(SessionSendError::Closed { operation });
         }
         let accepted_input_bytes = match &command {
@@ -829,13 +875,17 @@ fn runtime_worker(
     if !shared.stopping.load(Ordering::Acquire) {
         match runtime.start(size) {
             Ok(chunks) if shared.is_current(startup_generation) => {
-                let mut lifecycle = shared
-                    .lifecycle
-                    .lock()
-                    .expect("JavaScript session lifecycle lock is not poisoned");
-                *lifecycle = SessionLifecycle::Running;
-                drop(lifecycle);
-                let _ = shared.emit_control(SessionEvent::Lifecycle(SessionLifecycle::Running));
+                if runtime.is_completed() {
+                    shared.close_runtime_admission();
+                } else {
+                    let mut lifecycle = shared
+                        .lifecycle
+                        .lock()
+                        .expect("JavaScript session lifecycle lock is not poisoned");
+                    *lifecycle = SessionLifecycle::Running;
+                    drop(lifecycle);
+                    let _ = shared.emit_control(SessionEvent::Lifecycle(SessionLifecycle::Running));
+                }
                 if !validate_output(&chunks) {
                     shared.fail("JavaScript runtime exceeded the output bound");
                 } else {
@@ -854,18 +904,24 @@ fn runtime_worker(
         }
     }
 
-    while let Some(command) = shared.next_command() {
+    while !runtime.is_completed() {
+        let Some(command) = shared.next_command() else {
+            break;
+        };
         match command {
             SessionCommand::Input { generation, bytes } => {
                 if !shared.is_current(generation) {
                     continue;
                 }
                 for bytes in bytes.chunks(festerm_automation_js::program::MAX_INPUT_CHUNK_BYTES) {
-                    if !shared.is_current(generation) {
+                    if !shared.is_current(generation) || runtime.is_completed() {
                         break;
                     }
                     match runtime.input(bytes) {
                         Ok(chunks) => {
+                            if runtime.is_completed() {
+                                shared.close_runtime_admission();
+                            }
                             if !validate_output(&chunks) {
                                 shared.fail("JavaScript runtime exceeded the output bound");
                                 break;
@@ -889,6 +945,9 @@ fn runtime_worker(
                 }
                 match runtime.resize(size) {
                     Ok(chunks) if shared.is_current(generation) => {
+                        if runtime.is_completed() {
+                            shared.close_runtime_admission();
+                        }
                         if !validate_output(&chunks) {
                             shared.fail("JavaScript runtime exceeded the output bound");
                             break;
@@ -919,6 +978,7 @@ fn runtime_worker(
         }
     }
 
+    shared.close_command_admission();
     let close_result = runtime.close();
     let already_failed = matches!(shared.lifecycle(), SessionLifecycle::Failed(_));
     let result = match close_result {
@@ -1231,6 +1291,347 @@ mod tests {
             );
         }
         panic!("stopped lifecycle was not drained");
+    }
+
+    #[test]
+    fn runtime_completion_at_start_never_publishes_running() {
+        struct CompletedAtStart;
+        impl JavaScriptRuntime for CompletedAtStart {
+            fn is_completed(&self) -> bool {
+                true
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(vec![b"done".to_vec()])
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                panic!("completed startup must not accept input")
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                panic!("completed startup must not accept resize")
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let session = JavaScriptSession::start(CompletedAtStart, size()).unwrap();
+        wait_for(|| session.lifecycle().is_terminal());
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+        let mut saw_output = false;
+        let mut saw_stopped = false;
+        while let Ok(event) = session.try_recv_event() {
+            match event {
+                SessionEvent::Output(output) => {
+                    assert_eq!(output, b"done");
+                    saw_output = true;
+                }
+                SessionEvent::Lifecycle(SessionLifecycle::Running) => {
+                    panic!("normally completed startup was published as running")
+                }
+                SessionEvent::Lifecycle(SessionLifecycle::Stopped) => saw_stopped = true,
+                _ => {}
+            }
+        }
+        assert!(saw_output && saw_stopped);
+    }
+
+    #[test]
+    fn runtime_completion_after_input_discards_queued_input_normally() {
+        struct CompletesOnInput {
+            entered: mpsc::Sender<()>,
+            gate: Arc<(Mutex<bool>, Condvar)>,
+            calls: Arc<AtomicUsize>,
+            completed: bool,
+        }
+        impl JavaScriptRuntime for CompletesOnInput {
+            fn is_completed(&self) -> bool {
+                self.completed
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.calls.fetch_add(1, Ordering::Release);
+                self.entered.send(()).unwrap();
+                let (lock, ready) = &*self.gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+                self.completed = true;
+                Ok(vec![b"done".to_vec()])
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (entered, receive_entered) = mpsc::channel();
+        let session = JavaScriptSession::start(
+            CompletesOnInput {
+                entered,
+                gate: gate.clone(),
+                calls: calls.clone(),
+                completed: false,
+            },
+            size(),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session.try_send_input(b"first").unwrap();
+        receive_entered
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        session.try_send_input(b"queued").unwrap();
+        {
+            let (lock, ready) = &*gate;
+            *lock.lock().unwrap() = true;
+            ready.notify_all();
+        }
+        wait_for(|| session.lifecycle().is_terminal());
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+        assert!(!session.try_send_input(b"late").is_ok());
+    }
+
+    #[test]
+    fn runtime_completion_stops_remaining_chunks_of_one_input() {
+        struct CompletesOnFirstChunk {
+            calls: Arc<AtomicUsize>,
+            completed: bool,
+        }
+        impl JavaScriptRuntime for CompletesOnFirstChunk {
+            fn is_completed(&self) -> bool {
+                self.completed
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.calls.fetch_add(1, Ordering::Release);
+                self.completed = true;
+                Ok(vec![b"done".to_vec()])
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let session = JavaScriptSession::start(
+            CompletesOnFirstChunk {
+                calls: calls.clone(),
+                completed: false,
+            },
+            size(),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session
+            .try_send_input(&vec![
+                b'x';
+                festerm_automation_js::program::MAX_INPUT_CHUNK_BYTES
+                    + 1
+            ])
+            .unwrap();
+        wait_for(|| session.lifecycle().is_terminal());
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+    }
+
+    #[test]
+    fn runtime_completion_closes_admission_before_close_returns() {
+        struct PausesOnClose {
+            input_gate: Arc<(Mutex<bool>, Condvar)>,
+            close_entered: mpsc::Sender<()>,
+            close_gate: Arc<(Mutex<bool>, Condvar)>,
+            completed: bool,
+        }
+        impl JavaScriptRuntime for PausesOnClose {
+            fn is_completed(&self) -> bool {
+                self.completed
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                let (lock, ready) = &*self.input_gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+                self.completed = true;
+                Ok(Vec::new())
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.close_entered.send(()).unwrap();
+                let (lock, ready) = &*self.close_gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+                Ok(Vec::new())
+            }
+        }
+        let input_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let close_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (close_entered, receive_close_entered) = mpsc::channel();
+        let session = JavaScriptSession::start(
+            PausesOnClose {
+                input_gate: input_gate.clone(),
+                close_entered,
+                close_gate: close_gate.clone(),
+                completed: false,
+            },
+            size(),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session.try_send_input(b"first").unwrap();
+        session.try_send_input(b"queued").unwrap();
+        {
+            let (lock, ready) = &*input_gate;
+            *lock.lock().unwrap() = true;
+            ready.notify_all();
+        }
+        receive_close_entered
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(session.try_send_input(b"late").is_err());
+        assert!(session
+            .shared
+            .commands
+            .lock()
+            .expect("JavaScript session command lock is not poisoned")
+            .is_empty());
+        {
+            let (lock, ready) = &*close_gate;
+            *lock.lock().unwrap() = true;
+            ready.notify_all();
+        }
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+    }
+
+    #[test]
+    fn completed_startup_closes_admission_while_output_is_blocked() {
+        struct CompletedStartup;
+        impl JavaScriptRuntime for CompletedStartup {
+            fn is_completed(&self) -> bool {
+                true
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(vec![b"first".to_vec(), b"last".to_vec()])
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                panic!("completed startup must not accept input")
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                panic!("completed startup must not accept resize")
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let session = JavaScriptSession::start_with_capacities(
+            CompletedStartup,
+            size(),
+            noop_session_event_notifier(),
+            1,
+            2,
+        )
+        .unwrap();
+        wait_for(|| !session.shared.accepting.load(Ordering::Acquire));
+        assert_eq!(session.metrics().event_queue_depth, 1);
+        assert!(session.try_send_input(b"late").is_err());
+        let mut output = Vec::new();
+        let mut stopped = false;
+        loop {
+            match session.try_recv_event() {
+                Ok(SessionEvent::Output(bytes)) => output.push(bytes),
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                    panic!("completed startup was published as running")
+                }
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Stopped)) => {
+                    stopped = true;
+                    break;
+                }
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(SessionTryReceiveError::Closed) => break,
+            }
+        }
+        assert_eq!(output, vec![b"first".to_vec(), b"last".to_vec()]);
+        assert!(stopped);
+    }
+
+    #[test]
+    fn completed_input_closes_admission_while_output_is_blocked() {
+        struct CompletesWithOutput {
+            completed: bool,
+        }
+        impl JavaScriptRuntime for CompletesWithOutput {
+            fn is_completed(&self) -> bool {
+                self.completed
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(vec![b"prime".to_vec()])
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.completed = true;
+                Ok(vec![b"final".to_vec()])
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let session = JavaScriptSession::start_with_capacities(
+            CompletesWithOutput { completed: false },
+            size(),
+            noop_session_event_notifier(),
+            1,
+            2,
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        wait_for(|| session.metrics().event_queue_depth == 1);
+        session.try_send_input(b"done").unwrap();
+        wait_for(|| !session.shared.accepting.load(Ordering::Acquire));
+        assert!(session.try_send_input(b"late").is_err());
+        assert_eq!(
+            session.try_recv_event().unwrap(),
+            SessionEvent::Output(b"prime".to_vec())
+        );
+        wait_for(|| session.metrics().event_queue_depth == 1);
+        assert_eq!(
+            session.try_recv_event().unwrap(),
+            SessionEvent::Output(b"final".to_vec())
+        );
+        wait_for(|| session.lifecycle().is_terminal());
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Stopped));
     }
 
     #[test]
