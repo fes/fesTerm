@@ -3,6 +3,7 @@ members = [
     "crates/festerm-admission",
     "crates/festerm-automation",
     "crates/festerm-automation-js",
+    "crates/festerm-javascript-session",
     "crates/festerm-automation-mcp",
     "crates/festerm-automation-mcp-client",
     "crates/festerm-automation-workflow",
