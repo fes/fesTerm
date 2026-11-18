@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5fa88a3da80ead1ebcc285152e7b9bc98ee40fd1d6659b3adad3652fdcabd5ad"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "312a84dd6cf6558410e94d30311a2711d7e0b61dd143e07ee25c3c34707d4465"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Application-scoped automation authority, workflow approval, and MCP protocol state for exact terminal observation and control.
+Automation owns application-scoped grant authority, exact workflow binding, and MCP protocol state for terminal observation and control.
 
 Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
@@ -12,12 +12,12 @@ Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 
 Use for: Who may observe or control a target, and how are grant state and revocation tracked?
 
-- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns grant state, controller enrollment, run tracking, and revocation for exact targets
-- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — binds scope, target refs, lifetime, and invocation bindings for a native decision
+- [`Broker`](../../crates/festerm-automation/src/broker.rs) — owns grant state, controller enrollment, run tracking, and revocation
+- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — binds scope, target refs, lifetime, and invocation bindings after review
 
 Evidence:
 - [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — proves approvals and starts are bounded and stale state cannot replay
-- [`docs/automation-design.md`](../../docs/automation-design.md) — defines grant semantics, principal binding, and the application-owned authority model
+- [`docs/automation-design.md`](../../docs/automation-design.md) — defines principal binding, grant semantics, and the application-owned authority model
 
 Caveats:
 - A connection is not a grant; only broker-owned approval yields authority.
