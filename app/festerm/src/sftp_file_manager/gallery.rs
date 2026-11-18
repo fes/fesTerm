@@ -16,6 +16,7 @@ pub(crate) enum Scene {
     OperationError,
     Transfers,
     TransferDetails,
+    TransferDetailsNarrow,
     Collision,
     Narrow,
     Swapped,
@@ -63,7 +64,10 @@ impl Fixture {
                     "The synthetic file exceeds the bounded text-file limit.".into(),
                 ))
             }
-            Scene::Transfers | Scene::TransferDetails | Scene::Collision => {
+            Scene::Transfers
+            | Scene::TransferDetails
+            | Scene::TransferDetailsNarrow
+            | Scene::Collision => {
                 for event in festerm_ssh::gallery_transfer_events(matches!(scene, Scene::Collision))
                 {
                     tab.apply_transfer_event(event);
@@ -110,7 +114,10 @@ impl Fixture {
     }
 
     pub(crate) fn show(&mut self, ui: &mut Ui, id: crate::tabs::TabId) {
-        if matches!(self.scene, Scene::TransferDetails) {
+        if matches!(
+            self.scene,
+            Scene::TransferDetails | Scene::TransferDetailsNarrow
+        ) {
             self.tab.show_transfer_drawer(ui);
             return;
         }

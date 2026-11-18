@@ -4360,6 +4360,7 @@
         "bulk_cancel_finishes_more_than_one_command_queue_of_collision_paused_items",
         "bulk_cancel_does_not_cancel_work_enqueued_after_the_command",
         "gui_sftp_finished_history_retires_old_failures_at_the_approved_limit",
+        "gui_sftp_transfer_drawer_fits_and_paints_proportional_progress",
         "gui_sftp_history_keeps_active_rows_and_retires_by_finish_order",
         "gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity",
         "gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement",

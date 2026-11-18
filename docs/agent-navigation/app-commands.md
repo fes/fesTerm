@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a57f894ecbaa30da3fc231b37774bef4395a4440fc2306e55fdc2019519bdba5"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7d118274096378553d0bc6ed8603255dfc649baaa1ca2ff7f71b8a2e713671e2"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the typed app command bus, tab lifecycle, and keyboard shortcut routing for app-wide actions and singleton surfaces.
+Owns typed app commands, singleton tab policy, and keyboard shortcut eligibility for app-wide actions and tab/session routing.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -13,7 +13,7 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 Use for: Need to trace a widget or launcher action into the app mutation path and final tab or session effect.
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — Typed app intent from launcher, session, and singleton surfaces
-- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path for all app commands
+- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path for app commands and tab/session effects
 - [`AppState`](../../app/festerm/src/tabs.rs) — Owns tabs, focus, activation history, and singleton state
 
 Evidence:

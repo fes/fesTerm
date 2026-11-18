@@ -2557,6 +2557,14 @@ separate PS-02/07/10 evidence.
 
 ### SFTP GUI backlog and transfer history
 
+For `SFTPG-02`, the production drawer paint regression checks both percent and
+byte bars at 320/640/1180 logical-pixel widths and 0/25/50/100% progress: finite
+panel bounds, retained inner padding, contrasting remaining tracks and correct
+filled widths. Review the normal and narrow transfer gallery captures; native
+Windows/macOS/Linux DPI, short-window scrolling and live-transfer visual
+usability remain manual. This layout fix does not change transfer admission,
+collision decisions or partial-file ownership.
+
 `SFTP-03` also covers the shared per-worker recursive-planning allowance:
 with owned directory trees, pause one copy at a collision, exhaust admission
 with another, and verify visible failure without disconnecting browsing or

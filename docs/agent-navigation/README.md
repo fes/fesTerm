@@ -9,16 +9,16 @@ in source; pages route to code, they do not authorize or instruct.
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
 | [Terminal presentation and rendering](terminal-ui.md) | Terminal UI owns input routing, render caching, and the native/software painting boundary while keeping session I/O in the application layer. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission. |
-| [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP transfer flow used by remote file and session operations. |
+| [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust gating, and the GUI SFTP flow that backs remote file reads and queued transfers. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns versioned TOML configuration, workspace metadata, opaque secret references, and private file protection for config and workspace storage. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns the typed app command bus, tab lifecycle, and keyboard shortcut routing for app-wide actions and singleton surfaces. |
+| [Application commands, tabs, and input routing](app-commands.md) | Owns typed app commands, singleton tab policy, and keyboard shortcut eligibility for app-wide actions and tab/session routing. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gating, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns managed Dev Tunnel discovery, host identity and receipt validation, and the enterprise/PowerShell trust boundaries for browser-to-host and local-hosted profiles. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Owns packaged terminal runtime behavior, native real-window validation, and OS wake/privacy integration across macOS, Windows, and Linux. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust terminal host for iOS and Android, plus native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing. |
-| [Desktop application shell and screens](app-shell.md) | The desktop shell owns window lifecycle, pane/session routing, and consent-gated host and remote access flows around the egui application loop. |
+| [Desktop application shell and screens](app-shell.md) | This domain owns the desktop egui shell: startup, window lifecycle, pane/session routing, profile and settings screen flows, consent-gated host authorization, and durable diagnostics around the main application loop. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 
