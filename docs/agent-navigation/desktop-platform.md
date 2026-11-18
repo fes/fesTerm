@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a6e3c0f05dfa8eb74fc850d4ac6c47e912c86769ce606030d6b2be093315a0a1"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "c81177036b2fc793b2d651fcfed01d1bab2ecaea2a4410b270c8152b8e54c984"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged update gates, native smoke validation, AppKit/Finder bridges, and per-platform wake/privacy hooks.
+Desktop platform integration owns packaged self-update gates, real native smoke checks, macOS Finder/AppKit bridges, and wake/privacy notifications across platforms.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,11 +12,11 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: When packaging decides whether self-update is allowed
 
-- [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps build markers to installability and trust policy
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind and update readiness for packaged installs
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to installability and trust policy
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind and update readiness for packaged builds
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Fails closed when the build omits the update verification key
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Fails closed when the build omits the verification key
 - [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only explicit self-update markers are treated as installable
 
 Caveats:
