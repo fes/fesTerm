@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain":"app-shell","generator":"2","model":"codex-source-verified","sources":"e6dc3fcf27017224f646b295b5e7785bc94057bb85f27c1257944282ea432d36"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "33e72e5c036da316a68c8989ea205b2ec92a8ad83de5d1b937bfd1ca3637cba0"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,7 +29,7 @@ Caveats:
 Use for: Frame logic, close requests, and focused pane rendering
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds UI; applies border cursor feedback last
+- [`ui_content`](../../app/festerm/src/app.rs) — Builds one egui frame and routes overlays
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render
@@ -76,28 +76,11 @@ Use for: Exit recovery, crash evidence, and host failure history
 
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context
-- [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs) — Enable boundaries.
 
 Evidence:
 - [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes
-- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Historical pane only; no readiness claim
 
 Caveats:
 - Diagnostics preserve evidence but cannot fix runtime logic or app state.
 - Journal writes are best-effort and degrade gracefully when unavailable.
-
-## File operation review
-
-Use for: Remote file create/delete review and worker lifecycle
-
-- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Fences retired remote reviews
-- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory, and selection before confirm
-- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, bounded outcomes, and Files session lifecycle
-- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — Builds exact, bounded remote delete review for host files
-
-Evidence:
-- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks dialog geometry and review framing
-- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Fences late disclosures while retaining terminal outcomes
-
-Caveats:
-- Local/SFTP delete is nonrecursive; Open2 write grants no delete; Open3 needs separate consent and exact review.
+- A missing final record is evidence of interruption, not proof of a safe exit.
