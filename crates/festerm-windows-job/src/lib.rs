@@ -12,13 +12,15 @@ mod imp {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, HANDLE, STILL_ACTIVE},
         System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+            TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
         },
         System::Threading::{
-            GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_TERMINATE,
+            GetCurrentProcess, GetExitCodeProcess, OpenProcess, TerminateProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
         },
     };
 
@@ -33,6 +35,38 @@ mod imp {
                 Ok(Self(handle))
             }
         }
+    }
+
+    fn blocks_breakaway(flags: u32) -> bool {
+        flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) == 0
+    }
+
+    /// Reports a known restriction on independently starting a child process.
+    /// A false result is not proof of independence: only the immediate Job is
+    /// queried, and an ancestor or a later process-creation failure may refuse it.
+    pub fn current_process_blocks_breakaway() -> io::Result<bool> {
+        let mut in_job = 0;
+        if unsafe { IsProcessInJob(GetCurrentProcess(), ptr::null_mut(), &raw mut in_job) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if in_job == 0 {
+            return Ok(false);
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                ptr::null_mut(),
+                JobObjectExtendedLimitInformation,
+                (&raw mut limits).cast(),
+                u32::try_from(std::mem::size_of_val(&limits))
+                    .expect("Job Object limit structure fits in u32"),
+                ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(blocks_breakaway(limits.BasicLimitInformation.LimitFlags))
     }
 
     impl Drop for ProcessHandle {
@@ -118,7 +152,27 @@ mod imp {
             let _ = unsafe { CloseHandle(self.handle) };
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn immediate_job_only_refuses_when_both_breakaway_modes_are_absent() {
+            assert!(blocks_breakaway(0));
+            assert!(blocks_breakaway(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE));
+            for permitted in [
+                JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+                JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+                JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+            ] {
+                assert!(!blocks_breakaway(
+                    permitted | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
-pub use imp::{process_is_alive, terminate_process, WindowsJob};
+pub use imp::{current_process_blocks_breakaway, process_is_alive, terminate_process, WindowsJob};

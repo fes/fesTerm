@@ -1,16 +1,16 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27b5cf556d8c524b84d34f1dea63e80e3e14facc894773163eb3a680828479fe"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "922fc45ff8aed54127c8b9cc7fe3127c2abcd6ad778d5c2e0070572fa460a51f"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission.
+Owns the shared session lifecycle, PTY and serial backends, daemon recovery, and host-controlled session admission.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 ## Session contract
 
-Use for: When a backend or UI path needs the shared lifecycle, queue semantics, and reply ownership rules.
+Use for: A backend or UI path needs the shared lifecycle, queue semantics, and reply ownership rules.
 
 - [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle from start through terminal exit or failure.
 - [`Session`](../../crates/festerm-session/src/lib.rs) — Backend contract for input, resize, shutdown, and reply ownership.
@@ -21,11 +21,11 @@ Evidence:
 Caveats:
 - Events never mutate Terminal directly.
 - SessionLifecycle::Disconnected is not terminal.
-- Backend reply ownership is gated by terminal_replies_owned_by_backend.
+- terminal_replies_owned_by_backend gates backend-owned replies.
 
 ## Local PTY
 
-Use for: When a local child process or PTY must be started, resized, or shut down reliably.
+Use for: A local child process or PTY must be started, resized, or shut down reliably.
 
 - [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup.
 
@@ -39,7 +39,7 @@ Caveats:
 
 ## Persistent daemon
 
-Use for: When a named, recoverable session must be resumed, reconnected, or mirrored for persistence.
+Use for: A named, recoverable session must be resumed, reconnected, or mirrored for persistence.
 
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery sync.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains replies while ingesting bytes.
@@ -54,14 +54,14 @@ Caveats:
 
 ## Terminal flow
 
-Use for: When session output is pumped into the terminal or reply flow must be coordinated with backend-owned replies.
+Use for: Session output must be pumped into the terminal without duplicate replies or reordered recovery.
 
 - [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input, resize, and generation tracking.
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while suppressing duplicate backend replies and respecting byte budgets.
+- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while suppressing duplicate backend replies.
 
 Evidence:
 - [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize ordering while suppressing duplicate backend replies.
-- [`recording_observes_applied_output_resize_and_recovery_without_local_input`](../../app/festerm/src/session_controller.rs) — Proves recovery sync and resize integrate with recording without local input leakage.
+- [`recording_observes_applied_output_resize_and_recovery_without_local_input`](../../app/festerm/src/session_controller.rs) — Proves recovery sync and resize integrate with recording without local-input leakage.
 
 Caveats:
 - terminal_replies_owned_by_backend prevents double forwarding.
@@ -70,7 +70,7 @@ Caveats:
 
 ## Host control
 
-Use for: When a daemon must decide creation, attach, resume, and lease authority for named sessions.
+Use for: A daemon must decide creation, attach, resume, or lease authority for named sessions.
 
 - [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Host-owned create, attach, and lease authority for native session admission.
 

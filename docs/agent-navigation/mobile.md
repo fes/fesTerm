@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "58ee734f4b64e6ecbe102153ca677c07f5aa69cb2a220bb0fad7a03361ee99bd"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4e75d80dba59119f49c0590f0c9273a11a076ac3ecb742ff3a9c5175bb1c748e"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The mobile domain owns the shared Rust terminal host for iOS and Android, plus native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing.
+The mobile domain owns the shared Rust terminal host for iOS and Android, along with native bridge, offline-first host flows, and opt-in live SSH and tunnel plumbing.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
@@ -16,7 +16,7 @@ Use for: When a task starts from app launch or needs lifecycle, shell, lock, or 
 - [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and live session plumbing.
 
 Evidence:
-- [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Shows content stays hidden until auth succeeds and relock hides it again.
+- [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Proves content stays hidden until auth succeeds and relock hides it again.
 
 Caveats:
 - Offline stays default; live SSH is prototype-only.

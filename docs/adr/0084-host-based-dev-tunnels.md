@@ -2706,3 +2706,14 @@ no privacy-provider prerequisites, OS service state, access policy or retry
 authority. Validation includes deterministic loss-before-error, late-success,
 stale-scope and user-cancel fixtures; genuine signed native diagnosis remains
 required.
+
+The DT-02 desktop-local profile route checks known Windows Job restrictions
+only after exact Running lookup and explicit-start gating, before resolving a
+helper or reserving a generation. Neither breakaway mode permitted gives a
+specific local refusal; query failure is unavailable. Existing Running access
+and Unknown reservations retain their original behavior. Immediate-Job flags
+cannot establish complete escape from nested ancestor Jobs, and later launch
+uncertainty still preserves the reservation. Validation covers unchanged
+catalog/journal/lease/operation bytes on refusal, query errors, retained Unknown
+and real owned-fixture Running reuse. Windows API cross-compilation and native
+acceptance are separate; this does not diagnose or repair an earlier incident.

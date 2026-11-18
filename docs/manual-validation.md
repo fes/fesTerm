@@ -5132,6 +5132,18 @@ development wrapper, not installed or production services:
    per-profile tunnel state must be explicitly disabled and saved before enabling
    the new shared catalog; it is never adopted from portable configuration.
 
+   On Windows, a caller in a Job that permits neither explicit nor silent
+   breakaway must refuse a new shared local-profile start before helper
+   resolution or catalog/launch/lease/operation reservation. A failed Job query
+   is unavailable, not permission to start. Verify the specific local message,
+   unchanged protected records, and that the same context can still attach an
+   exact Running generation. An existing Unknown reservation must remain
+   Unknown. Permissive immediate-Job flags do not prove escape from all ancestor
+   Jobs; later ambiguous launch failures retain their reservation. These checks
+   prevent a known unsupported start, not repair an earlier uncertain launch or
+   establish its cause. Native Windows coverage is separate from unit fixtures
+   and cross-compilation.
+
 The opt-in service-client OFF campaign additionally requires a separate shared
 profile that is NotStarted in a complete authenticated inventory: no session and
 no uncertain target for its exact logical identity. One actual `EnsureProfile`

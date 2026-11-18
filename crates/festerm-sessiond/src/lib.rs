@@ -20,6 +20,19 @@ pub use detached::{
 };
 pub use remote::{RemoteSessionInventory, RemoteSessionTarget, RemoteSshEndpoint};
 
+/// Detects a known Windows launch restriction before reserving a new hosted
+/// generation. This does not establish that a later independent start succeeds.
+pub fn independent_host_start_blocked() -> std::io::Result<bool> {
+    #[cfg(windows)]
+    {
+        festerm_windows_job::current_process_blocks_breakaway()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,

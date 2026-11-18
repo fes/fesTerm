@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "05c08727a47b3675ee853c089b235cd836094a503be9cffb8f6d5dc732a0d573"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7d2420afedf6718abec9a72005d9c62ce5f4bdc77a175de2993f0c909ec7c162"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,16 +13,15 @@ Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-de
 Use for: When an input event, resize, or selection decision must flow through the terminal core without session I/O.
 
 - [`EncodedInputSink`](../../crates/festerm-ui-egui/src/input.rs) — Application-owned sink for encoded terminal bytes and resize signals.
-- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains bytes from terminal.handle_input into the sink without direct I/O.
-- [`route_mouse_input`](../../crates/festerm-ui-egui/src/input.rs) — Separates terminal claims from local selection and focus policy.
+- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains terminal input bytes into the sink without direct session I/O.
 
 Evidence:
 - [`warmed_character_routing_does_not_allocate_in_core_or_view`](../../crates/festerm-ui-egui/tests/routed_input_allocations.rs) — Proves routed bytes stay exact and the hot path remains allocation-free.
 
 Caveats:
-- UI never does session I/O; bytes must only reach the app-owned sink.
-- Resize stays app-owned unless the backend explicitly owns terminal resizing.
-- Selection and focus decisions remain local unless the core claims the input.
+- UI never does session I/O; bytes must only reach the application-owned sink.
+- Resize remains app-owned unless the backend explicitly owns terminal resizing.
+- Selection and focus decisions stay local unless core input claims the event.
 
 ## Render cache
 
@@ -52,7 +51,7 @@ Evidence:
 Caveats:
 - Unsupported frames and device failures must fall back to ordinary egui painting.
 - Native Direct2D is gated by Windows x64 Dx12 and eligible framebuffer formats.
-- Surface updates must remain transparent to terminal state and app-owned input flow.
+- Surface updates stay transparent to terminal state and app-owned input flow.
 
 ## Software fallback
 
