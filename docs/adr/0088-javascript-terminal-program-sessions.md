@@ -40,8 +40,8 @@ written, not a claim that every platform has shipping qualification:
 | --- | --- | --- |
 | JavaScript | [`festerm-automation-js`](../../crates/festerm-automation-js/README.md), pinned `rquickjs = 0.14.0` / QuickJS-NG; static modules, Promises and async/await | A distinct program entry contract and host API |
 | Host calls | [`HostRequest`](../../crates/festerm-automation-js/src/protocol.rs): observation, terminal reads/waits, input, profile open and workflow invocation schemas | Own-session output, input/resize delivery, timers, assets and saves; schema presence alone never authorizes a call |
-| Worker policy | Isolated supervised process; 64 MiB engine heap, bounded stack and platform-specific 128 MiB process policy; at most 300,000 ms/run, 5,000 ms cumulative CPU and 1,024 host calls | A separately qualified interactive lifetime and replenishing work budgets |
-| Native limits | [`platform.rs`](../../crates/festerm-automation-js/src/platform.rs) and [`windows.rs`](../../crates/festerm-automation-js/src/windows.rs) enforce cumulative CPU ceilings as well as engine checks | A native policy that can support extended play without removing runaway protection |
+| Worker policy | Isolated supervised process; 64 MiB engine heap, bounded stack and platform-specific 128 MiB process policy; at most 300,000 ms/run, 5,000 ms cumulative CPU and 1,024 host calls | Program mode supplies separate profile negotiation and replenishing active-turn budgets without changing this automation policy |
+| Native limits | [`platform.rs`](../../crates/festerm-automation-js/src/platform.rs) and [`windows.rs`](../../crates/festerm-automation-js/src/windows.rs) enforce cumulative CPU ceilings as well as engine checks | Program-mode Linux/macOS/Windows hard fallback and parent-owned rolling enforcement, pending packaged qualification |
 | Desktop workflow | [`automation/javascript.rs`](../../app/festerm/src/automation/javascript.rs) selects a local PTY target; current run is capped at 295,000 ms and terminal sends require separate input review | A launch into a new terminal without selecting or controlling a shell |
 | Session backend | [`Session`](../../crates/festerm-session/src/lib.rs) exchanges bounded input, output, resize, shutdown and lifecycle events | An implementation backed by the JS worker |
 | Tab and display | [`ApplicationSession`](../../app/festerm/src/tabs.rs), `SessionTab` and [`SessionController`](../../app/festerm/src/session_controller.rs) already compose ordinary terminal sessions | A program variant, typed launch intent, capability policy and metadata |
@@ -246,13 +246,35 @@ Do not trust a worker's self-reported idle state or allow it to renew its own
 resource allowance. Universe generation may require chunked computation or a
 separately bounded startup budget, with the same cancellation guarantees.
 
-The exact numeric CPU/rate quotas and active-work timeout are a launch gate:
-implementation must record measured normal workloads, hostile-loop results,
-aggregate multi-tab limits and each native enforcement mechanism before
-enablement. Existing kernel/job cumulative limits cannot simply be removed
-without demonstrating replacement runaway/host-stall protection. If a platform
-cannot qualify extended lifetime confinement, keep this mode unavailable there.
-Do not silently run in-process or impose an undocumented five-minute exit.
+The default-off developer process policy now uses explicit, separate profiles
+(`linux-seccomp-stdio-program-rolling-v1`,
+`macos-seatbelt-program-rolling-v1`, and
+`windows-appcontainer-program-job-v1`). It retains the automation mode's
+128 MiB process policy, no filesystem/network/process authority, descriptor
+closure, no core files and one-process boundary. The program policy has a
+finite 3,600-second native CPU fallback, a 200 ms active CPU / 1 second wall
+budget per turn, a 250 ms CPU budget in each rolling 1-second window and a
+500 ms close cut. Automation continues to use its original profiles and
+5-second cumulative CPU ceiling.
+
+QuickJS interrupt checks enforce the active-turn limits. Independently, the
+parent samples process CPU every 10 ms (`/proc` on Linux,
+`proc_pid_rusage` on macOS and `GetProcessTimes` on Windows), expires old
+samples, and force-terminates/reaps a worker that exhausts the rolling window.
+Only CPU deltas enter the rolling window, and program-mode input waits block on
+the existing inherited pipe instead of polling. Thus idle input does not
+consume active work and a later command can use replenished capacity. Missing
+or regressing CPU evidence and cleanup failure fail closed. The finite native
+ceiling is a last resort if all higher-level accounting fails, not a grant to
+run for an hour.
+
+These values close the source-level runaway policy gap, not the launch
+qualification gate. Record measured normal workloads, hostile-loop results,
+aggregate multi-tab limits and each packaged native enforcement mechanism
+before enablement. Existing kernel/job cumulative limits must not be changed
+for automation mode. If a platform cannot qualify the extended-lifetime
+profile, keep program mode unavailable there. Do not silently run in-process
+or impose an undocumented five-minute exit.
 
 Application lock, suspension or capability revocation cuts new host-operation
 admission immediately when detected, including save reads and input delivery.
@@ -468,9 +490,12 @@ input/resize/output checks, bounded control and a typed reviewed launch.
 An application-owned delivery fence binds OS privacy/lock monitoring, launch
 generation and cancellation. It is checked before worker IPC, before session
 queue publication and when queued output is consumed; revocation stops and
-reaps the process and suppresses queued terminal bytes. The branch does not
-make the mode generally enabled or qualify a production worker. Keep
-transactional state, packaged/native confinement, general launch review,
+reaps the process and suppresses queued terminal bytes. A separate
+default-off process profile adds deterministic rolling-window and idle-
+survival limits plus force-bounded hostile-input coverage while automation
+retains its original 5-second policy. The branch does not make the mode
+generally enabled or qualify a packaged production worker. Keep transactional
+state, packaged/native qualification, aggregate quotas, general launch review,
 TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
@@ -491,7 +516,11 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
 - **Automated tests required:** The developer slice includes strict manifest
   and protocol bounds, stale-generation refusal, ordered QuickJS echo/resize,
   bounded backpressure, the reviewed-launch exact digest/capability/generation
-  binding, worker reaping after revocation, queued-output suppression and the app-level
+  binding, worker reaping after revocation, queued-output suppression, 10 ms
+  query gating, deterministic 200 ms turn-budget interruption, rolling
+  CPU-window expiry, compliant cumulative work beyond five seconds,
+  hostile-input forced termination, native-profile separation, idle survival
+  and the app-level
   `javascript_program_launches_without_shell_or_automation_authority` route.
   Add the following concrete paths to the trace relationships as the remaining
   delivery slices land:
@@ -517,8 +546,12 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
 - **Native/manual evidence required:** `JSP-01` records the owner-run packaged,
   keyboard/IME/paste, multi-window, pressure, shutdown, privacy-lock and
   confinement checks required before enablement. Existing `AUTO-01` workflow
-  consent evidence does not qualify this execution mode. Mobile remains
-  deferred behind a separately qualified worker and lifecycle design.
+  consent evidence does not qualify this execution mode. Portable process
+  tests exercise the new rolling/idleness/hostile behavior on the current
+  host; macOS, Windows and Linux packaged profile qualification and measured
+  aggregate limits remain open. Mobile remains deferred behind a separately
+  qualified worker and lifecycle design.
 - **Coverage superseded:** None. `validation/traceability.json` registers the
-  implemented developer slice as partial and retains production confinement,
-  lifecycle, save, resume and platform evidence as prerequisites.
+  implemented developer slice as partial and retains packaged confinement,
+  aggregate quotas, lifecycle, save, resume and platform evidence as
+  prerequisites.
