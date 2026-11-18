@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "97277021280ddbf017e642480b8d2e3a76f83b7b68f945e1fdd8f71916fd9cce"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a39dc2690b4dfc84b9f514e6061197dfa1f7e7291d9c07e1fcf74ae7b90d11fb"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,7 +12,7 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Which install marker, updater key, and package metadata gate a release build?
 
-- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build marker to developer, managed, and self-updating modes.
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, managed, and self-updating modes.
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Build marker and verification key decide update availability and installability.
 
 Evidence:

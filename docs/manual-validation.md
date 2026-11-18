@@ -5676,3 +5676,15 @@ authorization, preserving Manual startup and denied RDP policy; restoration
 after monitor drain is operator-owned. This was lab preparation, not a product
 workaround or instruction to enable Remote Desktop. A generic monitor failure
 must not claim this exact service cause without separate evidence.
+
+DT-02 / HOST-02 / DIAG-01 startup diagnostics: on the next signed Windows
+local-profile and remote-created session attempts, retain the existing bounded
+sessiond lifecycle ring before any retry. Correlate exact generation and actor
+PID; check the fixed pre-Ready stage plus numeric OS/child exit code when
+available (known independent-spawn access denial retains OS code 5). No raw
+error, argv, cwd, environment, credentials or terminal content may be added.
+A diagnostic or missing ring must not authorize replacement, infer absence,
+repair Unknown or change the original outcome. The existing exact-daemon reader
+does not attribute starter entries to a daemon; no automatic pane display is
+claimed. Portable tests cover privacy, bounded storage and non-interference;
+actual signed native failure classification remains pending.

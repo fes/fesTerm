@@ -171,6 +171,66 @@ fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'stat
             .and_then(io::Error::raw_os_error),
     });
 }
+// Kept separate from DAEMON_LOG: a starter has no NativeSessionIdentity.
+struct StartupDiagnostic {
+    root: PathBuf,
+    name: String,
+    generation: std::cell::Cell<Option<u128>>,
+    stage: std::cell::Cell<FailureStage>,
+    os_code: std::cell::Cell<Option<i32>>,
+}
+
+impl StartupDiagnostic {
+    fn new(root: &Path, name: &str) -> Self {
+        Self {
+            root: root.into(),
+            name: name.into(),
+            generation: std::cell::Cell::new(
+                env::var("FESTERM_SESSIOND_GENERATION")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
+            ),
+            stage: std::cell::Cell::new(FailureStage::Runtime),
+            os_code: std::cell::Cell::new(None),
+        }
+    }
+
+    fn event(&self, event: LifecycleEvent) {
+        // Diagnostic I/O is never part of startup success, cleanup or authority.
+        let Some(generation) = self.generation.get() else {
+            return;
+        };
+        let _ = lifecycle::record_actor(&self.root, &self.name, process::id(), generation, event);
+    }
+
+    fn finish<T>(
+        &self,
+        result: Result<T, Box<dyn std::error::Error>>,
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        if let Err(error) = &result {
+            let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.as_ref());
+            let mut os_code = None;
+            for _ in 0..8 {
+                let Some(error) = source else {
+                    break;
+                };
+                os_code = error
+                    .downcast_ref::<io::Error>()
+                    .and_then(io::Error::raw_os_error);
+                if os_code.is_some() {
+                    break;
+                }
+                source = error.source();
+            }
+            self.event(LifecycleEvent::Failure {
+                stage: self.stage.get(),
+                os_code: os_code.or(self.os_code.get()),
+            });
+        }
+        result
+    }
+}
+
 #[cfg(windows)]
 const WINDOWS_CLIENT_READ_TIMEOUT: Duration = Duration::from_millis(250);
 /// How long shutdown waits for a worker thread before detaching it.
@@ -943,19 +1003,43 @@ fn run_start(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let runtime_root = festerm_sessiond::runtime_root()?;
+    let diagnostic = StartupDiagnostic::new(&runtime_root, &name);
+    let result = run_start_prepared(
+        name,
+        shell,
+        cols,
+        rows,
+        scrollback_limit_bytes,
+        runtime_root,
+        &diagnostic,
+    );
+    diagnostic.finish(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_start_prepared(
+    name: String,
+    shell: ShellSpec,
+    cols: u16,
+    rows: u16,
+    scrollback_limit_bytes: usize,
+    runtime_root: PathBuf,
+    diagnostic: &StartupDiagnostic,
+) -> Result<(), Box<dyn std::error::Error>> {
     if !runtime_root.exists() {
         festerm_sessiond::prepare_native_runtime(&runtime_root)?;
     }
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
 
+    diagnostic.stage.set(FailureStage::Registry);
     let start_lock = lock_session_file(&runtime_root, &name, "start")?;
 
     with_registry_lock(|registry| {
         if registry.foreign.contains_key(&name) {
             return Err(format!(
                 "session '{name}' was registered by a newer festerm-sessiond; \
-                 this helper cannot read or replace that record"
+             this helper cannot read or replace that record"
             )
             .into());
         }
@@ -963,11 +1047,11 @@ fn run_start(
             if record_is_live(record)? {
                 if !festerm_sessiond::protocol_is_supported(record.protocol_version) {
                     return Err(format!(
-                        "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
-                        record.protocol_version,
-                        festerm_sessiond::PROTOCOL_VERSION
-                    )
-                    .into());
+                    "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
+                    record.protocol_version,
+                    festerm_sessiond::PROTOCOL_VERSION
+                )
+                .into());
                 }
                 if record.protocol_version >= 2
                     && !festerm_sessiond::snapshot_schema_is_supported(
@@ -975,11 +1059,11 @@ fn run_start(
                     )
                 {
                     return Err(format!(
-                        "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2, 3 and {}",
-                        record.snapshot_schema_version,
-                        festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
-                    )
-                    .into());
+                    "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2, 3 and {}",
+                    record.snapshot_schema_version,
+                    festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+                )
+                .into());
                 }
                 return Err(format!("session '{name}' is already running").into());
             }
@@ -989,6 +1073,7 @@ fn run_start(
         Ok(())
     })?;
 
+    diagnostic.stage.set(FailureStage::Staging);
     let packaged_exe = env::current_exe()?;
     #[cfg(windows)]
     let exe = festerm_sessiond::stage_windows_daemon(&packaged_exe, &runtime_root)?;
@@ -1002,6 +1087,8 @@ fn run_start(
         Err(error) => return Err(error.into()),
     };
 
+    diagnostic.generation.set(Some(generation));
+    diagnostic.stage.set(FailureStage::IndependentSpawn);
     #[cfg(unix)]
     let mut daemon = {
         let mut command = Command::new(&exe);
@@ -1102,12 +1189,13 @@ fn run_start(
             Ok(child) => child,
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
                 if env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some() {
+                    diagnostic.os_code.set(error.raw_os_error());
                     return Err("host session requires independent Windows job ownership; breakaway was denied".into());
                 }
                 eprintln!(
                     "festerm-sessiond: could not break away from the current job object \
-                     (it likely disallows JOB_OBJECT_LIMIT_BREAKAWAY_OK); starting session \
-                     '{name}' without breakaway, so it may not outlive this process's job"
+                 (it likely disallows JOB_OBJECT_LIMIT_BREAKAWAY_OK); starting session \
+                 '{name}' without breakaway, so it may not outlive this process's job"
                 );
                 build_command(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS).spawn()?
             }
@@ -1116,6 +1204,7 @@ fn run_start(
     };
     let daemon_pid = daemon.id();
 
+    diagnostic.stage.set(FailureStage::Registration);
     let registration = (|| -> Result<SessionRecord, Box<dyn std::error::Error>> {
         // Report address errors to the caller rather than losing them with
         // the detached daemon's stderr. The actual child PID determines length.
@@ -1130,6 +1219,9 @@ fn run_start(
                 }
             }
             if let Some(status) = daemon.try_wait()? {
+                diagnostic.event(LifecycleEvent::StartupChildExited {
+                    code: status.code(),
+                });
                 return Err(format!(
                     "session daemon for '{name}' exited during startup with {status}"
                 )
@@ -1181,6 +1273,29 @@ fn run_daemon(
 
     let name = validate_name(name)?;
     let runtime_root = festerm_sessiond::runtime_root()?;
+    let diagnostic = StartupDiagnostic::new(&runtime_root, &name);
+    let result = run_daemon_prepared(
+        name,
+        shell,
+        cols,
+        rows,
+        scrollback_limit_bytes,
+        runtime_root,
+        &diagnostic,
+    );
+    diagnostic.finish(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_daemon_prepared(
+    name: String,
+    shell: ShellSpec,
+    cols: u16,
+    rows: u16,
+    scrollback_limit_bytes: usize,
+    runtime_root: PathBuf,
+    diagnostic: &StartupDiagnostic,
+) -> Result<(), Box<dyn std::error::Error>> {
     if !runtime_root.exists() {
         festerm_sessiond::prepare_native_runtime(&runtime_root)?;
     }
@@ -1188,6 +1303,7 @@ fn run_daemon(
     set_dir_mode(&runtime_root, 0o700)?;
     // Independent of the start-helper lock: that helper waits for registration.
     // Also fences direct `daemon` invocation before it can spawn a second shell.
+    diagnostic.stage.set(FailureStage::Registry);
     let _daemon_lock = lock_session_file(&runtime_root, &name, "daemon")?;
     let registry = load_registry()?;
     if registry.foreign.contains_key(&name)
@@ -1200,6 +1316,7 @@ fn run_daemon(
     {
         return Err("native generation already running or unsupported".into());
     }
+    diagnostic.stage.set(FailureStage::SpawnEvidence);
     let profile = festerm_pty::LocalProfile::new(&shell.executable)
         .with_arguments(shell.arguments.iter().cloned());
     let profile = match &shell.working_directory {
@@ -1248,7 +1365,9 @@ fn run_daemon(
         Err(env::VarError::NotPresent) => now_ms(),
         Err(error) => return Err(error.into()),
     };
+    diagnostic.generation.set(Some(generation));
     let _ = DAEMON_GENERATION.set(generation);
+    diagnostic.stage.set(FailureStage::HostLease);
     if let Some(expected) = env::var_os("FESTERM_SESSIOND_HOST_CONTROL") {
         if expected.to_str() != Some(&generation.to_string()) {
             return Err("invalid host daemon generation".into());
@@ -1260,6 +1379,7 @@ fn run_daemon(
         }
         let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(Some(watch)));
     }
+    diagnostic.stage.set(FailureStage::Registration);
     let mut record = generation_record(
         &runtime_root,
         GenerationRecordSpec {
@@ -1308,12 +1428,14 @@ fn run_daemon(
     }));
     #[cfg(unix)]
     session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
+    diagnostic.stage.set(FailureStage::Runtime);
     let result = with_daemon_generation(
         &runtime_root,
         &record,
         |socket_owned, preserve_artifacts| {
             let mut capability_owner = None;
             let result = (|| {
+                diagnostic.stage.set(FailureStage::SpawnEvidence);
                 if DAEMON_HOST_WATCH.get().is_none() {
                     if let Some(fingerprint) = &record.spawn_fingerprint {
                         let (binding, owner) =
@@ -1330,10 +1452,12 @@ fn run_daemon(
                 }
                 #[cfg(unix)]
                 {
+                    diagnostic.stage.set(FailureStage::Runtime);
                     let socket_path = Path::new(&record.socket);
                     let listener = bind_unix_listener(socket_path)?;
                     *socket_owned = true;
                     set_file_mode(socket_path, 0o600)?;
+                    diagnostic.stage.set(FailureStage::ShellSpawn);
                     let mut spawned =
                         spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
                             .inspect_err(|error| {
@@ -1343,8 +1467,10 @@ fn run_daemon(
                         Dimensions::new(cols as usize, rows as usize)?,
                         scrollback_limit_bytes,
                     )?;
+                    diagnostic.stage.set(FailureStage::Registration);
                     save_registry_record(record.clone())?;
                     lifecycle_event(LifecycleEvent::Ready);
+                    diagnostic.stage.set(FailureStage::Daemon);
                     let reader = spawned.master()?.try_clone_reader()?;
                     let writer = spawned.master()?.take_writer()?;
                     daemon_client_loop(
@@ -1360,7 +1486,9 @@ fn run_daemon(
                 #[cfg(windows)]
                 {
                     let _ = socket_owned;
+                    diagnostic.stage.set(FailureStage::Runtime);
                     let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
+                    diagnostic.stage.set(FailureStage::ShellSpawn);
                     let mut spawned =
                         spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
                             .inspect_err(|error| {
@@ -1370,8 +1498,10 @@ fn run_daemon(
                         Dimensions::new(cols as usize, rows as usize)?,
                         scrollback_limit_bytes,
                     )?;
+                    diagnostic.stage.set(FailureStage::Registration);
                     save_registry_record(record.clone())?;
                     lifecycle_event(LifecycleEvent::Ready);
+                    diagnostic.stage.set(FailureStage::Daemon);
                     let reader = spawned.master()?.try_clone_reader()?;
                     let writer = spawned.master()?.take_writer()?;
                     daemon_client_loop_windows(
@@ -5209,6 +5339,94 @@ fn now_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_failure_diagnostics_keep_stage_code_and_original_result() {
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let root = fixture.path().to_path_buf();
+        let diagnostic = super::StartupDiagnostic::new(&root, "diagnostic");
+        diagnostic.generation.set(Some(9));
+        diagnostic.stage.set(super::FailureStage::IndependentSpawn);
+        let error: Box<dyn std::error::Error> = Box::new(std::io::Error::from_raw_os_error(5));
+        let original = error.as_ref() as *const dyn std::error::Error;
+        let error = diagnostic.finish::<()>(Err(error)).unwrap_err();
+        assert!(std::ptr::eq(original, error.as_ref()));
+        let bytes = std::fs::read(root.join("lifecycle/diagnostic.json")).unwrap();
+        let entries: Vec<super::lifecycle::Entry> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pid, std::process::id());
+        assert_eq!(Some(entries[0].generation), diagnostic.generation.get());
+        assert_eq!(
+            entries[0].event,
+            super::LifecycleEvent::Failure {
+                stage: super::FailureStage::IndependentSpawn,
+                os_code: Some(5),
+            }
+        );
+        // Error Display payloads are never serialized, even for non-OS errors.
+        diagnostic.stage.set(super::FailureStage::SpawnEvidence);
+        let error = diagnostic
+            .finish::<()>(Err("PRIVATE-ARGV-CWD-TOKEN".into()))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "PRIVATE-ARGV-CWD-TOKEN");
+        let bytes = std::fs::read(root.join("lifecycle/diagnostic.json")).unwrap();
+        assert!(!String::from_utf8(bytes).unwrap().contains("PRIVATE"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_stages_and_opaque_breakaway_refusal_preserve_numeric_cause() {
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let root = fixture.path().to_path_buf();
+        let diagnostic = super::StartupDiagnostic::new(&root, "diagnostic");
+        diagnostic.generation.set(Some(9));
+        diagnostic.os_code.set(Some(5));
+        let stages = [
+            super::FailureStage::Runtime,
+            super::FailureStage::Registry,
+            super::FailureStage::Staging,
+            super::FailureStage::IndependentSpawn,
+            super::FailureStage::SpawnEvidence,
+            super::FailureStage::HostLease,
+            super::FailureStage::Registration,
+        ];
+        for stage in stages {
+            diagnostic.stage.set(stage);
+            let error = diagnostic
+                .finish::<()>(Err("opaque original refusal".into()))
+                .unwrap_err();
+            assert_eq!(error.to_string(), "opaque original refusal");
+        }
+        let entries: Vec<super::lifecycle::Entry> =
+            serde_json::from_slice(&std::fs::read(root.join("lifecycle/diagnostic.json")).unwrap())
+                .unwrap();
+        assert_eq!(entries.len(), stages.len());
+        for (entry, stage) in entries.iter().zip(stages) {
+            assert_eq!(
+                entry.event,
+                super::LifecycleEvent::Failure {
+                    stage,
+                    os_code: Some(5)
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn startup_diagnostic_storage_failure_never_changes_success_or_failure() {
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let root = fixture.path().to_path_buf();
+        std::fs::write(root.join("lifecycle"), b"blocked").unwrap();
+        let diagnostic = super::StartupDiagnostic::new(&root, "diagnostic");
+        diagnostic.generation.set(Some(9));
+        assert_eq!(diagnostic.finish(Ok(17)).unwrap(), 17);
+        let error = diagnostic
+            .finish::<()>(Err("original failure".into()))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "original failure");
+        assert_eq!(std::fs::read(root.join("lifecycle")).unwrap(), b"blocked");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     use super::*;
 
     #[test]

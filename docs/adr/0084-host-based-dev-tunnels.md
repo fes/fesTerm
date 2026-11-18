@@ -2717,3 +2717,16 @@ uncertainty still preserves the reservation. Validation covers unchanged
 catalog/journal/lease/operation bytes on refusal, query errors, retained Unknown
 and real owned-fixture Running reuse. Windows API cross-compilation and native
 acceptance are separate; this does not diagnose or repair an earlier incident.
+
+Pre-Ready native-session startup failures use the existing private lifecycle
+ring (64 entries, 32 KiB and bounded try-lock acquisition). Closed failure
+stages distinguish runtime, registry, staging, independent spawn, spawn evidence,
+host lease and registration; only generation, actor PID, numeric OS code and
+available child exit code are retained. A starter actor is not a native-session
+identity. Existing history readers still require the exact daemon PID/generation;
+missing or unreadable evidence supplies no authority. Diagnostic failure cannot
+change startup results, cleanup, Unknown retention, retries or access policy.
+No raw errors, command arguments, paths, environment or terminal input are added.
+Portable stage/privacy/non-interference fixtures do not prove the cause of any
+prior native failure; the next signed native attempt remains required. No new
+pane or control protocol is introduced.

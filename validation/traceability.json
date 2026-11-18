@@ -6319,7 +6319,11 @@
         "ordinary_desktop_privacy_preparation_diagnostic_cannot_cross_generation_or_account",
         "ordinary_desktop_user_cancel_does_not_report_privacy_preparation_failure",
         "ordinary_desktop_retry_clears_preparation_diagnostic_before_new_validation",
-        "ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure"
+        "ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure",
+        "starter_diagnostics_are_numeric_bounded_and_never_daemon_identity",
+        "startup_failure_diagnostics_keep_stage_code_and_original_result",
+        "startup_diagnostic_storage_failure_never_changes_success_or_failure",
+        "startup_stages_and_opaque_breakaway_refusal_preserve_numeric_cause"
       ],
       "manual_scenarios": [
         "DT-05",
