@@ -524,14 +524,17 @@ ADR 0088 introduces a separate own-session execution mode; it is not an
 automation workflow target and does not inherit local-shell filesystem or other
 tab authority. The default-off `javascript-program-dev` feature currently
 exposes only a repository-owned echo program for implementation qualification.
-Native process confinement, transactional saves, packaged enablement and
-ordinary launch review remain acceptance prerequisites.
+The central launch is bound to the reviewed developer digest, API/capability
+set and fresh worker generation. An application-owned privacy/lock fence cuts
+worker and queued-output delivery and is separate from automation grants.
+Packaged confinement, transactional save integration, general launch review
+and native lifecycle qualification remain acceptance prerequisites.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `JSP-01` | No program → running own-session tab | Invoke the centralized JavaScript developer launch command | Exactly one program tab replaces the launcher or opens as a normal session; it has no shell target, automation epoch, local-file origin or terminal-backend reply ownership | Close; never enroll as automation | P, H; repository-owned echo launch and authority-refusal coverage |
+| `JSP-01` | No program → running own-session tab | Invoke the centralized JavaScript developer launch command while OS privacy is available | Exactly one reviewed program tab replaces the launcher or opens as a normal session; digest, capability set and worker generation are exact; it has no shell target, automation epoch, local-file origin or terminal-backend reply ownership | Close; never enroll as automation | P, H; repository-owned echo launch and authority-refusal coverage |
 | `JSP-02` | Running program → input/resize output | Send ordinary encoded terminal bytes or an accepted resize | Exact ordered bytes and resize-specific output reach only the application-owned terminal; chunks may split UTF-8 and escape sequences; no worker owns a `Terminal` | Cancel/close the program | P, H; strict protocol, QuickJS and app-tab tests; native keyboard/IME qualification pending |
-| `JSP-03` | Running program → bounded pressure → stopped | Drain a full output queue, stop, or force a cooperative close cut | Output bytes are not dropped; terminal/control lifecycle events remain reachable; stale generation output and input refuse after the close cut; the worker/thread is reaped within the session bound | Reopen by explicit review; no implicit respawn | P, H, N; desktop thread/process tests; packaged lifecycle and stuck-worker evidence pending |
+| `JSP-03` | Running program → bounded pressure/privacy loss → stopped | Drain a full output queue, stop, revoke privacy or force a cooperative close cut | Output bytes are not dropped during ordinary pressure; stale/revoked output, including bytes already queued, is not delivered; terminal/control lifecycle events remain reachable; the worker/thread is reaped within the session bound | Reopen by explicit review; no implicit respawn | P, H, N; desktop thread/process tests; packaged lifecycle and native privacy-event evidence pending |
 | `JSP-04` | Stopped program / private universe → explicitly resumed program | Review an installed digest and private save identity, acquire the exclusive writer, load the last confirmed revision and create a fresh worker | Stale or foreign identities, conflicts, corrupt/future saves and uncertain publication refuse; resume never serializes a JS heap or workspace game state | Close; retain last confirmed checkpoint | P, N; transactional-save implementation and native filesystem evidence deferred |
 
 ## Staged MCP and JavaScript automation

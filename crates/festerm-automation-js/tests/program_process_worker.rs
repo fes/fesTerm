@@ -4,7 +4,7 @@ use festerm_automation_js::{
         developer_echo_program, ApprovedProgram, ProgramCapability, ProgramHostMessage,
         ProgramKind, ProgramManifest, ProgramSourceSnapshot, Submission, TerminalSize,
     },
-    ProgramSupervisor, WorkerProgram,
+    Error, ProgramDeliveryFence, ProgramSupervisor, WorkerProgram,
 };
 #[cfg(not(windows))]
 use festerm_automation_js::{program::ProgramWorkerMessage, protocol::read_frame};
@@ -12,6 +12,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
     process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -20,6 +24,30 @@ fn worker() -> WorkerProgram {
         .canonicalize()
         .unwrap();
     WorkerProgram::from_install_owned_absolute(&path).unwrap()
+}
+
+struct Fence {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ProgramDeliveryFence for Fence {
+    fn is_live(&self, worker_generation: u64) -> bool {
+        worker_generation == 11 && !self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn try_enter(
+        &self,
+        worker_generation: u64,
+    ) -> Result<
+        Option<Box<dyn festerm_automation_js::ProgramDeliveryPermit + '_>>,
+        festerm_automation_js::Error,
+    > {
+        if worker_generation != 11 || self.cancelled.load(Ordering::Acquire) {
+            Err(festerm_automation_js::Error::DisclosureRevoked)
+        } else {
+            Ok(Some(Box::new(())))
+        }
+    }
 }
 
 fn initial_size() -> TerminalSize {
@@ -159,12 +187,58 @@ fn confined_program_worker_close_is_force_bounded() {
     let started = Instant::now();
     assert!(program.close().is_err());
     assert!(started.elapsed() < Duration::from_secs(2));
+    let cleanup = std::thread::spawn(move || program.shutdown())
+        .join()
+        .expect("forced cleanup must still join the owned child");
     assert!(
-        std::thread::spawn(move || program.shutdown())
-            .join()
-            .unwrap()
-            .is_ok(),
-        "forced cleanup must still reap the owned child"
+        matches!(cleanup, Err(Error::Protocol | Error::Deadline)),
+        "forced cleanup may report the worker fault only after reaping: {cleanup:?}"
+    );
+}
+
+#[test]
+fn confined_program_worker_is_reaped_after_privacy_revocation() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let revoked = Arc::new(AtomicBool::new(false));
+    let forced = Arc::new(AtomicBool::new(false));
+    let mut program = ProgramSupervisor::spawn_with_authority(
+        &worker(),
+        developer_echo_program().unwrap(),
+        11,
+        initial_size(),
+        forced.clone(),
+        Arc::new(Fence {
+            cancelled: revoked.clone(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(program.input(b"before").unwrap(), vec![b"before".to_vec()]);
+    revoked.store(true, Ordering::Release);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if program.input(b"after").is_err() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(program.input(b"late").is_err());
+    assert!(
+        !forced.load(Ordering::Acquire),
+        "fence-only revocation must not depend on forced cancellation"
+    );
+    let started = Instant::now();
+    let cleanup = std::thread::spawn(move || program.shutdown())
+        .join()
+        .expect("revoked worker cleanup must be bounded");
+    assert!(
+        cleanup.is_err(),
+        "a fence-only revocation must be reported, not turned into success"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "revoked worker must be reaped within the bounded cleanup interval"
     );
 }
 
