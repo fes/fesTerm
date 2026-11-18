@@ -12,6 +12,7 @@ struct Scheduler {
     fail_remove_after: bool,
     revoke_create: bool,
     fail_query: bool,
+    prepared_upgrade: Option<(String, String)>,
 }
 
 struct Model {
@@ -32,7 +33,10 @@ impl CommandRunner for Model {
         let security = "task-owner-system-full-control-v1:S-1-5-21-84".to_owned();
         let observed = match action {
             TaskAction::Prepare(xml) => TaskSnapshot {
-                xml: Some(xml.clone()),
+                xml: Some(match &state.prepared_upgrade {
+                    Some((legacy, raw)) if legacy == xml => raw.clone(),
+                    _ => xml.clone(),
+                }),
                 security: Some(security),
                 state: 0,
                 last_exit: 0,
@@ -659,15 +663,25 @@ fn windows_stopped_update_cleanup_foreign_uncertain_or_live_tasks_refuse_without
         let count = state.calls.len();
         drop(state);
         assert!(services.cleanup(cleanup.epoch).is_err());
-        assert!(services.runner.state.borrow().calls[count..]
-            .iter()
-            .all(|request| matches!(
-                request,
+        // A differing raw XML observation may only prepare the original
+        // reservation on an unregistered definition; no native mutation.
+        assert!(services.runner.state.borrow().calls[count..].iter().all(
+            |request| match request {
                 NativeRequest::Task {
                     action: TaskAction::Query,
                     ..
+                } => true,
+                NativeRequest::Task {
+                    name,
+                    action: TaskAction::Prepare(xml),
+                } => {
+                    fault == 0
+                        && name == &pending.new.resource
+                        && Some(xml) == pending.new.native_expected.as_ref()
                 }
-            )));
+                _ => false,
+            }
+        ));
         let retained = services.replacement().unwrap().unwrap();
         if fault == 4 {
             let mut observed = pending;
@@ -787,4 +801,72 @@ fn windows_stopped_update_v3_receipt_rejects_foreign_fences_before_scheduler_eff
         assert!(services.replacement_status().is_err());
         assert_eq!(services.runner.state.borrow().calls.len(), count);
     }
+}
+
+#[test]
+fn windows_pending_replacement_descriptor_adopts_exact_raw_without_recreating_task() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    fixture.installed(&services);
+    services.runner.state.borrow_mut().fail_create_after = true;
+    assert!(fixture.update(&services).is_err());
+    let mut pending = services.replacement().unwrap().unwrap();
+    let before = pending.clone();
+    assert!(pending.new.native_submitted && pending.new.native_snapshot.is_none());
+    let legacy = pending.new.native_expected.clone().unwrap();
+    let raw = legacy.replace(
+        "<RegistrationInfo>",
+        "<RegistrationInfo><SecurityDescriptor>checked-owner-system-policy</SecurityDescriptor>",
+    );
+    assert_ne!(legacy, raw);
+    {
+        let mut scheduler = services.runner.state.borrow_mut();
+        scheduler
+            .tasks
+            .get_mut(&pending.new.resource)
+            .unwrap()
+            .0
+            .clone_from(&raw);
+        scheduler.prepared_upgrade = Some((legacy, raw.clone()));
+        scheduler.calls.clear();
+    }
+    services.reconcile_replacement_tasks(&mut pending).unwrap();
+    let mut wanted = before;
+    wanted.new.native_expected = Some(raw.clone());
+    wanted.new.native_snapshot = Some(raw);
+    assert_eq!(
+        pending, wanted,
+        "existing old raw snapshot and all other fields are preserved"
+    );
+    assert_eq!(services.replacement().unwrap().unwrap(), wanted);
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|c| matches!(
+            c,
+            NativeRequest::Task {
+                action: TaskAction::Query | TaskAction::Prepare(_),
+                ..
+            }
+        )));
+    assert_eq!(
+        fixture.update(&services).unwrap().state,
+        ReplacementState::Committed
+    );
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|c| !matches!(
+            c,
+            NativeRequest::Task {
+                action: TaskAction::Create(_) | TaskAction::Start,
+                ..
+            }
+        )));
 }

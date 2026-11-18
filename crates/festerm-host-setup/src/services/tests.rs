@@ -135,6 +135,8 @@ struct FakeState {
     observation_error: bool,
     native_xml: Option<String>,
     native_security: Option<String>,
+    native_prepared_upgrade: Option<(String, String)>,
+    replace_receipt_on_prepare: Option<Registration>,
     failed: bool,
     fail_reload_once: bool,
     pending_start: bool,
@@ -263,8 +265,22 @@ impl CommandRunner for FakeRunner {
             NativeRequest::Task { action, .. } => {
                 match action {
                     TaskAction::Prepare(xml) => {
+                        let canonical = match &state.native_prepared_upgrade {
+                            Some((legacy, current)) if legacy == xml => current.clone(),
+                            _ if xml.starts_with("normalized:") => xml.clone(),
+                            _ => format!("normalized:{xml}"),
+                        };
+                        if let Some(replacement) = state.replace_receipt_on_prepare.take() {
+                            let directory =
+                                storage::private_directory(self.receipt.parent().unwrap(), false)?;
+                            storage::replace_private(
+                                &directory,
+                                Path::new(RECORD),
+                                &serde_json::to_vec(&replacement).unwrap(),
+                            )?;
+                        }
                         output.stdout = serde_json::to_vec(&TaskSnapshot {
-                            xml: Some(format!("normalized:{xml}")),
+                            xml: Some(canonical),
                             security: Some(
                                 "task-owner-system-full-control-v1:S-1-5-21-1-2-3-1001".into(),
                             ),
@@ -2101,4 +2117,271 @@ fn native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_ow
         }
         assert!(owners.snapshot().unwrap().keys.is_empty());
     }
+}
+
+// Model the observed Scheduler-only XML insertion. The native boundary's COM
+// serialization and descriptor policy are qualified separately on Windows.
+fn pending_windows_descriptor(
+    services: &Services<'_, FakeRunner>,
+    epoch: u64,
+) -> (Registration, Registration) {
+    let mut before = services.registration().unwrap().1.unwrap();
+    before.native_snapshot = None;
+    let legacy = before.native_expected.clone().unwrap();
+    let raw = legacy.replace(
+        "<RegistrationInfo>",
+        "<RegistrationInfo><SecurityDescriptor>checked-owner-system-policy</SecurityDescriptor>",
+    );
+    assert_ne!(legacy, raw);
+    services.save(&before, epoch, Phase::Provisioned).unwrap();
+    let mut scheduler = services.runner.state.borrow_mut();
+    scheduler.native_xml = Some(raw.clone());
+    scheduler.native_prepared_upgrade = Some((legacy, raw.clone()));
+    scheduler.calls.clear();
+    let mut after = before.clone();
+    after.native_expected = Some(raw.clone());
+    after.native_snapshot = Some(raw);
+    (before, after)
+}
+
+#[test]
+fn native_service_windows_pending_descriptor_promotes_raw_v4_snapshot_without_recreate() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Windows);
+    services
+        .install_reserved_policy(&stage, snapshot.epoch, true)
+        .unwrap();
+    let (before, after) = pending_windows_descriptor(&services, snapshot.epoch);
+    assert_eq!(before.version, 4);
+    assert_eq!(services.status().unwrap().process, ProcessState::Stopped);
+    let remembered = services.registration().unwrap().1.unwrap();
+    assert_eq!(
+        remembered, after,
+        "only expected and raw snapshot may change"
+    );
+    // Preserve the pre-change helper's v4 raw equality/readback contract.
+    let old_format: Registration =
+        serde_json::from_slice(&serde_json::to_vec(&remembered).unwrap()).unwrap();
+    services
+        .validate_registration(&old_format, &snapshot)
+        .unwrap();
+    assert_eq!(old_format.native_snapshot, old_format.native_expected);
+    assert_eq!(
+        old_format.native_snapshot,
+        services.runner.state.borrow().native_xml
+    );
+    let calls = &services.runner.state.borrow().calls;
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| matches!(
+                c,
+                NativeRequest::Task {
+                    action: TaskAction::Prepare(_),
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(calls.iter().all(|c| matches!(
+        c,
+        NativeRequest::Task {
+            action: TaskAction::Query | TaskAction::Prepare(_),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn native_service_windows_existing_raw_snapshot_is_never_reprepared_or_rewritten() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Windows);
+    services
+        .install_reserved_policy(&stage, snapshot.epoch, true)
+        .unwrap();
+    let (_, raw) = pending_windows_descriptor(&services, snapshot.epoch);
+    services
+        .save(&raw, snapshot.epoch, Phase::Provisioned)
+        .unwrap();
+    let bytes = std::fs::read(&services.runner.receipt).unwrap();
+    services.runner.state.borrow_mut().native_prepared_upgrade = Some((
+        raw.native_expected.clone().unwrap(),
+        "must-not-reprepare".into(),
+    ));
+    for _ in 0..2 {
+        assert_eq!(services.status().unwrap().process, ProcessState::Stopped);
+        assert_eq!(std::fs::read(&services.runner.receipt).unwrap(), bytes);
+    }
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|c| matches!(
+            c,
+            NativeRequest::Task {
+                action: TaskAction::Query,
+                ..
+            }
+        )));
+}
+
+#[test]
+fn native_service_windows_descriptor_recovery_refuses_changed_authority_and_unsent_intent() {
+    for mutation in 0..10 {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let services = services(root.path(), &store, Platform::Windows);
+        services
+            .install_reserved_policy(&stage, snapshot.epoch, true)
+            .unwrap();
+        let (mut before, _) = pending_windows_descriptor(&services, snapshot.epoch);
+        if mutation == 0 {
+            before.native_submitted = false;
+            services
+                .save(&before, snapshot.epoch, Phase::Provisioned)
+                .unwrap();
+        } else {
+            let mut scheduler = services.runner.state.borrow_mut();
+            if mutation == 1 {
+                scheduler.native_security = Some("foreign-policy".into());
+            } else if mutation == 2 {
+                scheduler.native_xml = None;
+            } else {
+                let (needle, replacement) = match mutation {
+                    3 => ("<Command>", "<Command>foreign-executable-"),
+                    4 => ("<Arguments>", "<Arguments>foreign-argument "),
+                    5 => ("<UserId>", "<UserId>foreign-principal-"),
+                    6 => ("LeastPrivilege", "HighestAvailable"),
+                    7 => ("<URI>", "<URI>foreign-resource-"),
+                    8 => ("fesTerm-host-reservation:", "foreign-reservation:"),
+                    _ => ("IgnoreNew", "Parallel"),
+                };
+                let raw = scheduler.native_xml.as_mut().unwrap();
+                assert!(raw.contains(needle));
+                *raw = raw.replace(needle, replacement);
+            }
+        }
+        let bytes = std::fs::read(&services.runner.receipt).unwrap();
+        assert!(services.status().is_err(), "mutation {mutation}");
+        assert_eq!(std::fs::read(&services.runner.receipt).unwrap(), bytes);
+        assert!(services
+            .runner
+            .state
+            .borrow()
+            .calls
+            .iter()
+            .all(|c| matches!(
+                c,
+                NativeRequest::Task {
+                    action: TaskAction::Query | TaskAction::Prepare(_),
+                    ..
+                }
+            )));
+    }
+}
+
+#[test]
+fn native_service_windows_descriptor_promotion_cas_preserves_concurrent_receipt() {
+    for mutation in 0..3 {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let services = services(root.path(), &store, Platform::Windows);
+        services
+            .install_reserved_policy(&stage, snapshot.epoch, true)
+            .unwrap();
+        let (before, _) = pending_windows_descriptor(&services, snapshot.epoch);
+        let mut concurrent = before.clone();
+        match mutation {
+            0 => concurrent.native_submitted = false,
+            1 => concurrent.native_expected.as_mut().unwrap().push(' '),
+            _ => concurrent.native_snapshot = concurrent.native_expected.clone(),
+        }
+        services
+            .runner
+            .state
+            .borrow_mut()
+            .replace_receipt_on_prepare = Some(concurrent.clone());
+        assert!(services.status().is_err());
+        assert_eq!(services.registration().unwrap().1.unwrap(), concurrent);
+        assert!(services
+            .runner
+            .state
+            .borrow()
+            .calls
+            .iter()
+            .all(|c| matches!(
+                c,
+                NativeRequest::Task {
+                    action: TaskAction::Query | TaskAction::Prepare(_),
+                    ..
+                }
+            )));
+    }
+}
+
+#[test]
+fn native_service_windows_fresh_reservation_retains_raw_snapshot_and_never_starts() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Windows);
+    services
+        .install_reserved_policy(&stage, snapshot.epoch, true)
+        .unwrap();
+    let record = services.registration().unwrap().1.unwrap();
+    assert_eq!(record.version, 4);
+    assert_eq!(record.native_expected, record.native_snapshot);
+    let scheduler = services.runner.state.borrow();
+    assert_eq!(record.native_snapshot, scheduler.native_xml);
+    assert_eq!(
+        scheduler
+            .calls
+            .iter()
+            .filter(|c| matches!(
+                c,
+                NativeRequest::Task {
+                    action: TaskAction::Create(_),
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        scheduler
+            .calls
+            .iter()
+            .filter(|c| matches!(
+                c,
+                NativeRequest::Task {
+                    action: TaskAction::Prepare(_),
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!scheduler.calls.iter().any(|c| matches!(
+        c,
+        NativeRequest::Task {
+            action: TaskAction::Start,
+            ..
+        }
+    )));
 }

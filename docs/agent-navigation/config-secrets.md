@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f51f8e185ed9e70ac526135e6e57a45620b61554a9c5dbf6c06a13e216a31db6"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9852e52274064da1f38397e8b4aa3e9a67042783f0e095a85663916d5b59667e"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/
 
 ## Config startup
 
-Use for: Startup picks the config path and saves workspace or profile updates.
+Use for: Startup chooses the config source and persists workspace or profile updates.
 
 - [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — chooses the explicit override or native config path and keeps it private
 - [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — private loader and save gate for startup writes and reconciliation
@@ -22,10 +22,11 @@ Evidence:
 Caveats:
 - Diagnostics deliberately omit the selected path and source TOML.
 - Unknown or busy writes latch the save gate until restart.
+- The selected path is intentionally inaccessible outside this module.
 
 ## Config schema
 
-Use for: Parsing, validating, or serializing a configuration document or workspace snapshot.
+Use for: Parsing, validating, or serializing a config document or workspace snapshot.
 
 - [`Configuration`](../../crates/festerm-config/src/lib.rs) — versioned TOML document holding profiles, workspace, settings, and accounts
 - [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — metadata-only restore state with profile validation
@@ -37,6 +38,7 @@ Evidence:
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
 - Profile IDs and workspace tab profile_id references must stay unique and valid.
+- Config files store only metadata, never session content or secrets.
 
 ## Secret boundary
 
@@ -52,6 +54,7 @@ Evidence:
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
 - Unsupported, missing, locked, or unavailable native storage is a first-class error.
+- Secret references are opaque and must remain canonical UUIDv4 strings.
 
 ## File security
 
@@ -67,3 +70,4 @@ Evidence:
 Caveats:
 - Private file creation rejects inherited or foreign ACLs before publication.
 - Directory ancestry and ownership must remain trusted; otherwise the secure path is rejected.
+- Publication is gated on verified security metadata, not just a successful create call.

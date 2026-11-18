@@ -300,11 +300,12 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             match (&observed.xml, &observed.security) {
                 (Some(xml), Some(security))
                     if record.native_submitted
-                        && Some(xml) == record.native_expected.as_ref()
                         && Some(security) == record.native_security.as_ref() =>
                 {
+                    let before = record.clone();
+                    record.native_expected = Some(self.expected_task_xml(&record, xml)?);
                     record.native_snapshot = observed.xml;
-                    self.remember_created_task(&record)?;
+                    self.remember_created_task(&before, &record)?;
                 }
                 (None, None) if !record.native_submitted => {}
                 (None, None) => {
@@ -361,19 +362,45 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         })
     }
 
-    fn remember_created_task(&self, record: &Registration) -> io::Result<()> {
+    /// Admit only the native preparation of the recorded reservation. Query
+    /// and persisted snapshots remain raw, including Scheduler's descriptor.
+    fn expected_task_xml(&self, record: &Registration, observed: &str) -> io::Result<String> {
+        let expected = record
+            .native_expected
+            .as_ref()
+            .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?;
+        if expected == observed {
+            return Ok(expected.clone());
+        }
+        let prepared = self.task(record, TaskAction::Prepare(expected.clone()))?;
+        if prepared.xml.as_deref() != Some(observed)
+            || prepared.security.as_ref() != record.native_security.as_ref()
+        {
+            return Err(refused("host.service_foreign_native_definition"));
+        }
+        Ok(observed.into())
+    }
+
+    fn remember_created_task(
+        &self,
+        before: &Registration,
+        record: &Registration,
+    ) -> io::Result<()> {
         self.with_record(|directory, snapshot| {
             let mut prior = self
                 .read_registration(directory, snapshot)?
                 .ok_or_else(|| refused("host.service_not_installed"))?;
-            if prior.native_snapshot.is_some()
+            if prior != *before
+                || !prior.native_submitted
+                || prior.native_snapshot.is_some()
                 || record.native_snapshot.is_none()
                 || record.native_security.is_none()
-                || prior.native_expected.as_ref() != record.native_snapshot.as_ref()
+                || record.native_expected.as_ref() != record.native_snapshot.as_ref()
                 || prior.native_security != record.native_security
             {
                 return Err(refused("host.service_foreign_native_definition"));
             }
+            prior.native_expected.clone_from(&record.native_expected);
             prior.native_snapshot.clone_from(&record.native_snapshot);
             prior.native_security.clone_from(&record.native_security);
             if prior != *record {
@@ -716,6 +743,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                     record.native_submitted = true;
                     self.save(&record, epoch, Phase::Provisioned)?;
                     self.fence(epoch, Phase::Provisioned)?;
+                    let before = record.clone();
                     let created =
                         self.task(
                             &record,
@@ -733,7 +761,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                             .security
                             .ok_or_else(|| refused("host.service_task_creation_unconfirmed"))?,
                     );
-                    self.remember_created_task(&record)?;
+                    self.remember_created_task(&before, &record)?;
                 }
             }
         }

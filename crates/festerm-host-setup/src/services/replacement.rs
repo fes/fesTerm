@@ -108,9 +108,9 @@ impl<R: CommandRunner> Services<'_, R> {
             match (&observed.xml, &observed.security) {
                 (Some(xml), Some(security))
                     if target.native_submitted
-                        && Some(xml) == target.native_expected.as_ref()
                         && Some(security) == target.native_security.as_ref() =>
                 {
+                    target.native_expected = Some(self.expected_task_xml(target, xml)?);
                     target.native_snapshot = observed.xml;
                 }
                 (None, None) if !target.native_submitted => {}

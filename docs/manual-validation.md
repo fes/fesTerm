@@ -5510,6 +5510,18 @@ These native/service checks remain pending.
 
 
 Native Dev Tunnels workflow campaign follow-up (HOSTSETUP-01 / GUI:HOST-04):
+Windows task registration must separately qualify fresh preparation and recovery
+of an older submitted reservation with no stored snapshot. In a disposable lab,
+confirm that the unregistered preparation includes the checked owner/SYSTEM
+security descriptor and exactly matches the registered raw XML. Recover the
+original pending reservation without Create, Run, task edits or receipt repair;
+verify both XML fields are atomically recorded and an existing raw snapshot is
+unchanged. Exercise the previously released helper against the resulting v4
+receipt, then perform ordinary explicit Start and service/session checks.
+Changed command, arguments, principal, URI, settings, reservation or ACL and
+concurrent receipt changes must refuse. Portable models and Windows compilation
+do not establish these native or older-helper passes.
+
 Linux native screenshots exposed pending setup presented as On, unrelated host
 failures on private profile drafts, and recovery buttons collapsing into narrow
 text columns. Settings now reports the recorded phase (Configured still makes

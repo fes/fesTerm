@@ -1868,6 +1868,12 @@ NotPublished with no older/latest/schema-1 retry. Mock fixtures do not qualify
 genuine release availability, real native install/vault/cloud, endpoint Ready
 or usability. Setup alone never shares a shell.
 
+HOST-04/HOST-05 Windows registration retains raw task XML and checked native
+security. A submitted, unobserved reservation may adopt only an exact native
+re-preparation of its original definition under the original receipt CAS,
+including Scheduler's security-descriptor insertion. Existing observed snapshots
+are unchanged; this reconciliation never recreates or starts the task.
+
 **Private-session sharing child — controlled source integration, not native acceptance:**
 `HOST-03` routes exact connected-local review → explicit private Bind → separate
 explicit Switch, original-operation status Resume and exact Release/irreversible

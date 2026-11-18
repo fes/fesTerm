@@ -39,6 +39,15 @@ are unchanged. See the canonical
 [browser workflow](../gui-design.md#account-host-and-session-browser). Native
 layout, keyboard and live-service qualification remain distinct from UI tests.
 
+HOST-04/HOST-05 native Windows validation additionally covers Scheduler's
+security-descriptor XML insertion. Preparation uses the checked policy on an
+unregistered definition; raw snapshots and v4 equality remain unchanged. An
+older submitted reservation can adopt only exact native re-preparation plus
+unchanged policy under a protected original-receipt CAS, without Create or Run.
+Portable recovery/CAS fixtures and cross-compilation do not qualify actual
+Scheduler serialization or previously released helper interoperability; see
+[native service validation](../native-host-services.md#windows-task-descriptor-readback).
+
 ## Context
 
 The current bridge exposes one exact persistent daemon generation. Standalone
