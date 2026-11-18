@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "31eedb40641e8de04387f7491b6ed6800f2306abe5c1955912f36bf8d5a64a48", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e9e4a985641fca4420c7717a7a445e3ef135d2f51ad8872c1e7f17528f54cca6", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the
@@ -10,14 +10,14 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 | From | To | Trigger | Evidence |
 | --- | --- | --- | --- |
-| Starting | Running | connection established and shell ready | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Running | Stopping | shutdown requested while active | `crates/festerm-pty/src/lib.rs::request_stop` |
-| Running | Disconnected | transport lost and no auto-recovery resumed | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-sessiond/src/lib.rs::client_worker` |
-| Running | Exited | child process or daemon exited cleanly | `crates/festerm-pty/src/lib.rs::control_worker`<br>`crates/festerm-sessiond/src/lib.rs::client_worker` |
-| Running | Failed | local PTY I/O or SSH setup failure | `crates/festerm-pty/src/lib.rs::control_worker`<br>`crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind` |
-| Stopping | Stopped | reader stopped and shutdown completed | `crates/festerm-pty/src/lib.rs::control_worker` |
-| Disconnected | Starting | manual reconnect requested after disconnect | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Disconnected | Stopped | shutdown requested while disconnected | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Starting | Running | startup completes and the session is live | `crates/festerm-pty/src/lib.rs::start_with_notifier` |
+| Running | Stopping | shutdown or cancellation is requested | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-ssh/src/lib.rs::finish_sftp_cancellation` |
+| Running | Disconnected | transport is lost and recovery is not resumed | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Running | Exited | child process exits cleanly | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Running | Failed | fatal worker or transport error occurs | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
+| Stopping | Stopped | shutdown cleanup finishes | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
+| Disconnected | Starting | manual reconnect or reconnect request begins | `crates/festerm-ssh/src/lib.rs::schedule_reconnect` |
+| Disconnected | Stopped | user shuts down while disconnected or reconnect is cancelled | `crates/festerm-sessiond/src/lib.rs::finish_cancelled_reconnect`<br>`crates/festerm-sessiond/src/lib.rs::client_worker` |
 
 ## Property checks
 

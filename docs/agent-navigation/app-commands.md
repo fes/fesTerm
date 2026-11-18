@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "90bc17aeba6541bf39525bf9695e8a51c95d2245664b87e2581e059d4496d9ef"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e1fe3813f8491b9c782ef43c1bb78f592a7ca12aaddedc4c0ec9b38c661ba4ef"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions.
+This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal input and global actions.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -12,10 +12,10 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 
 Use for: A widget, launcher, or tab action needs to mutate app state.
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, tabs, and sessions
-- [`AppState`](../../app/festerm/src/tabs.rs) — window-level coordinator owning tabs, documents, and UI state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for app commands
-- [`with_primary_session`](../../app/festerm/src/tabs.rs) — creates the normal startup shell tab
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed product intents for launcher, settings, tabs, and sessions
+- [`AppState`](../../app/festerm/src/tabs.rs) — window coordinator owning tabs, documents, and UI state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for AppCommand values
+- [`with_primary_session`](../../app/festerm/src/tabs.rs) — builds the normal startup shell tab
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the opening tab rather than a neighbor
@@ -26,7 +26,7 @@ Caveats:
 - dispatch is the single mutation path; direct widget-side tab policy is rejected by design.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 
-## Tab close path
+## Tab close flow
 
 Use for: A tab is closing or a fallback focus choice is being selected.
 
