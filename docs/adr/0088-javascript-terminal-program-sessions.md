@@ -292,6 +292,14 @@ or regressing CPU evidence and cleanup failure fail closed. The finite native
 ceiling is a last resort if all higher-level accounting fails, not a grant to
 run for an hour.
 
+The application owns one process-wide lifecycle/quota coordinator shared by
+all tabs and windows. Its explicit developer default admits at most four
+pending, live or closing programs and accounts 128 MiB for each (512 MiB
+total). The process supervisor independently enforces the aggregate count and
+memory proxy before spawning. Permits release on every error, completion,
+cancellation and reap path. This is finite accounting, not aggregate RSS or
+CPU measurement, and does not change automation-worker admission.
+
 These values close the source-level runaway policy gap, not the launch
 qualification gate. Record measured normal workloads, hostile-loop results,
 aggregate multi-tab limits and each packaged native enforcement mechanism
@@ -308,6 +316,21 @@ v1 policy avoids inventing a trusted pause protocol. Already admitted storage
 publication may finish; report its real outcome. Existing OS event-detection
 timing limitations still apply. Do not claim synchronous knowledge of lock or
 revoke acknowledged effects retroactively.
+
+Normal tab, window and application close cuts new input first, allows the
+500 ms cooperative path only for a bounded same-universe checkpoint commit,
+then settles or reports the operation, forces termination if needed, joins the
+worker and releases the writer. App quit observes one aggregate cleanup
+deadline rather than waiting once per program. Privacy loss instead cuts
+storage, input and output immediately, discards queued output, skips
+checkpoint close and terminates/reaps. An uncompleted lease or reap is an
+explicit cleanup failure, never an inferred successful save. The cooperative
+and force paths are bounded for the worker/control plane. A local storage
+operation that remains inside uninterruptible native I/O cannot be forcibly
+resolved without an uncertain publication policy; quit remains cancelled with
+the writer retained until that operation returns. Packaged filesystem timing
+must be qualified before enablement rather than claiming a universal I/O
+deadline.
 
 ### 5. Supply private assets and transactional saves
 
@@ -363,6 +386,13 @@ explicit migration. Future, corrupt and unapproved schemas refuse; downward
 publication refuses. Resume publishes a durable pre-migration envelope before
 the replacement. New/refused-existing and resume/refused-missing are distinct
 launch results, and the exclusive writer is held for the runtime lifetime.
+
+Unexpected worker exit is observed through a supervisor termination wake,
+drives session cleanup, drops the runtime-owned writer and allows a later
+explicit Resume to start a fresh generation. The portable storage fixture
+proves that reopening after release retains only a confirmed save; packaged
+process-crash and power-loss evidence remains native qualification. Old
+input, queued output, host calls and terminal contents are not replayed.
 
 ### 6. Define clocks, randomness and game maintenance
 
@@ -525,9 +555,13 @@ queue publication and when queued output is consumed; revocation stops and
 reaps the process and suppresses queued terminal bytes. A separate
 default-off process profile adds deterministic rolling-window and idle-
 survival limits plus force-bounded hostile-input coverage while automation
-retains its original 5-second policy. The branch does not make the mode
-generally enabled or qualify a packaged production worker. Keep packaged/native
-qualification, aggregate quotas, general launch review,
+retains its original 5-second policy. The lifecycle slice now shares one
+application-owned aggregate coordinator across windows, moves live tabs
+without re-creating workers/writers, bounds normal/quit cleanup, skips close
+checkpointing on privacy loss, and refuses a fifth 128 MiB accounted program
+before worker spawn. The branch does not make the mode generally enabled or
+qualify a packaged production worker. Keep packaged/native
+qualification, measured actual aggregate resource use, general launch review,
 TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
@@ -539,6 +573,11 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
   ownership and explicit resume while preserving the single app
   terminal writer, core-owned protocol semantics, bounded queues, event-driven
   wakes, restricted host API, centralized commands and metadata-only workspaces.
+  The lifecycle slice adds shared aggregate admission, one runtime through
+  cross-window moves, privacy-first termination, bounded normal close/reap,
+  explicit cleanup failure and idle-exit wakeup. Fresh-runtime Resume and
+  storage release/reopen are modeled separately; real process-crash evidence
+  remains pending.
 - **GUI/action edges affected:** `JSP-01` launches only the repository-owned
   developer echo program through the typed command path; `JSP-02` carries
   ordinary encoded input, resize and output; `JSP-03` preserves close and
@@ -556,6 +595,9 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
   hostile-input forced termination, native-profile separation, idle survival
   and the app-level
   `javascript_program_launches_without_shell_or_automation_authority` route.
+  Aggregate parallel supervisor admission, app refusal/release, privacy
+  termination without checkpoint close, moved-tab adoption, source-window
+  removal and multi-program aggregate quit are now covered.
   Add the following concrete paths to the trace relationships as the remaining
   delivery slices land:
   - `javascript_program_launches_without_shell_or_target_authority`;
@@ -582,9 +624,10 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
   confinement checks required before enablement. Existing `AUTO-01` workflow
   consent evidence does not qualify this execution mode. Portable process
   tests exercise the new rolling/idleness/hostile behavior on the current
-  host; macOS, Windows and Linux packaged profile qualification and measured
-  aggregate limits remain open. Mobile remains deferred behind a separately
-  qualified worker and lifecycle design.
+  host; macOS, Windows and Linux packaged profile qualification, real
+  lock/suspend timing, packaged confinement and actual aggregate memory/CPU
+  measurements remain open. GUI/native usability is also unqualified. Mobile
+  remains deferred behind a separately qualified worker and lifecycle design.
 - **Coverage superseded:** None. `validation/traceability.json` registers the
   implemented developer slice as partial and retains packaged confinement,
   aggregate quotas, lifecycle, save, resume and platform evidence as

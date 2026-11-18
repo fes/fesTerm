@@ -190,6 +190,18 @@ pub trait ProgramDeliveryFence: Send + Sync {
         &self,
         worker_generation: u64,
     ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, Error>;
+
+    fn try_enter_now(
+        &self,
+        worker_generation: u64,
+    ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, Error> {
+        self.try_enter(worker_generation)
+    }
+
+    /// Releases application-owned lifetime accounting after the worker and
+    /// its admitted storage work have settled. Default implementations keep
+    /// release coupled to fence drop.
+    fn release(&self) {}
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -38,8 +38,13 @@ those workflows: it is disabled by default and exposes only a repository-owned
 echo program through the `javascript-program-dev` feature. The program owns one
 terminal tab without shell, local-file, or automation-target authority.
 Portable and confined-process tests do not qualify long-lived native resource
-policy, transactional saves, packaged lifecycle, mobile execution or a
-TradeWars port; see `JSP-01`–`JSP-04`.
+policy, measured aggregate memory/CPU, transactional saves on packaged real
+filesystems, native lifecycle/privacy timing, GUI usability, mobile execution or
+a TradeWars port. Portable lifecycle tests now cover one shared
+four-program/512 MiB accounting limit, aggregate close/reap, cross-window tab
+moves, privacy-first termination, exit-wake cleanup and portable save reopen;
+native process-crash Resume evidence is still pending; see
+`JSP-01`–`JSP-04`.
 
 The experimental iOS terminal keyboards include an on-device-only dictation
 spike with explicit bounded review/Insert (no implicit Return or cloud fallback).

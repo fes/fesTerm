@@ -36,7 +36,7 @@ pub use program_storage::{
     MAX_STORAGE_SLOT_BYTES, MAX_STORAGE_VALUE_BYTES,
 };
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
-pub use program_supervisor::ProgramSupervisor;
+pub use program_supervisor::{ProgramSupervisor, ProgramSupervisorQuota};
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
 pub use quickjs_program_runtime::QuickJsProgramRuntime;
 #[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
@@ -115,6 +115,8 @@ pub enum Error {
     Cleanup,
     #[error("automation worker failed: {0}")]
     WorkerFailed(&'static str),
+    #[error("aggregate JavaScript program quota exhausted")]
+    ProgramQuota,
     #[error("{0}")]
     Storage(&'static str),
 }

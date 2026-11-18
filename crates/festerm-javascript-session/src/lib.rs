@@ -75,6 +75,15 @@ pub trait JavaScriptRuntime: Send + 'static {
     fn input(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn resize(&mut self, size: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
     fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError>;
+
+    fn bind_termination_wake(&mut self, _wake: Arc<dyn Fn() + Send + Sync>) {}
+
+    fn terminate(&mut self) -> Result<(), JavaScriptRuntimeError> {
+        if let Some(flag) = self.cancellation_flag() {
+            flag.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
 }
 
 /// Deterministic runtime useful for transport tests and simple smoke callers.
@@ -172,6 +181,12 @@ impl JavaScriptRuntime for QuickJsJavaScriptRuntime {
             .close()
             .map_err(|_| JavaScriptRuntimeError::new("JavaScript program close failed"))
     }
+
+    fn terminate(&mut self) -> Result<(), JavaScriptRuntimeError> {
+        self.runtime
+            .terminate()
+            .map_err(|_| JavaScriptRuntimeError::new("JavaScript program cleanup failed"))
+    }
 }
 
 #[cfg(not(target_os = "ios"))]
@@ -183,6 +198,7 @@ pub struct ProcessJavaScriptRuntime {
     forced: Arc<AtomicBool>,
     worker_generation: u64,
     storage: Arc<dyn ProgramStorageHost>,
+    termination_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[cfg(not(target_os = "ios"))]
@@ -240,6 +256,7 @@ impl ProcessJavaScriptRuntime {
             forced: Arc::new(AtomicBool::new(false)),
             worker_generation,
             storage,
+            termination_wake: None,
         })
     }
 }
@@ -271,8 +288,21 @@ impl JavaScriptRuntime for ProcessJavaScriptRuntime {
         }
         let generation = launch.worker_generation();
         let params = launch.params().clone();
-        let mut supervisor =
-            festerm_automation_js::ProgramSupervisor::spawn_with_launch_and_storage(
+        let mut supervisor = match self.termination_wake.clone() {
+            Some(wake) => {
+                festerm_automation_js::ProgramSupervisor::spawn_with_launch_storage_and_wake(
+                    &self.worker,
+                    launch.program().clone(),
+                    generation,
+                    program_size(size),
+                    self.forced.clone(),
+                    self.fence.clone(),
+                    self.storage.clone(),
+                    params,
+                    wake,
+                )
+            }
+            None => festerm_automation_js::ProgramSupervisor::spawn_with_launch_and_storage(
                 &self.worker,
                 launch.program().clone(),
                 generation,
@@ -280,14 +310,13 @@ impl JavaScriptRuntime for ProcessJavaScriptRuntime {
                 self.forced.clone(),
                 self.fence.clone(),
                 self.storage.clone(),
-                params,
-            )
-            .map_err(|error| match error {
-                festerm_automation_js::Error::Storage(message) => {
-                    JavaScriptRuntimeError::new(message)
-                }
-                _ => JavaScriptRuntimeError::new("JavaScript program worker could not start"),
-            })?;
+                launch.params().clone(),
+            ),
+        }
+        .map_err(|error| match error {
+            festerm_automation_js::Error::Storage(message) => JavaScriptRuntimeError::new(message),
+            _ => JavaScriptRuntimeError::new("JavaScript program worker could not start"),
+        })?;
         let output = supervisor.take_start_output();
         self.supervisor = Some(supervisor);
         Ok(output)
@@ -320,6 +349,23 @@ impl JavaScriptRuntime for ProcessJavaScriptRuntime {
             .shutdown()
             .map_err(|_| JavaScriptRuntimeError::new("JavaScript program cleanup failed"))?;
         Ok(output)
+    }
+
+    fn terminate(&mut self) -> Result<(), JavaScriptRuntimeError> {
+        let Some(supervisor) = self.supervisor.take() else {
+            return Ok(());
+        };
+        supervisor.force();
+        match supervisor.shutdown() {
+            Ok(()) | Err(festerm_automation_js::Error::DisclosureRevoked) => Ok(()),
+            Err(_) => Err(JavaScriptRuntimeError::new(
+                "JavaScript program cleanup failed",
+            )),
+        }
+    }
+
+    fn bind_termination_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.termination_wake = Some(wake);
     }
 }
 
@@ -371,6 +417,8 @@ struct Shared {
     generation: AtomicU64,
     accepting: AtomicBool,
     stopping: AtomicBool,
+    runtime_stopped: AtomicBool,
+    cleanup_complete: AtomicBool,
     event_sender: SyncSender<SessionEvent>,
     control_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
@@ -562,6 +610,16 @@ pub struct JavaScriptSession {
 }
 
 impl JavaScriptSession {
+    pub fn cleanup_complete(&self) -> bool {
+        self.shared.cleanup_complete.load(Ordering::Acquire)
+            && !festerm_automation_js::cleanup_failed()
+    }
+
+    pub fn force_shutdown(&self) {
+        self.shared.force_cancellation();
+        self.shared.request_stop();
+    }
+
     pub fn start(
         runtime: impl JavaScriptRuntime,
         size: TerminalSize,
@@ -656,6 +714,8 @@ impl JavaScriptSession {
             generation: AtomicU64::new(1),
             accepting: AtomicBool::new(true),
             stopping: AtomicBool::new(false),
+            runtime_stopped: AtomicBool::new(false),
+            cleanup_complete: AtomicBool::new(false),
             event_sender,
             control_sender,
             event_notifier,
@@ -663,6 +723,17 @@ impl JavaScriptSession {
             fence,
             worker_generation,
         });
+        let termination_shared = shared.clone();
+        runtime.bind_termination_wake(Arc::new(move || {
+            let _commands = termination_shared
+                .commands
+                .lock()
+                .expect("JavaScript session command lock is not poisoned");
+            termination_shared
+                .runtime_stopped
+                .store(true, Ordering::Release);
+            termination_shared.command_ready.notify_all();
+        }));
         let _ = shared.emit_control(SessionEvent::Lifecycle(SessionLifecycle::Starting));
         let worker_shared = Arc::clone(&shared);
         thread::Builder::new()
@@ -670,11 +741,11 @@ impl JavaScriptSession {
             .spawn(move || {
                 let panic_shared = Arc::clone(&worker_shared);
                 let worker_completion = completion_sender.clone();
-                if catch_unwind(AssertUnwindSafe(|| {
+                let result = catch_unwind(AssertUnwindSafe(|| {
                     runtime_worker(worker_shared, &mut runtime, size, worker_completion);
-                }))
-                .is_err()
-                {
+                }));
+                drop(runtime);
+                if result.is_err() {
                     panic_shared.fail("JavaScript session worker panicked");
                     let error = SessionError::new(
                         SessionErrorKind::Internal,
@@ -682,6 +753,10 @@ impl JavaScriptSession {
                     );
                     let _ = completion_sender.send(Err(error));
                 }
+                if let Some(fence) = &panic_shared.fence {
+                    fence.release();
+                }
+                panic_shared.cleanup_complete.store(true, Ordering::Release);
             })
             .map_err(|_| JavaScriptSessionError::WorkerSpawn)?;
 
@@ -768,9 +843,10 @@ impl Session for JavaScriptSession {
             self.shared.output_ready.notify_all();
         } else {
             let fence_permit = match &self.shared.fence {
-                Some(fence) => match fence.try_enter(self.shared.worker_generation) {
+                Some(fence) => match fence.try_enter_now(self.shared.worker_generation) {
                     Ok(Some(permit)) => Some(DeliveryPermit { _permit: permit }),
-                    Ok(None) | Err(_) => {
+                    Ok(None) => return Err(SessionTryReceiveError::Empty),
+                    Err(_) => {
                         self.shared.request_stop();
                         self.shared.force_cancellation();
                         return Err(SessionTryReceiveError::Empty);
@@ -868,6 +944,21 @@ impl Shared {
         command: SessionCommand,
         operation: SessionOperation,
     ) -> Result<(), SessionSendError> {
+        let fence_permit = match &self.fence {
+            Some(fence) => match fence.try_enter_now(self.worker_generation) {
+                Ok(Some(permit)) => Some(permit),
+                Ok(None) => {
+                    return Err(SessionSendError::Full {
+                        operation,
+                        capacity: self.command_capacity,
+                    });
+                }
+                Err(_) => {
+                    return Err(SessionSendError::Closed { operation });
+                }
+            },
+            None => None,
+        };
         let _admission = self
             .admission
             .lock()
@@ -898,6 +989,7 @@ impl Shared {
             metrics.input_bytes = metrics.input_bytes.saturating_add(bytes);
         }
         self.command_ready.notify_one();
+        drop(fence_permit);
         Ok(())
     }
 
@@ -907,7 +999,8 @@ impl Shared {
             .lock()
             .expect("JavaScript session command lock is not poisoned");
         loop {
-            if self.stopping.load(Ordering::Acquire) {
+            if self.stopping.load(Ordering::Acquire) || self.runtime_stopped.load(Ordering::Acquire)
+            {
                 return None;
             }
             if let Some(command) = commands.pop_front() {
@@ -1035,7 +1128,13 @@ fn runtime_worker(
     }
 
     shared.close_command_admission();
-    let close_result = runtime.close();
+    let privacy_cut = !shared.fence_live();
+    let close_result = if privacy_cut {
+        shared.force_cancellation();
+        runtime.terminate().map(|()| Vec::new())
+    } else {
+        runtime.close()
+    };
     let already_failed = matches!(shared.lifecycle(), SessionLifecycle::Failed(_));
     let result = match close_result {
         Ok(chunks) if !already_failed && validate_output(&chunks) => {
@@ -1302,7 +1401,10 @@ mod tests {
             generation: 7,
             cancelled: cancelled.clone(),
         });
-        struct GenerationSevenEcho;
+        struct GenerationSevenEcho {
+            closed: Arc<AtomicBool>,
+            terminated: Arc<AtomicBool>,
+        }
         impl JavaScriptRuntime for GenerationSevenEcho {
             fn worker_generation(&self) -> u64 {
                 7
@@ -1320,11 +1422,21 @@ mod tests {
                 Ok(Vec::new())
             }
             fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                self.closed.store(true, Ordering::Release);
                 Ok(Vec::new())
             }
+            fn terminate(&mut self) -> Result<(), JavaScriptRuntimeError> {
+                self.terminated.store(true, Ordering::Release);
+                Ok(())
+            }
         }
+        let closed = Arc::new(AtomicBool::new(false));
+        let terminated = Arc::new(AtomicBool::new(false));
         let session = JavaScriptSession::start_with_authority(
-            GenerationSevenEcho,
+            GenerationSevenEcho {
+                closed: closed.clone(),
+                terminated: terminated.clone(),
+            },
             size(),
             noop_session_event_notifier(),
             fence,
@@ -1348,6 +1460,14 @@ mod tests {
         assert_eq!(
             session.shutdown(Duration::from_secs(1)),
             Ok(ShutdownResult::Stopped)
+        );
+        assert!(
+            !closed.load(Ordering::Acquire),
+            "privacy cut must skip checkpoint close"
+        );
+        assert!(
+            terminated.load(Ordering::Acquire),
+            "privacy cut must terminate immediately"
         );
         while let Ok(event) = session.try_recv_event() {
             if matches!(event, SessionEvent::Lifecycle(SessionLifecycle::Stopped)) {
@@ -2082,6 +2202,114 @@ mod tests {
     }
 
     #[test]
+    fn ui_admission_backpressures_without_waiting_for_storage_fence() {
+        struct BlockingFence {
+            gate: Arc<Mutex<()>>,
+        }
+        impl ProgramDeliveryFence for BlockingFence {
+            fn is_live(&self, generation: u64) -> bool {
+                generation == 7
+            }
+            fn try_enter(
+                &self,
+                generation: u64,
+            ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, festerm_automation_js::Error>
+            {
+                self.gate
+                    .lock()
+                    .map_err(|_| festerm_automation_js::Error::DisclosureRevoked)
+                    .and_then(|permit| {
+                        if generation == 7 {
+                            Ok(Some(Box::new(permit) as Box<dyn ProgramDeliveryPermit + '_>))
+                        } else {
+                            Err(festerm_automation_js::Error::DisclosureRevoked)
+                        }
+                    })
+            }
+            fn try_enter_now(
+                &self,
+                generation: u64,
+            ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, festerm_automation_js::Error>
+            {
+                if generation != 7 {
+                    return Err(festerm_automation_js::Error::DisclosureRevoked);
+                }
+                match self.gate.try_lock() {
+                    Ok(permit) => Ok(Some(Box::new(permit) as Box<dyn ProgramDeliveryPermit + '_>)),
+                    Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+                    Err(std::sync::TryLockError::Poisoned(_)) => {
+                        Err(festerm_automation_js::Error::DisclosureRevoked)
+                    }
+                }
+            }
+        }
+        struct BlockingStorageRuntime {
+            gate: Arc<Mutex<()>>,
+            entered: mpsc::Sender<()>,
+            release: Arc<(Mutex<bool>, Condvar)>,
+        }
+        impl JavaScriptRuntime for BlockingStorageRuntime {
+            fn worker_generation(&self) -> u64 {
+                7
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                let _permit = self.gate.lock().unwrap();
+                self.entered.send(()).unwrap();
+                let (lock, ready) = &*self.release;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+                Ok(Vec::new())
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+        }
+        let gate = Arc::new(Mutex::new(()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let session = JavaScriptSession::start_with_authority(
+            BlockingStorageRuntime {
+                gate: gate.clone(),
+                entered: entered_send,
+                release: release.clone(),
+            },
+            size(),
+            noop_session_event_notifier(),
+            Arc::new(BlockingFence { gate }),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session.try_send_input(b"first").unwrap();
+        entered_receive
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        let started = Instant::now();
+        assert!(matches!(
+            session.try_send_input(b"second"),
+            Err(SessionSendError::Full {
+                operation: SessionOperation::Input,
+                ..
+            })
+        ));
+        assert!(started.elapsed() < Duration::from_millis(100));
+        let (lock, ready) = &*release;
+        *lock.lock().unwrap() = true;
+        ready.notify_all();
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)),
+            Ok(ShutdownResult::Stopped)
+        );
+    }
+
+    #[test]
     fn session_has_no_automation_or_terminal_reply_authority() {
         let session = JavaScriptSession::start(EchoJavaScriptRuntime, size()).unwrap();
         wait_for(|| session.lifecycle() == SessionLifecycle::Running);
@@ -2442,5 +2670,125 @@ mod tests {
             session.shutdown(Duration::from_secs(1)),
             Err(ShutdownError::Failed(_))
         ));
+    }
+
+    #[test]
+    fn terminal_failure_is_not_cleanup_complete_before_runtime_and_fence_drop() {
+        struct ReleasedFence {
+            released: Arc<AtomicBool>,
+        }
+        impl ProgramDeliveryFence for ReleasedFence {
+            fn release(&self) {
+                self.released.store(true, Ordering::Release);
+            }
+            fn is_live(&self, generation: u64) -> bool {
+                generation == 1
+            }
+            fn try_enter(
+                &self,
+                generation: u64,
+            ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, festerm_automation_js::Error>
+            {
+                if generation == 1 {
+                    Ok(Some(Box::new(())))
+                } else {
+                    Err(festerm_automation_js::Error::DisclosureRevoked)
+                }
+            }
+        }
+        struct FailingRuntime {
+            close_gate: Arc<(Mutex<bool>, Condvar)>,
+        }
+        impl JavaScriptRuntime for FailingRuntime {
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Err(JavaScriptRuntimeError::new("runtime operation failed"))
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                let (lock, ready) = &*self.close_gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = ready.wait(released).unwrap();
+                }
+                Ok(Vec::new())
+            }
+        }
+        let released = Arc::new(AtomicBool::new(false));
+        let close_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let session = JavaScriptSession::start_with_authority(
+            FailingRuntime {
+                close_gate: close_gate.clone(),
+            },
+            size(),
+            noop_session_event_notifier(),
+            Arc::new(ReleasedFence {
+                released: released.clone(),
+            }),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        session.try_send_input(b"fail").unwrap();
+        wait_for(|| matches!(session.lifecycle(), SessionLifecycle::Failed(_)));
+        assert!(!session.cleanup_complete());
+        assert!(!released.load(Ordering::Acquire));
+        let (lock, ready) = &*close_gate;
+        *lock.lock().unwrap() = true;
+        ready.notify_all();
+        wait_for(|| session.cleanup_complete());
+        assert!(released.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn idle_runtime_exit_wakes_session_cleanup_without_an_input() {
+        type TerminationWake = Arc<dyn Fn() + Send + Sync>;
+        struct CrashedRuntime {
+            stopped: Arc<AtomicBool>,
+            wake: Arc<Mutex<Option<TerminationWake>>>,
+        }
+        impl JavaScriptRuntime for CrashedRuntime {
+            fn is_completed(&self) -> bool {
+                self.stopped.load(Ordering::Acquire)
+            }
+            fn start(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Ok(Vec::new())
+            }
+            fn input(&mut self, _: &[u8]) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Err(JavaScriptRuntimeError::new("worker exited"))
+            }
+            fn resize(&mut self, _: TerminalSize) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Err(JavaScriptRuntimeError::new("worker exited"))
+            }
+            fn close(&mut self) -> Result<Vec<Vec<u8>>, JavaScriptRuntimeError> {
+                Err(JavaScriptRuntimeError::new("worker exited"))
+            }
+            fn bind_termination_wake(&mut self, wake: TerminationWake) {
+                *self.wake.lock().unwrap() = Some(wake);
+            }
+        }
+        let stopped = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Mutex::new(None));
+        let session = JavaScriptSession::start(
+            CrashedRuntime {
+                stopped: stopped.clone(),
+                wake: wake.clone(),
+            },
+            size(),
+        )
+        .unwrap();
+        wait_for(|| session.lifecycle() == SessionLifecycle::Running);
+        let termination_wake = wake
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("session installed termination wake");
+        stopped.store(true, Ordering::Release);
+        termination_wake();
+        wait_for(|| session.cleanup_complete());
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Failed(_)));
     }
 }

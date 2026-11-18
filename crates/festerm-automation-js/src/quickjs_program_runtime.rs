@@ -384,6 +384,14 @@ impl QuickJsProgramRuntime {
         result
     }
 
+    pub fn terminate(&self) -> Result<(), QuickJsProgramRuntimeError> {
+        self.cancel.store(true, Ordering::Release);
+        let _ = self.commands.try_send(Command::Abort);
+        self.join();
+        self.state.store(CLOSED, Ordering::Release);
+        Ok(())
+    }
+
     fn ensure_running(&self) -> Result<(), QuickJsProgramRuntimeError> {
         match self.state.load(Ordering::Acquire) {
             RUNNING => Ok(()),
