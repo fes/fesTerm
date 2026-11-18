@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "be09f98d36b8ba8c83c01f2b8ade705c83178a7ef1c6e423c2387a4deb62a52e"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "16bd70dc94c0337b67c695b0f59625c42776e9a7169788511f2c290454071cd2"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,12 +13,11 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 Use for: When the app boots, validates CLI mode, and creates the primary window.
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native window startup
-- [`new`](../../app/festerm/src/application.rs) — Creates the primary app and binds automation state
-- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens restored secondary windows after the primary exists
+- [`new`](../../app/festerm/src/application.rs) — Builds the primary application and binds automation state
+- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn
-- [`docs/ui-state-narrative.md`](../../docs/ui-state-narrative.md) — Startup and first-run workspace flow
 
 Caveats:
 - Primary window owns quit, wake, and secret-store policy.
@@ -65,15 +64,15 @@ Use for: When a user reviews host recipes, tests discovery, or authorizes a remo
 - [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Desktop remote access consent screen and review actions
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Host creation requires explicit consent and a bounded registry
-- [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional and require review before activation
+- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry
+- [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional and require review
 
 Caveats:
 - Host approvals remain request-bound and exact locator matching must stay unambiguous.
 - Remote-access actions require fresh review before any worker can act.
 - Desktop creation stays consent-gated, with only one free permit.
 
-## Diagnostics
+## Lifecycle diagnostics
 
 Use for: When startup or shutdown fails and a lifecycle journal must persist exit intent or recovery artifacts.
 

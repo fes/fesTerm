@@ -151,6 +151,7 @@ pub(super) fn scenarios() -> Vec<Scenario> {
     sftp!("sftp-delete-local", DeleteLocal, "GUI SFTP: permanent Local delete review", "Local > select owned scratch file > Delete. Actual target is displayed; Cancel is focused and no deletion is submitted.");
     sftp!("sftp-delete-remote", DeleteRemote, "GUI SFTP: permanent Remote delete review", "Remote > select synthetic file > Delete. Actual captured side/endpoint/path is displayed; no deletion is submitted.");
     sftp!("sftp-transfer-details", TransferDetails, "GUI SFTP: isolated transfer drawer", "File manager > Transfers drawer. Isolated production drawer shows live progress and completed/failed history without the surrounding panes. Scroll for remaining rows.");
+    sftp!("sftp-transfer-details-narrow", TransferDetailsNarrow, "GUI SFTP: narrow transfer drawer", "Production transfer drawer at 460 logical pixels: padded finite-width percent/byte progress and wrapped controls; synthetic worker events only.");
     sftp!("sftp-collision", Collision, "GUI SFTP: collision decision", "Transfer > existing destination. Exit: Replace/Skip/Keep Both/Cancel; optional apply-to-all. Synthetic worker event; no overwrite.");
     sftp!("sftp-browser-narrow", Narrow, "GUI SFTP: narrow pane switcher", "Resize GUI SFTP below split-view threshold. Switch Local/Remote to navigate. Exit: widen window.");
     sftp!(
@@ -329,7 +330,11 @@ fn capture_sftp(scene: crate::sftp_file_manager::gallery::Scene) -> image::RgbaI
         &context,
     );
     let state = crate::sftp_file_manager::gallery::Fixture::new(tab, scene);
-    let width = if matches!(scene, crate::sftp_file_manager::gallery::Scene::Narrow) {
+    let width = if matches!(
+        scene,
+        crate::sftp_file_manager::gallery::Scene::Narrow
+            | crate::sftp_file_manager::gallery::Scene::TransferDetailsNarrow
+    ) {
         460.0
     } else {
         1180.0

@@ -574,3 +574,13 @@ and full command capacity. A controlled in-process SFTP fixture distinguishes
 STAT from LSTAT and removes only the reviewed link, preserving its target bytes.
 Native permissions/DPI/accessibility and actual network-loss presentation remain
 `SFTP-04` manual qualification.
+
+For SFTPG-02, progress widgets use finite available content width rather than
+an infinite desired width. The existing drawer margin remains the padding
+boundary; its heading wraps when needed. State-colored fills represent actual
+aggregate/per-item byte fractions against a distinct palette track, including
+zero and completed progress. The production paint regression
+`gui_sftp_transfer_drawer_fits_and_paints_proportional_progress` checks finite
+panel bounds, padding and both painted fill ratios at narrow and desktop widths.
+Headless gallery captures complement those geometry checks; native DPI and
+live-transfer usability remain manual.

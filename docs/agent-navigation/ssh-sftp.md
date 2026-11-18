@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "55928d98fc7520b19d8658de1427e3e4fe5aa3951650c3b5f1ad72210ab3dc3f"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "51a032dea5cd1ae500f54472baa6950a0885ed2cccf6ebabb857e0efe212e421"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns authenticated SSH transport, host-trust gating, GUI SFTP session setup, and the app-facing transfer and remote-file pipeline.
+This domain owns authenticated SSH transport, host-key trust enforcement, and the GUI-backed SFTP lifecycle that feeds app file transfers and remote reads.
 
 Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
@@ -29,7 +29,7 @@ Caveats:
 Use for: When the app opens a GUI-backed SFTP session and must pause for trust while keeping the transport alive.
 
 - [`connect_gui_sftp_session`](../../crates/festerm-ssh/src/lib.rs) — Starts the dedicated connect thread and emits host-key decisions as needed.
-- [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh-sftp client and local working-directory state.
+- [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh SFTP client and local working-directory state.
 
 Evidence:
 - [`cancelling_gui_connect_wait_closes_the_dedicated_transport_thread`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Cancelled GUI connect must tear down the dedicated transport thread.

@@ -1,19 +1,19 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6deabfbd6f19882f127ab47ffa8fedb14ed39f58b884f46962d10776c0f2708f"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "dbfbb408f741acac8830fbb5273c23a39163c26a3d5b5de22cd9795276449ee1"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns packaged installer metadata, native real-window validation, and platform wake/privacy integration for the desktop app.
+Owns desktop app packaging gates, native smoke validation, and OS wake/privacy bridges.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
 ## Packaging flow
 
-Use for: Which install marker, updater key, and package metadata are required for a release build?
+Use for: Which build metadata and update gate are required before a packaged release can self-update?
 
-- [`app/festerm/build.rs`](../../app/festerm/build.rs) — Build script embeds release package markers and installer metadata hooks.
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Validates build markers and the public key before any updater work starts.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Reads the installation marker and public key before enabling updater behavior.
+- [`from_build`](../../app/festerm/src/updates.rs) — Build-time environment decides which install kind and signing key are present.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
@@ -28,12 +28,12 @@ Caveats:
 
 Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the real-window smoke driver against the app event loop and PTY.
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Accepts one smoke mode and one result path, matching CI contract.
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the native smoke driver inside the real app event loop and PTY.
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Enforces exactly one smoke mode and one result path for CI.
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Smoke modes are mutually exclusive and require an explicit result path.
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke enforces the real terminal rendering contract, not a mocked one.
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Smoke modes are mutually exclusive and require a result path.
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke enforces the terminal rendering contract, not a mock.
 
 Caveats:
 - Only one smoke mode and one result path may be active at a time.
@@ -44,12 +44,11 @@ Caveats:
 
 Use for: What should I read when a Finder open event or macOS menu action breaks?
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Registers Finder open-document AppleEvents and drains queued paths early.
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Translates AppKit menu actions into semantic app commands.
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Registers Finder AppleEvents and drains queued file-open paths before UI attach.
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu actions into semantic app commands.
 
 Evidence:
-- [`OpenDocumentBridge`](../../crates/festerm-macos-window/src/lib.rs) — The bounded queue preserves FIFO order and drains before app attach.
-- [`crates/festerm-macos-window/tests/open_document_appleevent.rs`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — End-to-end AppleEvent tests cover queued Finder open-document behavior.
+- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — End-to-end AppleEvent test covers queued Finder open-document behavior.
 
 Caveats:
 - Finder open-document events must be drained before UI attaches or they can be lost.
@@ -60,7 +59,7 @@ Caveats:
 
 Use for: What should I read when resume-from-sleep, lock-screen, or privacy callbacks misfire?
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — A hidden message-only window listens for resume broadcasts and invokes the wake callback.
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — A hidden message-only window listens for resume broadcasts and triggers wake.
 - [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — The logind PrepareForSleep(false) signal is treated as resume and triggers wake.
 - [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Tracks lock, inactivity, and suspend-loss conditions with fail-closed semantics.
 

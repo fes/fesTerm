@@ -47,6 +47,8 @@ Actions are disabled with an explanation when there is no selection, the destina
 
 Transfers are always **copies**, never moves. Selection remains after starting so the user can verify what was queued. A bottom transfer drawer appears while it has active work or retained history and shows aggregate progress, the current item, byte progress where known, destination, and per-item state. Users may cancel pending/current work; finished items can be cleared. A retained failed item shows a concise reason plus **Retry** and **Details** without stopping unrelated queued items.
 
+The transfer drawer stays within the current content width, with 12 logical pixels of inner horizontal padding. Its heading wraps on narrow windows. Aggregate percent and per-file byte bars use the same finite available width; the state-colored filled portion grows in proportion to the measured progress against a contrasting remaining track, including empty and full states.
+
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
 
 ### Remote-to-local name admission
