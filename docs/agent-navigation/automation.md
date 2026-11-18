@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "45e45346308d869b1ff9b504108add652b1ffe9d999083271d4126e780fdfd1b"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "c95cd5e9536bc4774b6ce9ddc193b98470c52536397ba619b8449ce140865ec4"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,11 +13,11 @@ Canonical docs: [docs/automation-design.md](../../docs/automation-design.md)
 Use for: When a native review decides whether a connection may observe or control an exact target and how revocation is enforced.
 
 - [`Broker`](../../crates/festerm-automation/src/broker.rs) — Owns grant state, controller enrollment, and exact-target revocation.
-- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds scope, target refs, deadlines, and invocation parameters for a native decision.
+- [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds scope, targets, deadlines, and invocation parameters to a native decision.
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Shows approvals and starts are bounded and stale state cannot replay.
-- [`docs/automation-design.md`](../../docs/automation-design.md) — Defines grant semantics, principal binding, and the core ownership model.
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Approvals and starts are quota-limited and stale input cannot replay.
+- [`docs/automation-design.md`](../../docs/automation-design.md) — Defines grant scope, principal binding, and fail-closed revocation.
 
 Caveats:
 - A connection is not a grant; only broker-owned approval yields authority.
@@ -28,11 +28,11 @@ Caveats:
 
 Use for: When a selected bundle, parameter mapping, and native approval are validated before a workflow run starts.
 
-- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — Binds the approved bundle, parameter digest, target map, and manifest-scoped scope.
-- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and input approval commands through the app.
+- [`FrozenInvocation`](../../crates/festerm-automation-workflow/src/lib.rs) — Binds bundle, parameter digest, target map, and manifest-scoped scope.
+- [`NativeCommand`](../../app/festerm/src/automation/mod.rs) — Routes native review, workflow start, and input approval commands.
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves workflow approvals and starts are bounded and stale input cannot replay.
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves workflow approvals and starts are bounded and stale state cannot replay.
 - [`docs/automation-design.md`](../../docs/automation-design.md) — Describes bundle binding, parameter digests, and the review boundary.
 
 Caveats:
@@ -60,12 +60,12 @@ Caveats:
 
 Use for: When adapter channels, privacy gates, and controller enrollment flow into terminal actions.
 
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery.
+- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Queues adapter messages behind admission and privacy gates before delivery.
 - [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and window.
 
 Evidence:
-- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy and disconnect cuts revoke grants without restoring them.
-- [`docs/automation-design.md`](../../docs/automation-design.md) — Covers private channel binding, native review, and failed-closed privacy revocation.
+- [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Privacy loss closes admission and invalidates every grant and target.
+- [`docs/automation-design.md`](../../docs/automation-design.md) — Covers private channel binding, native review, and fail-closed privacy revocation.
 
 Caveats:
 - The shared privacy gate must close before grant admission or output can proceed.
