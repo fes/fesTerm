@@ -1,20 +1,20 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7c62c2280657a6df3c02d63e70184dbaf6aeddd8b1207e6c834fa1c7d50f2fb7"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4d9e8a75e578589da328e95eb5ca5cb9cb7d97b0bd22f127722d667789c37d80"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal input and global actions.
+This domain owns app-wide command intents, singleton-tab routing, and keyboard capture for terminal-input and global actions.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
 ## Command route
 
-Use for: When a widget or launcher needs to turn a gesture into a state-changing intent
+Use for: a widget or launcher needs to turn a gesture into a state-changing intent
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, tabs, and sessions
 - [`AppState`](../../app/festerm/src/tabs.rs) — window coordinator owning tabs, documents, and UI state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from app commands to state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from commands to state
 - [`with_primary_session`](../../app/festerm/src/tabs.rs) — fresh-window startup shell and default tab layout
 
 Evidence:
@@ -28,7 +28,7 @@ Caveats:
 
 ## Tab close flow
 
-Use for: When a tab is closing and the fallback focus target must be selected
+Use for: a tab is closing and the fallback focus target must be selected
 
 - [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread output on the newly active session
 - [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — stores the most recent open tab in last-left order
@@ -38,6 +38,7 @@ Use for: When a tab is closing and the fallback focus target must be selected
 Evidence:
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — singleton surfaces are passed through, not returned to
 - [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — fallback order when activation history is absent
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the originating tab, not its neighbor
 
 Caveats:
 - Only remembered tabs are recorded; singleton surfaces are intentionally skipped.
@@ -46,7 +47,7 @@ Caveats:
 
 ## Keyboard route
 
-Use for: When a raw key event is checked for eligibility, capture, and exact-match dispatch
+Use for: a raw key event is checked for eligibility, capture, and exact-match dispatch
 
 - [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — context gate for global, terminal, markdown, and document actions
 - [`allows`](../../app/festerm/src/keyboard.rs) — checks scope, blocked state, palette state, and tab availability
