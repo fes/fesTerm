@@ -42,3 +42,7 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = "warn"
+
+[[test]]
+name = "program_process_worker"
+required-features = ["javascript-program-dev"]

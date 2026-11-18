@@ -366,6 +366,10 @@ pub(crate) struct Child {
 
 impl Child {
     pub(crate) fn spawn(program: &Path) -> Result<Self, Error> {
+        Self::spawn_with_argument(program, "--automation-worker")
+    }
+
+    pub(crate) fn spawn_with_argument(program: &Path, argument: &str) -> Result<Self, Error> {
         // Concurrent profile creation and image ACL updates race inside
         // userenv; serialize setup through process creation.
         static SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -431,7 +435,7 @@ impl Child {
         // The worker has no standard handles and speaks only on its verified pipe.
         startup.lpAttributeList = list.0;
         let application = wide(program);
-        let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
+        let mut command_line = wide(format!("\"{}\" {argument}", program.display()));
         let environment = worker_environment()?;
         let mut current_directory = windows_directory()?;
         current_directory.push(0);
