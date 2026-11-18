@@ -11,12 +11,12 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns session lifecycle, native PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions. |
+| [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns workflow authority, MCP protocol state, and the app-level admission boundary for exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, Finder/AppKit integration, and OS wake/privacy hooks for the desktop app. |
+| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns packaged update gating, native smoke validation, Apple event integration, and platform wake/privacy hooks for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
