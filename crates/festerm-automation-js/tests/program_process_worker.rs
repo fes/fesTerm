@@ -1,11 +1,12 @@
 use festerm_automation_js::{
     platform,
     program::{
-        developer_echo_program, developer_host_services_program, ApprovedProgram,
-        ProgramCapability, ProgramHostMessage, ProgramKind, ProgramManifest, ProgramSourceSnapshot,
-        Submission, TerminalSize,
+        developer_echo_program, developer_host_services_program, developer_save_program,
+        ApprovedProgram, ProgramCapability, ProgramHostMessage, ProgramKind, ProgramLaunchMode,
+        ProgramLaunchParams, ProgramManifest, ProgramSourceSnapshot, Submission, TerminalSize,
     },
-    Error, ProgramDeliveryFence, ProgramSupervisor, WorkerProgram,
+    Error, ProgramDeliveryFence, ProgramStorageCommit, ProgramStorageCommitRequest,
+    ProgramStorageHost, ProgramStorageLoad, ProgramSupervisor, WorkerProgram,
 };
 #[cfg(not(windows))]
 use festerm_automation_js::{program::ProgramWorkerMessage, protocol::read_frame};
@@ -64,6 +65,75 @@ fn initial_size() -> TerminalSize {
         columns: 80,
         rows: 24,
     }
+}
+
+#[derive(Clone, Default)]
+struct ProcessStorage(Arc<Mutex<Option<StoredValue>>>);
+
+type StoredValue = (u64, Vec<u8>);
+
+impl ProgramStorageHost for ProcessStorage {
+    fn load(&self, slot: &str) -> ProgramStorageLoad {
+        if slot != "primary" {
+            return ProgramStorageLoad::Unavailable;
+        }
+        self.0
+            .lock()
+            .unwrap()
+            .clone()
+            .map_or(ProgramStorageLoad::Missing, |(revision, value)| {
+                ProgramStorageLoad::Present {
+                    schema_version: 2,
+                    revision,
+                    value,
+                }
+            })
+    }
+
+    fn commit(&self, slot: &str, request: ProgramStorageCommitRequest) -> ProgramStorageCommit {
+        if slot != "primary" {
+            return ProgramStorageCommit::Unavailable;
+        }
+        let mut stored = self.0.lock().unwrap();
+        let actual = stored.as_ref().map(|(revision, _)| *revision);
+        if request.expected_revision != actual {
+            return ProgramStorageCommit::Conflict {
+                actual_revision: actual,
+            };
+        }
+        let revision = actual.unwrap_or(0) + 1;
+        *stored = Some((revision, request.value));
+        ProgramStorageCommit::Committed { revision }
+    }
+}
+
+#[test]
+fn confined_program_worker_uses_injected_storage_only() {
+    if platform::program_availability().is_err() {
+        return;
+    }
+    let storage = ProcessStorage::default();
+    let mut program = ProgramSupervisor::spawn_with_launch_and_storage(
+        &worker(),
+        developer_save_program().unwrap(),
+        11,
+        initial_size(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Fence {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }),
+        Arc::new(storage.clone()),
+        ProgramLaunchParams::new(ProgramLaunchMode::New),
+    )
+    .unwrap();
+    assert_eq!(program.take_start_output(), vec![b"new-ready\n".to_vec()]);
+    assert_eq!(program.input(b"x").unwrap(), vec![b"saved:1\n".to_vec()]);
+    assert_eq!(
+        storage.0.lock().unwrap().as_ref().unwrap().1,
+        br#"{"turn":1}"#
+    );
+    program.close().unwrap();
+    program.shutdown().unwrap();
 }
 
 #[test]

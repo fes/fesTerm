@@ -83,6 +83,7 @@ fn run_worker<R: Read, W: Write>(pipe: &mut ProgramPipe<R, W>) -> Result<(), Err
         generation: launch_generation,
         bundle_digest,
         initial_size,
+        params,
     } = launch
     else {
         return Err(Error::Protocol);
@@ -99,7 +100,7 @@ fn run_worker<R: Read, W: Write>(pipe: &mut ProgramPipe<R, W>) -> Result<(), Err
         generation,
         next_write_id: 1,
     };
-    run_inline_program(program, generation, initial_size, &mut transport)
+    run_inline_program(program, generation, initial_size, params, &mut transport)
 }
 
 fn publish_output<R: Read, W: Write>(
