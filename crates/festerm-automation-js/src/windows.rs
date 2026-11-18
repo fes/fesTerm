@@ -365,10 +365,6 @@ pub(crate) struct Child {
 }
 
 impl Child {
-    pub(crate) fn spawn(program: &Path) -> Result<Self, Error> {
-        Self::spawn_with_argument(program, "--automation-worker")
-    }
-
     pub(crate) fn spawn_with_argument(program: &Path, argument: &str) -> Result<Self, Error> {
         // Concurrent profile creation and image ACL updates race inside
         // userenv; serialize setup through process creation.
