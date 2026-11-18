@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "2097da5aea090704e0c08c2323e0176b53fc07ad9331108a7b6e8a303690d833"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a6e3c0f05dfa8eb74fc850d4ac6c47e912c86769ce606030d6b2be093315a0a1"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 ## Packaging gate
 
-Use for: When a packaged build decides whether self-update is allowed
+Use for: When packaging decides whether self-update is allowed
 
 - [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps build markers to installability and trust policy
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind and update readiness for packaged installs
@@ -28,15 +28,15 @@ Caveats:
 
 Use for: When CI needs proof that a real native window and PTY pass a smoke flow
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the native PTY smoke flow inside the app event loop
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the app event-loop smoke flow against a real PTY window
 - [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires one explicit smoke mode and result path to activate
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces one-of env-var contracts for smoke activation
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the one-of env-var contract for smoke activation
 - [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates emoji width and trailing ASCII output in native mode
 
 Caveats:
-- Only one smoke mode and result path may be active.
+- Only one smoke mode and one result path may be active.
 - This checks real app and PTY behavior, not mocked behavior.
 - Native focus checks are platform-specific and not interchangeable.
 

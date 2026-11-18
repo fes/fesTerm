@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e2e2ea73c257b8e16e73bc080452ed33788cbdc795b80ccf8a89bbc31603c337"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "7c62c2280657a6df3c02d63e70184dbaf6aeddd8b1207e6c834fa1c7d50f2fb7"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,30 +10,30 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 
 ## Command route
 
-Use for: A widget, launcher, or tab action needs to mutate app state from a typed command.
+Use for: When a widget or launcher needs to turn a gesture into a state-changing intent
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed product intents for launcher, settings, tabs, and sessions
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, tabs, and sessions
 - [`AppState`](../../app/festerm/src/tabs.rs) — window coordinator owning tabs, documents, and UI state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from an AppCommand to state
-- [`with_primary_session`](../../app/festerm/src/tabs.rs) — default startup shell tab for a fresh window
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from app commands to state
+- [`with_primary_session`](../../app/festerm/src/tabs.rs) — fresh-window startup shell and default tab layout
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the opening tab rather than a neighbor
-- [`docs/application-command-model.md`](../../docs/application-command-model.md) — documents the single semantic command flow from invocation to state
+- [`docs/application-command-model.md`](../../docs/application-command-model.md) — describes the single semantic command flow from invocation to state
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close behavior converges on a single tab-routing policy
 
 Caveats:
-- Widgets convert input to commands; they do not own session policy.
+- Widgets emit commands; they do not own session policy.
 - dispatch is the single mutation path; direct widget-side tab policy is rejected by design.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 
 ## Tab close flow
 
-Use for: A tab is closing or the fallback focus target is being selected.
+Use for: When a tab is closing and the fallback focus target must be selected
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread state on the newly active tab
-- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — tracks the most recent still-open tab in last-left order
-- [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab that is still open
-- [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and picks a fallback
+- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread output on the newly active session
+- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — stores the most recent open tab in last-left order
+- [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab still in the tab list
+- [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and chooses the next active tab
 
 Evidence:
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — singleton surfaces are passed through, not returned to
@@ -46,7 +46,7 @@ Caveats:
 
 ## Keyboard route
 
-Use for: A raw key event is checked for eligibility, capture, and exact-match dispatch.
+Use for: When a raw key event is checked for eligibility, capture, and exact-match dispatch
 
 - [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — context gate for global, terminal, markdown, and document actions
 - [`allows`](../../app/festerm/src/keyboard.rs) — checks scope, blocked state, palette state, and tab availability
@@ -54,8 +54,8 @@ Use for: A raw key event is checked for eligibility, capture, and exact-match di
 - [`consume`](../../app/festerm/src/keyboard.rs) — removes exact matched input and clipboard-derived semantics
 
 Evidence:
-- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — context gating and exact-event capture stay aligned
 - [`docs/keyboard-shortcuts.md`](../../docs/keyboard-shortcuts.md) — defines binding scope and overlay behavior
+- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — context gating and exact-event capture stay aligned
 
 Caveats:
 - Exact modifier and key matching is enforced.
