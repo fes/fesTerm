@@ -8,6 +8,7 @@ javascript-program-process = { max-threads = 1 }
 [[profile.ci.overrides]]
 filter = 'package(festerm-automation-js)'
 test-group = 'javascript-program-process'
+threads-required = 'num-cpus'
 
 [profile.ci.junit]
 path = "junit.xml"
