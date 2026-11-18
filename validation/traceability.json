@@ -523,7 +523,14 @@
         "javascript_program_launches_without_shell_or_automation_authority",
         "javascript_program_commit_is_atomic_revision_checked_and_recoverable",
         "javascript_program_save_faults_preserve_or_report_real_publication",
-        "javascript_program_save_rejects_corruption_bounds_and_other_writers"
+        "javascript_program_save_rejects_corruption_bounds_and_other_writers",
+        "storage_wire_results_are_typed_and_strictly_bounded",
+        "developer_save_fixture_exercises_explicit_new_and_resume",
+        "javascript_program_migration_backs_up_and_refuses_downward_publication",
+        "reviewed_save_host_distinguishes_new_resume_and_exclusive_writer",
+        "reviewed_save_host_refuses_missing_resume",
+        "confined_program_worker_uses_injected_storage_only",
+        "reviewed_save_host_refuses_future_schema_without_publication"
       ],
       "manual_scenarios": [
         "JSP-01"
@@ -531,7 +538,6 @@
       "status": "partial",
       "prerequisites": [
         "Qualify the feature-gated confined-process path's rolling interactive CPU policy, packaged provenance, native privacy-event timing and forceable lifecycle before enablement",
-        "Bind the implemented private save core to reviewed program/universe authority and add worker protocol integration and explicit resume evidence for JSP-04",
         "Qualify packaged macOS, Windows and Linux input/resize/output ordering, privacy loss, pressure, keyboard/IME/paste, multi-window and usability behavior",
         "Keep TradeWars gameplay/assets/provenance, multiplayer, networking and mobile execution outside this slice"
       ]

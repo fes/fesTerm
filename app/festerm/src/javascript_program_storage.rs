@@ -8,16 +8,23 @@ use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
+use festerm_automation_js::{
+    program::ProgramLaunchMode, ProgramStorageCommit, ProgramStorageCommitRequest,
+    ProgramStorageHost, ProgramStorageLoad, ProgramStoragePreparation,
+};
 use festerm_sessiond::private_storage::{self, PreparedCheckpoint, UnlockOnDrop};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const STORAGE_VERSION: u8 = 1;
-const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
-const MAX_ENVELOPE_BYTES: usize = 320 * 1024;
+pub(crate) const CURRENT_SAVE_SCHEMA: u32 = 2;
+pub(crate) const OLDEST_APPROVED_SAVE_SCHEMA: u32 = 1;
+const MAX_PAYLOAD_BYTES: usize = festerm_automation_js::MAX_STORAGE_VALUE_BYTES;
+const MAX_ENVELOPE_BYTES: usize = 64 * 1024;
 const LOCK_NAME: &str = "writer.lock";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +91,7 @@ impl SaveRevision {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SaveSnapshot {
     pub(crate) revision: SaveRevision,
+    pub(crate) schema_version: u32,
     pub(crate) value: Vec<u8>,
     operation_id: OperationId,
 }
@@ -91,6 +99,239 @@ pub(crate) struct SaveSnapshot {
 impl SaveSnapshot {
     pub(crate) fn operation_id(&self) -> OperationId {
         self.operation_id
+    }
+}
+
+const DEVELOPER_PROGRAM_ID: Uuid = Uuid::from_u128(0x6d3ac8f4_67f4_49d0_b10a_bf7e8f10d188);
+const DEVELOPER_UNIVERSE_ID: Uuid = Uuid::from_u128(0x8d3ad0e2_62f1_47f7_9db5_0fdf8bbd18c4);
+const DEVELOPER_SLOT_ID: Uuid = Uuid::from_u128(0x1e8fbd1d_98d3_4d58_a0a0_d4d0a5c2e6b7);
+const DEVELOPER_SLOT: &str = "primary";
+
+pub(crate) struct ReviewedDeveloperStorageHost {
+    root: PathBuf,
+    mode: ProgramLaunchMode,
+    store: Mutex<Option<TransactionalSaveStore>>,
+}
+
+impl ReviewedDeveloperStorageHost {
+    pub(crate) fn from_application_data(root: PathBuf, mode: ProgramLaunchMode) -> Self {
+        Self {
+            root,
+            mode,
+            store: Mutex::new(None),
+        }
+    }
+
+    #[cfg(test)]
+    fn from_test(store: TransactionalSaveStore, mode: ProgramLaunchMode) -> Self {
+        Self {
+            root: PathBuf::new(),
+            mode,
+            store: Mutex::new(Some(store)),
+        }
+    }
+
+    fn with_store<T>(
+        &self,
+        operation: impl FnOnce(&mut TransactionalSaveStore) -> T,
+    ) -> Result<T, ProgramStoragePreparation> {
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|_| ProgramStoragePreparation::Unavailable)?;
+        if guard.is_none() {
+            let store = TransactionalSaveStore::open(
+                &self.root,
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::WouldBlock {
+                    ProgramStoragePreparation::BusyWriter
+                } else {
+                    ProgramStoragePreparation::Unavailable
+                }
+            })?;
+            *guard = Some(store);
+        }
+        Ok(operation(
+            guard
+                .as_mut()
+                .expect("opened JavaScript program storage is retained"),
+        ))
+    }
+
+    fn parse_operation_id(&self, operation_id: &str) -> Option<OperationId> {
+        let parsed = Uuid::parse_str(operation_id).ok()?;
+        (parsed.hyphenated().to_string() == operation_id).then_some(OperationId::from_host(parsed))
+    }
+}
+
+impl ProgramStorageHost for ReviewedDeveloperStorageHost {
+    fn prepare(&self) -> Result<(), ProgramStoragePreparation> {
+        let loaded = self.with_store(|store| {
+            let loaded = store.load();
+            if self.mode == ProgramLaunchMode::Resume {
+                if let SaveLoad::Present(snapshot) = &loaded {
+                    if store.has_uncertain_publication() {
+                        let reconciliation = store.resolve_uncertain();
+                        if !matches!(reconciliation, SaveCommit::Committed(_)) {
+                            return match reconciliation {
+                                SaveCommit::Corrupt(_) => SaveLoad::Corrupt(
+                                    "the prior save could not be reconciled".to_owned(),
+                                ),
+                                SaveCommit::Unavailable { kind, message } => {
+                                    SaveLoad::Unavailable { kind, message }
+                                }
+                                SaveCommit::Uncertain { message, .. } => SaveLoad::Unavailable {
+                                    kind: io::ErrorKind::Other,
+                                    message,
+                                },
+                                SaveCommit::Conflict { message, .. } => SaveLoad::Unavailable {
+                                    kind: io::ErrorKind::Other,
+                                    message,
+                                },
+                                SaveCommit::Future {
+                                    actual_schema_version,
+                                } => SaveLoad::Unavailable {
+                                    kind: io::ErrorKind::InvalidData,
+                                    message: format!(
+                                        "the prior save uses newer schema {actual_schema_version}"
+                                    ),
+                                },
+                                SaveCommit::Committed(_) => unreachable!(),
+                            };
+                        }
+                    }
+                    let _ = snapshot;
+                }
+            }
+            loaded
+        })?;
+        match loaded {
+            SaveLoad::Missing if self.mode == ProgramLaunchMode::New => Ok(()),
+            SaveLoad::Missing => Err(ProgramStoragePreparation::MissingSave),
+            SaveLoad::Present(snapshot) if snapshot.schema_version > CURRENT_SAVE_SCHEMA => {
+                Err(ProgramStoragePreparation::Future)
+            }
+            SaveLoad::Present(snapshot)
+                if snapshot.schema_version < OLDEST_APPROVED_SAVE_SCHEMA =>
+            {
+                Err(ProgramStoragePreparation::UnapprovedSchema)
+            }
+            SaveLoad::Present(snapshot) if self.mode == ProgramLaunchMode::New => {
+                let _ = snapshot;
+                Err(ProgramStoragePreparation::ExistingSave)
+            }
+            SaveLoad::Present(_) => Ok(()),
+            SaveLoad::Corrupt(_) => Err(ProgramStoragePreparation::Corrupt),
+            SaveLoad::Unavailable {
+                kind: io::ErrorKind::WouldBlock,
+                ..
+            } => Err(ProgramStoragePreparation::BusyWriter),
+            SaveLoad::Unavailable { .. } => Err(ProgramStoragePreparation::Unavailable),
+        }
+    }
+
+    fn load(&self, slot: &str) -> ProgramStorageLoad {
+        if slot != DEVELOPER_SLOT {
+            return ProgramStorageLoad::Unavailable;
+        }
+        match self.with_store(|store| store.load()) {
+            Ok(SaveLoad::Missing) => ProgramStorageLoad::Missing,
+            Ok(SaveLoad::Present(snapshot)) if snapshot.schema_version > CURRENT_SAVE_SCHEMA => {
+                ProgramStorageLoad::Future {
+                    actual_schema_version: snapshot.schema_version,
+                }
+            }
+            Ok(SaveLoad::Present(snapshot))
+                if snapshot.schema_version < OLDEST_APPROVED_SAVE_SCHEMA =>
+            {
+                ProgramStorageLoad::Corrupt
+            }
+            Ok(SaveLoad::Present(snapshot)) => ProgramStorageLoad::Present {
+                schema_version: snapshot.schema_version,
+                revision: snapshot.revision.value(),
+                value: snapshot.value,
+            },
+            Ok(SaveLoad::Corrupt(_)) | Err(ProgramStoragePreparation::Corrupt) => {
+                ProgramStorageLoad::Corrupt
+            }
+            Err(ProgramStoragePreparation::BusyWriter) => ProgramStorageLoad::BusyWriter,
+            Err(ProgramStoragePreparation::UnapprovedSchema) => ProgramStorageLoad::Corrupt,
+            Err(_) => ProgramStorageLoad::Unavailable,
+            Ok(SaveLoad::Unavailable {
+                kind: io::ErrorKind::WouldBlock,
+                ..
+            }) => ProgramStorageLoad::BusyWriter,
+            Ok(SaveLoad::Unavailable { .. }) => ProgramStorageLoad::Unavailable,
+        }
+    }
+
+    fn commit(&self, slot: &str, request: ProgramStorageCommitRequest) -> ProgramStorageCommit {
+        if slot != DEVELOPER_SLOT || request.schema_version != CURRENT_SAVE_SCHEMA {
+            return ProgramStorageCommit::ResourceLimit;
+        }
+        let Some(operation_id) = self.parse_operation_id(&request.operation_id) else {
+            return ProgramStorageCommit::ResourceLimit;
+        };
+        let expected_revision = request.expected_revision.map(SaveRevision);
+        let result = self.with_store(|store| {
+            let migrate = match store.load() {
+                SaveLoad::Present(snapshot) if snapshot.schema_version > CURRENT_SAVE_SCHEMA => {
+                    return SaveCommit::Future {
+                        actual_schema_version: snapshot.schema_version,
+                    };
+                }
+                SaveLoad::Present(snapshot) => snapshot.schema_version < request.schema_version,
+                SaveLoad::Missing => false,
+                _ => false,
+            };
+            if migrate {
+                if self.mode != ProgramLaunchMode::Resume
+                    || request.schema_version != CURRENT_SAVE_SCHEMA
+                {
+                    return SaveCommit::Conflict {
+                        actual_revision: expected_revision,
+                        message: "migration is refused outside explicit resume".to_owned(),
+                    };
+                }
+                store.commit_migrating(
+                    expected_revision,
+                    operation_id,
+                    request.schema_version,
+                    &request.value,
+                )
+            } else {
+                store.commit(expected_revision, operation_id, &request.value)
+            }
+        });
+        match result {
+            Ok(SaveCommit::Committed(receipt)) => ProgramStorageCommit::Committed {
+                revision: receipt.revision.value(),
+            },
+            Ok(SaveCommit::Conflict {
+                actual_revision, ..
+            }) => ProgramStorageCommit::Conflict {
+                actual_revision: actual_revision.map(SaveRevision::value),
+            },
+            Ok(SaveCommit::Corrupt(_)) | Err(ProgramStoragePreparation::Corrupt) => {
+                ProgramStorageCommit::Corrupt
+            }
+            Ok(SaveCommit::Future {
+                actual_schema_version,
+            }) => ProgramStorageCommit::Future {
+                actual_schema_version,
+            },
+            Ok(SaveCommit::Uncertain { .. }) => ProgramStorageCommit::Uncertain,
+            Ok(SaveCommit::Unavailable {
+                kind: io::ErrorKind::WouldBlock,
+                ..
+            })
+            | Err(ProgramStoragePreparation::BusyWriter) => ProgramStorageCommit::BusyWriter,
+            Err(_) | Ok(SaveCommit::Unavailable { .. }) => ProgramStorageCommit::Unavailable,
+        }
     }
 }
 
@@ -115,6 +356,9 @@ pub(crate) enum SaveLoad {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum SaveCommit {
     Committed(SaveReceipt),
+    Future {
+        actual_schema_version: u32,
+    },
     Conflict {
         actual_revision: Option<SaveRevision>,
         message: String,
@@ -138,6 +382,7 @@ struct SaveEnvelope {
     universe_id: String,
     slot_id: String,
     revision: u64,
+    schema_version: u32,
     operation_id: String,
     payload_digest: [u8; 32],
     payload: Vec<u8>,
@@ -238,13 +483,41 @@ impl TransactionalSaveStore {
         }
     }
 
+    pub(crate) fn has_uncertain_publication(&self) -> bool {
+        self.uncertain.is_some()
+    }
+
     pub(crate) fn commit(
         &mut self,
         expected_revision: Option<SaveRevision>,
         operation_id: OperationId,
         payload: &[u8],
     ) -> SaveCommit {
-        self.commit_with_fault(expected_revision, operation_id, payload, None)
+        self.commit_with_schema(
+            expected_revision,
+            operation_id,
+            CURRENT_SAVE_SCHEMA,
+            payload,
+            false,
+            None,
+        )
+    }
+
+    pub(crate) fn commit_migrating(
+        &mut self,
+        expected_revision: Option<SaveRevision>,
+        operation_id: OperationId,
+        schema_version: u32,
+        payload: &[u8],
+    ) -> SaveCommit {
+        self.commit_with_schema(
+            expected_revision,
+            operation_id,
+            schema_version,
+            payload,
+            true,
+            None,
+        )
     }
 
     fn commit_with_fault(
@@ -254,6 +527,31 @@ impl TransactionalSaveStore {
         payload: &[u8],
         fault: Option<CommitFault>,
     ) -> SaveCommit {
+        self.commit_with_schema(
+            expected_revision,
+            operation_id,
+            CURRENT_SAVE_SCHEMA,
+            payload,
+            false,
+            fault,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_with_schema(
+        &mut self,
+        expected_revision: Option<SaveRevision>,
+        operation_id: OperationId,
+        schema_version: u32,
+        payload: &[u8],
+        migrate: bool,
+        fault: Option<CommitFault>,
+    ) -> SaveCommit {
+        if schema_version == 0 || schema_version > CURRENT_SAVE_SCHEMA {
+            return SaveCommit::Corrupt(
+                "JavaScript program save schema version is not approved".to_owned(),
+            );
+        }
         if payload.len() > MAX_PAYLOAD_BYTES {
             return SaveCommit::Unavailable {
                 kind: io::ErrorKind::InvalidInput,
@@ -288,6 +586,15 @@ impl TransactionalSaveStore {
             .as_ref()
             .map(|stored| SaveRevision(stored.revision));
         if let Some(stored) = &envelope {
+            if schema_version < stored.schema_version
+                || (migrate && schema_version <= stored.schema_version)
+                || (!migrate && schema_version != stored.schema_version)
+            {
+                return SaveCommit::Conflict {
+                    actual_revision,
+                    message: "the save schema cannot be changed by this commit".to_owned(),
+                };
+            }
             if Uuid::parse_str(&stored.operation_id).ok() == Some(operation_id.0)
                 && stored.payload_digest == payload_digest
             {
@@ -327,6 +634,7 @@ impl TransactionalSaveStore {
             universe_id: self.universe_id.0.simple().to_string(),
             slot_id: self.slot_id.0.simple().to_string(),
             revision,
+            schema_version,
             operation_id: operation_id.0.simple().to_string(),
             payload_digest,
             payload: payload.to_vec(),
@@ -353,6 +661,35 @@ impl TransactionalSaveStore {
                 Ok(prepared) => prepared,
                 Err(error) => return unavailable(error),
             };
+        if migrate {
+            let Some(stored) = envelope.as_ref() else {
+                return SaveCommit::Corrupt(
+                    "a save migration requires a prior envelope".to_owned(),
+                );
+            };
+            let prior = match private_storage::read_private(
+                &self.directory,
+                &self.save_name(),
+                MAX_ENVELOPE_BYTES,
+            ) {
+                Ok(prior) => prior,
+                Err(error) => return unavailable(error),
+            };
+            let mut backup = match PreparedCheckpoint::prepare(
+                &self.directory,
+                &self.migration_backup_name(stored.revision),
+                &prior,
+            ) {
+                Ok(backup) => backup,
+                Err(error) => return unavailable(error),
+            };
+            if let Err(error) = backup.publish().and_then(|()| backup.sync()) {
+                return unavailable(error);
+            }
+            if let Err(error) = sync_publication_directory(&self.directory) {
+                return unavailable(error);
+            }
+        }
         if fault == Some(CommitFault::BeforePublish) {
             return SaveCommit::Unavailable {
                 kind: io::ErrorKind::Other,
@@ -458,6 +795,7 @@ impl TransactionalSaveStore {
         match self.read_envelope() {
             Ok(Some(envelope)) => SaveLoad::Present(SaveSnapshot {
                 revision: SaveRevision(envelope.revision),
+                schema_version: envelope.schema_version,
                 value: envelope.payload,
                 operation_id: OperationId(
                     Uuid::parse_str(&envelope.operation_id).expect("validated operation ID"),
@@ -513,6 +851,8 @@ impl TransactionalSaveStore {
             ));
         }
         if envelope.revision == 0
+            || envelope.revision > festerm_automation_js::protocol::MAX_SAFE_INTEGER
+            || envelope.schema_version == 0
             || Sha256::digest(&envelope.payload).as_slice() != envelope.payload_digest
             || envelope.payload.len() > MAX_PAYLOAD_BYTES
         {
@@ -525,6 +865,13 @@ impl TransactionalSaveStore {
 
     fn save_name(&self) -> PathBuf {
         PathBuf::from(format!("save-{}.json", self.slot_id.0.simple()))
+    }
+
+    fn migration_backup_name(&self, revision: u64) -> PathBuf {
+        PathBuf::from(format!(
+            "save-{}-pre-migration-r{revision}.json",
+            self.slot_id.0.simple()
+        ))
     }
 
     fn verify_writer(&self) -> io::Result<()> {
@@ -782,5 +1129,272 @@ mod tests {
             &**private_storage::read_private(&store.directory, &store.save_name(), 16,).unwrap(),
             b"{broken"
         );
+    }
+
+    #[test]
+    fn javascript_program_migration_backs_up_and_refuses_downward_publication() {
+        let (root, program, universe, slot) = fixture();
+        let mut store =
+            TransactionalSaveStore::open_test(root.directory(), program, universe, slot).unwrap();
+        let old_operation = OperationId::new();
+        let SaveCommit::Committed(old) = store.commit_with_schema(
+            None,
+            old_operation,
+            OLDEST_APPROVED_SAVE_SCHEMA,
+            b"legacy",
+            false,
+            None,
+        ) else {
+            panic!("legacy fixture save was not committed");
+        };
+        let prior_bytes =
+            private_storage::read_private(&store.directory, &store.save_name(), MAX_ENVELOPE_BYTES)
+                .unwrap();
+        assert!(matches!(
+            store.commit(Some(old.revision), OperationId::new(), b"downward"),
+            SaveCommit::Conflict { .. }
+        ));
+
+        let SaveCommit::Committed(migrated) = store.commit_migrating(
+            Some(old.revision),
+            OperationId::new(),
+            CURRENT_SAVE_SCHEMA,
+            b"migrated",
+        ) else {
+            panic!("explicit migration did not publish");
+        };
+        assert_eq!(migrated.revision.value(), 2);
+        assert_eq!(
+            private_storage::read_private(
+                &store.directory,
+                &store.migration_backup_name(old.revision.value()),
+                MAX_ENVELOPE_BYTES,
+            )
+            .unwrap(),
+            prior_bytes
+        );
+        let SaveLoad::Present(snapshot) = store.load() else {
+            panic!("migrated save did not reload");
+        };
+        assert_eq!(snapshot.schema_version, CURRENT_SAVE_SCHEMA);
+        assert_eq!(snapshot.value, b"migrated");
+    }
+
+    #[test]
+    fn reviewed_save_host_reconciles_then_migrates_reopened_legacy_save() {
+        let root = PrivateFixture::new();
+        let program = ProgramId::from_host(DEVELOPER_PROGRAM_ID);
+        let universe = UniverseId::from_host(DEVELOPER_UNIVERSE_ID);
+        let slot = SlotId::from_host(DEVELOPER_SLOT_ID);
+        {
+            let mut store =
+                TransactionalSaveStore::open_test(root.directory(), program, universe, slot)
+                    .unwrap();
+            assert!(matches!(
+                store.commit_with_schema(
+                    None,
+                    OperationId::new(),
+                    OLDEST_APPROVED_SAVE_SCHEMA,
+                    b"legacy",
+                    false,
+                    None,
+                ),
+                SaveCommit::Committed(_)
+            ));
+        }
+        let host = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(root.directory(), program, universe, slot).unwrap(),
+            ProgramLaunchMode::Resume,
+        );
+        assert_eq!(host.prepare(), Ok(()));
+        assert!(matches!(
+            host.commit(
+                DEVELOPER_SLOT,
+                ProgramStorageCommitRequest {
+                    expected_revision: Some(1),
+                    schema_version: CURRENT_SAVE_SCHEMA,
+                    value: b"migrated".to_vec(),
+                    operation_id: OperationId::new().0.hyphenated().to_string(),
+                },
+            ),
+            ProgramStorageCommit::Committed { revision: 2 }
+        ));
+        let stored = host
+            .store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("resume host retained its store")
+            .load();
+        assert!(matches!(
+            stored,
+            SaveLoad::Present(SaveSnapshot {
+                revision: SaveRevision(2),
+                schema_version: CURRENT_SAVE_SCHEMA,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn reviewed_save_host_distinguishes_new_resume_and_exclusive_writer() {
+        let root = PrivateFixture::new();
+        let new = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::New,
+        );
+        new.prepare().unwrap();
+        assert_eq!(new.load(DEVELOPER_SLOT), ProgramStorageLoad::Missing);
+        assert!(TransactionalSaveStore::open_test(
+            root.directory(),
+            ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+            UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+            SlotId::from_host(DEVELOPER_SLOT_ID),
+        )
+        .is_err());
+        let ProgramStorageCommit::Committed { revision } = new.commit(
+            DEVELOPER_SLOT,
+            ProgramStorageCommitRequest {
+                expected_revision: None,
+                schema_version: CURRENT_SAVE_SCHEMA,
+                value: b"state".to_vec(),
+                operation_id: Uuid::new_v4().hyphenated().to_string(),
+            },
+        ) else {
+            panic!("initial reviewed save did not commit");
+        };
+        assert_eq!(revision, 1);
+        drop(new);
+
+        let duplicate = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::New,
+        );
+        assert_eq!(
+            duplicate.prepare(),
+            Err(ProgramStoragePreparation::ExistingSave)
+        );
+        drop(duplicate);
+        let resumed = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::Resume,
+        );
+        resumed.prepare().unwrap();
+        assert!(matches!(
+            resumed.load(DEVELOPER_SLOT),
+            ProgramStorageLoad::Present {
+                schema_version: CURRENT_SAVE_SCHEMA,
+                revision: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reviewed_save_host_refuses_missing_resume() {
+        let root = PrivateFixture::new();
+        let host = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::Resume,
+        );
+        assert_eq!(host.prepare(), Err(ProgramStoragePreparation::MissingSave));
+    }
+
+    #[test]
+    fn reviewed_save_host_refuses_future_schema_without_publication() {
+        let root = PrivateFixture::new();
+        let mut store = TransactionalSaveStore::open_test(
+            root.directory(),
+            ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+            UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+            SlotId::from_host(DEVELOPER_SLOT_ID),
+        )
+        .unwrap();
+        store.commit(None, OperationId::new(), b"current");
+        let mut envelope: SaveEnvelope = serde_json::from_slice(
+            &private_storage::read_private(
+                &store.directory,
+                &store.save_name(),
+                MAX_ENVELOPE_BYTES,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        envelope.schema_version = CURRENT_SAVE_SCHEMA + 1;
+        private_storage::replace_private(
+            &store.directory,
+            &store.save_name(),
+            &serde_json::to_vec(&envelope).unwrap(),
+        )
+        .unwrap();
+        drop(store);
+
+        let host = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::Resume,
+        );
+        assert_eq!(host.prepare(), Err(ProgramStoragePreparation::Future));
+        assert!(matches!(
+            host.load(DEVELOPER_SLOT),
+            ProgramStorageLoad::Future {
+                actual_schema_version
+            } if actual_schema_version == CURRENT_SAVE_SCHEMA + 1
+        ));
+        assert!(matches!(
+            host.commit(
+                DEVELOPER_SLOT,
+                ProgramStorageCommitRequest {
+                    expected_revision: Some(1),
+                    schema_version: CURRENT_SAVE_SCHEMA,
+                    value: b"replacement".to_vec(),
+                    operation_id: OperationId::new().0.hyphenated().to_string(),
+                },
+            ),
+            ProgramStorageCommit::Future {
+                actual_schema_version
+            } if actual_schema_version == CURRENT_SAVE_SCHEMA + 1
+        ));
+        drop(host);
+        let new = ReviewedDeveloperStorageHost::from_test(
+            TransactionalSaveStore::open_test(
+                root.directory(),
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            )
+            .unwrap(),
+            ProgramLaunchMode::New,
+        );
+        assert_eq!(new.prepare(), Err(ProgramStoragePreparation::Future));
     }
 }

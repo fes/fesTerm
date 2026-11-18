@@ -5,6 +5,7 @@
 //! for exercising terminal I/O contracts before native process integration.
 
 use crate::{
+    program_storage::{MAX_STORAGE_SLOT_BYTES, MAX_STORAGE_VALUE_BYTES},
     protocol::{encode_frame, CHUNK_BYTES, MAX_FRAME_BYTES, MAX_SAFE_INTEGER},
     snapshot::{token, unique_map, ApprovedBundle, Manifest, SourceSnapshot, MAX_SNAPSHOT_BYTES},
     Error,
@@ -41,6 +42,8 @@ pub enum ProgramCapability {
     AssetsRead,
     ClockNow,
     ClockSleep,
+    StorageLoad,
+    StorageCommit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -60,6 +63,7 @@ pub struct ProgramAsset {
 pub struct JavaScriptProgramLaunch {
     program: ApprovedProgram,
     worker_generation: u64,
+    params: ProgramLaunchParams,
 }
 
 impl JavaScriptProgramLaunch {
@@ -83,6 +87,7 @@ impl JavaScriptProgramLaunch {
         Ok(Self {
             program,
             worker_generation,
+            params: ProgramLaunchParams::new(ProgramLaunchMode::New),
         })
     }
 
@@ -94,6 +99,32 @@ impl JavaScriptProgramLaunch {
         Ok(Self {
             program,
             worker_generation,
+            params: ProgramLaunchParams::new(ProgramLaunchMode::New),
+        })
+    }
+
+    pub fn reviewed_developer_save(
+        worker_generation: u64,
+        mode: ProgramLaunchMode,
+    ) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+        let program = developer_save_program()?;
+        let expected = BTreeSet::from([
+            ProgramCapability::TerminalInput,
+            ProgramCapability::TerminalOutput,
+            ProgramCapability::TerminalResize,
+            ProgramCapability::StorageLoad,
+            ProgramCapability::StorageCommit,
+        ]);
+        if program.manifest().capabilities != expected {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+            params: ProgramLaunchParams::new(mode),
         })
     }
 
@@ -111,6 +142,33 @@ impl JavaScriptProgramLaunch {
 
     pub fn capabilities(&self) -> &BTreeSet<ProgramCapability> {
         &self.program.manifest().capabilities
+    }
+
+    pub fn params(&self) -> &ProgramLaunchParams {
+        &self.params
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramLaunchMode {
+    New,
+    Resume,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramLaunchParams {
+    pub mode: ProgramLaunchMode,
+}
+
+impl ProgramLaunchParams {
+    pub const fn new(mode: ProgramLaunchMode) -> Self {
+        Self { mode }
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -249,7 +307,7 @@ fn validate_manifest(
         || manifest.kind != ProgramKind::TerminalProgram
         || !token(&manifest.name)
         || manifest.capabilities.is_empty()
-        || manifest.capabilities.len() > 6
+        || manifest.capabilities.len() > 8
         || manifest.assets.len() > MAX_ASSETS
     {
         return Err(Error::Snapshot);
@@ -461,7 +519,7 @@ pub fn developer_host_services_program() -> Result<ApprovedProgram, Error> {
     terminal.write(String.fromCharCode(...await assets.read("greeting")));
     const started = await clock.now();
     await clock.sleep(1);
-    if (typeof started !== "number" || Object.keys(params).length !== 0) throw new Error("params");
+    if (typeof started !== "number" || params.mode !== "new") throw new Error("params");
     const events = terminal.events();
     while (true) {
         const event = await events.next();
@@ -490,6 +548,66 @@ pub fn developer_host_services_program() -> Result<ApprovedProgram, Error> {
         },
         BTreeMap::from([("greeting".into(), greeting)]),
     )
+}
+
+pub fn developer_save_program() -> Result<ApprovedProgram, Error> {
+    ApprovedProgram::new(ProgramSourceSnapshot {
+        manifest: ProgramManifest {
+            version: PROGRAM_PROTOCOL_VERSION,
+            api_version: PROGRAM_API_VERSION,
+            kind: ProgramKind::TerminalProgram,
+            name: "developer-save-fixture".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            assets: Vec::new(),
+            capabilities: BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+                ProgramCapability::StorageLoad,
+                ProgramCapability::StorageCommit,
+            ]),
+        },
+        modules: BTreeMap::from([(
+            "main.js".into(),
+            r#"export async function main({terminal, storage, params}) {
+    const loaded = await storage.load("primary");
+    if (params.mode === "new" && loaded.status === "present") {
+        throw new Error("existing-save");
+    }
+    if (params.mode === "resume" && loaded.status === "missing") {
+        throw new Error("missing-save");
+    }
+    let revision = loaded.status === "present" ? loaded.revision : null;
+    let turn = 0;
+    terminal.write(params.mode === "new" ? "new-ready\n" : "resume-ready\n");
+    const events = terminal.events();
+    while (true) {
+        const event = await events.next();
+        if (event.done || event.value.type === "close") return;
+        if (event.value.type !== "input") continue;
+        turn += event.value.bytes.length;
+        const operation = "00000000-0000-4000-8000-" +
+            String(revision === null ? turn : revision + turn).padStart(12, "0").slice(-12);
+        const bytes = Uint8Array.from(Array.from(JSON.stringify({turn}),
+            character => character.charCodeAt(0)));
+        try {
+            const receipt = await storage.commit("primary", revision, 2, bytes, operation);
+            if (receipt.conflict === true) {
+                terminal.write("save-conflict:" + String(receipt.actualRevision) + "\n");
+                return;
+            }
+            revision = receipt.revision;
+            terminal.write("saved:" + revision + "\n");
+        } catch (error) {
+            terminal.write("save-failed:" + String(error.message).slice(0, 32) + "\n");
+            return;
+        }
+    }
+}"#
+            .into(),
+        )]),
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -522,6 +640,7 @@ pub enum ProgramHostMessage {
         generation: u64,
         bundle_digest: String,
         initial_size: TerminalSize,
+        params: ProgramLaunchParams,
     },
     Input {
         generation: u64,
@@ -562,6 +681,7 @@ impl ProgramHostMessage {
                 generation,
                 bundle_digest,
                 initial_size,
+                params,
             } => {
                 *version == PROGRAM_PROTOCOL_VERSION
                     && *api_version == PROGRAM_API_VERSION
@@ -569,6 +689,7 @@ impl ProgramHostMessage {
                     && bundle_digest.len() == 64
                     && bundle_digest.bytes().all(|b| b.is_ascii_hexdigit())
                     && initial_size.validate().is_ok()
+                    && params.validate().is_ok()
             }
             Self::Input {
                 generation,
@@ -774,9 +895,23 @@ impl ProgramWorkerMessage {
     deny_unknown_fields
 )]
 pub enum ProgramHostRequest {
-    AssetsRead { id: String },
+    AssetsRead {
+        id: String,
+    },
     ClockNow {},
-    ClockSleep { milliseconds: u32 },
+    ClockSleep {
+        milliseconds: u32,
+    },
+    StorageLoad {
+        slot: String,
+    },
+    StorageCommit {
+        slot: String,
+        expected_revision: Option<u64>,
+        schema_version: u32,
+        value: Vec<u8>,
+        operation_id: String,
+    },
 }
 
 impl ProgramHostRequest {
@@ -785,6 +920,25 @@ impl ProgramHostRequest {
             Self::AssetsRead { id } if token(id) => Ok(()),
             Self::ClockNow {} => Ok(()),
             Self::ClockSleep { milliseconds } if *milliseconds <= MAX_SLEEP_MS => Ok(()),
+            Self::StorageLoad { slot } => validate_storage_slot(slot),
+            Self::StorageCommit {
+                slot,
+                expected_revision,
+                schema_version,
+                value,
+                operation_id,
+            } => {
+                validate_storage_slot(slot)?;
+                if expected_revision.is_some_and(|revision| revision > MAX_SAFE_INTEGER)
+                    || *schema_version == 0
+                    || value.len() > MAX_STORAGE_VALUE_BYTES
+                    || !canonical_operation_id(operation_id)
+                {
+                    Err(Error::Protocol)
+                } else {
+                    Ok(())
+                }
+            }
             _ => Err(Error::Protocol),
         }
     }
@@ -794,6 +948,8 @@ impl ProgramHostRequest {
             Self::AssetsRead { .. } => ProgramCapability::AssetsRead,
             Self::ClockNow {} => ProgramCapability::ClockNow,
             Self::ClockSleep { .. } => ProgramCapability::ClockSleep,
+            Self::StorageLoad { .. } => ProgramCapability::StorageLoad,
+            Self::StorageCommit { .. } => ProgramCapability::StorageCommit,
         }
     }
 }
@@ -807,6 +963,11 @@ pub enum ProgramHostError {
     Cancelled,
     ResourceLimit,
     Invalid,
+    Corrupt,
+    Future,
+    Unavailable,
+    BusyWriter,
+    Uncertain,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -817,10 +978,28 @@ pub enum ProgramHostError {
     deny_unknown_fields
 )]
 pub enum ProgramHostResult {
-    Asset { bytes: Vec<u8> },
-    Clock { unix_milliseconds: u64 },
+    Asset {
+        bytes: Vec<u8>,
+    },
+    Clock {
+        unix_milliseconds: u64,
+    },
     Slept {},
-    Error { code: ProgramHostError },
+    Error {
+        code: ProgramHostError,
+    },
+    StorageMissing {},
+    StoragePresent {
+        schema_version: u32,
+        revision: u64,
+        value: Vec<u8>,
+    },
+    StorageCommitted {
+        revision: u64,
+    },
+    StorageConflict {
+        actual_revision: Option<u64>,
+    },
 }
 
 impl ProgramHostResult {
@@ -831,6 +1010,26 @@ impl ProgramHostResult {
             }
             (Self::Clock { .. }, ProgramHostRequest::ClockNow {}) => true,
             (Self::Slept {}, ProgramHostRequest::ClockSleep { .. }) => true,
+            (Self::StorageMissing {}, ProgramHostRequest::StorageLoad { .. }) => true,
+            (
+                Self::StoragePresent {
+                    schema_version,
+                    revision,
+                    value,
+                },
+                ProgramHostRequest::StorageLoad { .. },
+            ) => {
+                *schema_version > 0
+                    && *revision <= MAX_SAFE_INTEGER
+                    && value.len() <= MAX_STORAGE_VALUE_BYTES
+            }
+            (Self::StorageCommitted { revision }, ProgramHostRequest::StorageCommit { .. }) => {
+                *revision > 0 && *revision <= MAX_SAFE_INTEGER
+            }
+            (
+                Self::StorageConflict { actual_revision },
+                ProgramHostRequest::StorageCommit { .. },
+            ) => actual_revision.is_none_or(|revision| revision <= MAX_SAFE_INTEGER),
             (Self::Error { .. }, _) => true,
             _ => false,
         };
@@ -840,6 +1039,23 @@ impl ProgramHostResult {
             Err(Error::Protocol)
         }
     }
+}
+
+fn validate_storage_slot(slot: &str) -> Result<(), Error> {
+    if slot.is_empty() || slot.len() > MAX_STORAGE_SLOT_BYTES || !token(slot) {
+        Err(Error::Protocol)
+    } else {
+        Ok(())
+    }
+}
+
+fn canonical_operation_id(operation_id: &str) -> bool {
+    let bytes = operation_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(byte),
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -935,7 +1151,7 @@ impl ProgramWireDecoder {
                 break;
             }
             let size = u32::from_be_bytes(self.bytes[..4].try_into().unwrap()) as usize;
-            if size == 0 || size > MAX_FRAME_BYTES {
+            if size == 0 || size >= MAX_FRAME_BYTES {
                 return Err(Error::Protocol);
             }
             if self.bytes.len() < 4 + size {
@@ -1391,6 +1607,58 @@ mod tests {
         }
         .validate()
         .is_err());
+        assert!(ProgramHostRequest::StorageCommit {
+            slot: "primary".into(),
+            expected_revision: Some(1),
+            schema_version: 2,
+            value: vec![0; MAX_STORAGE_VALUE_BYTES + 1],
+            operation_id: "00000000-0000-4000-8000-000000000001".into(),
+        }
+        .validate()
+        .is_err());
+        assert!(ProgramHostRequest::StorageCommit {
+            slot: "primary".into(),
+            expected_revision: Some(1),
+            schema_version: 2,
+            value: vec![],
+            operation_id: "ambient-operation".into(),
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn storage_wire_results_are_typed_and_strictly_bounded() {
+        let load = ProgramHostRequest::StorageLoad {
+            slot: "primary".into(),
+        };
+        ProgramHostResult::StoragePresent {
+            schema_version: 2,
+            revision: 4,
+            value: vec![1; MAX_STORAGE_VALUE_BYTES],
+        }
+        .validate_for(&load)
+        .unwrap();
+        let encoded = encode_program_worker_frame(&ProgramWorkerMessage::HostCall {
+            generation: 7,
+            call_id: 1,
+            request: ProgramHostRequest::StorageCommit {
+                slot: "primary".into(),
+                expected_revision: Some(4),
+                schema_version: 2,
+                value: vec![255; MAX_STORAGE_VALUE_BYTES],
+                operation_id: "00000000-0000-4000-8000-000000000005".into(),
+            },
+        })
+        .unwrap();
+        assert!(encoded.len() - 4 < MAX_FRAME_BYTES);
+        let mut decoder = ProgramWireDecoder::default();
+        let exact_ceiling = {
+            let mut frame = vec![0; MAX_FRAME_BYTES + 4];
+            frame[..4].copy_from_slice(&(MAX_FRAME_BYTES as u32).to_be_bytes());
+            frame
+        };
+        assert!(decoder.feed(&exact_ceiling).is_err());
     }
 
     #[test]
