@@ -2298,3 +2298,8 @@ acquires or starts a host. Current-version launch verification and Headless CLI
 origin remain unchanged. Disabled/newer gating, stale scope/metadata rejection,
 review, cancellation/drain and recorded-version rendering have deterministic
 coverage; genuine signed native Desktop old→new acceptance remains required.
+HOST-01/HOST-02 selected-host privacy preparation failures remain available in
+Diagnostics after cancellation discards the authority result. Fixed unavailable,
+timeout and cleanup-unresolved outcomes are scoped to the current account and
+request generation. They neither revive admission nor admit late success;
+ordinary user cancellation is not classified as an OS preparation failure.

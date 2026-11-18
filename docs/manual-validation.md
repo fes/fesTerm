@@ -5636,3 +5636,19 @@ same-intent retry, changed target, unavailable bundle and cancellation while a
 native operation drains. No cache edits, CLI origin switch, automatic rollback,
 reenable or replacement shell qualifies recovery. Model/render/compilation and
 metadata projection are not genuine native publisher/service/vault evidence.
+### HOST-01/HOST-02 privacy preparation diagnostics
+
+Portable fixtures cover loss-before-installation-error ordering, discarded late
+success, retained fixed failure, stale generation/account refusal and ordinary
+user cancellation. Signed native rendering and real OS preparation failures for
+this diagnostic route remain pending; fixtures do not qualify a Windows privacy
+provider or authorize a connection.
+
+The controlled Windows .17.8 client campaign found TermService stopped (Manual)
+while the interactive Session1 app was otherwise available. Its existing native
+monitor requires that service running as well as an active/unlocked WTS session.
+The operator temporarily started the preinstalled service under the lab setup
+authorization, preserving Manual startup and denied RDP policy; restoration
+after monitor drain is operator-owned. This was lab preparation, not a product
+workaround or instruction to enable Remote Desktop. A generic monitor failure
+must not claim this exact service cause without separate evidence.

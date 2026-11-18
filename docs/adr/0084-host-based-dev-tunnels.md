@@ -2697,3 +2697,12 @@ cancel/drain, rendering and no-side-effect metadata tests are automated.
 Actual signed old→new Desktop/native switching and durable-shell survival remain
 HOSTSETUP-01 acceptance. This adds no origin override, replacement policy,
 automatic migration, rollback or Enable and does not accept this ADR.
+
+Privacy preparation diagnostics (HOST-01/HOST-02) retain only a bounded fixed
+outcome per current account/request generation, independently of authority
+result disposal. OS-loss cancellation remains immediate and fail closed; late
+results cannot install a session or infer absence. The diagnostic route changes
+no privacy-provider prerequisites, OS service state, access policy or retry
+authority. Validation includes deterministic loss-before-error, late-success,
+stale-scope and user-cancel fixtures; genuine signed native diagnosis remains
+required.
