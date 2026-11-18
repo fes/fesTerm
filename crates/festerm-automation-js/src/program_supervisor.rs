@@ -9,8 +9,9 @@ use crate::{
         MAX_PENDING_WRITES, MAX_SLEEP_MS, PROGRAM_API_VERSION, PROGRAM_PROTOCOL_VERSION,
     },
     protocol::{encode_frame, Decoder, CHUNK_BYTES, MAX_SAFE_INTEGER},
-    Error, WorkerProgram, PROGRAM_CPU_WINDOW, PROGRAM_CPU_WINDOW_LIMIT, PROGRAM_HARD_CPU_SECONDS,
-    PROGRAM_TURN_TIMEOUT,
+    Error, ProgramStorageCommit, ProgramStorageCommitRequest, ProgramStorageHost,
+    ProgramStorageLoad, UnavailableProgramStorage, WorkerProgram, PROGRAM_CPU_WINDOW,
+    PROGRAM_CPU_WINDOW_LIMIT, PROGRAM_HARD_CPU_SECONDS, PROGRAM_TURN_TIMEOUT,
 };
 #[cfg(not(windows))]
 use std::process::Child;
@@ -182,6 +183,49 @@ impl ProgramSupervisor {
         forced: Arc<AtomicBool>,
         fence: Arc<dyn ProgramDeliveryFence>,
     ) -> Result<Self, Error> {
+        Self::spawn_with_authority_and_storage(
+            worker,
+            program,
+            generation,
+            initial_size,
+            forced,
+            fence,
+            Arc::new(UnavailableProgramStorage),
+        )
+    }
+
+    pub fn spawn_with_authority_and_storage(
+        worker: &WorkerProgram,
+        program: ApprovedProgram,
+        generation: u64,
+        initial_size: crate::program::TerminalSize,
+        forced: Arc<AtomicBool>,
+        fence: Arc<dyn ProgramDeliveryFence>,
+        storage: Arc<dyn ProgramStorageHost>,
+    ) -> Result<Self, Error> {
+        Self::spawn_with_launch_and_storage(
+            worker,
+            program,
+            generation,
+            initial_size,
+            forced,
+            fence,
+            storage,
+            crate::program::ProgramLaunchParams::new(crate::program::ProgramLaunchMode::New),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_with_launch_and_storage(
+        worker: &WorkerProgram,
+        program: ApprovedProgram,
+        generation: u64,
+        initial_size: crate::program::TerminalSize,
+        forced: Arc<AtomicBool>,
+        fence: Arc<dyn ProgramDeliveryFence>,
+        storage: Arc<dyn ProgramStorageHost>,
+        params: crate::program::ProgramLaunchParams,
+    ) -> Result<Self, Error> {
         platform::program_availability()?;
         if crate::cleanup_failed() {
             return Err(Error::Unavailable("an owned worker could not be reaped"));
@@ -189,6 +233,14 @@ impl ProgramSupervisor {
         initial_size.validate()?;
         if generation == 0 || generation > MAX_SAFE_INTEGER {
             return Err(Error::Protocol);
+        }
+        {
+            let _prepare_permit = fence
+                .try_enter(generation)?
+                .ok_or(Error::DisclosureRevoked)?;
+            storage
+                .prepare()
+                .map_err(|error| Error::Storage(error.message()))?;
         }
         let source = program.snapshot_bytes()?;
         let capabilities = program.manifest().capabilities.clone();
@@ -208,12 +260,14 @@ impl ProgramSupervisor {
                     capabilities,
                     assets,
                     digest,
+                    params,
                     generation,
                     initial_size,
                     receive,
                     startup,
                     supervisor_forced,
                     supervisor_fence,
+                    storage,
                 )
             })
             .map_err(|_| Error::Unavailable("program supervisor thread unavailable"))?;
@@ -423,15 +477,24 @@ fn supervise_process(
     capabilities: BTreeSet<crate::program::ProgramCapability>,
     assets: BTreeMap<String, Vec<u8>>,
     digest: String,
+    params: crate::program::ProgramLaunchParams,
     generation: u64,
     initial_size: crate::program::TerminalSize,
     commands: mpsc::Receiver<CommandRequest>,
     startup: SyncSender<StartupReply>,
     forced: Arc<AtomicBool>,
     fence: Arc<dyn ProgramDeliveryFence>,
+    storage: Arc<dyn ProgramStorageHost>,
 ) -> Result<(), Error> {
-    let mut child =
-        crate::supervisor::spawn_worker_with_argument(&path, "--javascript-program-worker")?;
+    if forced.load(Ordering::Acquire) {
+        return Err(Error::DisclosureRevoked);
+    }
+    let mut child = {
+        let _launch_permit = fence
+            .try_enter(generation)?
+            .ok_or(Error::DisclosureRevoked)?;
+        crate::supervisor::spawn_worker_with_argument(&path, "--javascript-program-worker")?
+    };
     let result = catch_unwind(AssertUnwindSafe(|| {
         supervise_child(
             &mut child,
@@ -439,12 +502,14 @@ fn supervise_process(
             capabilities,
             assets,
             digest,
+            params,
             generation,
             initial_size,
             commands,
             &startup,
             &forced,
             fence.as_ref(),
+            storage.as_ref(),
         )
     }))
     .unwrap_or(Err(Error::Cleanup));
@@ -464,18 +529,23 @@ fn supervise_child(
     capabilities: BTreeSet<crate::program::ProgramCapability>,
     assets: BTreeMap<String, Vec<u8>>,
     digest: String,
+    params: crate::program::ProgramLaunchParams,
     generation: u64,
     initial_size: crate::program::TerminalSize,
     commands: mpsc::Receiver<CommandRequest>,
     startup: &SyncSender<StartupReply>,
     forced: &AtomicBool,
     fence: &dyn ProgramDeliveryFence,
+    storage: &dyn ProgramStorageHost,
 ) -> Result<(), Error> {
     #[cfg(windows)]
     {
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         while !child.poll_connected()? {
-            if child.try_wait()?.is_some() || Instant::now() >= deadline {
+            if forced.load(Ordering::Acquire)
+                || child.try_wait()?.is_some()
+                || Instant::now() >= deadline
+            {
                 return Err(Error::Deadline);
             }
             thread::sleep(Duration::from_millis(1));
@@ -520,6 +590,7 @@ fn supervise_child(
         generation,
         bundle_digest: digest,
         initial_size,
+        params,
     };
     write_message(&mut input, &launch, forced, fence, generation)?;
     let deadline = Instant::now() + STARTUP_TIMEOUT;
@@ -537,6 +608,7 @@ fn supervise_child(
         &capabilities,
         &assets,
         &mut next_host_call_id,
+        storage,
     )?;
     startup
         .try_send(Ok((startup_output, completed)))
@@ -623,6 +695,7 @@ fn supervise_child(
                     &capabilities,
                     &assets,
                     &mut next_host_call_id,
+                    storage,
                 )
             });
         let completed = operation.as_ref().is_ok_and(|response| response.completed);
@@ -717,6 +790,7 @@ fn wait_started(
     capabilities: &BTreeSet<crate::program::ProgramCapability>,
     assets: &BTreeMap<String, Vec<u8>>,
     next_host_call_id: &mut u64,
+    storage: &dyn ProgramStorageHost,
 ) -> Result<(Vec<Vec<u8>>, bool), Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
@@ -773,6 +847,7 @@ fn wait_started(
                         fence,
                         cpu,
                         admitted,
+                        storage,
                     )?
                 }
                 ProgramWorkerMessage::Failed { code } => return Err(worker_failure(code)),
@@ -799,6 +874,7 @@ fn wait_operation(
     capabilities: &BTreeSet<crate::program::ProgramCapability>,
     assets: &BTreeMap<String, Vec<u8>>,
     next_host_call_id: &mut u64,
+    storage: &dyn ProgramStorageHost,
 ) -> Result<OperationResponse, Error> {
     let mut writes = Vec::new();
     let mut output_bytes = 0;
@@ -860,6 +936,7 @@ fn wait_operation(
                         fence,
                         cpu,
                         admitted,
+                        storage,
                     )?
                 }
                 ProgramWorkerMessage::Finished {
@@ -906,11 +983,20 @@ fn serve_program_host_call(
     fence: &dyn ProgramDeliveryFence,
     cpu: &mut ProgramCpuBudget,
     admitted: bool,
+    storage: &dyn ProgramStorageHost,
 ) -> Result<(), Error> {
     request.validate()?;
     if !capabilities.contains(&request.capability()) {
         return Err(Error::Protocol);
     }
+    let _storage_permit = match &request {
+        ProgramHostRequest::StorageLoad { .. } | ProgramHostRequest::StorageCommit { .. } => Some(
+            fence
+                .try_enter(generation)?
+                .ok_or(Error::DisclosureRevoked)?,
+        ),
+        _ => None,
+    };
     let result = if !admitted {
         ProgramHostResult::Error {
             code: ProgramHostError::ResourceLimit,
@@ -940,12 +1026,34 @@ fn serve_program_host_call(
                 }
                 ProgramHostResult::Slept {}
             }
+            ProgramHostRequest::StorageLoad { slot } => storage_load_result(storage.load(slot)),
+            ProgramHostRequest::StorageCommit {
+                slot,
+                expected_revision,
+                schema_version,
+                value,
+                operation_id,
+            } => storage_commit_result(storage.commit(
+                slot,
+                ProgramStorageCommitRequest {
+                    expected_revision: *expected_revision,
+                    schema_version: *schema_version,
+                    value: value.clone(),
+                    operation_id: operation_id.clone(),
+                },
+            )),
         }
     };
     result.validate_for(&request)?;
-    let _permit = fence
-        .try_enter(generation)?
-        .ok_or(Error::DisclosureRevoked)?;
+    let _delivery_permit = if _storage_permit.is_none() {
+        Some(
+            fence
+                .try_enter(generation)?
+                .ok_or(Error::DisclosureRevoked)?,
+        )
+    } else {
+        None
+    };
     write_message_under_permit(
         input,
         &ProgramHostMessage::HostCallResult {
@@ -957,12 +1065,79 @@ fn serve_program_host_call(
     )
 }
 
+fn storage_load_result(result: ProgramStorageLoad) -> ProgramHostResult {
+    match result {
+        ProgramStorageLoad::Missing => ProgramHostResult::StorageMissing {},
+        ProgramStorageLoad::Present {
+            schema_version,
+            revision,
+            value,
+        } => ProgramHostResult::StoragePresent {
+            schema_version,
+            revision,
+            value,
+        },
+        ProgramStorageLoad::Corrupt => ProgramHostResult::Error {
+            code: ProgramHostError::Corrupt,
+        },
+        ProgramStorageLoad::Future { .. } => ProgramHostResult::Error {
+            code: ProgramHostError::Future,
+        },
+        ProgramStorageLoad::Unavailable => ProgramHostResult::Error {
+            code: ProgramHostError::Unavailable,
+        },
+        ProgramStorageLoad::BusyWriter => ProgramHostResult::Error {
+            code: ProgramHostError::BusyWriter,
+        },
+        ProgramStorageLoad::ResourceLimit => ProgramHostResult::Error {
+            code: ProgramHostError::ResourceLimit,
+        },
+    }
+}
+
+fn storage_commit_result(result: ProgramStorageCommit) -> ProgramHostResult {
+    match result {
+        ProgramStorageCommit::Committed { revision } => {
+            ProgramHostResult::StorageCommitted { revision }
+        }
+        ProgramStorageCommit::Conflict { actual_revision } => {
+            ProgramHostResult::StorageConflict { actual_revision }
+        }
+        ProgramStorageCommit::Corrupt => ProgramHostResult::Error {
+            code: ProgramHostError::Corrupt,
+        },
+        ProgramStorageCommit::Future { .. } => ProgramHostResult::Error {
+            code: ProgramHostError::Future,
+        },
+        ProgramStorageCommit::Unavailable => ProgramHostResult::Error {
+            code: ProgramHostError::Unavailable,
+        },
+        ProgramStorageCommit::BusyWriter => ProgramHostResult::Error {
+            code: ProgramHostError::BusyWriter,
+        },
+        ProgramStorageCommit::Uncertain => ProgramHostResult::Error {
+            code: ProgramHostError::Uncertain,
+        },
+        ProgramStorageCommit::ResourceLimit => ProgramHostResult::Error {
+            code: ProgramHostError::ResourceLimit,
+        },
+    }
+}
+
 fn admit_host_call_wait(
     deadline: &mut Instant,
     request: &ProgramHostRequest,
     close: bool,
     host_wait: &mut Duration,
 ) -> bool {
+    if close
+        && matches!(
+            request,
+            ProgramHostRequest::StorageLoad { .. } | ProgramHostRequest::StorageCommit { .. }
+        )
+    {
+        return false;
+    }
     let ProgramHostRequest::ClockSleep { milliseconds } = request else {
         return true;
     };
@@ -1282,6 +1457,14 @@ mod tests {
         assert!(!admit_host_call_wait(
             &mut deadline,
             &ProgramHostRequest::ClockSleep { milliseconds: 1 },
+            true,
+            &mut host_wait,
+        ));
+        assert!(!admit_host_call_wait(
+            &mut deadline,
+            &ProgramHostRequest::StorageLoad {
+                slot: "primary".into(),
+            },
             true,
             &mut host_wait,
         ));

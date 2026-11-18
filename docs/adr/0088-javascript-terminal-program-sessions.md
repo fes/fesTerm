@@ -131,6 +131,12 @@ general host timers. The repository-owned async fixture uses the same
 terminal/event ordering as the synchronous echo fixture while exercising a
 frozen asset, one sleep and split UTF-8 input.
 
+The save integration adds exactly `storage.load(slot)` and
+`storage.commit(slot, expectedRevision, schemaVersion, value, operationId)`.
+Opaque slots are application-bound: no path or handle crosses the worker.
+Launch parameters are immutable and host-created with explicit `new` or
+`resume` authority. Save frames stay strictly below the framing ceiling.
+
 Input is a byte stream after the existing keyboard/IME/paste encoding path,
 not raw OS keydown events. Chunks may split UTF-8, escape sequences and pasted
 commands; the port must decode incrementally. Document Enter, Backspace,
@@ -352,6 +358,12 @@ bundle cannot silently run a migration during workspace restoration. Import,
 export, delete and backup policy are explicit user operations; save data does
 not enter ordinary config, workspace metadata, logs or cloud synchronization.
 
+The implementation reviews schema 2 as current and schema 1 as approved for
+explicit migration. Future, corrupt and unapproved schemas refuse; downward
+publication refuses. Resume publishes a durable pre-migration envelope before
+the replacement. New/refused-existing and resume/refused-missing are distinct
+launch results, and the exclusive writer is held for the runtime lifetime.
+
 ### 6. Define clocks, randomness and game maintenance
 
 Expose separate wall time and monotonic delays, with bounded cancellation and
@@ -505,6 +517,8 @@ The current implementation branch closes none of the delivery gates. It
 contains only a default-off developer vertical slice: one repository-owned
 QuickJS echo program, ordinary session-tab composition, exact encoded
 input/resize/output checks, bounded control and a typed reviewed launch.
+The reviewed save fixture now adds opaque-slot load/commit, immutable start or
+resume parameters, exclusive writer ownership and recoverable schema migration.
 An application-owned delivery fence binds OS privacy/lock monitoring, launch
 generation and cancellation. It is checked before worker IPC, before session
 queue publication and when queued output is consumed; revocation stops and
@@ -512,8 +526,8 @@ reaps the process and suppresses queued terminal bytes. A separate
 default-off process profile adds deterministic rolling-window and idle-
 survival limits plus force-bounded hostile-input coverage while automation
 retains its original 5-second policy. The branch does not make the mode
-generally enabled or qualify a packaged production worker. Keep transactional
-state, packaged/native qualification, aggregate quotas, general launch review,
+generally enabled or qualify a packaged production worker. Keep packaged/native
+qualification, aggregate quotas, general launch review,
 TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
@@ -521,15 +535,17 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
 - **Invariants introduced or changed:** Own-session capabilities,
   digest/capability-bound reviewed launches, generation-fenced worker
   messages, independent developer-runtime budgets, application-owned privacy
-  delivery fencing and explicit close. A later accepted slice adds private transactional save
-  ownership and explicit resume. The developer slice preserves the single app
+  delivery fencing and explicit close. The save slice adds private transactional
+  ownership and explicit resume while preserving the single app
   terminal writer, core-owned protocol semantics, bounded queues, event-driven
   wakes, restricted host API, centralized commands and metadata-only workspaces.
 - **GUI/action edges affected:** `JSP-01` launches only the repository-owned
   developer echo program through the typed command path; `JSP-02` carries
   ordinary encoded input, resize and output; `JSP-03` preserves close and
-  backpressure behavior. `JSP-04` remains deferred for digest/save review and
-  resume. Revalidate existing `ROOT-03`, `ROOT-04`, `CLOSE-01`, `CLOSE-04` and
+  backpressure behavior. `JSP-04` exercises reviewed start/resume, writer
+  exclusion, save faults and schema migration; packaged/native filesystem
+  qualification remains open. Revalidate existing `ROOT-03`, `ROOT-04`,
+  `CLOSE-01`, `CLOSE-04` and
   applicable move/window/input edges without reinterpreting them as game policy.
 - **Automated tests required:** The developer slice includes strict manifest
   and protocol bounds, stale-generation refusal, ordered QuickJS echo/resize,
