@@ -22,6 +22,7 @@ enum Mode {
     Program,
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 const fn cpu_limit_seconds(program: bool) -> u64 {
     if program {
         crate::PROGRAM_HARD_CPU_SECONDS
@@ -84,6 +85,7 @@ pub(crate) fn confine() -> Result<(), Error> {
     confine_for(Mode::Automation)
 }
 
+#[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
 pub(crate) fn confine_program() -> Result<(), Error> {
     confine_for(Mode::Program)
 }
@@ -141,6 +143,7 @@ pub(crate) fn cpu_time() -> Option<std::time::Duration> {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
 pub(crate) fn child_cpu_time(pid: u32) -> Result<std::time::Duration, Error> {
     use std::io::Read;
 
@@ -177,6 +180,7 @@ pub(crate) fn child_cpu_time(pid: u32) -> Result<std::time::Duration, Error> {
 }
 
 #[cfg(target_os = "macos")]
+#[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
 pub(crate) fn child_cpu_time(pid: u32) -> Result<std::time::Duration, Error> {
     let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
     // SAFETY: `info` is writable for the complete v2 structure.
