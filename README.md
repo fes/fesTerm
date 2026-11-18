@@ -12,6 +12,13 @@ service qualification remains open under
 [#429](https://github.com/fes/fesTerm/issues/429);
 advanced scoped-token activation remains available.
 
+An optional, default-off [JavaScript terminal-program developer slice](docs/adr/0088-javascript-terminal-program-sessions.md)
+runs a frozen repository-owned QuickJS echo fixture in its own normal terminal
+tab. It is distinct from JavaScript automation and has no shell, local-file,
+or automation-target authority. Build with `--features javascript-program-dev`
+to inspect the slice; production confinement, saves/resume, native lifecycle,
+and game integration are not accepted.
+
 The host-based Desktop/iOS/Android workflow requires automatic account-scoped
 host discovery, authorized inventory on host expansion and durable session
 creation under the host's global policy. Normal connections must not require

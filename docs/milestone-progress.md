@@ -15767,3 +15767,28 @@ vocabulary: Terminal, Keyboard (default keyboard, split and haptics merged),
 Security (App lock and Trusted hosts), Dev Tunnels, Recording and About, which
 now holds the offline demo. No defaults changed. Each of these behaviours is
 covered by a focused test.
+
+## Running a JavaScript program in its own terminal tab
+
+ADR 0088 separated own-terminal JavaScript programs from the existing
+automation workflow API: `sendText` controls another session, while a program
+must own an input/event stream, terminal dimensions and its display output.
+The first implementation keeps the distinction concrete with a separate
+manifest/protocol, a `JavaScriptSession` backend and a default-off developer
+echo program.
+
+The desktop developer slice now runs the frozen QuickJS bundle through an
+install-owned worker process. It has no automation target, no terminal-backend
+reply ownership and no local-file origin. Input, resize, output, stale
+generations, backpressure and cooperative close travel through the ordinary
+bounded `SessionController`; the app remains the only terminal writer. The
+command-palette route uses one centralized typed command, and focused tests
+prove real QuickJS state plus the normal-tab route. A direct in-process runtime
+remains test-only so application tests do not need to spawn the test harness as
+a worker.
+
+This is not production enablement. Interactive native CPU policy, packaged
+confinement, privacy/revocation fencing, keyboard/IME/paste usability,
+multi-window lifecycle, private transactional saves and explicit resume remain
+JSP-01/JSP-04 qualification work. TradeWars rules, assets and provenance are a
+separate game implementation, not evidence supplied by the terminal host.
