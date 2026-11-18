@@ -18,7 +18,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
 | [Desktop platform integration and packaging](desktop-platform.md) | This domain owns packaged update gating, native smoke validation, Apple event integration, and platform wake/privacy hooks for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm. |
+| [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, per-frame pane rendering, screen routing, and automation bootstraps for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 
