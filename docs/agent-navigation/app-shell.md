@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "33e72e5c036da316a68c8989ea205b2ec92a8ad83de5d1b937bfd1ca3637cba0"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "940df1e393d4df04cbd930d6e210e041d815159fec727b970254e7930914b5c8"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm.
+Owns desktop shell lifecycle, pane rendering, and screen-level host/profile/settings routing for fesTerm.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -14,22 +14,22 @@ Use for: Startup, restored windows, and saved workspace recovery
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native viewport startup
 - [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns every window and cross-window policy
-- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after primary exists
+- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens additional windows from the saved workspace
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn
 
 Caveats:
 - Primary window owns quit, wake, and secret-store policy.
-- Automation worker and MCP modes exit before GUI creation.
 - Restored windows reopen only after the primary window exists.
+- Automation worker and MCP modes exit before GUI creation.
 
 ## Frame loop
 
 Use for: Frame logic, close requests, and focused pane rendering
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds one egui frame and routes overlays
+- [`ui_content`](../../app/festerm/src/app.rs) — Builds the egui frame and routes overlays and screen actions
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render
@@ -59,7 +59,7 @@ Caveats:
 
 Use for: Host discovery, inventory, attach, and creation review
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit review or approval
 
 Evidence:
 - [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0f13f30a1b436e81d12d076576749ee1bfb691c10f6cbcf725505259c6fb4c7b"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5fa88a3da80ead1ebcc285152e7b9bc98ee40fd1d6659b3adad3652fdcabd5ad"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -17,7 +17,7 @@ Use for: Who may observe or control a target, and how are grant state and revoca
 
 Evidence:
 - [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — proves approvals and starts are bounded and stale state cannot replay
-- [`docs/automation-design.md`](../../docs/automation-design.md) — defines grant semantics, principal binding, and the ownership model
+- [`docs/automation-design.md`](../../docs/automation-design.md) — defines grant semantics, principal binding, and the application-owned authority model
 
 Caveats:
 - A connection is not a grant; only broker-owned approval yields authority.
@@ -60,7 +60,7 @@ Caveats:
 
 Use for: How do adapter channels, privacy gates, and controller enrollment flow into terminal actions?
 
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — enqueues adapter messages under admission and privacy checks before delivery
+- [`Connection`](../../app/festerm/src/automation/ipc.rs) — queues adapter messages under admission and privacy checks before delivery
 - [`freeze_association`](../../app/festerm/src/automation/controller.rs) — locks a reviewed controller enrollment to its exact target and window
 
 Evidence:
