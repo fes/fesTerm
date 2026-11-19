@@ -1238,8 +1238,28 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     assert!(session.try_send_input(b"never-replay").is_err());
     drop(session);
     let mut control = fixture.control().await;
+    let directory =
+        festerm_sessiond::private_storage::private_directory(&fixture.native.root, false).unwrap();
+    let lease_lock = festerm_sessiond::private_storage::open_private_file(
+        &directory,
+        std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+        false,
+    )
+    .unwrap();
     let operation = OperationId::new();
     tokio::time::timeout(native_timeout, async {
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact mobile generation lease failed: {error}"),
+            }
+        }
+        // Cancellation cleanup can contend with observation. Exercise that
+        // exact outcome without treating an Unknown generation as absent.
+        let mut contention = Some(lease_lock);
         loop {
             let response = control
                 .request(
@@ -1254,12 +1274,37 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
                     reason: festerm_host_protocol::Refusal::Busy,
                 } => tokio::time::sleep(Duration::from_millis(25)).await,
                 Response::Inventory { page } => {
-                    assert!(page.sessions.iter().any(|session| session.target == target));
-                    assert!(page
-                        .sessions
-                        .iter()
-                        .any(|session| session.target == foreign_target));
-                    break;
+                    assert!(page.next.is_none(), "two-target fixture must fit one page");
+                    assert_eq!(
+                        page.sessions.len() + page.unknown.len(),
+                        2,
+                        "cancel lost or duplicated a persistent target"
+                    );
+                    assert!(
+                        [&target, &foreign_target].iter().all(|target| {
+                            page.sessions
+                                .iter()
+                                .any(|session| &session.target == *target)
+                                || page.unknown.contains(target)
+                        }),
+                        "cancel replaced a persistent target"
+                    );
+                    if let Some(lock) = contention.take() {
+                        assert!(
+                            page.unknown.contains(&target),
+                            "held generation must be uncertain"
+                        );
+                        drop(lock);
+                    }
+                    if page.unknown.is_empty() {
+                        assert!(page.sessions.iter().any(|session| session.target == target));
+                        assert!(page
+                            .sessions
+                            .iter()
+                            .any(|session| session.target == foreign_target));
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
                 }
                 other => panic!("cancel is not detach, end, or absence: {other:?}"),
             }
