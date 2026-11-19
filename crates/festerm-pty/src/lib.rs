@@ -1604,8 +1604,11 @@ fn expand_home_directory_with(path: PathBuf, home: Option<&Path>) -> PathBuf {
     }
 }
 
+/// Equivalent shell-facing cwd spelling; canonical profiles remain unchanged.
+/// Also used by the persistence daemon at the final PTY spawn boundary.
+#[doc(hidden)]
 #[cfg(windows)]
-fn shell_working_directory(path: &Path) -> &Path {
+pub fn shell_working_directory(path: &Path) -> &Path {
     // Use the first-dot DOS stem; dunce 1.0.5 misses multi-extension aliases,
     // console aliases and superscript DOS device digits.
     for component in path.components() {

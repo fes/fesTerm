@@ -1262,6 +1262,15 @@ ConPTY child reporting its actual cwd. This does not measure mapped-drive
 latency: signed-package performance on the reported `Q:\src` environment
 remains native qualification under [#733](https://github.com/fes/fesTerm/issues/733).
 
+The required Windows `native_windows_wmi_starter_survives_calling_job_with_same_generation_io`
+fixture additionally exercises the persistence daemon with actual `cmd.exe`, a
+space- and Unicode-bearing canonical cwd, and `%CD%` expansion after caller-Job
+exit. The expected directory is not typed into the command; canonical registry
+cwd, spawn fingerprint and generation remain pinned. This regression covers the
+daemon spawn route that bypassed local-PTY cwd spelling; it does not qualify a
+new signed helper or alter existing running shells. Native qualification must
+use a fresh explicitly created session from the updated authenticated helper.
+
 Windows background hosting has deterministic task-action/legacy-upgrade
 coverage and native, task-free console probes:
 `windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`

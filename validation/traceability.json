@@ -6342,6 +6342,8 @@
         "immediate_job_only_refuses_when_both_breakaway_modes_are_absent",
         "silent_job_does_not_request_explicit_breakaway",
         "native_windows_wmi_starter_survives_calling_job_with_same_generation_io",
+        "windows_shell_cwd_simplifies_drive_paths_without_mutating_profile",
+        "windows_shell_cwd_preserves_paths_requiring_verbatim_semantics",
         "wmi_routing_never_repeats_a_successor_or_changes_direct_launch",
         "fast_wmi_successor_uses_only_exact_existing_ready_after_lost_pid",
         "command_line_quotes_empty_unicode_quotes_and_trailing_slashes",

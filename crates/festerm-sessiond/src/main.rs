@@ -5345,10 +5345,15 @@ fn spawn_shell(
     let pair = system.openpty(size)?;
     let mut command = CommandBuilder::new(&shell.executable);
     command.args(&shell.arguments);
-    command.cwd(match &shell.working_directory {
+    let working_directory = match &shell.working_directory {
         Some(working_directory) => PathBuf::from(working_directory),
         None => env::current_dir()?,
-    });
+    };
+    // Only the final spawn spelling changes; canonical recipe and fingerprint
+    // evidence above retain their exact path, including verbatim-only names.
+    #[cfg(windows)]
+    let working_directory = festerm_pty::shell_working_directory(&working_directory);
+    command.cwd(working_directory);
     apply_terminal_environment(&mut command, correlation);
     let child = pair.slave.spawn_command(command)?;
     let master = pair.master;
