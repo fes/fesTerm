@@ -4968,6 +4968,74 @@ mod tests {
     }
 
     #[test]
+    fn skip_all_and_replace_all_leave_other_paused_batches_unresolved() {
+        for decision in [SftpCollisionDecision::Skip, SftpCollisionDecision::Replace] {
+            for download in [false, true] {
+                let root = unique_test_directory("explicit-batch-conflicts");
+                let source = root.join("source");
+                let destination = root.join("destination");
+                recreate_directory(&source);
+                recreate_directory(&destination);
+                for name in ["a", "b", "separate"] {
+                    stdfs::write(source.join(name), b"new").unwrap();
+                    stdfs::write(destination.join(name), b"old").unwrap();
+                }
+                test_runtime().block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        let (commands, mut events, _) = spawn_worker(TestBackend::default()).await;
+                        let request = |name| {
+                            let source = source.join(name);
+                            SftpTransferRequest::new(
+                                if download { SftpPath::remote(display_path(&source)) } else { SftpPath::local(source) },
+                                if download { SftpPath::local(&destination) } else { SftpPath::remote(display_path(&destination)) },
+                            ).unwrap()
+                        };
+                        let first = queue_batch(&commands, vec![request("a"), request("b")]);
+                        let second = queue_numbered_batch(&commands, 3, request("separate"));
+                        let mut collisions = Vec::new();
+                        for _ in 0..3 {
+                            collisions.push(next_collision(&mut events).await.1);
+                        }
+                        let chosen = collisions.iter().find(|c| c.batch_id == first.batch_id).unwrap();
+                        let separate = collisions.iter().find(|c| c.batch_id == second.batch_id).unwrap();
+                        commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                            collision_id: chosen.id, decision, scope: SftpCollisionScope::RemainingConflictsInBatch,
+                        })).await.unwrap();
+                        let first_events = collect_until_batch_finished(&mut events, first.batch_id).await;
+                        let resolved = first_events.iter().filter(|event| match (decision, event) {
+                            (SftpCollisionDecision::Skip, SftpTransferEvent::ItemSkipped { batch_id, .. }) |
+                            (SftpCollisionDecision::Replace, SftpTransferEvent::ItemCompleted { batch_id, .. }) => *batch_id == first.batch_id,
+                            _ => false,
+                        }).count();
+                        assert_eq!(resolved, 2, "one decision resolves both paused conflicts");
+                        assert!(!first_events.iter().any(|event| matches!(event,
+                            SftpTransferEvent::BatchFinished { batch_id } if *batch_id == second.batch_id)));
+                        assert_eq!(stdfs::read(destination.join("separate")).unwrap(), b"old");
+                        // The unrelated collision must still accept its own explicit decision.
+                        commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                            collision_id: separate.id, decision: SftpCollisionDecision::Skip, scope: SftpCollisionScope::ThisItem,
+                        })).await.unwrap();
+                        let second_events = collect_until_batch_finished(&mut events, second.batch_id).await;
+                        assert!(second_events.iter().any(|event| matches!(event,
+                            SftpTransferEvent::ItemSkipped { transfer_id, .. } if *transfer_id == second.transfer_ids[0])));
+                    }).await.expect("batch decisions must not resolve or strand a separate batch");
+                });
+                for name in ["a", "b"] {
+                    assert_eq!(
+                        stdfs::read(destination.join(name)).unwrap(),
+                        if decision == SftpCollisionDecision::Replace {
+                            b"new"
+                        } else {
+                            b"old"
+                        }
+                    );
+                }
+                stdfs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn merge_folders_preserves_destination_only_content_and_obeys_descendant_collisions() {
         let root = unique_test_directory("merge-folders");
         let local = root.join("local");

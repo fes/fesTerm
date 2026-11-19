@@ -303,7 +303,12 @@ Required semantics:
 - descendant file conflicts inside a merge continue through the same collision
   pipeline rather than inheriting a hidden overwrite rule.
 
-The "apply to all" memory is scoped to one `SftpTransferBatchId` only. It is
+Explicit GUI **Skip all** and **Replace all** use the existing
+`RemainingConflictsInBatch` resolution, filtered by backend-permitted decisions.
+The ordinary choices remain single-item actions; no checkbox carries hidden
+batch scope. Source/destination Local/Remote labels follow the captured paths
+for both upload and download. The batch memory is scoped to one
+`SftpTransferBatchId` only. It is
 never persisted to settings or profiles and must be cleared once that batch has
 no remaining unresolved conflicts.
 
@@ -483,6 +488,9 @@ recursive folder deletion and trash remain outside this decision.
   `sftp_transfer_manager_emits_progress_and_completion`,
   `sftp_transfer_manager_cancels_pending_and_running_items`,
   `sftp_collision_apply_to_all_is_limited_to_one_batch`,
+  `collision_modal_actions_keep_explicit_item_and_batch_scopes`,
+  `collision_modal_batch_actions_require_batch_and_allowed_decisions`,
+  `skip_all_and_replace_all_leave_other_paused_batches_unresolved`,
   `sftp_keep_both_generates_deterministic_sibling_names`,
   `sftp_merge_folders_preserves_destination_only_descendants`,
   `gui_sftp_workspace_restore_requires_fresh_authentication`, and

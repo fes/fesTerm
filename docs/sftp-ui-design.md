@@ -227,7 +227,7 @@ Never silently overwrite an existing file. A collision pauses only the affected 
 - **Replace** — overwrite the destination only after this explicit choice.
 - **Skip** — leave the destination unchanged; this is the initially focused safest action.
 - **Keep Both** — choose a non-conflicting sibling name such as `report (copy).csv`, incrementing deterministically if needed.
-- **Apply to all conflicts in this batch** — shown only when more than one possible conflict remains. It applies the chosen action to the current batch only and is never saved as a global preference.
+- **Skip all / Replace all** — explicit batch actions shown when the backend permits a batch choice and that decision is allowed for the displayed conflict. They resolve compatible paused and later conflicts in the current batch only; incompatible conflicts still require review. Ordinary Replace, Skip, Keep Both and Merge folders remain single-item choices. No batch decision is saved as a global preference.
 
 Escape/cancel returns the item to a paused state without choosing. For a same-name folder, use a distinct **Merge folders** decision: merging adds/updates descendants but never deletes destination-only content, and each descendant file collision still follows the policy above. If the destination changes after the prompt, revalidate immediately before commit and prompt again rather than using stale approval.
 
@@ -314,6 +314,6 @@ should be introduced.
 1. From a running `production-db` SSH chip, invoke **Open SFTP**; a sibling SFTP chip appears and reuses trusted host/profile context.
 2. Browse Local `/Users/fes/Downloads/release` and Remote `/srv/releases/2026.09` using breadcrumbs, keyboard navigation, sorting, and folder filters.
 3. Select `festerm-0.1.0.tar.gz` locally and upload with the center action or `Ctrl/Cmd+Enter`.
-4. When the remote file already exists, verify the collision dialog defaults to Skip and presents Replace, Skip, Keep Both, metadata, and batch-only Apply to all.
+4. When the remote file already exists, verify the collision dialog defaults to Skip and presents Replace, Skip, Keep Both, direction-correct Local/Remote metadata, and explicit batch-only Skip all / Replace all. Verify another queued batch still prompts.
 5. Choose Keep Both; observe queued/running byte progress, the deterministic destination name, completion, refreshed Remote listing, and a concise success state.
 6. Simulate one permission failure; verify the affected row offers Retry/Details, other work continues, and no existing destination was silently overwritten.
