@@ -9,7 +9,7 @@ use festerm_config::{
 };
 use festerm_ui_egui::{
     chrome::ChipLayout,
-    controls::{action_button, ActionButtonRole},
+    controls::{action_button, action_button_enabled, ActionButtonRole},
     icon::{self, Icon},
     theme,
 };
@@ -71,6 +71,8 @@ pub(crate) struct SettingsViewModel {
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
     pub automatic_update_checks: bool,
+    pub safe_mode: bool,
+    pub open_automation_activity: bool,
     pub mcp_enabled: bool,
     pub javascript_enabled: bool,
     pub automation_mcp_enabled: bool,
@@ -225,6 +227,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_resumable_sessions,
         show_durable_session_in_status_bar,
         automatic_update_checks,
+        safe_mode,
+        open_automation_activity,
         mcp_enabled,
         javascript_enabled,
         automation_mcp_enabled,
@@ -266,6 +270,11 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         data.get_temp::<SettingsNavigation>(navigation_id)
             .unwrap_or_default()
     });
+    if open_automation_activity {
+        navigation.page = SettingsPage::AutomationActivity;
+        navigation.return_to = None;
+        navigation.focus_back = true;
+    }
     // The fixed Ctrl+Shift+F12 recovery chord asks the keyboard editor to
     // focus its search; the editor lives on its own sub-page, so go there.
     // The editor itself consumes the request.
@@ -987,6 +996,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         });
 
                         settings_card(ui, "Automation (Beta)", |ui| {
+                            if safe_mode {
+                                ssh_paragraph(ui, "Safe Mode is active. MCP and JavaScript execution are disabled for this process; saved preferences and workflow files were not changed.");
+                                ui.add_space(SETTINGS_ROW_GAP);
+                            }
                             if let Some(feedback) = automation_preference_feedback {
                                 ssh_paragraph(ui, feedback);
                                 if automation_preference_retry_available
@@ -997,32 +1010,36 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 ui.add_space(SETTINGS_ROW_GAP);
                             }
                             let viewport = ui.ctx().viewport_id();
-                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable local MCP (Beta)",
-                                    "Allow a local assistant adapter to request access. Each connection \
-                                     still needs a separate native grant for exact terminals. Terminal \
-                                     output can contain secrets. Off by default.",
-                                    mcp_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleMcpEnabled);
-                            }
+                            ui.add_enabled_ui(!safe_mode, |ui| {
+                                if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
+                                    settings_toggle_row(
+                                        ui,
+                                        "Enable local MCP (Beta)",
+                                        "Allow a local assistant adapter to request access. Each connection \
+                                         still needs a separate native grant for exact terminals. Terminal \
+                                         output can contain secrets. Off by default.",
+                                        mcp_enabled,
+                                    )
+                                }).inner {
+                                    automation_command.record(AppCommand::ToggleMcpEnabled);
+                                }
+                            });
                             ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
                             settings_row_separator(ui);
-                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable JavaScript workflows (Beta)",
-                                    "Run a selected workflow in an isolated, resource-limited worker \
-                                     after you approve it for one local terminal. Every input it sends \
-                                     needs a separate approval. Off by default.",
-                                    javascript_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
-                            }
+                            ui.add_enabled_ui(!safe_mode, |ui| {
+                                if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
+                                    settings_toggle_row(
+                                        ui,
+                                        "Enable JavaScript workflows (Beta)",
+                                        "Run a selected workflow in an isolated, resource-limited worker \
+                                         after you approve it for one local terminal. Every input it sends \
+                                         needs a separate approval. Off by default.",
+                                        javascript_enabled,
+                                    )
+                                }).inner {
+                                    automation_command.record(AppCommand::ToggleJavascriptEnabled);
+                                }
+                            });
                             settings_row_separator(ui);
                             ssh_paragraph(ui, automation.status);
                             ui.add_space(4.0);
@@ -1345,6 +1362,7 @@ fn workflow_settings(
 ) -> Option<AppCommand> {
     use crate::automation::{NativeCommand, WorkflowStatus};
     use festerm_automation_js::snapshot::{Capability, ParameterType};
+    let mut command = SettingsAutomationCommands::default();
 
     ssh_paragraph(
         ui,
@@ -1353,11 +1371,112 @@ fn workflow_settings(
          output can contain secrets. Each text or key input is shown here and waits for \
          your approval. Access stops when the screen locks or the computer sleeps.",
     );
-    if !enabled {
-        return None;
+    ui.add_space(8.0);
+    settings_group_label(ui, "Registered workflows");
+    if snapshot.workflow_registry.busy {
+        ssh_paragraph(ui, "Importing the workflow into private managed storage…");
+    }
+    if let Some(error) = &snapshot.workflow_registry.operation_error {
+        ui.colored_label(theme::STATUS_ERROR, error);
+    }
+    if let Some(error) = &snapshot.workflow_registry.error {
+        ui.colored_label(theme::STATUS_ERROR, error);
+    } else if snapshot.workflow_registry.entries.is_empty() {
+        ssh_paragraph(
+            ui,
+            "No workflows are registered. Register a saved .workflow.json from the editor; saving a file alone does not install it.",
+        );
+    } else {
+        for entry in &snapshot.workflow_registry.entries {
+            ui.push_id(("registered-workflow", &entry.digest), |ui| {
+                let name = ui
+                    .add(egui::Label::new(&entry.name).truncate())
+                    .on_hover_text(&entry.name);
+                name.widget_info(|| {
+                    WidgetInfo::labeled(WidgetType::Label, true, format!("Workflow {}", entry.name))
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "SHA-256 {}… · imported {}",
+                            entry.digest.get(..12).unwrap_or(&entry.digest),
+                            entry.imported_at
+                        ))
+                        .color(theme::TEXT_MUTED),
+                    );
+                    let review = action_button_enabled(
+                        ui,
+                        enabled,
+                        ActionButtonRole::Secondary,
+                        "Review Run",
+                    );
+                    review.widget_info(|| {
+                        WidgetInfo::labeled(
+                            WidgetType::Button,
+                            enabled,
+                            format!(
+                                "Review Run for {} ({})",
+                                entry.name,
+                                entry.digest.get(..12).unwrap_or(&entry.digest)
+                            ),
+                        )
+                    });
+                    if review.clicked() {
+                        command.record(AppCommand::Automation(
+                            NativeCommand::SelectRegisteredWorkflow {
+                                digest: entry.digest.clone(),
+                            },
+                        ));
+                    }
+                    let remove = action_button(ui, ActionButtonRole::DangerOutline, "Remove");
+                    remove.widget_info(|| {
+                        WidgetInfo::labeled(
+                            WidgetType::Button,
+                            true,
+                            format!(
+                                "Remove registered workflow {} ({})",
+                                entry.name,
+                                entry.digest.get(..12).unwrap_or(&entry.digest)
+                            ),
+                        )
+                    });
+                    if remove.clicked() {
+                        command.record(AppCommand::Automation(
+                            NativeCommand::DeleteRegisteredWorkflow {
+                                digest: entry.digest.clone(),
+                            },
+                        ));
+                    }
+                });
+                if !enabled {
+                    review_disabled_reason(ui);
+                }
+            });
+            ui.add_space(6.0);
+        }
     }
 
-    let mut command = SettingsAutomationCommands::default();
+    fn review_disabled_reason(ui: &mut Ui) {
+        ui.label(
+            egui::RichText::new("Enable JavaScript workflows before reviewing a registered run.")
+                .small()
+                .color(theme::TEXT_MUTED),
+        );
+    }
+    if snapshot.workflow_registry.quarantined > 0 {
+        ssh_paragraph(
+            ui,
+            &format!(
+                "{} malformed registry entries were quarantined and ignored.",
+                snapshot.workflow_registry.quarantined
+            ),
+        );
+    }
+    ui.add_space(8.0);
+    if !enabled {
+        return command.resolve(None);
+    }
+
     if ui
         .add_enabled(
             !snapshot.workflow.busy(),
@@ -3102,6 +3221,7 @@ fn settings_clickstop_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automation::NativeCommand;
     use egui_kittest::{
         kittest::{NodeT, Queryable},
         Harness,
@@ -3242,6 +3362,8 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            safe_mode: false,
+                            open_automation_activity: false,
                             mcp_enabled: state.mcp_enabled,
                             javascript_enabled: state.javascript_enabled,
                             automation_mcp_enabled: state.mcp_enabled && !state.automation_stopped,
@@ -3335,6 +3457,85 @@ mod tests {
             } else {
                 assert!(harness.query_by_label("Select workflow JSON").is_none());
             }
+        }
+    }
+
+    #[test]
+    fn registered_workflow_review_uses_its_digest_and_removal_is_separate() {
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot
+            .workflow_registry
+            .entries
+            .push(crate::workflow_registry::Entry {
+                digest: "ab".repeat(32),
+                name: "registered".into(),
+                imported_at: 1,
+            });
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 500.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    if let Some(action) = workflow_settings(ui, &snapshot, true) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+        harness.get_by_label_contains("Review Run for").click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::Automation(
+                NativeCommand::SelectRegisteredWorkflow { digest }
+            )) if digest == &"ab".repeat(32)
+        ));
+
+        harness.state_mut().take();
+        harness
+            .get_by_label_contains("Remove registered workflow")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::Automation(
+                NativeCommand::DeleteRegisteredWorkflow { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn registered_workflow_actions_wrap_at_narrow_width() {
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot
+            .workflow_registry
+            .entries
+            .push(crate::workflow_registry::Entry {
+                digest: "cd".repeat(32),
+                name: "workflow-".repeat(28),
+                imported_at: 1,
+            });
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    if let Some(action) = workflow_settings(ui, &snapshot, true) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+
+        for label in ["Review Run for", "Remove registered workflow"] {
+            let response = harness.get_by_label_contains(label);
+            assert!(response.rect().left() >= 0.0);
+            assert!(response.rect().right() <= 352.0);
+            assert!(
+                response.rect().height() >= 24.0,
+                "{label}: {}",
+                response.rect()
+            );
         }
     }
 
@@ -5589,6 +5790,8 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            safe_mode: false,
+                            open_automation_activity: false,
                             mcp_enabled: false,
                             javascript_enabled: false,
                             automation_mcp_enabled: false,

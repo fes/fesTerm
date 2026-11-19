@@ -511,8 +511,18 @@ keeps automation stopped until restart. A busy gate suppresses retry while its
 outcome is pending; an indeterminate attempted save or poisoned gate blocks
 retry and requires manual reconciliation and full restart. No durable off
 latch is written on failure, so restart can read an enabled value still on disk,
-although prior grants are not restored. This does not resolve stale
-non-automation documents, filesystem namespace safety, durable restart
+although prior grants are not restored.
+
+`--safe-mode` is a process-local startup fence, not another saved setting.
+It dominates both persisted booleans before automation or workflow-registry
+initialization, does not rewrite the file, and suppresses listeners, workers,
+registry activation and automatic workflow review. Source-file editing and
+validation remain inert editor operations. **Restart in Safe Mode…** in About
+uses the ordinary dirty-document/session confirmation path, starts a new
+process with the flag and closes only after that child starts. A later normal
+restart restores the user's previously saved opt-ins; Safe Mode never creates a
+durable disable bit. Neither path resolves stale non-automation documents,
+filesystem namespace safety, durable restart
 reconciliation, or external editors.
 
 Other interface preferences are
