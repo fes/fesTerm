@@ -1541,15 +1541,25 @@ fn deliberate_takeover_alternates_between_remote_and_local_repeatedly() {
     }
     args.push("spin");
     launch_session_with(&executable, &runtime, &name, &shell, &args);
-    let unattached = || list_unattached_sessions_in(&registry).unwrap();
-    bounded_poll(|| unattached().len() == 1, "takeover discovery");
-    let selected = unattached().remove(0);
+    let unattached = || takeover_registry_observation(list_unattached_sessions_in(&registry));
+    let mut discovered = None;
+    bounded_poll(
+        || {
+            discovered = unattached();
+            discovered
+                .as_ref()
+                .is_some_and(|sessions| sessions.len() == 1)
+        },
+        "takeover discovery",
+    );
+    let selected = discovered.unwrap().remove(0);
     let holder = || {
-        list_running_sessions_in(&registry)
-            .unwrap()
-            .into_iter()
-            .find(|running| running.session.name == name)
-            .map(|running| running.attached_by)
+        takeover_registry_observation(list_running_sessions_in(&registry)).and_then(|sessions| {
+            sessions
+                .into_iter()
+                .find(|running| running.session.name == name)
+                .map(|running| running.attached_by)
+        })
     };
     let ready = |session: &PersistentSession| {
         bounded_poll(
@@ -1615,11 +1625,24 @@ fn deliberate_takeover_alternates_between_remote_and_local_repeatedly() {
         send(&remote, &format!("r{round}"), tags[turn - 1]);
 
         // Local takes over from remote.
-        let running = list_running_sessions_in(&registry).unwrap();
+        let mut running = None;
+        bounded_poll(
+            || {
+                running = takeover_registry_observation(list_running_sessions_in(&registry));
+                running.is_some()
+            },
+            "remote takeover inventory",
+        );
+        let running = running.unwrap();
         assert_eq!(running[0].attached_by, Some(AttachKind::Remote));
-        assert!(
-            unattached().is_empty(),
-            "an attached session is not unattached"
+        bounded_poll(
+            || {
+                unattached().is_some_and(|sessions| {
+                    assert!(sessions.is_empty(), "an attached session is not unattached");
+                    true
+                })
+            },
+            "attached session exclusion",
         );
         let local = PersistentSession::take_over_discovered_in(
             &running[0].session,
@@ -1639,6 +1662,57 @@ fn deliberate_takeover_alternates_between_remote_and_local_repeatedly() {
     }
     drop(current);
     bounded_poll(|| holder() == Some(None), "released after the last detach");
+}
+
+// Registry reads have their own 500 ms lock deadline. Only that exact native
+// contention result is an unavailable observation, never an empty inventory.
+#[cfg(unix)]
+fn takeover_registry_observation<T>(
+    result: Result<T, festerm_sessiond::PersistentSessionError>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error)
+            if error.to_string()
+                == format!(
+                    "session registry unavailable (lock deadline 500 ms): {}",
+                    fs2::lock_contended_error()
+                ) =>
+        {
+            None
+        }
+        Err(error) => panic!("takeover registry observation failed: {error}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn takeover_registry_contention_is_unavailable_not_absence() {
+    use festerm_sessiond::list_running_sessions_in;
+    let runtime = short_runtime_root("takeover-lock");
+    fs::create_dir_all(&runtime).unwrap();
+    let lock = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(runtime.join("registry.lock"))
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    assert!(takeover_registry_observation(list_running_sessions_in(&runtime)).is_none());
+    FileExt::unlock(&lock).unwrap();
+    assert!(
+        takeover_registry_observation(list_running_sessions_in(&runtime))
+            .unwrap()
+            .is_empty()
+    );
+    fs::write(runtime.join("registry.json"), b"broken").unwrap();
+    assert!(
+        std::panic::catch_unwind(|| {
+            takeover_registry_observation(list_running_sessions_in(&runtime))
+        })
+        .is_err(),
+        "corrupt inventory must fail immediately, not poll"
+    );
+    fs::remove_dir_all(runtime).unwrap();
 }
 
 fn churn_setting(name: &str, default: usize, max: usize) -> usize {
