@@ -1,0 +1,60 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/782",
+  "status": "accepted bounded pending-stop recovery and fresh ordinary lifecycle cycle",
+  "production_change": false,
+  "original_failure_cause": "Unknown; the original visible error category was not retained. No causal fix or permanent-resolution claim.",
+  "sources": {
+    "Windows_GUI": {
+      "source": "a459c535ce1cf1f5d812ffb20d5dad7c78346a3a",
+      "version": "0.17.12",
+      "artifact_kind": "unsigned development frontend"
+    },
+    "signed_HOST": {
+      "source": "a459c535ce1cf1f5d812ffb20d5dad7c78346a3a",
+      "version": "0.17.12"
+    },
+    "retained_shell_version": "0.17.10"
+  },
+  "observed_sequence": [
+    "One ordinary Review Disable completed pending StopRequested21 as Disabled21 at the same epoch.",
+    "First Enable refused an invalid duplicated archive path before protected state changed; operator input failure retained separately.",
+    "One corrected signed-local Enable reached Listening22.",
+    "One fresh ordinary Disable reached Disabled23 on its first confirmation; worker absent and Task stopped.",
+    "One final Enable with the same authenticated local tuple reached Listening24."
+  ],
+  "preservation": {
+    "installation_binding_settings_and_original_profile_unchanged": true,
+    "original_full_session_record_generation_and_actor_births_unchanged": true,
+    "new_0_17_12_daemon_creation_qualified": false
+  },
+  "source_semantics": {
+    "controller": "crates/festerm-host-setup/src/controller.rs::disable_scoped_with",
+    "pending": "StopRequested reuses the existing revoked snapshot and epoch instead of revoking again.",
+    "completion": "Requires matching installation/origin/epoch, stopped/absent/failed native observation and runtime-lease release before confirming Disabled.",
+    "Windows_observation": "services.rs::windows_stop_observation retries only WouldBlock under one 10-second observation deadline; existing fenced receipt reconciliation remains possible, with no repeated manager mutation.",
+    "runtime_drain": "Controller subsequently bounds runtime-lease contention separately; the Windows observation deadline is not a total Disable duration guarantee.",
+    "limit": "These fail-closed bounded-observation semantics do not establish why the original stop remained pending."
+  },
+  "cleanup": {
+    "GUI": "normal exit0; owned supervisor/input absent and GUI Job empty",
+    "protected_state_unchanged_during_exit": true,
+    "current_HOST_and_original_durable_actors_retained": true,
+    "TermService": "Stayed Stopped with Manual startup and RDP denied; no service change."
+  },
+  "qualification_limits": {
+    "full_remote_pair_8_executed": false,
+    "matrix_complete": false,
+    "stress_or_longevity_fix_claimed": false,
+    "new_build_release_or_production_fix": false
+  },
+  "private_evidence_sha256": {
+    "aggregate_14_references_rehashed": "b78c4e45865390bb68d400f15cd2b1e489447319f9c9a4afb48b1bf7bc1e1b9f",
+    "pending_same_epoch_completion": "991a2a5c1b2a2ec5f81e6d648312e6afabcc83698e0f059822a3893f4fc12fec",
+    "invalid_input_refusal": "bf4a074fcf2e14e5c67dbbbf70964b5924f95ec2c58ff26ba8ff623c1ae87d0a",
+    "fresh_Disable": "df384740ba2c4498d5b60716aa99594a2dab20d5b514a2eb773477e50c80c272",
+    "final_Enable": "ff5097ae0fb052d7bc4d505bd52588a4e03105e9eb1e7c0e29ba88a34507170d",
+    "final_preservation": "9b73bfe13d6f45b40937c84c54cceae9c513422cef59eac93dfc9ff2b9a44983"
+  },
+  "publication_privacy": "Raw captures, process metadata, host identifiers, addresses, account references and credentials remain private."
+}

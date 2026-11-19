@@ -440,6 +440,19 @@ runtime failure stops that run under the current policy; a generic
 `RuntimeFailed` result alone does not establish its cause. Historical events
 do not establish current readiness or permission to retry an uncertain action.
 
+**Completing a pending Disable.** `StopRequested` means access consent has
+already been revoked; it does not mean stop completion has been confirmed.
+Screenshot the visible failure, then select **Refresh local status**. Expand
+**Advanced / Recovery**, select **Review Disable**, and confirm **Disable
+access** for the same installation. The pending stop retains the same epoch.
+Completion still requires matching native stop and
+runtime-lease observations; contention can leave it pending after a bounded
+wait. Do not re-enable or reprovision just to finish a stop. A pending result
+alone does not identify the failure's cause. The
+[Windows 0.17.12 recovery record](../validation/dev-tunnels/windows-disable-0.17.12.json)
+qualifies this recovery and a fresh ordinary lifecycle cycle without claiming
+a production fix or a complete remote workflow case.
+
 - [ADR 0046](adr/0046-opt-in-retained-document-frame.md) complete-frame
   retention defaults on for the qualified WARP route. Set
   `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` to disable it; unset/empty/`1`
