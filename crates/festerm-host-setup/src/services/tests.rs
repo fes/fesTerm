@@ -2008,6 +2008,161 @@ fn native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive
 
 #[cfg(all(feature = "cloud", feature = "host-runtime"))]
 #[test]
+fn native_service_windows_stop_retries_transient_read_contention_without_task_mutation() {
+    use std::cell::Cell;
+    struct BusyOnce {
+        native: FakeRunner,
+        busy: Cell<bool>,
+    }
+    impl CommandRunner for BusyOnce {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            if matches!(
+                request,
+                NativeRequest::Task {
+                    action: TaskAction::Query,
+                    ..
+                }
+            ) && self.busy.replace(false)
+            {
+                self.native.state.borrow_mut().calls.push(request.clone());
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "fixture.read_busy",
+                ));
+            }
+            self.native.execute(request)
+        }
+    }
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let before = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let original = services(root.path(), &store, Platform::Windows);
+    original.install(&stage, before.epoch).unwrap();
+    original
+        .start_with(&stage, before.epoch, || Ok(()))
+        .unwrap();
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    original.runner.state.borrow_mut().calls.clear();
+    original.runner.state.borrow_mut().quiesce_after_query = true;
+    let services = Services {
+        store: &store,
+        state: original.state,
+        context: original.context,
+        runner: BusyOnce {
+            native: original.runner,
+            busy: Cell::new(true),
+        },
+    };
+    assert_eq!(
+        services.stop(revoked.epoch).unwrap().process,
+        ProcessState::Stopped
+    );
+    assert_eq!(store.snapshot().unwrap(), revoked);
+    let state = services.runner.native.state.borrow();
+    assert!(state.calls.len() >= 2);
+    assert!(state.calls.iter().all(|request| matches!(
+        request,
+        NativeRequest::Task {
+            action: TaskAction::Query,
+            ..
+        }
+    )));
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+fn native_service_windows_stop_contention_keeps_one_deadline_and_revocation() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    provision(&store);
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    let services = fixture_services(&store, &state).unwrap();
+    let held = services.lease().unwrap();
+    let started = std::time::Instant::now();
+    let error = services
+        .stop_windows_revocation(revoked.epoch, std::time::Duration::from_millis(40))
+        .err()
+        .unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(error.to_string(), "host.runtime_stop_pending");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(40));
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(store.snapshot().unwrap(), revoked);
+    drop(held);
+    assert_eq!(
+        services.stop(revoked.epoch).unwrap().process,
+        ProcessState::Absent
+    );
+    assert_eq!(store.snapshot().unwrap(), revoked);
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+fn native_service_windows_stop_rechecks_scope_after_constructor_contention() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    provision(&store);
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    let mut held = Some(store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap());
+    let mut calls = 0;
+    let error = windows_stop_observation(std::time::Duration::from_secs(1), |deadline| {
+        calls += 1;
+        let result = fixture_services(&store, &state)
+            .and_then(|services| services.stop_once(revoked.epoch, deadline));
+        if let Some(lease) = held.take() {
+            assert_eq!(
+                result.as_ref().err().unwrap().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            drop(lease);
+            // A different exact foreground completion advances into cleanup.
+            store.confirm_stopped(revoked.epoch, revoked.binding.as_ref().unwrap())?;
+            store.request_cleanup()?;
+        }
+        result
+    })
+    .err()
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(
+        error.to_string(),
+        "host.service_stale_or_unapproved_operation"
+    );
+    let current = store.snapshot().unwrap();
+    assert_eq!(current.phase, Phase::CleanupPending);
+    assert!(current.epoch > revoked.epoch);
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+fn native_service_windows_stop_never_retries_foreign_state_refusal() {
+    let root = storage::private_test_directory();
+    let other = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    provision(&store);
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    let mut calls = 0;
+    let error = windows_stop_observation(std::time::Duration::from_secs(1), |deadline| {
+        calls += 1;
+        fixture_services(&store, &other.path().join("state"))?.stop_once(revoked.epoch, deadline)
+    })
+    .err()
+    .unwrap();
+    assert_eq!(calls, 1);
+    assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(store.snapshot().unwrap(), revoked);
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
 fn native_service_windows_revocation_reconciles_exact_task_without_destructive_stop() {
     let root = storage::private_test_directory();
     let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "7eb147f70588280453164564b0e12f00773d456784adce1ab19c84bb469e9527"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "67706a92bbf0e9782c3b9af2ec99465cdaefd8fce15066bb9b601c2c2f9205e9"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -18,17 +18,18 @@ Use for: Which build metadata and update gate are required before a packaged rel
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
 - [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only app, appimage, and nsis are eligible for in-place updates.
+- [`scripts/tests/test_check_packaging.py`](../../scripts/tests/test_check_packaging.py) — Checks ARM-only existing-frontend export with checkout/tree/head provenance and explicit development scope.
 
 Caveats:
-- Install markers are package-specific and not interchangeable.
-- Updater signing is separate from app signing; only the public key is checked.
-- Only a small set of installation kinds are eligible for auto-update.
+- A package-smoke development executable is not a signed release or HOST bundle.
+- GUI updater configuration and the embedded HOST bundle verification key are separate.
+- Install markers remain package-specific and limit self-update formats.
 
 ## Native smoke
 
 Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the native smoke driver inside the real app event loop and PTY.
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs smoke in the real app event loop and PTY.
 - [`from_environment`](../../app/festerm/src/native_smoke.rs) — Enforces exactly one smoke mode and one result path for CI.
 
 Evidence:
@@ -38,13 +39,13 @@ Evidence:
 Caveats:
 - Only one smoke mode and one result path may be active at a time.
 - This validates real PTY and window behavior, not headless replay.
-- Linux Xvfb can report an unfocused result and should not be mistaken for native focus proof.
+- Xvfb focus results do not prove native desktop focus.
 
 ## macOS document bridge
 
 Use for: What should I read when a Finder open event or macOS menu action breaks?
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Registers Finder AppleEvents and drains queued file-open paths before UI attach.
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder open-document events before UI attachment.
 - [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu actions into semantic app commands.
 
 Evidence:
@@ -59,8 +60,8 @@ Caveats:
 
 Use for: What should I read when resume-from-sleep, lock-screen, or privacy callbacks misfire?
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — A hidden message-only window listens for resume broadcasts and triggers wake.
-- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — The logind PrepareForSleep(false) signal is treated as resume and triggers wake.
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Routes Windows resume broadcasts to wake.
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Treats logind PrepareForSleep(false) as resume.
 - [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Tracks lock, inactivity, and suspend-loss conditions with fail-closed semantics.
 
 Evidence:
@@ -70,12 +71,12 @@ Evidence:
 
 Caveats:
 - These monitors treat only the resume edge as wake and ignore suspend transitions.
-- Linux privacy depends on systemd-logind and a compatible GNOME session and shell.
+- Linux privacy needs logind and compatible GNOME.
 - Fail-closed is required: unknown or broken bus state counts as privacy loss.
 
 ## Hosted Windows startup
 
-Use for: A persistent hosted shell must outlive the GUI, bridge and HOST worker on Windows.
+Use for: Windows persistent shells outlive GUI, bridge and HOST.
 
 - [`run_start_prepared`](../../crates/festerm-sessiond/src/main.rs) — Selects one WMI hop for an initial hosted starter in any Job, before taking start locks.
 - [`relaunch_current_starter`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Uses local WMI with bounded successor observation and preserved Unicode arguments and environment.

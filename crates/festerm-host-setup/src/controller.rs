@@ -420,7 +420,7 @@ pub struct DisableResult {
 /// Neither native daemon nor persistent sessions are stop targets.
 pub fn disable(store: &Store, state: &Path) -> io::Result<DisableResult> {
     disable_with(store, Duration::from_secs(10), |epoch| {
-        Services::current_user(store, state)?.stop(epoch)
+        Services::stop_current_user(store, state, epoch)
     })
 }
 
@@ -430,7 +430,7 @@ pub fn disable_if_current(
     expected: &Snapshot,
 ) -> io::Result<DisableResult> {
     disable_scoped_with(store, Some(expected), Duration::from_secs(10), |epoch| {
-        Services::current_user(store, state)?.stop(epoch)
+        Services::stop_current_user(store, state, epoch)
     })
 }
 

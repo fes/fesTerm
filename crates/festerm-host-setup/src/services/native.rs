@@ -25,6 +25,15 @@ pub(super) struct OperationGuard {
 }
 
 impl OperationGuard {
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    pub(super) fn limit_until(&self, deadline: Instant) {
+        UNTIL.with(|slot| {
+            slot.set(Some(
+                slot.get().map_or(deadline, |prior| prior.min(deadline)),
+            ))
+        });
+    }
+
     pub(super) fn enter(lease: Lease) -> Self {
         Self {
             previous: OWNERSHIP.with(|slot| slot.replace(Some(Arc::new(lease)))),
@@ -358,6 +367,14 @@ mod tests {
         )
         .unwrap();
         let guard = OperationGuard::enter(Lease::exclusive(file).unwrap());
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        {
+            let expired = Instant::now() - Duration::from_secs(1);
+            guard.limit_until(expired);
+            guard.limit_until(Instant::now() + Duration::from_secs(30));
+            assert_eq!(UNTIL.with(|slot| slot.get()), Some(expired));
+        }
+        #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
         UNTIL.with(|slot| slot.set(Some(Instant::now() - Duration::from_secs(1))));
         let result = NativeRunner.execute(&NativeRequest::Process {
             tool: root.path().join("must-never-spawn"),

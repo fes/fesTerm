@@ -4867,6 +4867,14 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+Windows stop-observation fixtures additionally exercise transient native-query
+and lifecycle/service-lease contention, one shared deadline, changed scope and
+non-contention refusal without manager mutation; existing fenced receipt
+reconciliation may still persist exact native snapshots. For `HOST-04`, ordinary Disable
+with a live persistent shell must still reach confirmed Disabled after exact
+runtime-lease release and Task quiescence, then separately Enable and reconnect
+the same generation with fresh executed I/O. A Busy notice or absent worker
+alone is not confirmed Disable or evidence identifying the contended lock.
 **Primary desktop Setup source/mock increment (`HOSTSETUP-01`, not acceptance):**
 Settings → Remote access → explicit Enable now acquires only the current build's
 official native-target schema-2 bundle on the bounded background worker. Version,

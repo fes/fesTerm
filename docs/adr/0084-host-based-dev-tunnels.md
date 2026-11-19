@@ -617,6 +617,16 @@ protected-revocation/runtime-release check with both task observations. It
 never launches/stops a host or session daemon, weakens signing policy or
 claims real Windows/native release acceptance. See the
 [receipt/recovery contract](../native-host-services.md#windows-stopped-replacement-contract-design-before-implementation).
+After protected Windows revocation, transient `WouldBlock` while opening the
+current-user service context, acquiring its lease or observing exact tasks may
+retry those observations and existing fenced receipt reconciliation under one
+shared ten-second deadline. Exact missing native snapshots may be persisted;
+this does not permit manager mutation or replacement identity. Native observation
+deadlines cannot extend the budget. Each attempt rechecks the original epoch;
+changed scope and every non-contention refusal remain final. Timeout retains
+`StopRequested`; it never confirms absence, repeats revocation or issues native
+Start/Stop/Remove actions. These contention fixtures do not establish the cause
+of a particular native Busy report or replace live-daemon Disable qualification.
 Pending local cleanup is removal authority, not launch/update authority:
 protected CleanupPending epochs, exact journal/task XML/ACL ownership and
 quiescence plus independent absence suffice even when either bundle is

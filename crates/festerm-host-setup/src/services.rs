@@ -181,6 +181,24 @@ impl<'a> Services<'a, NativeRunner> {
     pub fn current_user(store: &'a Store, state: &Path) -> io::Result<Self> {
         Self::with_runner(store, state, NativeRunner)
     }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn stop_current_user(
+        store: &'a Store,
+        state: &Path,
+        epoch: u64,
+    ) -> io::Result<Observation> {
+        #[cfg(all(windows, feature = "cloud", feature = "host-runtime"))]
+        {
+            windows_stop_observation(std::time::Duration::from_secs(10), |deadline| {
+                Self::current_user(store, state)?.stop_once(epoch, deadline)
+            })
+        }
+        #[cfg(not(all(windows, feature = "cloud", feature = "host-runtime")))]
+        {
+            Self::current_user(store, state)?.stop(epoch)
+        }
+    }
 }
 
 impl<'a, R: CommandRunner> Services<'a, R> {
@@ -953,9 +971,36 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     }
 
     pub fn stop(&self, epoch: u64) -> io::Result<Observation> {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            return self.stop_windows_revocation(epoch, std::time::Duration::from_secs(10));
+        }
+        self.stop_once(
+            epoch,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn stop_windows_revocation(
+        &self,
+        epoch: u64,
+        wait: std::time::Duration,
+    ) -> io::Result<Observation> {
+        windows_stop_observation(wait, |deadline| self.stop_once(epoch, deadline))
+    }
+
+    fn stop_once(&self, epoch: u64, deadline: std::time::Instant) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::StopRequested)?;
-        if let Some(result) = self.stop_replacement(epoch)? {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            _lease.limit_until(deadline);
+        }
+        if let Some(result) = self.stop_replacement(
+            epoch,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )? {
             return Ok(result);
         }
         let (_, record) = self.reconciled_registration()?;
@@ -967,7 +1012,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return self.wait_windows_revocation(
                 &snapshot,
                 &record,
-                std::time::Duration::from_secs(10),
+                deadline.saturating_duration_since(std::time::Instant::now()),
             );
         }
         let state = self.observe(&record)?;
@@ -1116,6 +1161,39 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         record.removed = true;
         self.save(&record, epoch, Phase::CleanupPending)?;
         Ok(observation(&snapshot, ProcessState::Absent))
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+fn windows_stop_observation(
+    wait: std::time::Duration,
+    mut read: impl FnMut(std::time::Instant) -> io::Result<Observation>,
+) -> io::Result<Observation> {
+    let deadline = std::time::Instant::now() + wait;
+    let mut attempted = false;
+    loop {
+        if attempted && std::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "host.runtime_stop_pending",
+            ));
+        }
+        attempted = true;
+        // Revocation is already durable. Retry same-epoch observations and
+        // existing fenced receipt reconciliation, never manager mutations.
+        match read(deadline) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "host.runtime_stop_pending",
+                    ));
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+            }
+            result => return result,
+        }
     }
 }
 

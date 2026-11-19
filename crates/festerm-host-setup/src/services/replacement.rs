@@ -598,7 +598,11 @@ impl<R: CommandRunner> Services<'_, R> {
         Ok(())
     }
 
-    pub(super) fn stop_replacement(&self, epoch: u64) -> io::Result<Option<Observation>> {
+    pub(super) fn stop_replacement(
+        &self,
+        epoch: u64,
+        _wait: std::time::Duration,
+    ) -> io::Result<Option<Observation>> {
         let Some(mut record) = self.replacement()?.filter(Replacement::pending) else {
             return Ok(None);
         };
@@ -611,7 +615,7 @@ impl<R: CommandRunner> Services<'_, R> {
                 .wait_windows_resources_revocation(
                     &self.fence(epoch, Phase::StopRequested)?,
                     &[&record.old, &record.new],
-                    std::time::Duration::from_secs(10).saturating_sub(started.elapsed()),
+                    _wait.saturating_sub(started.elapsed()),
                 )
                 .map(Some);
         }

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9e72d45d8339aeace0a03e149f8b177ba08152b9d957b81c27fd02e98699a86d"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "6e2a9d381d8cc7ee4e83ec53879d3b29b94c052c289cf4e0eac171ab383aca46"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -16,7 +16,6 @@ Use for: Which tunnel qualifies as HOST and what exact binding does it carry?
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
-- [`docs/agent-navigation/tunnels-enterprise.md`](../../docs/agent-navigation/tunnels-enterprise.md) — Documents the HOST-only resolver and metadata stripping.
 
 Caveats:
 - HOST resolution never falls back to the legacy bridge label.
@@ -31,7 +30,7 @@ Use for: How does Dev Center sign-in and bounded inventory fit into the worker-o
 - [`EnterpriseInventory`](../../app/festerm/src/enterprise.rs) — Bounded project and Dev Box rows with truncation signals.
 
 Evidence:
-- [`docs/agent-navigation/tunnels-enterprise.md`](../../docs/agent-navigation/tunnels-enterprise.md) — Documents the Dev Center sign-in and inventory flow for this domain.
+- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Bounds enterprise rows and output rather than retaining unbounded inventory.
 
 Caveats:
 - Inventory is worker-owned and bounded; it is not a generic failure path.
@@ -53,21 +52,23 @@ Caveats:
 - Behavior semantics distinguish resume, create, and attach instead of inferring absence.
 - Legacy import keeps old defaults without silently changing exact generation semantics.
 
-## Host replacement
+## Host stop and replacement
 
-Use for: How is a native host update prepared and verified without granting execution authority?
+Use for: A Windows Disable remains pending, or a stopped native host replacement needs exact provenance.
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Host-local approval only after the client reviewed the exact binding.
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only availability metadata; it does not grant replacement authority.
+- [`windows_stop_observation`](../../crates/festerm-host-setup/src/services.rs) — Retries same-epoch contention and fenced receipt reconciliation within one shared stop deadline.
 
 Evidence:
 - [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Replacement preserves identity grants and helper provenance while authenticated.
 - [`host_update_release_metadata_preserves_pending_original_and_refuses_other_target`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Manifest verification keeps original provenances and rejects out-of-band targets.
+- [`native_service_windows_stop_retries_transient_read_contention_without_task_mutation`](../../crates/festerm-host-setup/src/services/tests.rs) — Recovers a transient native-query Busy without Start, Stop or other manager mutations.
 
 Caveats:
-- Replacement state is durable journal data, not execution authority.
-- Signed bundle and same-intent checks happen before native task effects or consent restore.
-- Pending metadata retains original provenance even if another target is later evaluated.
+- Contention may retry bounded observations and exact receipt persistence, never revocation or manager actions.
+- Changed scope and non-contention refusals remain final; timeout retains StopRequested.
+- Replacement still requires signed bundles and the original durable intent.
 
 ## PowerShell lifecycle
 
