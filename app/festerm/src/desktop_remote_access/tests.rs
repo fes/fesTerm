@@ -1878,3 +1878,226 @@ fn desktop_remote_access_confirmation_keeps_bundle_mechanics_in_advanced() {
     assert!(matches!(harness.state().1, Some(Action::Dismiss)));
     assert_eq!(harness.state().0.scope, scope);
 }
+
+fn update_fixture_scope() -> Scope {
+    let mut scope = provisioned_scope();
+    let Scope::Present(snapshot) = &mut scope else {
+        unreachable!()
+    };
+    Arc::make_mut(snapshot).phase = Phase::Disabled;
+    scope
+}
+
+fn update_fixture_release() -> festerm_host_setup::services::ReleaseMetadata {
+    festerm_host_setup::services::ReleaseMetadata {
+        recorded_version: "0.0.1".into(),
+        replacement: None,
+    }
+}
+
+#[test]
+fn desktop_remote_access_update_requires_explicit_review_and_keeps_host_disabled() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let captured = calls.clone();
+    let expected = update_fixture_scope();
+    let original = expected.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            assert_eq!(request.operation, Operation::Update);
+            assert_eq!(request.expected, original);
+            assert_eq!(request.release.as_ref(), Some(&update_fixture_release()));
+            captured.lock().unwrap().push(request.operation);
+            Ok(Report {
+                scope: request.expected,
+                release: Some(festerm_host_setup::services::ReleaseMetadata {
+                    recorded_version: festerm_host_setup::VERSION.into(),
+                    replacement: None,
+                }),
+                ..Report::default()
+            })
+        },
+    )));
+    controller.view.scope = expected.clone();
+    controller.view.release = Some(update_fixture_release());
+    controller.view.access_requested = Some(true); // unconfirmed Enable intent is not retained.
+    controller.view.draft.allow_creation = true; // update must not apply pending preferences.
+    let context = egui::Context::default();
+    controller.action(Action::Review(Operation::Update), &context);
+    assert_eq!(controller.view.review, Some(Operation::Update));
+    assert_eq!(controller.view.access_requested, Some(false));
+    assert!(calls.lock().unwrap().is_empty());
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [Operation::Update]);
+    assert_eq!(controller.view.scope, expected);
+    assert!(!controller.view.access_enabled());
+    assert!(!controller.view.update_eligible());
+    assert!(controller.view.draft.allow_creation);
+}
+
+#[test]
+fn desktop_remote_access_update_blocks_live_unknown_equal_and_older_target_without_worker() {
+    let context = egui::Context::default();
+    for (scope, release) in [
+        (provisioned_scope(), Some(update_fixture_release())),
+        (Scope::Absent, Some(update_fixture_release())),
+        (update_fixture_scope(), None),
+        (
+            update_fixture_scope(),
+            Some(festerm_host_setup::services::ReleaseMetadata {
+                recorded_version: festerm_host_setup::VERSION.into(),
+                replacement: None,
+            }),
+        ),
+        (
+            update_fixture_scope(),
+            Some(festerm_host_setup::services::ReleaseMetadata {
+                recorded_version: "99.0.0".into(),
+                replacement: None,
+            }),
+        ),
+    ] {
+        let mut controller = fixture(Arc::new(Fake(
+            |_: Request, _: &CancellationToken| -> Result<Report, Failure> {
+                panic!("blocked update cannot admit a worker")
+            },
+        )));
+        controller.view.scope = scope;
+        controller.view.release = release;
+        controller.view.review = Some(Operation::Enable);
+        controller.action(Action::Review(Operation::Update), &context);
+        assert_eq!(controller.view.failure, Some(Failure::UpdateBlocked));
+        assert!(controller.view.review.is_none());
+        assert!(!controller.view.busy);
+    }
+}
+
+#[test]
+fn desktop_remote_access_update_cancel_retains_admission_without_start_or_automatic_rollback() {
+    let (send, receive) = mpsc::sync_channel(1);
+    let receive = Arc::new(Mutex::new(receive));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, cancel: &CancellationToken| {
+            recorded.lock().unwrap().push(request.operation);
+            receive
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            assert!(cancel.is_cancelled());
+            Ok(Report {
+                scope: request.expected,
+                ..Report::default()
+            })
+        },
+    )));
+    controller.view.scope = update_fixture_scope();
+    controller.view.release = Some(update_fixture_release());
+    let context = egui::Context::default();
+    controller.action(Action::Review(Operation::Update), &context);
+    controller.action(Action::Confirm, &context);
+    controller.action(Action::Cancel, &context);
+    assert!(controller.view.busy);
+    assert!(controller.fence.is_none());
+    controller.action(Action::Review(Operation::Update), &context);
+    assert_eq!(controller.view.failure, Some(Failure::Busy));
+    send.send(()).unwrap();
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [Operation::Update]);
+    assert!(!controller.view.access_enabled());
+}
+
+#[test]
+fn desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation() {
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1200.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: update_fixture_scope(),
+                    release: Some(update_fixture_release()),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    harness.get_by_label(&format!(
+        "Host components: 0.0.1 → {}",
+        festerm_host_setup::VERSION
+    ));
+    let metadata_note =
+        "Recorded host version is metadata; signed components are verified again when updating.";
+    assert!(harness.query_by_label(metadata_note).is_none());
+    harness.get_by_label("Update host…").click();
+    harness.run();
+    assert!(matches!(
+        harness.state().1,
+        Some(Action::Review(Operation::Update))
+    ));
+    harness.state_mut().0.review = Some(Operation::Update);
+    harness.run();
+    harness.get_by_label("Update host components?");
+    harness.get_by_label("Remote access must be off. The host stays disabled after updating; enable access separately when you are ready.");
+    harness.get_by_label("Update host").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Confirm)));
+    harness.state_mut().0.review = None;
+    harness.state_mut().0.scope = provisioned_scope();
+    harness.run();
+    harness.get_by_label("Disable remote access before updating the host.");
+    harness.get_by_label("Advanced / Recovery").click();
+    harness.run();
+    harness.get_by_label(metadata_note);
+    harness
+        .state_mut()
+        .0
+        .release
+        .as_mut()
+        .unwrap()
+        .recorded_version = festerm_host_setup::VERSION.into();
+    harness.run();
+    assert!(harness
+        .query_by_label("Disable remote access before updating the host.")
+        .is_none());
+    assert!(harness
+        .get_by_label("Update host…")
+        .accesskit_node()
+        .is_disabled());
+}
+
+#[test]
+fn desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback() {
+    let mut controller = fixture(Arc::new(Fake(|request: Request, _: &CancellationToken| {
+        assert_eq!(request.operation, Operation::Update);
+        Ok(Report {
+            scope: request.expected,
+            release: request.release,
+            failure: Some(Failure::UpdateIncomplete),
+            ..Report::default()
+        })
+    })));
+    controller.view.scope = update_fixture_scope();
+    controller.view.release = Some(update_fixture_release());
+    let context = egui::Context::default();
+    controller.action(Action::Review(Operation::Update), &context);
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.failure, Some(Failure::UpdateIncomplete));
+    assert!(!controller.view.access_enabled());
+    assert_eq!(controller.view.bundle_status, BundleStatus::Blocked);
+    assert!(!Failure::UpdateIncomplete
+        .notice()
+        .contains("Nothing was installed"));
+    assert!(!controller.view.busy);
+}

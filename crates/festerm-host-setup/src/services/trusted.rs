@@ -22,6 +22,7 @@ pub struct TrustedStage {
     helpers: Vec<TrustedExecutable>,
     release_version: String,
     bundle_digest: String,
+    platform: Platform,
 }
 
 struct TrustedExecutable {
@@ -70,7 +71,7 @@ impl TrustedStage {
         artifact: &VerifiedArtifact,
         root: &Path,
         version: &str,
-        mut signature: impl FnMut(&File, &Path) -> io::Result<()>,
+        signature: impl FnMut(&File, &Path) -> io::Result<()>,
     ) -> io::Result<Self> {
         let platform = match std::env::consts::OS {
             "linux" => Platform::Linux,
@@ -83,6 +84,19 @@ impl TrustedStage {
             "aarch64" => Architecture::Aarch64,
             _ => return Err(refused("host.service_unsupported_platform")),
         };
+        Self::publish_target_with(artifact, root, version, platform, architecture, signature)
+    }
+
+    // The public production path always supplies the compile-time native tuple.
+    // Tests supply an explicit tuple to exercise Windows inventory portably.
+    fn publish_target_with(
+        artifact: &VerifiedArtifact,
+        root: &Path,
+        version: &str,
+        platform: Platform,
+        architecture: Architecture,
+        mut signature: impl FnMut(&File, &Path) -> io::Result<()>,
+    ) -> io::Result<Self> {
         let manifest = artifact.manifest();
         if manifest.package != Package::Host
             || manifest.schema != 2
@@ -94,7 +108,12 @@ impl TrustedStage {
                 "host.service_current_native_authenticated_bundle_required",
             ));
         }
-        let name = format!("festerm-host{}", std::env::consts::EXE_SUFFIX);
+        let name = if platform == Platform::Windows {
+            "festerm-host.exe"
+        } else {
+            "festerm-host"
+        }
+        .to_owned();
         let entry = artifact
             .entries()
             .iter()
@@ -165,6 +184,7 @@ impl TrustedStage {
             helpers,
             release_version: manifest.version.clone(),
             bundle_digest: manifest.sha256.clone(),
+            platform,
         };
         receipt.revalidate()?;
         Ok(receipt)
@@ -281,6 +301,27 @@ pub(super) fn version_fixture_with_sessiond(
     .unwrap()
 }
 
+#[cfg(test)]
+pub(super) fn windows_fixture(root: &Path, version: &str) -> TrustedStage {
+    let _directory = storage::private_directory(root, true).unwrap();
+    let expected = crate::artifacts::ExpectedArtifact {
+        version,
+        platform: Platform::Windows,
+        architecture: Architecture::Aarch64,
+        package: Package::Host,
+    };
+    let artifact = crate::artifacts::host_acquisition_fixture(&expected);
+    TrustedStage::publish_target_with(
+        &artifact,
+        &root.join("windows-artifacts"),
+        version,
+        expected.platform,
+        expected.architecture,
+        |_, _| Ok(()),
+    )
+    .unwrap()
+}
+
 #[cfg(all(test, feature = "native-service-fixtures", unix))]
 pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
     use std::os::unix::fs::PermissionsExt;
@@ -303,6 +344,7 @@ pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
         helpers: Vec::new(),
         release_version: crate::VERSION.into(),
         bundle_digest: artifact.manifest().sha256.clone(),
+        platform: artifact.manifest().platform,
     }
 }
 
@@ -362,9 +404,25 @@ impl TrustedStage {
         {
             return Err(refused("host.service_authenticated_bundle_changed"));
         }
-        let name = format!("festerm-host{}", std::env::consts::EXE_SUFFIX);
+        let name = if artifact.manifest().platform == Platform::Windows {
+            "festerm-host.exe"
+        } else {
+            "festerm-host"
+        }
+        .to_owned();
         if record.executable.file_name().and_then(|name| name.to_str()) != Some(name.as_str()) {
             return Err(refused("host.service_authenticated_host_entry_required"));
+        }
+        if let Some(worker) = &record.windows_managed {
+            let entry = artifact
+                .entries()
+                .iter()
+                .find(|entry| entry.executable() && entry.name() == "festerm-tunnel-worker.exe")
+                .ok_or_else(|| refused("host.service_authenticated_worker_required"))?;
+            if worker.path != directory.join(entry.name()) || worker.digest != digest(entry.bytes())
+            {
+                return Err(refused("host.service_authenticated_worker_changed"));
+            }
         }
         for entry in artifact.entries().iter().filter(|entry| entry.executable()) {
             let path = directory.join(entry.name());
@@ -387,7 +445,19 @@ impl TrustedStage {
         Self::authenticate_registered_with(
             record,
             version,
-            crate::artifacts::verify_staging_fixture,
+            |manifest, signature, archive, expected| {
+                // Portable model only: synthetic signatures and an explicit
+                // authenticated manifest tuple, never native publisher proof.
+                let descriptor: crate::artifacts::Manifest = serde_json::from_slice(manifest)
+                    .map_err(|_| crate::artifacts::ArtifactError::Manifest)?;
+                let target = crate::artifacts::ExpectedArtifact {
+                    version: expected.version,
+                    platform: descriptor.platform,
+                    architecture: descriptor.architecture,
+                    package: expected.package,
+                };
+                crate::artifacts::verify_staging_fixture(manifest, signature, archive, &target)
+            },
             |_, _| Ok(()),
         )
     }
@@ -400,17 +470,70 @@ impl TrustedStage {
     /// Exact same-version signed helper; never search PATH or accept a request path.
     pub fn sessiond_path(&self) -> io::Result<&Path> {
         self.revalidate()?;
-        let name = format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX);
+        let name = if self.platform == Platform::Windows {
+            "festerm-sessiond.exe"
+        } else {
+            "festerm-sessiond"
+        };
         self.helpers
             .iter()
-            .find(|helper| {
-                helper
-                    .path
-                    .file_name()
-                    .is_some_and(|file| file == name.as_str())
-            })
+            .find(|helper| helper.path.file_name().is_some_and(|file| file == name))
             .map(|helper| helper.path.as_path())
             .ok_or_else(|| refused("host.service_authenticated_sessiond_required"))
+    }
+
+    pub(super) fn windows_managed_execution(&self) -> io::Result<super::WindowsManagedExecution> {
+        if self.platform != Platform::Windows {
+            return Err(refused("host.service_authenticated_worker_required"));
+        }
+        self.revalidate()?;
+        let helper = self
+            .helpers
+            .iter()
+            .find(|helper| helper.path == self.path.with_file_name("festerm-tunnel-worker.exe"))
+            .ok_or_else(|| refused("host.service_authenticated_worker_required"))?;
+        Ok(super::WindowsManagedExecution {
+            path: helper.path.clone(),
+            digest: helper.digest.clone(),
+        })
+    }
+
+    pub(super) fn revalidate_registration(&self, record: &super::Registration) -> io::Result<()> {
+        self.revalidate()?;
+        if self.path != record.executable
+            || self.digest != record.digest
+            || record.provenance.as_deref() != Some(self.provenance_path())
+        {
+            return Err(refused("host.service_authenticated_bundle_changed"));
+        }
+        if let Some(worker) = &record.windows_managed {
+            if *worker != self.windows_managed_execution()? {
+                return Err(refused("host.service_authenticated_worker_changed"));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_running_worker(
+        &self,
+        record: &super::Registration,
+        running: &Path,
+    ) -> io::Result<()> {
+        self.revalidate_registration(record)?;
+        let worker = record
+            .windows_managed
+            .as_ref()
+            .ok_or_else(|| refused("host.service_authenticated_worker_required"))?;
+        let helper = self
+            .helpers
+            .iter()
+            .find(|helper| helper.path == worker.path)
+            .ok_or_else(|| refused("host.service_authenticated_worker_required"))?;
+        let current = open(running)?;
+        if !same(&current, &helper.file)? {
+            return Err(refused("host.service_running_worker_mismatch"));
+        }
+        check(&current, helper.file.metadata()?.len(), &worker.digest)
     }
 
     pub(super) fn revalidate(&self) -> io::Result<()> {

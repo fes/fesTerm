@@ -12,6 +12,7 @@ struct Scheduler {
     fail_remove_after: bool,
     revoke_create: bool,
     fail_query: bool,
+    prepared_upgrade: Option<(String, String)>,
 }
 
 struct Model {
@@ -32,7 +33,10 @@ impl CommandRunner for Model {
         let security = "task-owner-system-full-control-v1:S-1-5-21-84".to_owned();
         let observed = match action {
             TaskAction::Prepare(xml) => TaskSnapshot {
-                xml: Some(xml.clone()),
+                xml: Some(match &state.prepared_upgrade {
+                    Some((legacy, raw)) if legacy == xml => raw.clone(),
+                    _ => xml.clone(),
+                }),
                 security: Some(security),
                 state: 0,
                 last_exit: 0,
@@ -659,15 +663,25 @@ fn windows_stopped_update_cleanup_foreign_uncertain_or_live_tasks_refuse_without
         let count = state.calls.len();
         drop(state);
         assert!(services.cleanup(cleanup.epoch).is_err());
-        assert!(services.runner.state.borrow().calls[count..]
-            .iter()
-            .all(|request| matches!(
-                request,
+        // A differing raw XML observation may only prepare the original
+        // reservation on an unregistered definition; no native mutation.
+        assert!(services.runner.state.borrow().calls[count..].iter().all(
+            |request| match request {
                 NativeRequest::Task {
                     action: TaskAction::Query,
                     ..
+                } => true,
+                NativeRequest::Task {
+                    name,
+                    action: TaskAction::Prepare(xml),
+                } => {
+                    fault == 0
+                        && name == &pending.new.resource
+                        && Some(xml) == pending.new.native_expected.as_ref()
                 }
-            )));
+                _ => false,
+            }
+        ));
         let retained = services.replacement().unwrap().unwrap();
         if fault == 4 {
             let mut observed = pending;
@@ -787,4 +801,261 @@ fn windows_stopped_update_v3_receipt_rejects_foreign_fences_before_scheduler_eff
         assert!(services.replacement_status().is_err());
         assert_eq!(services.runner.state.borrow().calls.len(), count);
     }
+}
+
+#[test]
+fn windows_pending_replacement_descriptor_adopts_exact_raw_without_recreating_task() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    fixture.installed(&services);
+    services.runner.state.borrow_mut().fail_create_after = true;
+    assert!(fixture.update(&services).is_err());
+    let mut pending = services.replacement().unwrap().unwrap();
+    let before = pending.clone();
+    assert!(pending.new.native_submitted && pending.new.native_snapshot.is_none());
+    let legacy = pending.new.native_expected.clone().unwrap();
+    let raw = legacy.replace(
+        "<RegistrationInfo>",
+        "<RegistrationInfo><SecurityDescriptor>checked-owner-system-policy</SecurityDescriptor>",
+    );
+    assert_ne!(legacy, raw);
+    {
+        let mut scheduler = services.runner.state.borrow_mut();
+        scheduler
+            .tasks
+            .get_mut(&pending.new.resource)
+            .unwrap()
+            .0
+            .clone_from(&raw);
+        scheduler.prepared_upgrade = Some((legacy, raw.clone()));
+        scheduler.calls.clear();
+    }
+    services.reconcile_replacement_tasks(&mut pending).unwrap();
+    let mut wanted = before;
+    wanted.new.native_expected = Some(raw.clone());
+    wanted.new.native_snapshot = Some(raw);
+    assert_eq!(
+        pending, wanted,
+        "existing old raw snapshot and all other fields are preserved"
+    );
+    assert_eq!(services.replacement().unwrap().unwrap(), wanted);
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|c| matches!(
+            c,
+            NativeRequest::Task {
+                action: TaskAction::Query | TaskAction::Prepare(_),
+                ..
+            }
+        )));
+    assert_eq!(
+        fixture.update(&services).unwrap().state,
+        ReplacementState::Committed
+    );
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|c| !matches!(
+            c,
+            NativeRequest::Task {
+                action: TaskAction::Create(_) | TaskAction::Start,
+                ..
+            }
+        )));
+}
+
+// Synthetic Windows schema-2 bundles, fake publisher and Scheduler only. This
+// models an existing managed console record; it is not an older native release.
+fn desktop_worker_update_fixture() -> Fixture {
+    let root = storage::private_test_directory();
+    let store = Arc::new(
+        Store::create(
+            &root.path().join("state"),
+            Origin::Desktop,
+            Settings {
+                ordinary_access: Default::default(),
+                friendly_name: "Desktop worker update model".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+            },
+        )
+        .unwrap(),
+    );
+    let directory = storage::private_directory(&root.path().join("state"), false).unwrap();
+    let identity =
+        HostIdentity::load_or_create_from_private_directory(&directory, Path::new("host-identity"))
+            .unwrap();
+    let ticket = store
+        .request_enable(&store.snapshot().unwrap().settings)
+        .unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            Binding {
+                host_id: identity.host_id(),
+                account: "github:42".into(),
+                qualified_tunnel: "fixture-qualified".into(),
+                cloud_incarnation: "fixture-incarnation".into(),
+                host_key_fingerprint: identity.fingerprint().unwrap(),
+            },
+        )
+        .unwrap();
+    let old = trusted::windows_fixture(root.path(), "0.15.0");
+    let next = trusted::windows_fixture(root.path(), crate::VERSION);
+    Fixture {
+        root,
+        store,
+        old,
+        next,
+    }
+}
+
+fn install_legacy_desktop_managed(f: &Fixture, services: &Services<'_, Model>) -> Snapshot {
+    let before = f.store.snapshot().unwrap();
+    services.install_reserved(&f.old, before.epoch).unwrap();
+    let mut record = services.registration().unwrap().1.unwrap();
+    record.version = 4;
+    record.definition = definitions::render(&record).unwrap();
+    let prepared = services
+        .task(&record, TaskAction::Prepare(record.definition.clone()))
+        .unwrap();
+    record.native_expected.clone_from(&prepared.xml);
+    record.native_snapshot.clone_from(&prepared.xml);
+    services.runner.state.borrow_mut().tasks.insert(
+        record.resource.clone(),
+        (prepared.xml.unwrap(), prepared.security.unwrap(), 3),
+    );
+    services
+        .save(&record, before.epoch, Phase::Provisioned)
+        .unwrap();
+    f.store.revoke().unwrap();
+    let stopped = f.store.snapshot().unwrap();
+    f.store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    f.store.snapshot().unwrap()
+}
+
+#[test]
+fn windows_stopped_update_switches_managed_desktop_to_same_bundle_worker_without_start() {
+    let fixture = desktop_worker_update_fixture();
+    let services = fixture.services();
+    let stopped = install_legacy_desktop_managed(&fixture, &services);
+    let before = fixture.preserved();
+    let report = fixture.update(&services).unwrap();
+    assert_eq!(report.state, ReplacementState::Committed);
+    assert_eq!(fixture.store.snapshot().unwrap(), stopped);
+    assert_eq!(fixture.preserved(), before);
+    let record = services.registration().unwrap().1.unwrap();
+    assert_eq!(record.version, 6);
+    assert_eq!(record.executable, fixture.next.path);
+    assert_eq!(
+        record.windows_managed.as_ref().unwrap(),
+        &fixture.next.windows_managed_execution().unwrap()
+    );
+    assert!(record
+        .definition
+        .contains("festerm-tunnel-worker.exe</Command>"));
+    assert!(record
+        .definition
+        .contains("run-desktop-managed --state-dir"));
+    let creates_before = creates(&services);
+    assert_eq!(
+        fixture.update(&services).unwrap().operation,
+        report.operation
+    );
+    assert_eq!(creates(&services), creates_before);
+    assert!(services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .all(|request| !matches!(
+            request,
+            NativeRequest::Task {
+                action: TaskAction::Start | TaskAction::Stop,
+                ..
+            }
+        )));
+    let valid = services.replacement().unwrap().unwrap();
+    let mut downgrade = valid.clone();
+    downgrade.old.version = 6;
+    downgrade.old.windows_managed = Some(fixture.old.windows_managed_execution().unwrap());
+    downgrade.old.definition = definitions::render(&downgrade.old).unwrap();
+    downgrade.old.native_expected = Some(downgrade.old.definition.clone());
+    downgrade.old.native_snapshot = Some(downgrade.old.definition.clone());
+    downgrade.new.version = 5;
+    downgrade.new.windows_managed = None;
+    downgrade.new.definition = definitions::render(&downgrade.new).unwrap();
+    downgrade.new.native_expected = Some(downgrade.new.definition.clone());
+    downgrade.new.native_snapshot = Some(downgrade.new.definition.clone());
+    services
+        .save_replacement(&downgrade, stopped.epoch, Phase::Disabled)
+        .unwrap();
+    assert_eq!(
+        services.replacement().err().unwrap().to_string(),
+        "host.update_foreign_journal",
+        "a new6 registration cannot claim an older5 pending intent"
+    );
+    services
+        .save_replacement(&valid, stopped.epoch, Phase::Disabled)
+        .unwrap();
+}
+
+#[test]
+fn windows_stopped_update_existing_pending_v5_keeps_original_console_execution_intent() {
+    let fixture = desktop_worker_update_fixture();
+    let services = fixture.services();
+    let stopped = install_legacy_desktop_managed(&fixture, &services);
+    services.runner.state.borrow_mut().fail_create_after = true;
+    assert!(fixture.update(&services).is_err());
+    let mut journal = services.replacement().unwrap().unwrap();
+    let operation = journal.operation.clone();
+    // Reconstruct the already-pending old revision exactly, before its Create.
+    journal.new.version = 5;
+    journal.new.windows_managed = None;
+    journal.new.definition = definitions::render(&journal.new).unwrap();
+    let prepared = services
+        .task(
+            &journal.new,
+            TaskAction::Prepare(journal.new.definition.clone()),
+        )
+        .unwrap();
+    let raw = prepared.xml.unwrap();
+    journal.new.native_expected = Some(raw.clone());
+    services
+        .runner
+        .state
+        .borrow_mut()
+        .tasks
+        .get_mut(&journal.new.resource)
+        .unwrap()
+        .0 = raw;
+    journal.new.native_snapshot = None;
+    services
+        .save_replacement(&journal, stopped.epoch, Phase::Disabled)
+        .unwrap();
+    let original_creates = creates(&services);
+    assert_eq!(fixture.update(&services).unwrap().operation, operation);
+    assert_eq!(
+        creates(&services),
+        original_creates,
+        "adopt exact already-created legacy Task; no duplicate Create"
+    );
+    let after = services.registration().unwrap().1.unwrap();
+    assert_eq!(after.version, 5);
+    assert!(after.windows_managed.is_none());
+    assert!(after.definition.contains("festerm-host.exe</Command>"));
+    assert!(!after
+        .definition
+        .contains("festerm-tunnel-worker.exe</Command>"));
+    assert_eq!(fixture.store.snapshot().unwrap(), stopped);
 }

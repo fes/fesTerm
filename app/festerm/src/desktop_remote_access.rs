@@ -167,6 +167,7 @@ pub enum Operation {
     Enable,
     ApproveOwner,
     Start,
+    Update,
     Disable,
     Uninstall,
     Share(ShareStep),
@@ -222,6 +223,8 @@ pub enum Failure {
     ShareCapability,
     SessionChanged,
     NoNativeObservation,
+    UpdateBlocked,
+    UpdateIncomplete,
     InvalidDraft,
     CloudUncertain,
 }
@@ -250,6 +253,12 @@ impl Failure {
                 "Host setup is not qualified for this startup policy or platform."
             }
             Self::NoNativeObservation => "No native host registration was observed.",
+            Self::UpdateBlocked => {
+                "Disable access and refresh the recorded host version before updating."
+            }
+            Self::UpdateIncomplete => {
+                "Host update did not complete. Keep access off and review Recovery."
+            }
             Self::InvalidDraft => "Check the host settings before reviewing.",
         }
     }
@@ -272,6 +281,8 @@ impl Failure {
             Self::ShareCapability => "This shell has no authenticated connected-local source capability. Older or remote helpers remain unsupported; metadata, a PID or a guessed runtime directory cannot grant sharing.",
             Self::SessionChanged => "The selected profile, native session or generation changed. Nothing was shared, stopped or restarted.",
             Self::NoNativeObservation => "No native registration receipt was published. Status has no manager observation; this is not fabricated native absence.",
+            Self::UpdateIncomplete => "Retain the original signed bundle and replacement operation. Refresh update status and retry only that same target; no automatic rollback, cache repair or reenable occurred.",
+            Self::UpdateBlocked => "Updating requires a bound disabled host, a newer current-build signed bundle and the same recorded update intent. Finish an interrupted update with its original signed bundle; do not reinstall or repair the cache.",
             Self::InvalidDraft => "A field exceeds its bounded input limit. Shorten it before review.",
             Self::CloudUncertain => "Cloud access is denied, offline or uncertain. Retain the protected receipt and access fence; retry explicitly with the original account. There is no verified removal target.",
         }
@@ -292,6 +303,7 @@ pub struct View {
     /// Last operation metadata only; never inferred from a generic local error.
     pub diagnostic: Option<HostSetupDiagnostic>,
     pub process: Option<String>,
+    pub release: Option<festerm_host_setup::services::ReleaseMetadata>,
     /// Protected current-epoch history; never a live endpoint observation.
     pub last_run: Option<festerm_host_setup::controller::RunState>,
     pub owner_binding: Option<String>,
@@ -329,7 +341,9 @@ pub enum BundleStatus {
 impl BundleStatus {
     fn label(self) -> &'static str {
         match self {
-            Self::Idle => "Not requested. Only explicit Enable confirmation acquires a bundle.",
+            Self::Idle => {
+                "Not requested. Only explicit Enable or Update confirmation acquires a bundle."
+            }
             Self::Acquiring => {
                 "Acquiring / verifying exact current host bundle on the bounded worker…"
             }
@@ -403,6 +417,14 @@ impl View {
         }
     }
 
+    fn update_eligible(&self) -> bool {
+        matches!(&self.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled && snapshot.binding.is_some())
+            && self
+                .release
+                .as_ref()
+                .is_some_and(|release| release.update_available(festerm_host_setup::VERSION))
+    }
+
     pub fn observation_label(&self) -> &'static str {
         match &self.scope {
             Scope::Unobserved => "Not observed. No readiness assertion.",
@@ -428,11 +450,13 @@ struct Request {
     owned: Arc<Mutex<Option<Snapshot>>>,
     owner_revision: Option<u64>,
     sharing: Option<ShareTask>,
+    release: Option<festerm_host_setup::services::ReleaseMetadata>,
 }
 
 #[derive(Default)]
 struct Report {
     scope: Scope,
+    release: Option<festerm_host_setup::services::ReleaseMetadata>,
     process: Option<String>,
     last_run: Option<festerm_host_setup::controller::RunState>,
     owner_binding: Option<String>,
@@ -679,7 +703,7 @@ impl Controller {
             Action::Dismiss => {
                 if matches!(
                     self.view.review,
-                    Some(Operation::Enable | Operation::Disable)
+                    Some(Operation::Enable | Operation::Disable | Operation::Update)
                 ) {
                     self.view.access_requested = None;
                 }
@@ -688,11 +712,17 @@ impl Controller {
             }
             Action::Refresh => self.start(Operation::Refresh, false, context),
             Action::Review(operation) => {
-                if matches!(operation, Operation::Share(_)) {
+                if operation == Operation::Update && !self.view.update_eligible() {
+                    self.view.review = None;
+                    self.view.failure = Some(Failure::UpdateBlocked);
+                } else if matches!(operation, Operation::Share(_)) {
                     self.view.failure = Some(Failure::InvalidDraft);
                 } else if matches!(self.view.scope, Scope::Unobserved) {
                     self.view.failure = Some(Failure::RefreshFirst);
                 } else {
+                    if operation == Operation::Update {
+                        self.view.access_requested = Some(false);
+                    }
                     self.view.review = Some(operation);
                 }
             }
@@ -867,9 +897,10 @@ impl Controller {
             owned: self.owned.clone(),
             owner_revision: self.view.owner_revision,
             sharing: self.share_request.take(),
+            release: self.view.release.clone(),
         };
         self.view.cleanup_verified_for_manual_review = false;
-        if operation == Operation::Enable {
+        if matches!(operation, Operation::Enable | Operation::Update) {
             self.view.bundle_status = BundleStatus::Acquiring;
         }
         if !fence && !matches!(operation, Operation::Share(_)) {
@@ -935,7 +966,7 @@ impl Controller {
         self.view.device_opened = None;
         self.device_actions = super::tunnel_browser::DeviceActions::default();
         self.view.failure = Some(Failure::Cancelled);
-        if pending.operation == Operation::Enable {
+        if matches!(pending.operation, Operation::Enable | Operation::Update) {
             self.view.bundle_status = BundleStatus::Cancelled;
         }
         if needs_fence && self.fence.is_none() {
@@ -1009,7 +1040,7 @@ impl Controller {
                     self.view.device_copied = None;
                     self.view.device_opened = None;
                     self.device_actions = super::tunnel_browser::DeviceActions::default();
-                    if pending.operation == Operation::Enable {
+                    if matches!(pending.operation, Operation::Enable | Operation::Update) {
                         self.view.bundle_status = match &result {
                             Ok(report) if report.failure.is_none() => BundleStatus::Complete,
                             Ok(report) if report.failure == Some(Failure::Cancelled) => {
@@ -1041,6 +1072,7 @@ impl Controller {
                                 }
                             }
                             self.view.scope = report.scope;
+                            self.view.release = report.release;
                             self.view.process = report.process;
                             self.view.last_run = report.last_run;
                             self.view.owner_binding = report.owner_binding;
@@ -1071,6 +1103,7 @@ impl Controller {
                         Err(error) => {
                             self.view.last_run = None;
                             self.view.process = None;
+                            self.view.release = None;
                             self.view.diagnostic = None;
                             self.view.failure = Some(error);
                         }

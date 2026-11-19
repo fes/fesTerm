@@ -470,7 +470,7 @@ pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
     tests::host_staging_fixture()
 }
 
-#[cfg(all(test, feature = "acquisition"))]
+#[cfg(all(test, any(feature = "acquisition", feature = "native-services")))]
 pub(crate) use tests::host_acquisition_fixture;
 #[cfg(all(
     test,
@@ -667,7 +667,7 @@ mod tests {
         verify_with_key(&data, &signature, archive, expected, &key)
     }
 
-    #[cfg(feature = "acquisition")]
+    #[cfg(any(feature = "acquisition", feature = "native-services"))]
     pub(crate) fn host_acquisition_fixture(expected: &ExpectedArtifact<'_>) -> VerifiedArtifact {
         let mut files = files_for_package(expected.platform, expected.package);
         files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =

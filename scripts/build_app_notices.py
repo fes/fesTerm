@@ -83,7 +83,8 @@ def tree_packages(text):
 
 def tree_for(target, kind):
     if kind == "desktop":
-        selection = [arg for package in DESKTOP_PACKAGES for arg in ("-p", package)]
+        packages = (*DESKTOP_PACKAGES, "festerm-host") if "windows" in target else DESKTOP_PACKAGES
+        selection = [arg for package in packages for arg in ("-p", package)]
     elif kind == "ios":
         selection = ["-p", "festerm-mobile", "--features", "live-ssh"]
     elif kind == "android":

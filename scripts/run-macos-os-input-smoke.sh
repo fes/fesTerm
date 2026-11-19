@@ -3,11 +3,26 @@
 set -eu
 
 mode=os-input
+existing_pid=
+if [ "${1:-}" = "--scroll-existing" ]; then
+    [ "$#" -eq 6 ] || { echo 'usage: --scroll-existing PID X Y DETENTS RESULT' >&2; exit 2; }
+    existing_pid=$2
+    scroll_x=$3
+    scroll_y=$4
+    scroll_detents=$5
+    result_path=$6
+    case "$existing_pid" in ''|*[!0-9]*|0) echo 'invalid PID' >&2; exit 2;; esac
+    # Capture the original process identity before any driver compilation delay.
+    expected_start=$(LC_ALL=C ps -p "$existing_pid" -o lstart= | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$expected_start" ] || { echo 'existing PID unavailable' >&2; exit 2; }
+    mode=scroll-existing
+    shift 6
+fi
 if [ "${1:-}" = "--rapid-live-resize" ]; then
     mode=rapid-live-resize
     shift
 fi
-result_path=${1:-os-input-smoke-result.txt}
+if [ "$mode" != scroll-existing ]; then result_path=${1:-os-input-smoke-result.txt}; fi
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 case "$result_path" in
     /*) ;;
@@ -20,7 +35,7 @@ launchctl print "gui/$(id -u)" >/dev/null 2>&1 ||
     { echo 'macOS OS-input smoke requires the console user GUI session.' >&2; exit 2; }
 
 cd "$repository_root"
-cargo build --workspace
+if [ "$mode" != scroll-existing ]; then cargo build --workspace; fi
 driver_bundle="$HOME/.local/share/festerm-vm-evidence-relay/FesTermEvidenceDriver.app"
 driver_path="$driver_bundle/Contents/MacOS/festerm-macos-os-input-driver"
 if [ ! -x "$driver_path" ] || [ scripts/macos-os-input-driver.swift -nt "$driver_path" ]; then
@@ -28,6 +43,15 @@ if [ ! -x "$driver_path" ] || [ scripts/macos-os-input-driver.swift -nt "$driver
     cp scripts/macos-os-input-driver-Info.plist "$driver_bundle/Contents/Info.plist"
     swiftc scripts/macos-os-input-driver.swift -o "$driver_path"
     codesign --force --sign - "$driver_bundle"
+fi
+if [ "$mode" = scroll-existing ]; then
+    # Existing retained data, GUI and supervisor stay intact. This mode never
+    # requests Accessibility, starts another frontend, or types terminal input.
+    "$driver_path" "$existing_pid" scroll-existing "$result_path" \
+        "$scroll_x" "$scroll_y" "$scroll_detents" "$expected_start"
+    cat "$result_path"
+    grep -qx 'status=sent' "$result_path"
+    exit
 fi
 rm -f "$result_path"
 driver_result_path="$result_path.driver"

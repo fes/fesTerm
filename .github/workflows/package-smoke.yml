@@ -247,6 +247,8 @@ jobs:
           ./scripts/stage-conpty.ps1 -Configuration Release
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
+          cargo build --locked --release -p festerm-host --bin festerm-tunnel-worker
+          if ($LASTEXITCODE -ne 0) { throw 'Windowless worker composition build failed' }
           ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           python scripts/run-cargo-packager.py --config packaging/windows.toml --formats nsis
           if ($LASTEXITCODE -ne 0) { throw 'cargo-packager failed to build the NSIS installer' }
@@ -469,6 +471,41 @@ jobs:
               }
             }
           }
+      - name: Record existing Windows ARM64 development frontend
+        if: matrix.name == 'windows-aarch64'
+        shell: pwsh
+        env:
+          DEVELOPMENT_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $source = @(git show -s '--format=%H%n%T' HEAD)
+          if ($LASTEXITCODE -ne 0 -or $source.Count -ne 2 -or $source[0] -ne $env:GITHUB_SHA) {
+            throw 'Development frontend checkout identity is unavailable'
+          }
+          $binary = Get-Item -LiteralPath 'target/release/festerm.exe' -ErrorAction Stop
+          $receipt = [ordered]@{
+            purpose = 'development-frontend-only-not-signed-release'
+            checkout_commit = $source[0]
+            checkout_tree = $source[1]
+            candidate_head = $env:DEVELOPMENT_SOURCE_HEAD
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            binary = 'festerm.exe'
+            bytes = $binary.Length
+            sha256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            host_bundle_key_sha256 = (Get-FileHash -LiteralPath 'packaging/updater.pub' -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $json = $receipt | ConvertTo-Json
+          [IO.File]::WriteAllText('target/release/development-frontend-provenance.json', $json, [Text.UTF8Encoding]::new($false))
+      - name: Retain existing Windows ARM64 development frontend
+        if: matrix.name == 'windows-aarch64'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: development-windows-aarch64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/release/festerm.exe
+            target/release/development-frontend-provenance.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Build unsigned Linux AppImage
         if: matrix.platform == 'linux'
         env:

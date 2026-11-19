@@ -35,6 +35,7 @@ class WorkflowTests(unittest.TestCase):
             "private_revision": 1,
             "generic_logical": "11111111-1111-4111-8111-111111111111",
             "denied_logical": "22222222-2222-4222-8222-222222222222",
+            "stopped_shared_profile_name": "Lab stopped shared",
             "creation_allowed": False, "allow_shell_input": True, "shell": "posix",
         }
         self.path = self.root / "operator.json"
@@ -120,9 +121,36 @@ class WorkflowTests(unittest.TestCase):
                 status, _ = self.invoke("--run")
             self.assertEqual(status, 1)
 
+    def test_off_requires_stopped_fixture_and_separate_success_marker(self):
+        for value in (None, "", "Lab shared", "Lab private", "x" * 129):
+            with self.subTest(value=value):
+                self.record["stopped_shared_profile_name"] = value
+                self.write_record()
+                with self.assertRaises(runner.Blocked):
+                    runner.fixture_record(self.path)
+        self.record["stopped_shared_profile_name"] = "Lab stopped shared"
+        with patch.object(runner, "fixture_record", return_value=self.record), patch.object(
+                runner, "run_bounded", side_effect=[(0, b""), (0, runner.MARKER + b"\n1 passed; 0 failed")]):
+            status, _ = self.invoke("--run")
+        self.assertEqual(status, 1)
+
+    def test_on_uses_ordinary_marker_without_stopped_claim(self):
+        self.record["creation_allowed"] = True
+        self.record.pop("stopped_shared_profile_name")
+        self.write_record()
+        self.assertEqual(runner.fixture_record(self.path), self.record)
+        with patch.object(runner, "fixture_record", return_value=self.record), patch.object(
+                runner, "run_bounded", side_effect=[(0, b""), (0, runner.MARKER + b"\n1 passed; 0 failed")]):
+            status, _ = self.invoke("--run")
+        self.assertEqual(status, 0)
+        self.record["stopped_shared_profile_name"] = "Lab stopped shared"
+        self.write_record()
+        with self.assertRaises(runner.Blocked):
+            runner.fixture_record(self.path)
+
     def test_success_uses_fixed_cargo_selector_and_keeps_gui_unrun(self):
         with patch.object(runner, "fixture_record", return_value=self.record), patch.object(
-                runner, "run_bounded", side_effect=[(0, b""), (0, runner.MARKER + b"\n1 passed; 0 failed")]) as run:
+                runner, "run_bounded", side_effect=[(0, b""), (0, runner.MARKER + b"\n" + runner.STOPPED_MARKER + b"\n1 passed; 0 failed")]) as run:
             status, output = self.invoke("--run")
         self.assertEqual(status, 0)
         self.assertIn("scope=real-service-host-client", output)
@@ -164,7 +192,7 @@ class WorkflowTests(unittest.TestCase):
     def test_windows_main_dispatches_to_owned_job_backend(self):
         with patch.object(runner, "fixture_record", return_value=self.record), patch.object(
                 runner.os, "name", "nt"), patch.object(runner, "run_bounded_windows",
-                    side_effect=[(0, b""), (0, runner.MARKER + b"\n1 passed; 0 failed")]) as run:
+                    side_effect=[(0, b""), (0, runner.MARKER + b"\n" + runner.STOPPED_MARKER + b"\n1 passed; 0 failed")]) as run:
             status, output = self.invoke("--run")
         self.assertEqual(status, 0)
         self.assertIn("status=pass", output)

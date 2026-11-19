@@ -30,6 +30,29 @@ BASH = shutil.which("bash")
 
 
 class PackagingMetadataTests(unittest.TestCase):
+    def test_development_frontend_export_is_existing_arm_build_only(self):
+        workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
+            encoding="utf-8"
+        )
+        export = workflow.split(
+            "      - name: Record existing Windows ARM64 development frontend\n", 1
+        )[1].split("      - name: Build unsigned Linux AppImage\n", 1)[0]
+        self.assertEqual(export.count("if: matrix.name == 'windows-aarch64'"), 2)
+        self.assertIn("'--format=%H%n%T'", export)
+        self.assertIn("$source[0] -ne $env:GITHUB_SHA", export)
+        self.assertIn("candidate_head = $env:DEVELOPMENT_SOURCE_HEAD", export)
+        self.assertIn("development-frontend-only-not-signed-release", export)
+        self.assertIn("'packaging/updater.pub'", export)
+        self.assertIn("if-no-files-found: error", export)
+        self.assertIn("retention-days: 7", export)
+        self.assertIn("target/release/festerm.exe", export)
+        self.assertNotIn("cargo build", export)
+        self.assertNotIn("festerm-host.exe", export)
+        self.assertLess(
+            workflow.index("Build unsigned Windows package with verified ConPTY sidecar"),
+            workflow.index("Record existing Windows ARM64 development frontend"),
+        )
+
     def test_native_renderer_changes_trigger_package_smoke(self):
         workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
             encoding="utf-8"

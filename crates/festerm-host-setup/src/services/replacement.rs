@@ -30,7 +30,7 @@ struct Replacement {
     state: ReplacementState,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ReplacementReport {
     pub operation: String,
     pub from_version: String,
@@ -41,6 +41,45 @@ pub struct ReplacementReport {
     pub candidate_executable: PathBuf,
     pub candidate_bundle_sha256: String,
     pub meaning: &'static str,
+}
+
+/// Read-only recorded metadata. It grants no execution or replacement authority;
+/// the updater independently authenticates the complete signed old/new bundles.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReleaseMetadata {
+    pub recorded_version: String,
+    pub replacement: Option<ReplacementReport>,
+}
+
+impl ReleaseMetadata {
+    pub fn from_version(&self) -> &str {
+        match &self.replacement {
+            Some(update)
+                if matches!(
+                    update.state,
+                    ReplacementState::Prepared | ReplacementState::Applying
+                ) =>
+            {
+                &update.from_version
+            }
+            _ => &self.recorded_version,
+        }
+    }
+
+    /// Version/UI eligibility only. Actual stop, signatures, scope and same-intent
+    /// replacement admission are still checked by the production updater.
+    pub fn update_available(&self, target: &str) -> bool {
+        let (Ok(from), Ok(to)) = (version(self.from_version()), version(target)) else {
+            return false;
+        };
+        from < to
+            && self.replacement.as_ref().is_none_or(|update| {
+                !matches!(
+                    update.state,
+                    ReplacementState::Prepared | ReplacementState::Applying
+                ) || update.to_version == target
+            })
+    }
 }
 
 fn version(value: &str) -> io::Result<[u64; 3]> {
@@ -108,9 +147,9 @@ impl<R: CommandRunner> Services<'_, R> {
             match (&observed.xml, &observed.security) {
                 (Some(xml), Some(security))
                     if target.native_submitted
-                        && Some(xml) == target.native_expected.as_ref()
                         && Some(security) == target.native_security.as_ref() =>
                 {
+                    target.native_expected = Some(self.expected_task_xml(target, xml)?);
                     target.native_snapshot = observed.xml;
                 }
                 (None, None) if !target.native_submitted => {}
@@ -157,7 +196,24 @@ impl<R: CommandRunner> Services<'_, R> {
                 || record.epoch == 0
                 || record.epoch > snapshot.epoch
                 || version(&record.from_version)? >= version(&record.to_version)?
-                || record.new.version != if record.old.version >= 4 { 5 } else { 3 }
+                || !(record.new.version
+                    == match record.old.version {
+                        6 => 6,
+                        4 | 5 => 5,
+                        _ => 3,
+                    }
+                    || (record.new.version == 6
+                        && record.old.version >= 4
+                        && record.old.platform == super::Platform::Windows
+                        && record.old.origin == crate::lifecycle::Origin::Desktop))
+                || (record.new.version == 6
+                    && record.new.resource
+                        != definitions::replacement_resource(
+                            snapshot,
+                            record.new.epoch,
+                            &record.new.reservation,
+                            record.new.platform,
+                        )?)
                 || record.old.resource == record.new.resource
                 || record.old.settings != record.new.settings
                 || record.operation != record.new.reservation
@@ -207,6 +263,40 @@ impl<R: CommandRunner> Services<'_, R> {
             return Err(refused("host.update_recovery_required"));
         }
         Ok(())
+    }
+
+    /// Read only bounded, private release metadata; never calls a native manager,
+    /// publisher, vault, current-version launcher or a replacement operation.
+    pub fn release_metadata(&self) -> io::Result<Option<ReleaseMetadata>> {
+        let (before, record) = self.registration()?;
+        let Some(record) = record.filter(|record| !record.removed) else {
+            return Ok(None);
+        };
+        let provenance = record
+            .provenance
+            .as_ref()
+            .ok_or_else(|| refused("host.service_signed_provenance_required"))?;
+        let directory = storage::private_directory(provenance, false)?;
+        let bytes = storage::read_private(
+            &directory,
+            Path::new(".manifest.json"),
+            crate::artifacts::MAX_MANIFEST_BYTES,
+        )?;
+        let manifest: crate::artifacts::Manifest = serde_json::from_slice(&bytes)
+            .map_err(|_| refused("host.update_recorded_release_metadata_invalid"))?;
+        if manifest.schema != 2 || manifest.package != crate::artifacts::Package::Host {
+            return Err(refused("host.update_recorded_release_metadata_invalid"));
+        }
+        version(&manifest.version)?;
+        let replacement = self.replacement()?.map(|update| update.report());
+        let (after, current) = self.registration()?;
+        if before != after || current.as_ref() != Some(&record) {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        Ok(Some(ReleaseMetadata {
+            recorded_version: manifest.version,
+            replacement,
+        }))
     }
 
     pub fn replacement_status(&self) -> io::Result<Option<ReplacementReport>> {
@@ -327,6 +417,14 @@ impl<R: CommandRunner> Services<'_, R> {
                 new.executable = stage.path.clone();
                 new.digest = stage.digest.clone();
                 new.provenance = Some(stage.provenance_path().to_owned());
+                new.windows_managed = None;
+                if current.version >= 4
+                    && self.context.platform == super::Platform::Windows
+                    && snapshot.origin == crate::lifecycle::Origin::Desktop
+                {
+                    new.version = 6;
+                    new.windows_managed = Some(stage.windows_managed_execution()?);
+                }
                 new.definition = definitions::render(&new)?;
                 if self.context.platform == Platform::Windows {
                     new.native_submitted = false;
@@ -359,6 +457,7 @@ impl<R: CommandRunner> Services<'_, R> {
         if transaction.new.settings != snapshot.settings {
             return Err(refused("host.update_settings_changed_reconfirm_or_cleanup"));
         }
+        stage.revalidate_registration(&transaction.new)?;
         authenticate(&transaction.old, from_version)?;
         authenticate(&transaction.new, stage.version())?;
         self.validate_registration(&transaction.new, &snapshot)?;
@@ -499,7 +598,11 @@ impl<R: CommandRunner> Services<'_, R> {
         Ok(())
     }
 
-    pub(super) fn stop_replacement(&self, epoch: u64) -> io::Result<Option<Observation>> {
+    pub(super) fn stop_replacement(
+        &self,
+        epoch: u64,
+        _wait: std::time::Duration,
+    ) -> io::Result<Option<Observation>> {
         let Some(mut record) = self.replacement()?.filter(Replacement::pending) else {
             return Ok(None);
         };
@@ -512,7 +615,7 @@ impl<R: CommandRunner> Services<'_, R> {
                 .wait_windows_resources_revocation(
                     &self.fence(epoch, Phase::StopRequested)?,
                     &[&record.old, &record.new],
-                    std::time::Duration::from_secs(10).saturating_sub(started.elapsed()),
+                    _wait.saturating_sub(started.elapsed()),
                 )
                 .map(Some);
         }

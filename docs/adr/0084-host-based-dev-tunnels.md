@@ -39,6 +39,15 @@ are unchanged. See the canonical
 [browser workflow](../gui-design.md#account-host-and-session-browser). Native
 layout, keyboard and live-service qualification remain distinct from UI tests.
 
+HOST-04/HOST-05 native Windows validation additionally covers Scheduler's
+security-descriptor XML insertion. Preparation uses the checked policy on an
+unregistered definition; raw snapshots and v4 equality remain unchanged. An
+older submitted reservation can adopt only exact native re-preparation plus
+unchanged policy under a protected original-receipt CAS, without Create or Run.
+Portable recovery/CAS fixtures and cross-compilation do not qualify actual
+Scheduler serialization or previously released helper interoperability; see
+[native service validation](../native-host-services.md#windows-task-descriptor-readback).
+
 ## Context
 
 The current bridge exposes one exact persistent daemon generation. Standalone
@@ -608,6 +617,16 @@ protected-revocation/runtime-release check with both task observations. It
 never launches/stops a host or session daemon, weakens signing policy or
 claims real Windows/native release acceptance. See the
 [receipt/recovery contract](../native-host-services.md#windows-stopped-replacement-contract-design-before-implementation).
+After protected Windows revocation, transient `WouldBlock` while opening the
+current-user service context, acquiring its lease or observing exact tasks may
+retry those observations and existing fenced receipt reconciliation under one
+shared ten-second deadline. Exact missing native snapshots may be persisted;
+this does not permit manager mutation or replacement identity. Native observation
+deadlines cannot extend the budget. Each attempt rechecks the original epoch;
+changed scope and every non-contention refusal remain final. Timeout retains
+`StopRequested`; it never confirms absence, repeats revocation or issues native
+Start/Stop/Remove actions. These contention fixtures do not establish the cause
+of a particular native Busy report or replace live-daemon Disable qualification.
 Pending local cleanup is removal authority, not launch/update authority:
 protected CleanupPending epochs, exact journal/task XML/ACL ownership and
 quiescence plus independent absence suffice even when either bundle is
@@ -2634,3 +2653,118 @@ HOST/stub regressions cover category preservation, capture before cancellation
 and refused continuation. Queue limits, cancellation, admission and no-replay
 behavior are unchanged; native saturation cause/long-input acceptance remain
 separate evidence.
+
+### Windows managed Desktop HOST without a console
+
+Architectural decision (HOST-04/HOST-05/HOST-06): the existing GUI-subsystem
+`festerm-tunnel-worker` target moves from the bridge crate to the HOST app
+composition package. Its filename and legacy `--state-dir` setup route remain
+compatible. Exactly one additional Windows Desktop-managed route invokes the
+shared managed bootstrap/run body in that same process. Its strict fixed
+`run_windows_desktop_worker_from_path` entry requires revision6; the existing
+`run_from_path` CLI entry preserves legacy semantics. Common runtime admission
+also refuses a console process against revision6. It does not
+spawn a console HOST or introduce another binary, generic launcher, supervisor,
+restart loop, elevation or OS-policy change. The GUI route directly awaits
+shared managed revocation/drain and does not install a console Ctrl+C handler;
+the console CLI keeps its original signal wrapper. Public console CLI/default-run
+behavior remains available.
+
+A new explicit Windows Desktop execution revision binds the Task action to
+that worker while retaining the signed HOST entry as bundle authority. Both
+fixed entries/path/digests must belong to the same verified schema-2 HOST bundle;
+publisher identity or sibling location alone is insufficient. Retained file
+handles and revalidation cover both roles, and managed bootstrap verifies the
+running process against the registered execution role. Versions 2–5 retain exact
+definition/snapshot bytes and query/reconciliation/adoption behavior; status
+never upgrades an existing receipt. Existing managed installations change their
+execution route only through the supported authenticated stopped replacement.
+
+The shared managed runtime owns the existing typed result and failure history,
+native restart suppression, lease, revocation and drain behavior. Sessiond keeps
+its Windows HOST Job breakaway refusal and independent durable-child contract.
+Moving binary ownership also moves its binary integration test and updates every
+`--bins` package producer and standalone notice dependency root/features, so the
+same legacy helper filename remains complete in both package forms.
+
+Validation requires deterministic parser/legacy-route, same-bundle/role/tamper,
+old-receipt/new-definition/stopped-update and managed exit/lease/revocation
+regressions plus the affected packaging checks. Signed native no-console
+observation and durable PID/generation preservation remain separate acceptance
+gates. Native Windows ARM64, x64 CI/emulation and native x64 OS evidence are
+reported separately; source or cross-compilation establishes none of them.
+
+### Validation impact: Desktop stopped HOST update surface
+
+GUI `HOST-04`/`HOST-06` now compose the existing stopped updater through Desktop's
+typed Settings Review/Confirm worker. A bounded private recorded-version query
+is display metadata only and makes no native manager/publisher/vault calls;
+strict old/new signature and current-version launch policies stay unchanged.
+`update_if_current` binds the reviewed Snapshot while sharing the existing
+transaction, original intent, cancellation and exact native replacement rules.
+Version/disabled gating, stale metadata/scope, pending target, explicit review,
+cancel/drain, rendering and no-side-effect metadata tests are automated.
+Actual signed old→new Desktop/native switching and durable-shell survival remain
+HOSTSETUP-01 acceptance. This adds no origin override, replacement policy,
+automatic migration, rollback or Enable and does not accept this ADR.
+
+Privacy preparation diagnostics (HOST-01/HOST-02) retain only a bounded fixed
+outcome per current account/request generation, independently of authority
+result disposal. OS-loss cancellation remains immediate and fail closed; late
+results cannot install a session or infer absence. The diagnostic route changes
+no privacy-provider prerequisites, OS service state, access policy or retry
+authority. Validation includes deterministic loss-before-error, late-success,
+stale-scope and user-cancel fixtures; genuine signed native diagnosis remains
+required.
+
+The DT-02 desktop-local profile route queries Windows Job state after exact
+Running lookup and explicit-start gating, before resolving a helper or reserving
+a generation. Query failure is unavailable. An initially Job-contained hosted start now has a
+supported local WMI starter route; a successful query is not native readiness.
+Existing Running access, Unknown reservations and their no-replay semantics are
+unchanged. Validation retains unchanged catalog/journal/lease/operation bytes on
+preflight refusal and query errors, retained Unknown and owned Running reuse.
+
+Pre-Ready native-session startup failures use the existing private lifecycle
+ring (64 entries, 32 KiB and bounded try-lock acquisition). Closed failure
+stages distinguish runtime, registry, staging, independent spawn, spawn evidence,
+host lease and registration; only generation, actor PID, numeric OS code and
+available child exit code are retained. A starter actor is not a native-session
+identity. Existing history readers still require the exact daemon PID/generation;
+missing or unreadable evidence supplies no authority. Diagnostic failure cannot
+change startup results, cleanup, Unknown retention, retries or access policy.
+No raw errors, command arguments, paths, environment or terminal input are added.
+Portable stage/privacy/non-interference fixtures do not prove the cause of any
+prior native failure; the next signed native attempt remains required. No new
+pane or control protocol is introduced.
+
+Windows host-controlled startup uses one local WMI re-launch of the existing
+short-lived `start` helper whenever the initial process is in any Job, before
+startup/registry locks. Even permissive inner Jobs can retain restrictive
+caller-owned ancestors; only a context-verified successor takes direct spawn.
+No-Job initial starts remain direct. A blocked successor refuses without a third
+hop. The successor must match the live
+parent executable, user, logon session, process session, elevation and integrity;
+a bounded nonce marker restricts recursion and is removed before daemon spawn.
+The marker grants no creation authority: protected launch/generation, spawn
+fingerprint, binding and host lease checks remain unchanged. Arguments and the
+Unicode environment stay in memory. No remote WMI, credentials, privilege or Job
+policy changes, shell shim, custom broker or new service are introduced.
+
+The SDK's existing eight-second owned helper bound remains. WMI/PID/timeout
+ambiguity retains Unknown without retry/fallback. Only a known successful Create
+with lost short-lived PID handoff may observe an already-Ready exact generation,
+launch request and fingerprint; final native-binding verification remains in
+the existing SDK. Explicit refusal, context mismatch and timeout are not turned
+into success. Parent observation of a WMI PID does not authorize termination; the successor has its own finite deadline.
+Direct host-controlled process-creation failure still refuses rather than
+inheriting a caller Job as a fallback. Ordinary non-host legacy behavior remains.
+OS-owned Job membership alone is not failure: ADR0025/this ADR require survival
+of caller/GUI/HOST shutdown, not identical process ancestry. Permissive flags are
+not proof of independence. The required Windows CI fixture creates a real PTY,
+covers a blocked Job and a permissive inner Job with a restrictive ancestor,
+checks exclusion from both exact caller-owned Jobs, terminates the caller Job,
+then reattaches the same generation and verifies shell execution. Signed native
+normal HOST Disable/Task stop/GUI close and reconnect remain separate gates.
+Validation impact: DT-02 / HOST-02 / ADR0084; command/marker bounds, one-hop
+routing and native lifecycle tests do not repair an earlier Unknown operation.

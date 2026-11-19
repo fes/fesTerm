@@ -48,7 +48,61 @@ struct Fixture {
     denied_logical: LogicalSessionId,
     creation_allowed: bool,
     allow_shell_input: bool,
+    #[serde(default)]
+    stopped_shared_profile_name: Option<String>,
     shell: Shell,
+}
+
+// Inventory is assembled from all correlated pages; uncertainty is never absence.
+fn not_started(inventory: &Inventory, logical: &LogicalSessionId) -> bool {
+    !inventory
+        .sessions
+        .iter()
+        .any(|session| &session.target.logical == logical)
+        && !inventory
+            .unknown
+            .iter()
+            .any(|target| &target.logical == logical)
+}
+
+fn stopped_profile<'a>(
+    fixture: &Fixture,
+    inventory: &'a Inventory,
+) -> Result<Option<&'a festerm_host_protocol::ProfileSummary>, ()> {
+    let Some(name) = &fixture.stopped_shared_profile_name else {
+        return Ok(None);
+    };
+    if fixture.creation_allowed
+        || name.trim().is_empty()
+        || name.len() > 128
+        || name == &fixture.shared_profile_name
+        || name == &fixture.private_profile_name
+    {
+        return Err(());
+    }
+    let mut candidates = inventory
+        .profiles
+        .iter()
+        .filter(|profile| &profile.name == name);
+    let profile = candidates.next().ok_or(())?;
+    if candidates.next().is_some()
+        || !not_started(inventory, &profile.logical)
+        || [
+            &fixture.private_logical,
+            &fixture.generic_logical,
+            &fixture.denied_logical,
+        ]
+        .contains(&&profile.logical)
+        || inventory
+            .profiles
+            .iter()
+            .filter(|other| other.logical == profile.logical)
+            .count()
+            != 1
+    {
+        return Err(());
+    }
+    Ok(Some(profile))
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -65,7 +119,9 @@ fn probe(shell: Shell, nonce: &str) -> (Vec<u8>, Vec<u8>) {
     let command = match shell {
         Shell::Posix => format!("printf '\\n%s%s\\n' 'FESTERM_LAB_{first}' '{second}'\r"),
         Shell::Powershell => format!("[Console]::WriteLine(('FESTERM_LAB_{first}'+'{second}'))\r"),
-        Shell::Cmd => format!("set \"FESTERM_VM_LAB_A=FESTERM_LAB_{first}\"\rset \"FESTERM_VM_LAB_B={second}\"\recho %FESTERM_VM_LAB_A%%FESTERM_VM_LAB_B%\rset FESTERM_VM_LAB_A=\rset FESTERM_VM_LAB_B=\r"),
+        Shell::Cmd => format!(
+            "set \"FESTERM_VM_LAB_A=FESTERM_LAB_{first}\"\rset \"FESTERM_VM_LAB_B={second}\"\recho %FESTERM_VM_LAB_A%%FESTERM_VM_LAB_B%\rset FESTERM_VM_LAB_A=\rset FESTERM_VM_LAB_B=\r"
+        ),
     };
     assert!(
         !command.contains(&marker),
@@ -454,6 +510,10 @@ fn controlled_github_host_service_client_workflow() {
             .any(|profile| profile.name == fixture.private_profile_name),
         "private profile leaked into authorized inventory"
     );
+    assert!(
+        not_started(&inventory, &fixture.private_logical),
+        "private logical identity leaked into sessions or uncertain inventory"
+    );
     assert!(matches!(
         peer.operation(Operation::EnsureProfile {
             logical: fixture.private_logical.clone(),
@@ -465,6 +525,32 @@ fn controlled_github_host_service_client_workflow() {
             Refusal::Denied | Refusal::Stale
         )))
     ));
+    let stopped = stopped_profile(&fixture, &inventory)
+        .unwrap_or_else(|()| blocked())
+        .cloned();
+    if let Some(profile) = &stopped {
+        assert!(
+            matches!(
+                peer.operation(Operation::EnsureProfile {
+                    logical: profile.logical.clone(),
+                    revision: profile.revision,
+                    attachment: AttachmentId::new(),
+                })
+                .outcome,
+                Outcome::Failed(host_client::Failure::Control(Error::Refused(
+                    Refusal::Denied
+                )))
+            ),
+            "stopped shared profile must receive exact server denial while creation is off"
+        );
+        let after = peer.inventory();
+        assert!(!after.capabilities.creation_allowed);
+        assert_eq!(
+            stopped_profile(&fixture, &after).unwrap_or_else(|()| blocked()),
+            Some(profile),
+            "denied stopped profile must retain exact catalog revision and NotStarted state"
+        );
+    }
     let profiles: Vec<_> = inventory
         .profiles
         .iter()
@@ -543,10 +629,7 @@ fn controlled_github_host_service_client_workflow() {
         }
     } else {
         assert!(
-            !inventory
-                .sessions
-                .iter()
-                .any(|session| session.target.logical == fixture.denied_logical),
+            not_started(&inventory, &fixture.denied_logical),
             "denied-create fixture logical ID must not already exist"
         );
         let (completion, originals, original_id) =
@@ -563,5 +646,131 @@ fn controlled_github_host_service_client_workflow() {
             _ => panic!("host did not explicitly deny generic creation while creation was off"),
         }
     }
+    if !fixture.creation_allowed {
+        let after = peer.inventory();
+        assert!(
+            !after.capabilities.creation_allowed && not_started(&after, &fixture.denied_logical),
+            "denied generic logical must remain absent without uncertainty"
+        );
+    }
+    if stopped.is_some() {
+        println!("FESTERM_DEV_TUNNEL_LAB_STOPPED_PROFILE_DENIED_PASS");
+    }
     println!("FESTERM_DEV_TUNNEL_LAB_ORDINARY_CLIENT_PASS");
+}
+
+#[cfg(test)]
+mod stopped_policy_tests {
+    use super::*;
+    use festerm_host_protocol::{Capabilities, GenerationId, ProfileSummary, SessionSummary};
+
+    fn fixture_inventory() -> (Fixture, Inventory) {
+        let fixture = Fixture {
+            schema_version: 2,
+            account: "fes-festerm1".into(),
+            configuration: "/fixture/config".into(),
+            runtime_root: "/fixture/runtime".into(),
+            locator: "fixture.region".into(),
+            shared_profile_name: "Shared".into(),
+            private_profile_name: "Private".into(),
+            private_logical: LogicalSessionId::new(),
+            private_revision: Epoch::new(1).unwrap(),
+            generic_logical: LogicalSessionId::new(),
+            denied_logical: LogicalSessionId::new(),
+            creation_allowed: false,
+            allow_shell_input: true,
+            shell: Shell::Posix,
+            stopped_shared_profile_name: Some("Stopped".into()),
+        };
+        let inventory = Inventory {
+            capabilities: Capabilities {
+                issuance_epoch: Some(Epoch::new(1).unwrap()),
+                inventory: true,
+                profiles: true,
+                ensure: true,
+                ensure_profile: true,
+                create: true,
+                attach: true,
+                detach: true,
+                explicit_end: true,
+                temporary: false,
+                creation_allowed: false,
+            },
+            sessions: vec![],
+            unknown: vec![],
+            profiles: vec![ProfileSummary {
+                logical: LogicalSessionId::new(),
+                revision: Epoch::new(7).unwrap(),
+                name: "Stopped".into(),
+            }],
+        };
+        (fixture, inventory)
+    }
+
+    #[test]
+    fn stopped_profile_requires_unique_opt_in_off_catalog_identity() {
+        let (mut fixture, mut inventory) = fixture_inventory();
+        let profile = inventory.profiles[0].clone();
+        assert_eq!(stopped_profile(&fixture, &inventory), Ok(Some(&profile)));
+        fixture.creation_allowed = true;
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        fixture.creation_allowed = false;
+        inventory.profiles.push(profile.clone());
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        inventory.profiles.pop();
+        inventory.profiles.push(ProfileSummary {
+            name: "Alias".into(),
+            ..profile.clone()
+        });
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        inventory.profiles.pop();
+        fixture.denied_logical = profile.logical;
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        fixture.stopped_shared_profile_name = None;
+        assert_eq!(stopped_profile(&fixture, &inventory), Ok(None));
+    }
+
+    #[test]
+    fn stopped_profile_unknown_or_running_never_means_not_started() {
+        let (fixture, mut inventory) = fixture_inventory();
+        let logical = inventory.profiles[0].logical.clone();
+        let target = Target {
+            logical: logical.clone(),
+            generation: GenerationId::new(3).unwrap(),
+        };
+        inventory.unknown.push(target.clone());
+        assert!(!not_started(&inventory, &logical));
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        inventory.unknown.clear();
+        inventory.sessions.push(SessionSummary {
+            target,
+            name: "Existing".into(),
+            lifetime: Lifetime::Persistent {},
+            attached: false,
+        });
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+        inventory.sessions.clear();
+        assert!(not_started(&inventory, &logical));
+        assert!(stopped_profile(&fixture, &inventory).is_ok());
+        inventory.unknown.push(Target {
+            logical: fixture.private_logical.clone(),
+            generation: GenerationId::new(4).unwrap(),
+        });
+        assert!(!not_started(&inventory, &fixture.private_logical));
+        assert!(not_started(&inventory, &logical));
+        assert!(stopped_profile(&fixture, &inventory).is_ok());
+    }
+
+    #[test]
+    fn stopped_profile_revision_change_cannot_satisfy_same_catalog_postcondition() {
+        let (fixture, mut inventory) = fixture_inventory();
+        let original = stopped_profile(&fixture, &inventory).unwrap().cloned();
+        inventory.profiles[0].revision = Epoch::new(8).unwrap();
+        assert_ne!(
+            stopped_profile(&fixture, &inventory).unwrap(),
+            original.as_ref()
+        );
+        inventory.profiles.clear();
+        assert!(stopped_profile(&fixture, &inventory).is_err());
+    }
 }

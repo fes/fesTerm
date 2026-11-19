@@ -91,17 +91,59 @@ fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Fai
     Ok(())
 }
 
-fn prepare_enable<T>(
+fn update_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Failure> {
+    if cancel.is_cancelled() {
+        return Err(Failure::Cancelled);
+    }
+    let Scope::Present(expected) = &request.expected else {
+        return Err(Failure::UpdateBlocked);
+    };
+    if expected.phase != Phase::Disabled || expected.binding.is_none() {
+        return Err(Failure::UpdateBlocked);
+    }
+    let store = observed(&request.root)?.ok_or(Failure::ScopeChanged)?;
+    verify(Some(&store), &request.expected)?;
+    let current = Services::current_user(&store, &request.root)
+        .and_then(|services| services.release_metadata())
+        .map_err(|_| Failure::UpdateBlocked)?;
+    check_update_release(request.release.as_ref(), current.as_ref())
+}
+
+fn check_update_release(
+    expected: Option<&festerm_host_setup::services::ReleaseMetadata>,
+    current: Option<&festerm_host_setup::services::ReleaseMetadata>,
+) -> Result<(), Failure> {
+    let Some(current) = current else {
+        return Err(Failure::UpdateBlocked);
+    };
+    if expected != Some(current) {
+        return Err(Failure::ScopeChanged);
+    }
+    if !current.update_available(festerm_host_setup::VERSION) {
+        return Err(Failure::UpdateBlocked);
+    }
+    Ok(())
+}
+
+fn bundle_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Failure> {
+    match request.operation {
+        Operation::Enable => enable_scope(request, cancel),
+        Operation::Update => update_scope(request, cancel),
+        _ => Err(Failure::InvalidDraft),
+    }
+}
+
+fn prepare_bundle<T>(
     request: &Request,
     cancel: &CancellationToken,
     progress: &SyncSender<Progress>,
     acquire: impl FnOnce(&Request, &CancellationToken) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
-    enable_scope(request, cancel)?;
+    bundle_scope(request, cancel)?;
     let artifact = acquire(request, cancel)?;
     // Verification is synchronous and bounded, not CPU-preempted. Never accept
     // its owned bytes against a cancelled or replaced consent scope.
-    enable_scope(request, cancel)?;
+    bundle_scope(request, cancel)?;
     let _ = progress.try_send(Progress::Bundle(BundleStatus::Authenticated));
     Ok(artifact)
 }
@@ -166,7 +208,7 @@ fn verify(store: Option<&Store>, expected: &Scope) -> Result<(), Failure> {
     }
 }
 
-fn report(store: Option<&Store>) -> Result<Report, Failure> {
+fn report(store: Option<&Store>, root: &Path) -> Result<Report, Failure> {
     let Some(store) = store else {
         return Ok(Report {
             scope: Scope::Absent,
@@ -186,7 +228,14 @@ fn report(store: Option<&Store>) -> Result<Report, Failure> {
     } else {
         None
     };
+    // Recorded version is display metadata, never old-bundle execution trust.
+    // Missing/corrupt provenance must not block ordinary Disable or recovery.
+    let release = Services::current_user(store, root)
+        .and_then(|services| services.release_metadata())
+        .ok()
+        .flatten();
     Ok(Report {
+        release,
         last_run,
         scope: Scope::Present(snapshot.into()),
         cleanup,
@@ -322,7 +371,7 @@ impl Native {
         }
         let existing = observed(&request.root)?;
         if request.operation == Operation::Refresh {
-            return report(existing.as_ref());
+            return report(existing.as_ref(), &request.root);
         }
         if request.cancel_fence {
             let store = existing.as_ref().ok_or(Failure::ScopeChanged)?;
@@ -330,8 +379,8 @@ impl Native {
         } else {
             verify(existing.as_ref(), &request.expected)?;
         }
-        let artifact = if request.operation == Operation::Enable {
-            Some(prepare_enable(&request, cancel, &progress, acquire)?)
+        let artifact = if matches!(request.operation, Operation::Enable | Operation::Update) {
+            Some(prepare_bundle(&request, cancel, &progress, acquire)?)
         } else {
             None
         };
@@ -361,7 +410,7 @@ impl Native {
             }
             let stage = match artifact {
                 Some(artifact) => {
-                    enable_scope(&request, cancel)?;
+                    bundle_scope(&request, cancel)?;
                     let _ = progress.try_send(Progress::Bundle(BundleStatus::Qualifying));
                     Some(publish(
                         artifact,
@@ -373,8 +422,8 @@ impl Native {
             if cancel.is_cancelled() {
                 return Err(Failure::Cancelled);
             }
-            if request.operation == Operation::Enable {
-                enable_scope(&request, cancel)?;
+            if matches!(request.operation, Operation::Enable | Operation::Update) {
+                bundle_scope(&request, cancel)?;
             }
             self.perform(
                 &store,
@@ -397,7 +446,7 @@ impl Native {
                 }
                 Err(error) => error,
             };
-            let mut observed = report(Some(&store))?;
+            let mut observed = report(Some(&store), &request.root)?;
             observed.failure = Some(failure);
             return Ok(observed);
         }
@@ -406,7 +455,7 @@ impl Native {
             Err(error) => {
                 // Reobserve local protected partial progress without another
                 // credential/network/native operation or a success assertion.
-                let mut observed = report(Some(&store))?;
+                let mut observed = report(Some(&store), &request.root)?;
                 observed.diagnostic = scoped_diagnostic(diagnostic, &request, &observed.scope);
                 observed.failure = Some(error);
                 Ok(observed)
@@ -437,7 +486,7 @@ impl Native {
                             failure(error)
                         }
                     })?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 if result.scope != request.expected
                     || observation.installation != expected.installation
                     || observation.epoch != expected.epoch
@@ -452,7 +501,7 @@ impl Native {
                     .owner_enrollment()
                     .and_then(|owners| owners.snapshot())
                     .map_err(failure)?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 if result.scope != request.expected {
                     return Err(Failure::ScopeChanged);
                 }
@@ -467,7 +516,7 @@ impl Native {
                     diagnostic,
                     CloudHostAdapter::new(store).reconcile(cancel),
                 )?;
-                report(Some(store))
+                report(Some(store), &request.root)
             }
             Operation::Enable => {
                 let account = request
@@ -525,7 +574,7 @@ impl Native {
                         },
                     ),
                 )?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 let Scope::Present(snapshot) = &result.scope else {
                     return Err(Failure::ScopeChanged);
                 };
@@ -585,7 +634,7 @@ impl Native {
                 let owner =
                     controller::approve_owner_if_current(store, expected, revision, consent)
                         .map_err(failure)?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 if result.scope != request.expected {
                     return Err(Failure::ScopeChanged);
                 }
@@ -608,7 +657,7 @@ impl Native {
                 let services = Services::current_user(store, &request.root).map_err(failure)?;
                 let stage = services.reopen_stage(expected.epoch).map_err(failure)?;
                 let observation = services.start(&stage, expected.epoch).map_err(failure)?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 if result.scope != request.expected {
                     return Err(Failure::ScopeChanged);
                 }
@@ -616,12 +665,39 @@ impl Native {
                 public_owner(&mut result, owner)?;
                 Ok(result)
             }
+            Operation::Update => {
+                update_scope(request, cancel)?;
+                let Scope::Present(expected) = &request.expected else {
+                    return Err(Failure::ScopeChanged);
+                };
+                let stage = stage.ok_or(Failure::SignedBundle)?;
+                let release = request.release.as_ref().ok_or(Failure::UpdateBlocked)?;
+                let runtime = runtime()?;
+                run_async(
+                    &runtime,
+                    cancel,
+                    diagnostic,
+                    controller::update_if_current(
+                        store,
+                        &request.root,
+                        expected,
+                        stage,
+                        release.from_version(),
+                        cancel,
+                    ),
+                )
+                .map_err(|error| match error {
+                    Failure::Cancelled | Failure::ScopeChanged => error,
+                    _ => Failure::UpdateIncomplete,
+                })?;
+                report(Some(store), &request.root)
+            }
             Operation::Disable => {
                 let Scope::Present(expected) = &request.expected else {
                     return Err(Failure::ScopeChanged);
                 };
                 controller::disable_if_current(store, &request.root, expected).map_err(failure)?;
-                report(Some(store))
+                report(Some(store), &request.root)
             }
             Operation::Uninstall => {
                 let Scope::Present(expected) = &request.expected else {
@@ -634,7 +710,7 @@ impl Native {
                     diagnostic,
                     controller::uninstall_if_current(store, &request.root, expected, cancel),
                 )?;
-                let mut result = report(Some(store))?;
+                let mut result = report(Some(store), &request.root)?;
                 if let UninstallResult::NativeRemovedCloudCleanupPending { context } = outcome {
                     if !matches!(&result.scope, Scope::Present(snapshot) if
                         snapshot.installation == context.installation && snapshot.epoch == context.epoch)

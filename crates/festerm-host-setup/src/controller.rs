@@ -420,7 +420,7 @@ pub struct DisableResult {
 /// Neither native daemon nor persistent sessions are stop targets.
 pub fn disable(store: &Store, state: &Path) -> io::Result<DisableResult> {
     disable_with(store, Duration::from_secs(10), |epoch| {
-        Services::current_user(store, state)?.stop(epoch)
+        Services::stop_current_user(store, state, epoch)
     })
 }
 
@@ -430,7 +430,7 @@ pub fn disable_if_current(
     expected: &Snapshot,
 ) -> io::Result<DisableResult> {
     disable_scoped_with(store, Some(expected), Duration::from_secs(10), |epoch| {
-        Services::current_user(store, state)?.stop(epoch)
+        Services::stop_current_user(store, state, epoch)
     })
 }
 
@@ -725,6 +725,28 @@ pub async fn update(
     .await
 }
 
+/// Foreground GUI replacement binds the exact snapshot reviewed by the user.
+/// Shares the existing stopped updater; never changes origin or replacement policy.
+pub async fn update_if_current(
+    store: &Store,
+    state: &Path,
+    expected: &Snapshot,
+    stage: &TrustedStage,
+    from_version: &str,
+    cancel: &CancellationToken,
+) -> io::Result<crate::services::ReplacementReport> {
+    update_current_with_admission(
+        store,
+        state,
+        Some(expected),
+        stage,
+        from_version,
+        cancel,
+        |startup| startup_admission(startup, cancel),
+    )
+    .await
+}
+
 async fn update_with_admission<A: std::future::Future<Output = io::Result<()>>>(
     store: &Store,
     state: &Path,
@@ -733,7 +755,22 @@ async fn update_with_admission<A: std::future::Future<Output = io::Result<()>>>(
     cancel: &CancellationToken,
     admission: impl FnOnce(Startup) -> A,
 ) -> io::Result<crate::services::ReplacementReport> {
+    update_current_with_admission(store, state, None, stage, from_version, cancel, admission).await
+}
+
+async fn update_current_with_admission<A: std::future::Future<Output = io::Result<()>>>(
+    store: &Store,
+    state: &Path,
+    expected: Option<&Snapshot>,
+    stage: &TrustedStage,
+    from_version: &str,
+    cancel: &CancellationToken,
+    admission: impl FnOnce(Startup) -> A,
+) -> io::Result<crate::services::ReplacementReport> {
     let snapshot = store.snapshot()?;
+    if expected.is_some_and(|expected| expected != &snapshot) {
+        return Err(refused("host.runtime_consent_changed"));
+    }
     if cancel.is_cancelled() {
         return Err(refused("host.cloud_cancelled"));
     }
@@ -1019,7 +1056,9 @@ fn authorize_run(
         return Err(refused("host.runtime_consent_changed"));
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
-    let stage = Services::current_user(store, state)?.reopen_stage(expected.epoch)?;
+    let services = Services::current_user(store, state)?;
+    let stage = services.reopen_stage(expected.epoch)?;
+    services.require_runtime_execution(&stage)?;
     stage.sessiond_path()?;
     record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
     {
@@ -1408,6 +1447,62 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_update_reviewed_snapshot_refuses_changes_before_shared_admission() {
+        let (root, store) = fixture();
+        let state = root.path().join("host");
+        provision(&store);
+        fixture_disable(&store, &state).unwrap();
+        let expected = store.snapshot().unwrap();
+        let stage = crate::services::fixture_stage(&root.path().join("candidate"));
+        let cancel = CancellationToken::new();
+        for change in ["epoch", "settings", "origin", "binding"] {
+            let mut stale = expected.clone();
+            match change {
+                "epoch" => stale.epoch += 1,
+                "settings" => stale.settings.allow_creation = !stale.settings.allow_creation,
+                "origin" => stale.origin = crate::lifecycle::Origin::Desktop,
+                "binding" => stale.binding.as_mut().unwrap().account.push_str("-changed"),
+                _ => unreachable!(),
+            }
+            let calls = std::cell::Cell::new(0);
+            let error = update_current_with_admission(
+                &store,
+                &state,
+                Some(&stale),
+                &stage,
+                "0.15.0",
+                &cancel,
+                |_| async {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), "host.runtime_consent_changed");
+            assert_eq!(calls.get(), 0);
+            assert_eq!(store.snapshot().unwrap(), expected);
+        }
+        let calls = std::cell::Cell::new(0);
+        let error = update_current_with_admission(
+            &store,
+            &state,
+            Some(&expected),
+            &stage,
+            "0.15.0",
+            &cancel,
+            |_| async {
+                calls.set(calls.get() + 1);
+                Err(refused("fixture.shared_admission_reached"))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "fixture.shared_admission_reached");
+        assert_eq!(calls.get(), 1);
     }
 
     #[tokio::test]

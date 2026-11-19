@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -12,6 +13,15 @@ SPEC.loader.exec_module(notices)
 
 
 class AppNoticesTests(unittest.TestCase):
+    def test_windows_desktop_notice_tree_tracks_relocated_worker_composition_root(self):
+        with mock.patch.object(notices, "cargo", return_value="dependency v1.0.0\n") as cargo:
+            notices.tree_for("aarch64-pc-windows-msvc", "desktop")
+            args = cargo.call_args.args
+            self.assertIn("festerm-host", args)
+            self.assertEqual(args[args.index("festerm-host") - 1], "-p")
+            notices.tree_for("aarch64-apple-darwin", "desktop")
+            self.assertNotIn("festerm-host", cargo.call_args.args)
+
     def test_retains_primary_and_nested_dependency_notices(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

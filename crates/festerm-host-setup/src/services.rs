@@ -6,7 +6,7 @@ pub mod native;
 mod reconfiguration;
 mod replacement;
 mod trusted;
-pub use replacement::{ReplacementReport, ReplacementState};
+pub use replacement::{ReleaseMetadata, ReplacementReport, ReplacementState};
 pub use trusted::TrustedStage;
 
 #[cfg(all(test, feature = "cloud", feature = "host-runtime"))]
@@ -114,6 +114,13 @@ impl Context {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+struct WindowsManagedExecution {
+    path: PathBuf,
+    digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Registration {
     version: u8,
     installation: String,
@@ -126,6 +133,8 @@ struct Registration {
     resource: String,
     executable: PathBuf,
     digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows_managed: Option<WindowsManagedExecution>,
     #[serde(default)]
     provenance: Option<PathBuf>,
     state: PathBuf,
@@ -171,6 +180,24 @@ pub struct Services<'a, R = NativeRunner> {
 impl<'a> Services<'a, NativeRunner> {
     pub fn current_user(store: &'a Store, state: &Path) -> io::Result<Self> {
         Self::with_runner(store, state, NativeRunner)
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn stop_current_user(
+        store: &'a Store,
+        state: &Path,
+        epoch: u64,
+    ) -> io::Result<Observation> {
+        #[cfg(all(windows, feature = "cloud", feature = "host-runtime"))]
+        {
+            windows_stop_observation(std::time::Duration::from_secs(10), |deadline| {
+                Self::current_user(store, state)?.stop_once(epoch, deadline)
+            })
+        }
+        #[cfg(not(all(windows, feature = "cloud", feature = "host-runtime")))]
+        {
+            Self::current_user(store, state)?.stop(epoch)
+        }
     }
 }
 
@@ -242,7 +269,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     fn validate_registration(&self, record: &Registration, snapshot: &Snapshot) -> io::Result<()> {
         let mut resource = definitions::resource(snapshot, record.epoch);
-        if matches!(record.version, 3 | 5) {
+        if matches!(record.version, 3 | 5) || (record.version == 6 && record.resource != resource) {
             resource = definitions::replacement_resource(
                 snapshot,
                 record.epoch,
@@ -250,7 +277,18 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 record.platform,
             )?;
         }
-        if !matches!(record.version, 2..=5)
+        if !matches!(record.version, 2..=6)
+            || (record.version == 6) != record.windows_managed.is_some()
+            || record.windows_managed.as_ref().is_some_and(|worker| {
+                record.platform != Platform::Windows
+                    || record.origin != Origin::Desktop
+                    || worker.path
+                        != record
+                            .executable
+                            .with_file_name("festerm-tunnel-worker.exe")
+                    || worker.digest.len() != 64
+                    || !worker.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
@@ -300,11 +338,12 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             match (&observed.xml, &observed.security) {
                 (Some(xml), Some(security))
                     if record.native_submitted
-                        && Some(xml) == record.native_expected.as_ref()
                         && Some(security) == record.native_security.as_ref() =>
                 {
+                    let before = record.clone();
+                    record.native_expected = Some(self.expected_task_xml(&record, xml)?);
                     record.native_snapshot = observed.xml;
-                    self.remember_created_task(&record)?;
+                    self.remember_created_task(&before, &record)?;
                 }
                 (None, None) if !record.native_submitted => {}
                 (None, None) => {
@@ -361,19 +400,45 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         })
     }
 
-    fn remember_created_task(&self, record: &Registration) -> io::Result<()> {
+    /// Admit only the native preparation of the recorded reservation. Query
+    /// and persisted snapshots remain raw, including Scheduler's descriptor.
+    fn expected_task_xml(&self, record: &Registration, observed: &str) -> io::Result<String> {
+        let expected = record
+            .native_expected
+            .as_ref()
+            .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?;
+        if expected == observed {
+            return Ok(expected.clone());
+        }
+        let prepared = self.task(record, TaskAction::Prepare(expected.clone()))?;
+        if prepared.xml.as_deref() != Some(observed)
+            || prepared.security.as_ref() != record.native_security.as_ref()
+        {
+            return Err(refused("host.service_foreign_native_definition"));
+        }
+        Ok(observed.into())
+    }
+
+    fn remember_created_task(
+        &self,
+        before: &Registration,
+        record: &Registration,
+    ) -> io::Result<()> {
         self.with_record(|directory, snapshot| {
             let mut prior = self
                 .read_registration(directory, snapshot)?
                 .ok_or_else(|| refused("host.service_not_installed"))?;
-            if prior.native_snapshot.is_some()
+            if prior != *before
+                || !prior.native_submitted
+                || prior.native_snapshot.is_some()
                 || record.native_snapshot.is_none()
                 || record.native_security.is_none()
-                || prior.native_expected.as_ref() != record.native_snapshot.as_ref()
+                || record.native_expected.as_ref() != record.native_snapshot.as_ref()
                 || prior.native_security != record.native_security
             {
                 return Err(refused("host.service_foreign_native_definition"));
             }
+            prior.native_expected.clone_from(&record.native_expected);
             prior.native_snapshot.clone_from(&record.native_snapshot);
             prior.native_security.clone_from(&record.native_security);
             if prior != *record {
@@ -560,7 +625,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_authenticated_bundle_changed"));
         }
         self.fence(epoch, phase)?;
-        stage.revalidate()?;
+        stage.revalidate_registration(&record)?;
         Ok(stage)
     }
 
@@ -626,6 +691,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             {
                 return Err(refused("host.service_explicit_replacement_required"));
             }
+            stage.revalidate_registration(&record)?;
             record
         } else {
             let mut record = Registration {
@@ -643,6 +709,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 resource: definitions::resource(&snapshot, epoch),
                 executable: stage.path.clone(),
                 digest: stage.digest.clone(),
+                windows_managed: None,
                 provenance: Some(stage.provenance_path().to_owned()),
                 state: self.state.clone(),
                 definition: String::new(),
@@ -654,6 +721,13 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 retiring_definition: false,
                 removed: false,
             };
+            if recovery
+                && self.context.platform == Platform::Windows
+                && snapshot.origin == Origin::Desktop
+            {
+                record.version = 6;
+                record.windows_managed = Some(stage.windows_managed_execution()?);
+            }
             record.definition = definitions::render(&record)?;
             if self.context.platform == Platform::Windows {
                 let prepared =
@@ -716,6 +790,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                     record.native_submitted = true;
                     self.save(&record, epoch, Phase::Provisioned)?;
                     self.fence(epoch, Phase::Provisioned)?;
+                    let before = record.clone();
                     let created =
                         self.task(
                             &record,
@@ -733,7 +808,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                             .security
                             .ok_or_else(|| refused("host.service_task_creation_unconfirmed"))?,
                     );
-                    self.remember_created_task(&record)?;
+                    self.remember_created_task(&before, &record)?;
                 }
             }
         }
@@ -750,13 +825,42 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(observation(&snapshot, process))
     }
 
-    pub(crate) fn require_recovery_registration(&self) -> io::Result<()> {
-        let (_, record) = self.registration()?;
-        if record.is_some_and(|record| matches!(record.version, 4 | 5) && !record.removed) {
-            Ok(())
-        } else {
-            Err(refused("host.native_recovery_registration_required"))
+    pub(crate) fn require_recovery_registration(&self) -> io::Result<Option<TrustedStage>> {
+        self.require_managed_registration(false)
+    }
+
+    pub(crate) fn require_windows_worker_registration(&self) -> io::Result<Option<TrustedStage>> {
+        self.require_managed_registration(true)
+    }
+
+    fn require_managed_registration(
+        &self,
+        worker_required: bool,
+    ) -> io::Result<Option<TrustedStage>> {
+        let (snapshot, record) = self.registration()?;
+        let record = record
+            .filter(|record| matches!(record.version, 4..=6) && !record.removed)
+            .ok_or_else(|| refused("host.native_recovery_registration_required"))?;
+        if worker_required && record.version != 6 {
+            return Err(refused("host.windows_managed_worker_registration_required"));
         }
+        if record.version == 6 {
+            let stage = self.reopen_stage(snapshot.epoch)?;
+            stage.require_running_worker(&record, &std::env::current_exe()?)?;
+            Ok(Some(stage))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(crate) fn require_runtime_execution(&self, stage: &TrustedStage) -> io::Result<()> {
+        let (_, record) = self.registration()?;
+        let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
+        stage.revalidate_registration(&record)?;
+        if record.version == 6 {
+            stage.require_running_worker(&record, &std::env::current_exe()?)?;
+        }
+        Ok(())
     }
 
     /// Explicit start requires current protected native-vault policy. A locked
@@ -815,6 +919,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         {
             return Err(refused("host.service_explicit_replacement_required"));
         }
+        stage.revalidate_registration(&record)?;
         let before = self.observe(&record)?;
         if before == ProcessState::Transitioning {
             self.fence(epoch, Phase::Provisioned)?;
@@ -866,9 +971,36 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     }
 
     pub fn stop(&self, epoch: u64) -> io::Result<Observation> {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            return self.stop_windows_revocation(epoch, std::time::Duration::from_secs(10));
+        }
+        self.stop_once(
+            epoch,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn stop_windows_revocation(
+        &self,
+        epoch: u64,
+        wait: std::time::Duration,
+    ) -> io::Result<Observation> {
+        windows_stop_observation(wait, |deadline| self.stop_once(epoch, deadline))
+    }
+
+    fn stop_once(&self, epoch: u64, deadline: std::time::Instant) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::StopRequested)?;
-        if let Some(result) = self.stop_replacement(epoch)? {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            _lease.limit_until(deadline);
+        }
+        if let Some(result) = self.stop_replacement(
+            epoch,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )? {
             return Ok(result);
         }
         let (_, record) = self.reconciled_registration()?;
@@ -880,7 +1012,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return self.wait_windows_revocation(
                 &snapshot,
                 &record,
-                std::time::Duration::from_secs(10),
+                deadline.saturating_duration_since(std::time::Instant::now()),
             );
         }
         let state = self.observe(&record)?;
@@ -1029,6 +1161,39 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         record.removed = true;
         self.save(&record, epoch, Phase::CleanupPending)?;
         Ok(observation(&snapshot, ProcessState::Absent))
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+fn windows_stop_observation(
+    wait: std::time::Duration,
+    mut read: impl FnMut(std::time::Instant) -> io::Result<Observation>,
+) -> io::Result<Observation> {
+    let deadline = std::time::Instant::now() + wait;
+    let mut attempted = false;
+    loop {
+        if attempted && std::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "host.runtime_stop_pending",
+            ));
+        }
+        attempted = true;
+        // Revocation is already durable. Retry same-epoch observations and
+        // existing fenced receipt reconciliation, never manager mutations.
+        match read(deadline) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "host.runtime_stop_pending",
+                    ));
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+            }
+            result => return result,
+        }
     }
 }
 

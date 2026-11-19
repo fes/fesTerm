@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a22527cd4835abcddaa04ac7c15217653c9d5be3582e8f4e48991c892fd8e0b3"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "13aaba76a042393662276aacba5307e115188cda4684fa759d211c4dd993e17a"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,13 +13,13 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 Use for: Tracing a widget or launcher action into the state mutation it actually performs.
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, profiles, tabs, and sessions
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for all commands
+- [`AppState`](../../app/festerm/src/tabs.rs) — window-level coordinator owning tabs, documents, and UI state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for all app commands
 - [`with_primary_session`](../../app/festerm/src/tabs.rs) — creates the normal startup shell tab
-- [`open_settings`](../../app/festerm/src/tabs.rs) — focuses singleton settings surface instead of duplicating it
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to origin rather than neighbour
-- [`docs/application-command-model.md`](../../docs/application-command-model.md) — defines one semantic command flow from invocation to state
+- [`docs/application-command-model.md`](../../docs/application-command-model.md) — single semantic command flow from invocation to state
 
 Caveats:
 - Widgets convert input to commands; they do not own session policy.
@@ -28,9 +28,11 @@ Caveats:
 
 ## tab close path
 
+Use for: When a tab closes, which fallback or origin should be chosen.
+
 - [`set_active`](../../app/festerm/src/tabs.rs) — records the departing tab in activation history
-- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — keeps last-used tabs once, excluding closed or detached ones
-- [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the most recent still-open tab when available
+- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — keeps the most recent still-open tab once, in last-left order
+- [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab that is still open
 - [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and selects a fallback
 
 Evidence:

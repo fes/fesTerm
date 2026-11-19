@@ -42,6 +42,8 @@ pub enum Error {
     Unavailable,
     Busy,
     StartRequired,
+    StartContextBlocked,
+    StartContextUnavailable,
     Unknown,
 }
 impl std::fmt::Display for Error {
@@ -52,6 +54,8 @@ impl std::fmt::Display for Error {
             Self::Unavailable=>"The protected profile or authenticated native helper is unavailable. No fallback shell was started.",
             Self::Busy=>"The exact profile operation is still busy. No replacement shell was started.",
             Self::StartRequired=>"This profile has no running generation. An explicit local Connect is required to start it.",
+            Self::StartContextBlocked=>"This Windows launch context cannot start an independent saved session. Open fesTerm normally to start it. Existing running sessions can still be attached.",
+            Self::StartContextUnavailable=>"Could not verify independent startup context. No shell was started.",
             Self::Unknown=>"The existing profile outcome is uncertain. No replacement shell was started.",
         })
     }
@@ -103,6 +107,24 @@ fn ensure_using(
     request: Request<'_>,
     cancel: &AtomicBool,
     resolve: impl FnOnce(&Snapshot) -> Result<PathBuf, Error>,
+) -> Result<Target, Error> {
+    ensure_using_with_start_check(
+        owners,
+        state,
+        request,
+        cancel,
+        resolve,
+        festerm_sessiond::independent_host_start_blocked,
+    )
+}
+
+fn ensure_using_with_start_check(
+    owners: &OwnerEnrollment<'_>,
+    state: &Path,
+    request: Request<'_>,
+    cancel: &AtomicBool,
+    resolve: impl FnOnce(&Snapshot) -> Result<PathBuf, Error>,
+    start_blocked: impl FnOnce() -> std::io::Result<bool>,
 ) -> Result<Target, Error> {
     if cancel.load(Ordering::Acquire) {
         return Err(Error::Cancelled);
@@ -170,6 +192,11 @@ fn ensure_using(
     }
     if !request.allow_start {
         return Err(Error::StartRequired);
+    }
+    // Only a new start needs this check. Never reinterpret an existing Unknown
+    // reservation or prevent attaching an already verified Running generation.
+    if start_blocked().map_err(|_| Error::StartContextUnavailable)? {
+        return Err(Error::StartContextBlocked);
     }
     let helper = resolve(&expected)?;
     if cancel.load(Ordering::Acquire) {
@@ -275,6 +302,157 @@ mod tests {
             size: TerminalSize::new(117, 39).unwrap(),
             scrollback_limit_bytes: 4096,
         }
+    }
+
+    fn daemon_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        fn collect(
+            root: &Path,
+            path: &Path,
+            files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        ) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(root, &path, files);
+                } else {
+                    files.insert(
+                        path.strip_prefix(root).unwrap().into(),
+                        std::fs::read(path).unwrap(),
+                    );
+                }
+            }
+        }
+        let mut files = std::collections::BTreeMap::new();
+        collect(root, root, &mut files);
+        files
+    }
+
+    fn assert_start_context_refuses_before_reservation(
+        check: impl FnOnce() -> std::io::Result<bool>,
+        expected: Error,
+    ) {
+        let (root, store, vault) = setup();
+        let state = root.path().join("s");
+        let owners = fixture_owners(&store, vault);
+        let logical = LogicalSessionId::new();
+        let recipe = Recipe::default();
+        let daemon = state.join("daemon");
+        let sessions =
+            SessionControl::with_helper(&daemon, &std::env::current_exe().unwrap()).unwrap();
+        let revision = sessions
+            .set_profile(
+                logical.clone(),
+                "11111111-1111-4111-8111-111111111111",
+                "Local",
+                recipe.clone(),
+                true,
+            )
+            .unwrap();
+        let before = daemon_files(&daemon);
+        assert!(matches!(
+            ensure_using_with_start_check(
+                &owners, &state, request(&logical, &recipe, revision, true, true),
+                &AtomicBool::new(false), |_| panic!("refused context must not resolve or launch helper"), check,
+            ),
+            Err(error) if error == expected
+        ));
+        // Includes the exact catalog/operation bytes and absence of launch or
+        // generation-lease artifacts, rather than only checking the error label.
+        assert_eq!(daemon_files(&daemon), before);
+        let catalog: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(daemon.join("host-sessions.json")).unwrap())
+                .unwrap();
+        assert_eq!(catalog["sessions"], serde_json::json!({}));
+        assert_eq!(catalog["operations"], serde_json::json!({}));
+        assert_eq!(catalog["last_generation"], 0);
+    }
+
+    #[test]
+    fn local_blocked_start_context_leaves_catalog_journals_leases_and_operations_unchanged() {
+        assert_start_context_refuses_before_reservation(|| Ok(true), Error::StartContextBlocked);
+        assert!(Error::StartContextBlocked
+            .to_string()
+            .contains("Existing running sessions can still be attached"));
+    }
+
+    #[test]
+    fn local_start_context_query_error_is_unavailable_without_reservation() {
+        assert_start_context_refuses_before_reservation(
+            || Err(std::io::Error::other("context query unavailable")),
+            Error::StartContextUnavailable,
+        );
+    }
+
+    #[test]
+    fn local_unknown_reservation_is_not_reclassified_by_start_context() {
+        use festerm_host_protocol::{GenerationId, Lifetime};
+        let (root, store, vault) = setup();
+        let state = root.path().join("s");
+        let owners = fixture_owners(&store, vault);
+        let principal = owners.snapshot().unwrap().binding.principal;
+        let logical = LogicalSessionId::new();
+        let recipe = Recipe::default();
+        let daemon = state.join("daemon");
+        let sessions =
+            SessionControl::with_helper(&daemon, &std::env::current_exe().unwrap()).unwrap();
+        let revision = sessions
+            .set_profile(
+                logical.clone(),
+                "11111111-1111-4111-8111-111111111111",
+                "Local",
+                recipe.clone(),
+                true,
+            )
+            .unwrap();
+        let file = daemon.join("host-sessions.json");
+        let mut catalog: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        catalog["last_generation"] = serde_json::json!(1);
+        catalog["sessions"][logical.as_str()] = serde_json::json!({
+            "owner": principal, "logical": logical, "display_name": "Local",
+            "recipe": recipe, "effective_recipe": recipe, "lifetime": Lifetime::Persistent {},
+            "epoch": Epoch::new(1).unwrap(), "revoked": false, "name": "hs-slot-00",
+            "launch": OperationId::new(), "generation": GenerationId::new(1).unwrap(),
+            "fingerprint": "0".repeat(64), "phase": "Launching", "identity": null,
+            "artifacts_retired": false, "binding": null, "profile_revision": revision,
+            "profile_enabled": true
+        });
+        let directory = storage::private_directory(&daemon, false).unwrap();
+        // A retained Launching reservation with unavailable lease evidence is
+        // Unknown, never authorization to enter a new-start preflight.
+        drop(
+            storage::open_private_file(&directory, Path::new("host-daemon-1.lock"), true).unwrap(),
+        );
+        storage::replace_private(
+            &directory,
+            Path::new("host-sessions.json"),
+            &serde_json::to_vec(&catalog).unwrap(),
+        )
+        .unwrap();
+        // Exercise the real protected-catalog lookup; no helper is executed.
+        assert_eq!(
+            sessions
+                .local_profile_target(
+                    &principal,
+                    &local_request(&request(&logical, &recipe, revision, true, true)),
+                    |_| Ok::<_, ControlError>(())
+                )
+                .map(|target| target.is_some()),
+            Err(ControlError::Unknown)
+        );
+        let before = daemon_files(&daemon);
+        assert!(matches!(
+            ensure_using_with_start_check(
+                &owners,
+                &state,
+                request(&logical, &recipe, revision, true, true),
+                &AtomicBool::new(false),
+                |_| panic!("Unknown cannot resolve helper"),
+                || panic!("Unknown must return before any new-start context check"),
+            ),
+            Err(Error::Unknown)
+        ));
+        assert_eq!(daemon_files(&daemon), before);
     }
     #[test]
     fn local_restore_never_prompts_writes_or_resolves_helper_and_locked_store_refuses() {
@@ -421,6 +599,27 @@ mod tests {
         };
         let mut frontend = None;
         let body = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // An explicit Connect to the actual existing daemon must succeed even
+            // when a new independent start would be blocked in this caller context.
+            let running_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            let running = loop {
+                let current = ensure_using_with_start_check(
+                    &owners,
+                    &state,
+                    request(&logical, &recipe, revision, initially_enabled, true),
+                    &AtomicBool::new(false),
+                    |_| panic!("Running cannot resolve helper"),
+                    || panic!("Running cannot query new-start context"),
+                );
+                match current {
+                    Err(Error::Busy) if std::time::Instant::now() < running_deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(5))
+                    }
+                    other => break other.unwrap(),
+                }
+            };
+            assert_eq!(running.identity, result.identity);
+            assert_eq!(running.summary.target, result.summary.target);
             assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
             assert!(!store.snapshot().unwrap().settings.allow_creation);
             assert_eq!(target.logical, logical);

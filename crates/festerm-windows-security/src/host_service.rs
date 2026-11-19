@@ -11,7 +11,7 @@ use windows::{
             ITaskService, TaskScheduler, TASK_CREATE, TASK_DONT_ADD_PRINCIPAL_ACE,
             TASK_LOGON_INTERACTIVE_TOKEN,
         },
-        Variant::VARIANT,
+        Variant::{VARIANT, VT_BSTR},
     },
 };
 
@@ -71,6 +71,18 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
             definition
                 .SetXmlText(&BSTR::from(xml.as_str()))
                 .map_err(map)?;
+            // This definition is unregistered: include the same independently
+            // checked policy which RegisterTask publishes into its raw XML.
+            // Never erase a foreign embedded descriptor during recovery.
+            let registration = definition.RegistrationInfo().map_err(map)?;
+            let mut previous = VARIANT::default();
+            registration
+                .SecurityDescriptor(&mut previous)
+                .map_err(map)?;
+            check_embedded_task_security(&previous, &sid)?;
+            registration
+                .SetSecurityDescriptor(&VARIANT::from(task_security_descriptor(&sid).as_str()))
+                .map_err(map)?;
             return Ok(TaskObservation {
                 xml: Some(read_task_xml(|xml| definition.XmlText(xml))?),
                 security: Some(task_security_policy(&sid)),
@@ -89,7 +101,7 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
                     &VARIANT::from(sid.as_str()),
                     &empty,
                     TASK_LOGON_INTERACTIVE_TOKEN,
-                    &VARIANT::from(format!("O:{sid}D:P(A;;GA;;;SY)(A;;GA;;;{sid})").as_str()),
+                    &VARIANT::from(task_security_descriptor(&sid).as_str()),
                 )
                 .map_err(map)?,
             _ => match folder.GetTask(&name) {
@@ -166,6 +178,26 @@ fn bounded(text: BSTR) -> io::Result<String> {
 
 fn task_security_policy(sid: &str) -> String {
     format!("task-owner-system-full-control-v1:{sid}")
+}
+
+fn task_security_descriptor(sid: &str) -> String {
+    format!("O:{sid}D:P(A;;GA;;;SY)(A;;GA;;;{sid})")
+}
+
+fn check_embedded_task_security(value: &VARIANT, user: &str) -> io::Result<()> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.vt() != VT_BSTR {
+        return Err(io::Error::other("host.service_task_security_unqualified"));
+    }
+    // SAFETY: vt was checked as VT_BSTR. Borrow the owned BSTR without
+    // transferring it; the VARIANT remains alive and owns its destruction.
+    let text = unsafe { &*value.Anonymous.Anonymous.Anonymous.bstrVal };
+    if text.is_empty() {
+        return Ok(());
+    }
+    checked_task_security(&bounded(text.clone())?, user).map(|_| ())
 }
 
 fn checked_task_security(sddl: &str, user: &str) -> io::Result<String> {
@@ -255,6 +287,10 @@ fn checked_task_security(sddl: &str, user: &str) -> io::Result<String> {
         let expected = [
             format!("O:{user}D:P(A;;GA;;;SY)(A;;GA;;;{user})"),
             format!("O:{user}D:P(A;;GA;;;{user})(A;;GA;;;SY)"),
+            // Scheduler may mark the protected DACL as auto-inherited while
+            // retaining these two explicit ACEs. AceFlags must still be zero.
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;{user})(A;;GA;;;SY)"),
         ];
         if !expected.contains(&canonical_text) {
             return Err(refused());
@@ -330,6 +366,66 @@ mod tests {
             format!("O:SYD:P(A;;GA;;;SY)(A;;GA;;;{user})"),
             format!("O:{user}D:P(A;;FR;;;SY)(A;;GA;;;{user})"),
             format!("O:{user}D:P(A;;GA;;;SY)(A;;GA;;;{user})(A;;FR;;;WD)"),
+        ] {
+            assert!(checked_task_security(&sddl, user).is_err());
+        }
+    }
+
+    #[test]
+    fn task_preparation_embedded_security_accepts_only_absence_or_exact_policy() {
+        let user = "S-1-5-21-1-2-3-1001";
+        check_embedded_task_security(&VARIANT::default(), user).unwrap();
+        check_embedded_task_security(&VARIANT::from(""), user).unwrap();
+        check_embedded_task_security(
+            &VARIANT::from(task_security_descriptor(user).as_str()),
+            user,
+        )
+        .unwrap();
+        for mask in ["GA", "FA"] {
+            check_embedded_task_security(
+                &VARIANT::from(format!("O:{user}D:P(A;;{mask};;;SY)(A;;{mask};;;{user})").as_str()),
+                user,
+            )
+            .unwrap();
+        }
+        for value in [
+            VARIANT::from(true),
+            VARIANT::from("invalid"),
+            VARIANT::from(format!("O:{user}D:(A;;GA;;;SY)(A;;GA;;;{user})").as_str()),
+            VARIANT::from(format!("O:{user}D:P(A;;GA;;;WD)(A;;GA;;;{user})").as_str()),
+            VARIANT::from(format!("O:SYD:P(A;;GA;;;SY)(A;;GA;;;{user})").as_str()),
+            VARIANT::from(format!("O:{user}D:P(A;;FR;;;SY)(A;;GA;;;{user})").as_str()),
+        ] {
+            assert!(check_embedded_task_security(&value, user).is_err());
+        }
+    }
+
+    #[test]
+    fn task_recovery_security_accepts_only_exact_auto_inherited_metadata() {
+        let user = "S-1-5-21-1-2-3-1001";
+        for mask in ["GA", "FA"] {
+            for (first, second) in [("SY", user), (user, "SY")] {
+                assert_eq!(
+                    checked_task_security(
+                        &format!("O:{user}D:PAI(A;;{mask};;;{first})(A;;{mask};;;{second})"),
+                        user,
+                    )
+                    .unwrap(),
+                    task_security_policy(user),
+                );
+            }
+        }
+        for sddl in [
+            format!("O:{user}D:AI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAR(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PARAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;ID;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;OI;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;CI;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;WD)"),
+            format!("O:SYD:PAI(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;FR;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:PAI(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;WD)"),
         ] {
             assert!(checked_task_security(&sddl, user).is_err());
         }

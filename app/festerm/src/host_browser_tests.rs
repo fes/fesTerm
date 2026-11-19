@@ -1710,3 +1710,200 @@ fn assert_account_switch_keeps_directory(workspace_entry: bool) {
         "account/host browsing never retargets saved metadata"
     );
 }
+
+#[test]
+fn ordinary_desktop_privacy_preparation_error_after_loss_survives_result_discard() {
+    for failure in [
+        PrivacyPreparationFailure::Unavailable,
+        PrivacyPreparationFailure::Timeout,
+        PrivacyPreparationFailure::CleanupUnresolved,
+    ] {
+        let (mut app, ctx) = fixture();
+        let (_, ordinary) = ordinary_fixture_context(42);
+        let token = CancellationToken::new();
+        let diagnostic = PrivacyPreparationDiagnostic {
+            generation: 9,
+            failure: Arc::new(OnceLock::new()),
+        };
+        let parent_cancel;
+        let (send, receiver) = mpsc::sync_channel(1);
+        send.send(Ok(ResultEvent::Ordinary(Box::new((
+            ordinary,
+            Inventory {
+                capabilities: Default::default(),
+                sessions: Vec::new(),
+                profiles: Vec::new(),
+                unknown: Vec::new(),
+            },
+        )))))
+        .unwrap();
+        {
+            let browser = app.host_browser.as_mut().unwrap();
+            browser.generation = 9;
+            browser.ordinary_selected = true;
+            browser.ordinary_lifetime = Some(token.clone());
+            browser.privacy_preparation = Some(diagnostic.clone());
+            browser.receiver = Some(receiver);
+            let child = browser.cancel.child_token();
+            browser.pending_deadline = Some((Instant::now() + Duration::from_secs(30), child));
+            parent_cancel = browser.cancel.clone();
+        }
+        ordinary_privacy_loss(token.clone())();
+        app.poll_host_browser(&ctx);
+        assert!(app.host_browser.as_ref().unwrap().ordinary.is_none());
+        // The OS callback fenced admission before installation returned its
+        // failure. Its authority result channel has already been discarded.
+        record_privacy_preparation_failure(&diagnostic, &parent_cancel, failure, &ctx);
+        for _ in 0..2 {
+            app.poll_host_browser(&ctx);
+            let browser = app.host_browser.as_ref().unwrap();
+            assert_eq!(browser.feedback.as_deref(), Some(failure.notice()));
+            assert_eq!(browser.privacy_preparation_failure(), Some(failure));
+            assert!(
+                browser.ordinary.is_none()
+                    && browser.inventory.is_none()
+                    && browser.receiver.is_none()
+            );
+            assert!(token.is_cancelled());
+        }
+        assert!(app.state.host_creation_intents.is_empty());
+    }
+}
+
+#[test]
+fn ordinary_desktop_privacy_preparation_diagnostic_cannot_cross_generation_or_account() {
+    let (mut app, ctx) = fixture();
+    let old = PrivacyPreparationDiagnostic {
+        generation: 7,
+        failure: Arc::new(OnceLock::new()),
+    };
+    let old_cancel = app.host_browser.as_ref().unwrap().cancel.clone();
+    {
+        let browser = app.host_browser.as_mut().unwrap();
+        browser.generation = 8;
+        browser.privacy_preparation = Some(old.clone());
+    }
+    record_privacy_preparation_failure(
+        &old,
+        &old_cancel,
+        PrivacyPreparationFailure::Unavailable,
+        &ctx,
+    );
+    assert_eq!(
+        app.host_browser
+            .as_ref()
+            .unwrap()
+            .privacy_preparation_failure(),
+        None
+    );
+    let fresh = PrivacyPreparationDiagnostic {
+        generation: 8,
+        failure: Arc::new(OnceLock::new()),
+    };
+    app.host_browser.as_mut().unwrap().privacy_preparation = Some(fresh);
+    let account = app.host_browser.as_ref().unwrap().account.clone();
+    let replacement = DevTunnelAccount::new(
+        account.identifier(),
+        AccountProvider::Github,
+        account.account_id(),
+        account.login(),
+        SecretReference::generate(),
+    )
+    .unwrap();
+    let config = app
+        .state
+        .configuration()
+        .with_account(replacement)
+        .unwrap()
+        .0;
+    app.state.replace_configuration(config);
+    app.poll_host_browser(&ctx);
+    assert!(app.host_browser.is_none());
+    record_privacy_preparation_failure(
+        &old,
+        &old_cancel,
+        PrivacyPreparationFailure::CleanupUnresolved,
+        &ctx,
+    );
+    assert!(app.host_browser.is_none());
+}
+
+#[test]
+fn ordinary_desktop_user_cancel_does_not_report_privacy_preparation_failure() {
+    let (mut app, ctx) = fixture();
+    let diagnostic = PrivacyPreparationDiagnostic {
+        generation: 0,
+        failure: Arc::new(OnceLock::new()),
+    };
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.privacy_preparation = Some(diagnostic.clone());
+    let cancel = browser.cancel.clone();
+    cancel.cancel();
+    record_privacy_preparation_failure(
+        &diagnostic,
+        &cancel,
+        PrivacyPreparationFailure::Timeout,
+        &ctx,
+    );
+    assert!(diagnostic.failure.get().is_none());
+    assert_eq!(browser.privacy_preparation_failure(), None);
+    assert!(browser.feedback.is_none());
+}
+
+#[test]
+fn ordinary_desktop_retry_clears_preparation_diagnostic_before_new_validation() {
+    let (mut app, ctx) = fixture();
+    let mut rendered = ctx.run_ui(
+        egui::RawInput {
+            focused: true,
+            ..Default::default()
+        },
+        |_| {},
+    );
+    rendered.textures_delta.clear();
+    let diagnostic = PrivacyPreparationDiagnostic {
+        generation: 0,
+        failure: Arc::new(OnceLock::new()),
+    };
+    diagnostic
+        .failure
+        .set(PrivacyPreparationFailure::Unavailable)
+        .unwrap();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.privacy_preparation = Some(diagnostic);
+    browser.locator = "invalid locator".into();
+    app.begin_ordinary_host(&ctx);
+    let browser = app.host_browser.as_ref().unwrap();
+    assert!(browser.privacy_preparation.is_none());
+    assert!(browser
+        .feedback
+        .as_ref()
+        .unwrap()
+        .contains("no valid Dev Tunnel locator"));
+}
+
+#[test]
+fn ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let (mut app, _) = fixture();
+    let mut browser = app.host_browser.take().unwrap();
+    let diagnostic = PrivacyPreparationDiagnostic {
+        generation: browser.generation,
+        failure: Arc::new(OnceLock::new()),
+    };
+    diagnostic
+        .failure
+        .set(PrivacyPreparationFailure::Unavailable)
+        .unwrap();
+    browser.privacy_preparation = Some(diagnostic);
+    let mut harness = Harness::builder().build_ui(move |ui| browser.privacy_diagnostics(ui));
+    assert!(harness
+        .query_by_label(PrivacyPreparationFailure::Unavailable.notice())
+        .is_none());
+    harness.get_by_label("Diagnostics").click();
+    harness.run();
+    harness.get_by_label(PrivacyPreparationFailure::Unavailable.notice());
+    harness.get_by_label(
+        "Connection admission remains closed. No session result or absence was accepted.",
+    );
+}

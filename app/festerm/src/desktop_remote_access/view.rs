@@ -50,6 +50,60 @@ pub(crate) fn show(
             "Access has not been disabled yet. Confirm Disable and wait for revocation to finish.",
         );
     }
+    if matches!(&view.scope, Scope::Present(snapshot) if snapshot.binding.is_some() && snapshot.phase != Phase::Removed)
+    {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "Host components: {} → {}",
+                view.release
+                    .as_ref()
+                    .map(|release| release.recorded_version.as_str())
+                    .unwrap_or("unavailable"),
+                festerm_host_setup::VERSION
+            ));
+            ui.add_enabled_ui(!view.busy && view.update_eligible(), |ui| {
+                if action_button(ui, ActionButtonRole::Secondary, "Update host…").clicked() {
+                    action = Some(Action::Review(Operation::Update));
+                }
+            });
+        });
+        let prerequisite = if !matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled)
+        {
+            view.release
+                .as_ref()
+                .filter(|release| release.update_available(festerm_host_setup::VERSION))
+                .map(|_| "Disable remote access before updating the host.")
+        } else if let Some(release) = &view.release {
+            match release.replacement.as_ref() {
+                Some(update)
+                    if matches!(
+                        update.state,
+                        festerm_host_setup::services::ReplacementState::Prepared
+                            | festerm_host_setup::services::ReplacementState::Applying
+                    ) =>
+                {
+                    Some(if update.to_version == festerm_host_setup::VERSION {
+                        "Resume the interrupted update with its original signed bundle."
+                    } else {
+                        "Finish the pending update using its original app version and signed bundle."
+                    })
+                }
+                Some(update)
+                    if update.state
+                        == festerm_host_setup::services::ReplacementState::Committed =>
+                {
+                    Some("Host updated. Enable remote access separately when ready.")
+                }
+                _ => None,
+            }
+        } else {
+            Some("Refresh local status or review Recovery before updating.")
+        };
+        if let Some(prerequisite) = prerequisite {
+            settings_note(ui, prerequisite);
+        }
+    }
+
     if let Some(failure) = view.failure {
         ui.colored_label(theme::STATUS_ERROR, failure.notice());
     }
@@ -155,6 +209,16 @@ pub(crate) fn show(
         }
         ui.collapsing("Advanced / Recovery", |ui| {
         ui.label(view.observation_label());
+        settings_note(ui, "Recorded host version is metadata; signed components are verified again when updating.");
+        if let Some(update) = view.release.as_ref().and_then(|release| release.replacement.as_ref()) {
+            let state = match update.state {
+                festerm_host_setup::services::ReplacementState::Prepared => "ready to apply",
+                festerm_host_setup::services::ReplacementState::Applying => "incomplete; retry the same update",
+                festerm_host_setup::services::ReplacementState::Committed => "completed",
+                festerm_host_setup::services::ReplacementState::Aborted => "aborted; review Recovery",
+            };
+            ui.label(format!("Update {} → {}: {state}", update.from_version, update.to_version));
+        }
         settings_note(ui, "Selecting an account is not host authentication. Enable separately verifies the selected account and native-vault consent.");
             if let Some(failure) = view.failure {
                 settings_note(ui, failure.message());
@@ -311,6 +375,14 @@ pub(crate) fn show(
                     Operation::ApproveOwner => {
                         ui.label("Approve this exact public key/fingerprint and selected permissions? Native vault errors never select file storage.");
                         settings_note(ui, "Cancelling in-flight permission work fences this host; persistent shells remain untouched.");
+                    }
+                    Operation::Update => {
+                        let from = view.release.as_ref().map(|release| release.from_version()).unwrap_or("unavailable");
+                        ui.label(format!("Update host components: {from} → {}", festerm_host_setup::VERSION));
+                        ui.label("Remote access must be off. The host stays disabled after updating; enable access separately when you are ready.");
+                        ui.label("Keep the host identity, account, sharing and existing durable shells. Edited preferences are not applied by this update.");
+                        ui.label(if draft.manual_bundle { "Verify the original signed bundle selected in Advanced." } else { "Download and verify the exact signed host bundle for this app version." });
+                        settings_note(ui, "An interrupted update keeps its original operation and target; retrying cannot select a replacement intent.");
                     }
                     Operation::Disable => {
                         ui.label("Revoke first, drain host leases and stop remote exposure. Persistent shells are NOT stopped or restarted.");
@@ -557,6 +629,7 @@ fn confirmation_labels(operation: Operation, draft: &Draft) -> (&'static str, &'
         Operation::Reconcile => ("Recover host setup?", "Recover setup"),
         Operation::ApproveOwner => ("Approve this device?", "Approve device"),
         Operation::Start => ("Start remote access?", "Start host"),
+        Operation::Update => ("Update host components?", "Update host"),
         Operation::Disable => ("Disable remote access?", "Disable access"),
         Operation::Uninstall => ("Remove this host?", "Remove host"),
         Operation::Share(_) => ("Review session sharing?", "Continue"),

@@ -9,6 +9,7 @@ description = "Narrow Windows current-user object security support for fesTerm."
 
 [features]
 default = []
+independent-start = ["dep:windows", "windows/Win32_System_Wmi", "windows/Win32_System_Rpc", "windows-sys/Win32_Security_Cryptography"]
 host-service = [
     "dep:windows",
     "windows-sys/Win32_Security_Cryptography",
@@ -41,4 +42,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }
 festerm-windows-job = { path = "../festerm-windows-job" }

@@ -11,6 +11,7 @@ fn request(root: &Path, operation: Operation, expected: Scope) -> Request {
         owned: Arc::new(Mutex::new(None)),
         owner_revision: None,
         sharing: None,
+        release: None,
     }
 }
 
@@ -585,7 +586,7 @@ fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
     .unwrap();
     // Disabled projection must not be blocked or relabelled by obsolete run history.
     std::fs::write(root.path().join("desktop/host-runtime.json"), b"{").unwrap();
-    let disabled = report(Some(&store)).unwrap();
+    let disabled = report(Some(&store), &root.path().join("desktop")).unwrap();
     assert!(disabled.last_run.is_none());
     assert!(matches!(disabled.scope, Scope::Present(ref state) if state.phase == Phase::Disabled));
     let mut snapshot = store.snapshot().unwrap();
@@ -634,5 +635,106 @@ fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
             Some(record(&snapshot.installation, snapshot.epoch))
         ),
         None
+    );
+}
+
+#[test]
+fn desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition() {
+    for origin in [Origin::Desktop, Origin::Headless] {
+        for bound in [false, true] {
+            let root = storage::private_test_directory();
+            let state = root.path().join("host");
+            let store = Store::create(&state, origin, Draft::default().settings()).unwrap();
+            if bound {
+                let ticket = store
+                    .request_enable(&store.snapshot().unwrap().settings)
+                    .unwrap();
+                store
+                    .record_provisioned(
+                        &ticket,
+                        festerm_host_setup::lifecycle::Binding {
+                            host_id: "11111111-1111-4111-8111-111111111111".into(),
+                            account: "github:42".into(),
+                            qualified_tunnel: "cluster/tunnel".into(),
+                            cloud_incarnation: "incarnation".into(),
+                            host_key_fingerprint: "public-pin".into(),
+                        },
+                    )
+                    .unwrap();
+            }
+            let scope = store.snapshot().unwrap();
+            let mut work = request(
+                &state,
+                Operation::Update,
+                Scope::Present(scope.clone().into()),
+            );
+            work.release = Some(festerm_host_setup::services::ReleaseMetadata {
+                recorded_version: "0.0.1".into(),
+                replacement: None,
+            });
+            let result = Native.execute_with(
+                work,
+                &CancellationToken::new(),
+                mpsc::sync_channel(1).0,
+                |_, _| -> Result<(), Failure> { panic!("blocked update cannot acquire") },
+                |_, _| panic!("blocked update cannot publish"),
+            );
+            assert!(matches!(
+                result,
+                Err(Failure::UpdateBlocked | Failure::PrivateStorage)
+            ));
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let cancelled = Native.execute_with(
+                request(
+                    &state,
+                    Operation::Update,
+                    Scope::Present(scope.clone().into()),
+                ),
+                &cancel,
+                mpsc::sync_channel(1).0,
+                |_, _| -> Result<(), Failure> { panic!("cancelled update cannot acquire") },
+                |_, _| panic!("cancelled update cannot publish"),
+            );
+            assert!(matches!(cancelled, Err(Failure::Cancelled)));
+            assert_eq!(store.snapshot().unwrap(), scope);
+            assert!(!state.join("signed-release-cache").exists());
+            assert!(!state.join("native-service.json").exists());
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget() {
+    use festerm_host_setup::services::ReleaseMetadata;
+    let original = ReleaseMetadata {
+        recorded_version: "0.0.1".into(),
+        replacement: None,
+    };
+    assert_eq!(
+        check_update_release(Some(&original), Some(&original)),
+        Ok(())
+    );
+    assert_eq!(
+        check_update_release(Some(&original), None),
+        Err(Failure::UpdateBlocked)
+    );
+    for version in ["0.0.2", "99.0.0", "invalid"] {
+        let changed = ReleaseMetadata {
+            recorded_version: version.into(),
+            replacement: None,
+        };
+        assert_eq!(
+            check_update_release(Some(&original), Some(&changed)),
+            Err(Failure::ScopeChanged)
+        );
+    }
+    let current = ReleaseMetadata {
+        recorded_version: festerm_host_setup::VERSION.into(),
+        replacement: None,
+    };
+    assert_eq!(
+        check_update_release(Some(&current), Some(&current)),
+        Err(Failure::UpdateBlocked)
     );
 }

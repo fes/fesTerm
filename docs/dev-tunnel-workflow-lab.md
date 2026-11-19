@@ -265,6 +265,7 @@ The record contains public fixture metadata and explicit input consent only:
   "locator": "REPLACE-WITH-EXACT-TUNNEL-ID.CLUSTER",
   "shared_profile_name": "Lab shared",
   "private_profile_name": "Lab private",
+  "stopped_shared_profile_name": "Lab stopped shared",
   "private_logical": "REPLACE-WITH-PRIVATE-PROFILE-LOGICAL-UUID",
   "private_revision": 1,
   "generic_logical": "REPLACE-WITH-A-NEW-CANONICAL-UUID",
@@ -287,6 +288,28 @@ unknown fields are refused. `shell` must be `posix`, `powershell` or `cmd`,
 matching both the shared fixture and host default generic shell. The fixed
 probe assembles a fresh nonce remotely; its complete expected output is absent
 from sent input, and only a terminated full output line passes.
+
+For creation OFF the wrapper additionally requires `stopped_shared_profile_name`:
+a distinct advertised shared profile whose logical ID has neither a running
+session nor an uncertain target in the complete authenticated inventory. The
+test sends one actual `EnsureProfile` RPC, requires exact `Denied`, then verifies
+the same catalog logical ID/revision remains without a session or uncertainty.
+It never starts or ends that fixture. An uncertain inventory is not NotStarted.
+The generic OFF probe uses `Ensure`, which reaches the server even when creation
+is off, and verifies no session/uncertainty afterward; explicit `Create` can be
+refused by the client before transport and would not prove server enforcement.
+
+Private-profile exclusion checks the catalog, sessions and uncertain targets
+for its exact logical identity; a stopped or previously published private
+profile is not assumed to be Running.
+
+Only a completed stopped-profile check emits
+`FESTERM_DEV_TUNNEL_LAB_STOPPED_PROFILE_DENIED_PASS`; the OFF wrapper requires it
+in addition to the ordinary completion marker. The Rust field stays optional
+for older schema-2 fixtures, but their ordinary marker alone does not qualify the
+full OFF matrix. ON records omit this field and do not claim the negative check.
+Pure inventory/fixture tests are automated; actual provider/native-vault server
+execution and each native UI/Copilot case remain separate acceptance evidence.
 
 ## Execute both creation-policy phases
 
@@ -321,7 +344,7 @@ The creation-off phase verifies:
 
 Next use the **host UI** to enable generic remote creation, including any
 required reviewed reconfiguration. No per-device owner-key approval is needed.
-Change only `creation_allowed` to `true` in the operator
+Remove `stopped_shared_profile_name` and change `creation_allowed` to `true` in the operator
 record. Rerun with a new evidence destination:
 
 ```sh

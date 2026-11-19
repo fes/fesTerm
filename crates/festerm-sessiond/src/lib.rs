@@ -20,6 +20,20 @@ pub use detached::{
 };
 pub use remote::{RemoteSessionInventory, RemoteSessionTarget, RemoteSshEndpoint};
 
+/// Queries Windows Job state before reservation, failing closed on query error.
+/// Initial Job membership uses the bounded WMI starter route. A false result
+/// is not readiness or evidence that the later independent start succeeds.
+pub fn independent_host_start_blocked() -> std::io::Result<bool> {
+    #[cfg(windows)]
+    {
+        festerm_windows_job::current_process_child_job_policy().map(|_| false)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,

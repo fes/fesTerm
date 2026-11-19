@@ -20,6 +20,9 @@ pub enum Event {
     Ready,
     BreakawayGranted,
     BreakawayDenied,
+    StartupChildExited {
+        code: Option<i32>,
+    },
     ShellExited {
         code: u32,
     },
@@ -35,9 +38,16 @@ pub enum Event {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureStage {
+    Runtime,
+    Registry,
+    Staging,
+    IndependentSpawn,
+    SpawnEvidence,
+    HostLease,
+    Registration,
     Daemon,
     ShellSpawn,
     ShellWait,
@@ -104,18 +114,39 @@ fn read(directory: &File, name: &Path) -> io::Result<Vec<Entry>> {
 }
 
 pub fn record(root: &Path, identity: &NativeSessionIdentity, event: Event) -> io::Result<()> {
-    let (directory, name, _lock) = storage(root, &identity.name)?;
+    record_actor(
+        root,
+        &identity.name,
+        identity.pid,
+        identity.created_at_unix_ms,
+        event,
+    )
+}
+
+/// Content-free diagnostics only: an actor is not a native-session identity or
+/// evidence that a shell exists. Readers still require an exact daemon identity.
+pub fn record_actor(
+    root: &Path,
+    name: &str,
+    pid: u32,
+    generation: u128,
+    event: Event,
+) -> io::Result<()> {
+    let (directory, name, _lock) = storage(root, name)?;
     let mut entries = read(&directory, &name)?;
     if entries.len() == LIMIT {
         entries.remove(0);
     }
     entries.push(Entry {
         timestamp_ms: now_ms(),
-        pid: identity.pid,
-        generation: identity.created_at_unix_ms,
+        pid,
+        generation,
         event,
     });
     let bytes = serde_json::to_vec(&entries)?;
+    if bytes.len() > BYTE_LIMIT {
+        return Err(io::Error::other("oversized lifecycle journal"));
+    }
     private_storage::replace_private(&directory, &name, &bytes)
 }
 
@@ -147,6 +178,65 @@ pub fn unexpected_exit(entries: &[Entry]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starter_diagnostics_are_numeric_bounded_and_never_daemon_identity() {
+        let root = private_storage::test_directory();
+        let identity = NativeSessionIdentity {
+            name: "test".into(),
+            pid: 8,
+            created_at_unix_ms: 9,
+            endpoint: "unused".into(),
+        };
+        for _ in 0..70 {
+            record_actor(
+                &root,
+                "test",
+                7,
+                9,
+                Event::Failure {
+                    stage: FailureStage::IndependentSpawn,
+                    os_code: Some(5),
+                },
+            )
+            .unwrap();
+        }
+        record_actor(
+            &root,
+            "test",
+            7,
+            9,
+            Event::StartupChildExited { code: Some(2) },
+        )
+        .unwrap();
+        assert!(history(&root, &identity).unwrap().is_empty());
+        assert!(!unexpected_exit(&history(&root, &identity).unwrap()));
+        let bytes = std::fs::read(root.join("lifecycle/test.json")).unwrap();
+        assert!(bytes.len() <= BYTE_LIMIT);
+        let entries: Vec<Entry> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(entries.len(), LIMIT);
+        assert!(entries
+            .iter()
+            .all(|entry| entry.pid == 7 && entry.generation == 9));
+        assert_eq!(
+            entries[0].event,
+            Event::Failure {
+                stage: FailureStage::IndependentSpawn,
+                os_code: Some(5)
+            }
+        );
+        assert_eq!(
+            entries.last().unwrap().event,
+            Event::StartupChildExited { code: Some(2) }
+        );
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value[0].as_object().unwrap().len(), 4);
+        assert_eq!(value[0]["event"]["failure"].as_object().unwrap().len(), 2);
+        // Previous schema records continue to deserialize without migration.
+        let old: Event = serde_json::from_str("\"ready\"").unwrap();
+        assert_eq!(old, Event::Ready);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn lifecycle_journal_is_bounded_generation_scoped_and_preserves_stop_intent() {

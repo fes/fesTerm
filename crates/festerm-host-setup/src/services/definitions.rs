@@ -92,7 +92,7 @@ pub(super) fn runner_verb(origin: Origin) -> &'static str {
 }
 
 pub(super) fn record_runner_verb(record: &Registration) -> &'static str {
-    if matches!(record.version, 4 | 5) {
+    if matches!(record.version, 4..=6) {
         match record.origin {
             Origin::Desktop => "run-desktop-managed",
             Origin::Headless => "run-managed",
@@ -106,10 +106,15 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
     if record.settings.startup == Startup::BeforeLogin {
         return Err(refused("host.startup_before_login_unqualified"));
     }
-    let executable = path_text(&record.executable)?;
+    let executable = path_text(
+        record
+            .windows_managed
+            .as_ref()
+            .map_or(record.executable.as_path(), |worker| worker.path.as_path()),
+    )?;
     let state = path_text(&record.state)?;
     let verb = record_runner_verb(record);
-    let recovery = matches!(record.version, 4 | 5);
+    let recovery = matches!(record.version, 4..=6);
     match record.platform {
         Platform::Linux => {
             let (limits, restart) = if recovery {
@@ -183,7 +188,7 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
 
 pub(super) fn definition_path(context: &Context, record: &Registration) -> PathBuf {
     let directory = if record.platform == Platform::Macos
-        && matches!(record.version, 4 | 5)
+        && matches!(record.version, 4..=6)
         && record.settings.startup == Startup::Manual
     {
         record.state.join("native-manual-services")

@@ -25,6 +25,7 @@ enum Monitor {
 type Monitor = festerm_windows_power::SharedPrivacyMonitor;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
+type PreparationFailure = Arc<dyn Fn(bool) + Send + Sync>;
 type Slot = Arc<Mutex<Option<SharedRecording>>>;
 
 pub(crate) struct PrivacyGuard {
@@ -115,7 +116,7 @@ pub(crate) struct PrivacyTask {
 
 impl PrivacyTask {
     pub(crate) fn start(wake: Wake) -> Result<Self, String> {
-        Self::start_inner(wake, None, ())
+        Self::start_inner(wake, None, (), None)
     }
 
     /// Session access reuses the existing lock/sleep monitor; it does not
@@ -125,14 +126,16 @@ impl PrivacyTask {
         wake: Wake,
         on_loss: Wake,
         charge: impl Send + 'static,
+        on_preparation_failure: PreparationFailure,
     ) -> Result<Self, String> {
-        Self::start_inner(wake, Some(on_loss), charge)
+        Self::start_inner(wake, Some(on_loss), charge, Some(on_preparation_failure))
     }
 
     fn start_inner(
         wake: Wake,
         on_loss: Option<Wake>,
         charge: impl Send + 'static,
+        on_preparation_failure: Option<PreparationFailure>,
     ) -> Result<Self, String> {
         let activity = if on_loss.is_some() {
             "Remote connection"
@@ -147,14 +150,15 @@ impl PrivacyTask {
             .spawn(move || {
                 // Cancellation of the waiter never releases admitted native work.
                 let _charge = charge;
-                let result = install(wake.clone(), on_loss).and_then(|guard| {
-                    if worker_cancelled.load(Ordering::Acquire) {
-                        drop(guard);
-                        Err(format!("{activity} preparation was cancelled"))
-                    } else {
-                        Ok(guard)
-                    }
-                });
+                let result =
+                    install(wake.clone(), on_loss, on_preparation_failure).and_then(|guard| {
+                        if worker_cancelled.load(Ordering::Acquire) {
+                            drop(guard);
+                            Err(format!("{activity} preparation was cancelled"))
+                        } else {
+                            Ok(guard)
+                        }
+                    });
                 let _ = send.send(result);
                 wake();
             })
@@ -233,7 +237,11 @@ fn privacy_loss_callback(
     })
 }
 
-fn install(wake: Wake, on_loss: Option<Wake>) -> Result<PrivacyGuard, String> {
+fn install(
+    wake: Wake,
+    on_loss: Option<Wake>,
+    on_preparation_failure: Option<PreparationFailure>,
+) -> Result<PrivacyGuard, String> {
     let loss = Arc::new(AtomicBool::new(false));
     let recording: Slot = Arc::new(Mutex::new(None));
     let session = on_loss.is_some();
@@ -277,6 +285,11 @@ fn install(wake: Wake, on_loss: Option<Wake>) -> Result<PrivacyGuard, String> {
                 .is_some_and(|status| !crate::automation::finish_privacy_cleanup(status))
         };
         #[cfg(not(windows))]
+        let unresolved = false;
+        if let Some(report) = &on_preparation_failure {
+            report(unresolved);
+        }
+        #[cfg(not(windows))]
         let _ = &mut error;
         #[cfg(windows)]
         let hint = if unresolved {
@@ -289,6 +302,9 @@ fn install(wake: Wake, on_loss: Option<Wake>) -> Result<PrivacyGuard, String> {
         format!("{activity} cannot start without lock and sleep monitoring: {error}.{hint}")
     })?;
     if loss.load(Ordering::Acquire) {
+        if let Some(report) = &on_preparation_failure {
+            report(false);
+        }
         return Err(format!(
             "{activity} cannot start because device privacy is unavailable"
         ));

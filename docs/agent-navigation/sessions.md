@@ -1,36 +1,38 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27b5cf556d8c524b84d34f1dea63e80e3e14facc894773163eb3a680828479fe"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "789dd634cbd644fadbbefd0e32573a4f689781e5856b28c2e2035e7cbec68ba6"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the shared session lifecycle, PTY and serial backends, persistent daemon recovery, and host-controlled session admission.
+Owns session lifecycle and byte transport, local PTYs, detached daemon recovery, protected hosted creation and caller-independent process lifetime.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 ## Session contract
 
-Use for: When a backend or UI path needs the shared lifecycle, queue semantics, and reply ownership rules.
+Use for: A backend or UI path needs the shared lifecycle, queue semantics, and reply-ownership rules.
 
-- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Observable lifecycle from start through terminal exit or failure.
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Backend contract for input, resize, shutdown, and reply ownership.
+- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — observable lifecycle from starting through exit, failure, and disconnect
+- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — backend output, recovery, resize, and lifecycle notifications
+- [`Session`](../../crates/festerm-session/src/lib.rs) — backend contract for input, resize, shutdown, and reply ownership
 
 Evidence:
-- [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered through transitions.
+- [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — proves lifecycle and admission epochs stay ordered across transitions
 
 Caveats:
 - Events never mutate Terminal directly.
 - SessionLifecycle::Disconnected is not terminal.
-- Backend reply ownership is gated by terminal_replies_owned_by_backend.
+- terminal_replies_owned_by_backend gates backend-owned replies.
 
 ## Local PTY
 
-Use for: When a local child process or PTY must be started, resized, or shut down reliably.
+Use for: A local child process or PTY must be started, resized, or shut down reliably.
 
-- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup.
+- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — validated shell startup config and environment policy
+- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — native PTY worker with bounded queues and process-tree cleanup
 
 Evidence:
-- [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion.
+- [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — validates PTY-controlled input sequencing and completion
 
 Caveats:
 - Local shell startup is validated before spawn.
@@ -39,13 +41,13 @@ Caveats:
 
 ## Persistent daemon
 
-Use for: When a named, recoverable session must be resumed, reconnected, or mirrored for persistence.
+Use for: A named, recoverable session must be resumed, reconnected, or mirrored for persistence.
 
-- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery sync.
-- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned recovery mirror drains replies while ingesting bytes.
+- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — daemon-backed client for resume, reconnect, and recovery sync
+- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — backend-owned recovery mirror drains replies while ingesting bytes
 
 Evidence:
-- [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect policy, and explicit attach semantics.
+- [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — proves generation pinning, reconnect policy, and explicit attach semantics
 
 Caveats:
 - Daemon protocol and recovery schema versions must stay compatible.
@@ -54,30 +56,32 @@ Caveats:
 
 ## Terminal flow
 
-Use for: When session output is pumped into the terminal or reply flow must be coordinated with backend-owned replies.
+Use for: Session output must be pumped into the terminal without duplicate replies or reordered recovery.
 
-- [`SessionController`](../../app/festerm/src/session_controller.rs) — Application-owned terminal writer with pending input, resize, and generation tracking.
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Drains session events while suppressing duplicate backend replies and respecting byte budgets.
+- [`SessionController`](../../app/festerm/src/session_controller.rs) — application-owned terminal writer with pending input and generation tracking
+- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — drains queued backend events while suppressing duplicate reply forwarding
 
 Evidence:
-- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize ordering while suppressing duplicate backend replies.
-- [`recording_observes_applied_output_resize_and_recovery_without_local_input`](../../app/festerm/src/session_controller.rs) — Proves recovery sync and resize integrate with recording without local input leakage.
+- [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — proves output and resize ordering while suppressing duplicate backend replies
+- [`recording_observes_applied_output_resize_and_recovery_without_local_input`](../../app/festerm/src/session_controller.rs) — proves recovery sync and resize integrate with recording without local-input leakage
 
 Caveats:
 - terminal_replies_owned_by_backend prevents double forwarding.
 - pump_session_events is bounded by MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Controller shutdown and reconnect preserve generation and recovery invariants.
 
-## Host control
+## Hosted session control
 
-Use for: When a daemon must decide creation, attach, resume, and lease authority for named sessions.
+Use for: A host creates or resumes a durable generation, or a Windows launch remains uncertain.
 
-- [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Host-owned create, attach, and lease authority for native session admission.
+- [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — Serializes protected logical sessions, issuance and generation-bound creation or attachment.
+- [`ensure_host_reserved`](../../crates/festerm-sessiond/src/detached.rs) — Uses the existing reserved generation and launch journal instead of authorizing replacement.
+- [`use_wmi_starter`](../../crates/festerm-sessiond/src/main.rs) — Routes initial hosted starts in any Job through one successor while refusing recursive or blocked successor launch.
 
 Evidence:
-- [`persistent_host_shell_accepts_ordinary_local_unticketed_attachment`](../../crates/festerm-sessiond/tests/host_control.rs) — Proves local host-shell attachment is admitted without a temporary lease.
+- [`native_windows_wmi_starter_survives_calling_job_with_same_generation_io`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Exercises blocked and nested caller Jobs, then same-generation terminal I/O after terminating the caller Job.
 
 Caveats:
-- Protected control paths never trust live wire inventory alone.
-- Create, attach, and end effects are serialized per generation and issuance epoch.
-- Cancellation cannot undo a committed creation or disguise its result.
+- An unavailable launch remains Unknown; no alternate mechanism or fresh generation is tried automatically.
+- Only a known successful Create with a lost short-lived PID handoff can reconcile an exact protected Ready record.
+- Persistent shell lifetime is independent from client, bridge and HOST worker exit, not guaranteed through OS logoff or reboot.

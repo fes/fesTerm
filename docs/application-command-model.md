@@ -499,6 +499,14 @@ Do not design a generalized plugin command API before plugin or scripting work i
 
 A material change that bypasses these rules or moves product policy into individual GUI widgets requires architectural review and, during the 0.1 architecture-stability period, an ADR.
 
+
+Desktop Remote access **Update host…** routes through the existing
+`LocalRemoteAccess` Review/Confirm controller and its owned worker, alongside
+Enable/Disable. It binds the reviewed disabled snapshot and recorded release
+intent, reuses signed acquisition and the production stopped updater with
+Desktop origin, and returns Disabled. It adds no parallel button-owned updater,
+CLI origin override, automatic Enable, rollback or background upgrade.
+
 ### Graphical file-manager mutations
 
 Local/Remote New directory and Delete translate to one pane-owned review and

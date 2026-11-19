@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "16bd70dc94c0337b67c695b0f59625c42776e9a7169788511f2c290454071cd2"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-agent", "sources": "fb01cd3741ea14957a2cdb5de1d69a8e704c0849d7ff0801fc84334c8a65be7a"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-The desktop shell owns app lifecycle, pane/session routing, consent-gated host and remote access, and the diagnostic journal around the egui loop.
+Owns desktop window and pane routing, application command surfaces, host/session workflow screens, file-operation review and lifecycle diagnostics.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -13,7 +13,7 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 Use for: When the app boots, validates CLI mode, and creates the primary window.
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native window startup
-- [`new`](../../app/festerm/src/application.rs) — Builds the primary application and binds automation state
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns windows and cross-window policy, recording and automation coordination.
 - [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists
 
 Evidence:
@@ -54,13 +54,12 @@ Evidence:
 Caveats:
 - Profile and settings actions are dispatched as AppCommand events, not direct mutation.
 - Draft state is keyed by tab or context; stale UI state can leak across editors.
-- Saved profile forms depend on provider defaults and current configuration state.
 
 ## Host access
 
-Use for: When a user reviews host recipes, tests discovery, or authorizes a remote session launch.
+Use for: A user discovers a host, refreshes its sessions, connects to a session, or reviews a policy-gated new host shell.
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Foreground host review, consent gate, and workspace attach flow
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes ordinary host/session views and explicit creation or attachment review.
 - [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Desktop remote access consent screen and review actions
 
 Evidence:
@@ -68,9 +67,7 @@ Evidence:
 - [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional and require review
 
 Caveats:
-- Host approvals remain request-bound and exact locator matching must stay unambiguous.
-- Remote-access actions require fresh review before any worker can act.
-- Desktop creation stays consent-gated, with only one free permit.
+- Ordinary host discovery must not require manual fingerprint or JSON entry.
 
 ## Lifecycle diagnostics
 
@@ -85,5 +82,17 @@ Evidence:
 
 Caveats:
 - Diagnostics preserve evidence but cannot fix runtime logic or app state.
-- Exit intent is durable, and repeated finish calls must remain idempotent.
-- Partial-write recovery must not lose the last valid artifact.
+
+## File operation review
+
+Use for: Local or SFTP directory creation, permanent deletion, transfer status or narrow-window layout is incorrect.
+
+- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory and selection before submitting one worker operation.
+- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Retires stale remote operation reviews when the worker reconnects.
+- [`show_transfer_progress`](../../app/festerm/src/sftp_file_manager.rs) — Uses the available padded width and measured fraction for transfer progress painting.
+
+Evidence:
+- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks production dialog geometry for local/remote create and delete at narrow widths.
+
+Caveats:
+- Deletion is permanent and supports files, links and empty directories; it is not recursive deletion.

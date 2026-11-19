@@ -38,7 +38,7 @@ socket2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 festerm-windows-job = { path = "../festerm-windows-job" }
-festerm-windows-security = { path = "../festerm-windows-security" }
+festerm-windows-security = { path = "../festerm-windows-security", features = ["independent-start"] }
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
@@ -52,6 +52,9 @@ festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge" }
 rpassword = "7"
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "time", "net", "sync", "macros", "process"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+festerm-windows-job = { path = "../festerm-windows-job", features = ["test-support"] }
 
 [lints]
 workspace = true

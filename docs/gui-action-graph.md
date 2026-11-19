@@ -1870,6 +1870,12 @@ NotPublished with no older/latest/schema-1 retry. Mock fixtures do not qualify
 genuine release availability, real native install/vault/cloud, endpoint Ready
 or usability. Setup alone never shares a shell.
 
+HOST-04/HOST-05 Windows registration retains raw task XML and checked native
+security. A submitted, unobserved reservation may adopt only an exact native
+re-preparation of its original definition under the original receipt CAS,
+including Scheduler's security-descriptor insertion. Existing observed snapshots
+are unchanged; this reconciliation never recreates or starts the task.
+
 **Private-session sharing child — controlled source integration, not native acceptance:**
 `HOST-03` routes exact connected-local review → explicit private Bind → separate
 explicit Switch, original-operation status Resume and exact Release/irreversible
@@ -1903,7 +1909,7 @@ readiness states, not success, absence or installed/native qualification.
 | `HOST-03` | Session → shared/detached/ended | Exact local persistent generation review; private Bind, separate Switch, original-operation Resume/Release/rollback; host-created exact End and original-End reopen; correlated Close/Disconnect; separate default-No local Forget | Private by default; protected connected-local provenance/current NativeVault authority, never metadata/PID authority; imported/private bindings cannot native-End even when Absent; End requires fresh exact protected host-created generation authority | Reviewed recovery uses reviewed target/typed original, status controls retain displayed target/original; no implicit Switch or replacement grant; exact reduction preserves frontend/PTY/lifetime; only correlated Ended settles exact originals, StopRequested stays uncertain, stale detach cannot affect replacement; local Forget removes only selected local retry history, not End or remote settlement | P; current sharing/recovery/lease/refusal, local Forget and per-source protected-original/SSH/helper/PTY evidence; integrated native-vault/device/installed endpoint/GUI acceptance remains open |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings → Dev Tunnels → Remote access › typed review/confirm; editable friendly name initially seeded from the OS hostname; signed helper/account and explicit ProviderOwner policy for normal account access; advanced manual client approval remains separate | Shared origin/account/OS-user authority; full-snapshot/settings/epoch CAS; bounded primary plus independent revoke worker; native vault only; creation and sign-in startup off by default; zero shells; native process/history never Ready  Missing ordinary-access fields remain OwnerOnly; package update never enables provider access. Reviewed mode change requires Disabled and exact settings; interactive shells run with the HOST OS user’s privileges, without an OS sandbox. | Reconfirm edited/stale consent; cancelled workers retain admission and original issued scope, late results cannot grant; explicit recovery, revoke/drain disable and typed manual cloud-cleanup guidance preserve drafts/daemons; no browser/DELETE or uncertain removal target | P,H,N; protected policy/migration, reviewed normal Enable consent and controller/service regressions; complete ordinary integration checks, fresh signed bundles and native qualification remain open |
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; service-status/disable/cleanup-local/uninstall/recover-cleanup; authenticated stopped update/update-status | Shared origin/account/exact-owned receipt policy; disabled configuration, zero-shell access-off setup; independent default-No creation/end/temporary, temporary never creates; exact signed bundle/helper and fresh vault policy; initial child startup retries only installation/service-lease WouldBlock within a fixed2s window with fresh full original snapshot/current consent and cancellation, never manager Start or cached permission; watchdog retries installation contention, never cached permission; update strictly newer current release + explicit signed from-version, existing identity/binding, stopped host/runtime, protected old/new native reservation; history/native Running/cloud presence is not Ready; Linux UserSignIn requires current-logon proof | Revoke before exact native stop/runtime-lease release; never-published absence requires full lease/phase/epoch/instance fences and no replacement history, including Committed/Aborted journals; status stays no-observation; corrupt/foreign/uncertain evidence is not absence; update Prepared/Applying retains unknown old/new state, same-intent retry only, no automatic enable/rollback/repair or daemon kill; partial-update cleanup reconciles both resources; unsuccessful cloud CleanupPending/deletion remains separate | P,H,N; core removal fixtures retain explicit fake cloud/account/native contexts, real Services/private lifecycle and a panic-on-manager runner; update cores use typed fake native/network/credentials and synthetic signatures; coupled daemon launches authenticated old cached entry in installation namespace, preserving PID/generation/endpoint, frontend/control and helper path/bytes with negative controls; current-source binary tagged old is not genuine older-release/publisher/native switching or Windows account acceptance; separate client trust/index/chooser, first bootstrap, platform and cloud-deletion gates remain |
-| `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped update; owned inventory/preview/reservation; separate owner approval; current-daemon bind/switch/resume/defer/exact release/rollback | Exact signed old/new artifacts; protected source/account/key/claim/namespace/generation, owner/principal/issuer and preview/destination epoch; no grant expansion or frontend acquisition; live stop requires separate default-No exact-generation consent, never setup/sharing/migration consent | Same-operation immutable binding/activation/release intent; revoke before exact release/claims rollback; retain cleanup/revocation evidence and legacy use; old helpers defer without restart/create; manual provider review does not complete removal | P: stopped-update, authenticity/publication, receipt-bound guidance, reservation/authentication/recovery fixtures; controlled current-source live binding/frontend/PTY is separate from genuine cross-version/installed Windows/macOS/Linux switching, cloud/vault/GUI acceptance |
+| `HOST-06` | Existing installation → updated/migrated host | Desktop Settings Remote access → explicit Disable → Review Update from recorded old version to this build → committed Disabled → separate Enable; authenticated stopped update; owned inventory/preview/reservation; separate owner approval; current-daemon bind/switch/resume/defer/exact release/rollback | Exact signed old/new artifacts; protected source/account/key/claim/namespace/generation, owner/principal/issuer and preview/destination epoch; no grant expansion or frontend acquisition; live stop requires separate default-No exact-generation consent, never setup/sharing/migration consent | Same-operation immutable binding/activation/release intent; revoke before exact release/claims rollback; retain cleanup/revocation evidence and legacy use; old helpers defer without restart/create; manual provider review does not complete removal | P: stopped-update, authenticity/publication, receipt-bound guidance, reservation/authentication/recovery fixtures; controlled current-source live binding/frontend/PTY is separate from genuine cross-version/installed Windows/macOS/Linux switching, cloud/vault/GUI acceptance |
 
 HOST-01/02 use the approved account → host → sessions presentation: Desktop
 host/session panes and mobile host-detail navigation, with account-scoped
@@ -2270,3 +2276,32 @@ the old temporary owner/epoch/deadline and foreign/committed ticket fences;
 Busy/Unknown/OutcomeUncertain never establish absence. The `4898f407` macOS
 native18/1 producer is unknown; no retry/sleep/policy change or new native
 acceptance is implied.
+
+
+HOST-04/HOST-05/HOST-06 Windows Desktop managed revision6 binds the existing
+GUI-subsystem worker as the native execution role, while the signed HOST entry
+remains bundle authority. Shared runtime admission requires that exact running
+worker; console/default Headless and legacy2–5 behavior remain unchanged. Queries
+and pending adoption preserve old raw receipts; only supported stopped
+replacement selects the new role. Signed no-console, revocation/restart and
+durable PID/generation acceptance remain native gates.
+HOST-01/02 native OFF matrix evidence additionally requires an authenticated
+stopped-shared-profile `EnsureProfile` denial with exact unchanged catalog
+revision and no session/uncertain target before or after. The opt-in campaign
+emits a separate negative marker only when this check runs; its wrapper refuses
+an OFF success using only the older ordinary marker. This is test evidence, not
+a new GUI action or creation permission. Generic OFF uses server-routed Ensure
+and a no-session/no-uncertainty postcondition.
+HOST-04/HOST-06 Desktop updates use the existing typed Review/Confirm worker
+and Desktop Store. Recorded old version is metadata only; the existing updater
+reauthenticates signed old/new complete bundles, binds the exact reviewed
+Snapshot and retains its original replacement intent. Rendering/Refresh never
+acquires or starts a host. Current-version launch verification and Headless CLI
+origin remain unchanged. Disabled/newer gating, stale scope/metadata rejection,
+review, cancellation/drain and recorded-version rendering have deterministic
+coverage; genuine signed native Desktop old→new acceptance remains required.
+HOST-01/HOST-02 selected-host privacy preparation failures remain available in
+Diagnostics after cancellation discards the authority result. Fixed unavailable,
+timeout and cleanup-unresolved outcomes are scoped to the current account and
+request generation. They neither revive admission nor admit late success;
+ordinary user cancellation is not classified as an OS preparation failure.

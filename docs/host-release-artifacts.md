@@ -436,3 +436,16 @@ alignment regression is cross-compiled, not executed locally. No new dispatch,
 fixture download or genuine Windows execution accompanies that correction. Both
 historical failures remain failures; fresh exact-source reviews and a separate
 new one-run grant remain mandatory. Required three-platform CI is separate.
+
+
+The Windows `festerm-tunnel-worker.exe` filename remains part of both legacy
+helper and schema-2 HOST inventories. Its Cargo binary target is owned by
+`app/festerm-host`, the app composition layer, rather than the transport bridge.
+Windows Desktop package producers explicitly build that target; standalone
+legacy Windows recovery builds include its composition package without owner
+routing, while full HOST builds enable owner routing. Dependency notices follow
+the actual composition root/features even when the console HOST executable is
+not packaged in a legacy helper archive. No new binary or manifest schema is
+introduced. The fixed Desktop-managed worker route invokes the shared managed
+controller in-process and requires a revision6 registration authenticated to
+the same HOST bundle; the legacy setup route remains separate and unchanged.

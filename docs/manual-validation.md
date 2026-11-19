@@ -47,6 +47,18 @@ reviewer using the eight-question rubric, including icon-only versus text
 action presentation. Findings and any follow-up usability study remain
 separate work. These screenshots do not upgrade milestone acceptance.
 
+## Existing-window macOS evidence scroll
+
+The operator-only `--scroll-existing` path in the existing macOS OS-input runner
+has automated invalid-argument/zero-event refusal and no-Cargo/no-GUI-launch
+routing coverage (`scripts/tests/test_macos_evidence_scroll.py`). Native trust,
+foreground/topmost point validation and actual scroll delivery remain
+**manual/native**. Use the adapter README procedure, verify the exact existing
+supervised PID, and preserve before/after screenshots; `status=sent` is not a
+scroll-success or product acceptance result. Missing Accessibility/event-posting
+trust is blocked without a permission prompt. This tooling change adds no GUI
+workflow edge, relay payload mode, product authority or milestone acceptance.
+
 ## HOST relay recovery
 
 HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery has focused
@@ -4855,6 +4867,14 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+Windows stop-observation fixtures additionally exercise transient native-query
+and lifecycle/service-lease contention, one shared deadline, changed scope and
+non-contention refusal without manager mutation; existing fenced receipt
+reconciliation may still persist exact native snapshots. For `HOST-04`, ordinary Disable
+with a live persistent shell must still reach confirmed Disabled after exact
+runtime-lease release and Task quiescence, then separately Enable and reconnect
+the same generation with fresh executed I/O. A Busy notice or absent worker
+alone is not confirmed Disable or evidence identifying the contended lock.
 **Primary desktop Setup source/mock increment (`HOSTSETUP-01`, not acceptance):**
 Settings → Remote access → explicit Enable now acquires only the current build's
 official native-target schema-2 bundle on the bounded background worker. Version,
@@ -5133,6 +5153,33 @@ development wrapper, not installed or production services:
    endpoint while retaining catalog registrations for re-enable. Existing
    per-profile tunnel state must be explicitly disabled and saved before enabling
    the new shared catalog; it is never adopted from portable configuration.
+
+   On Windows, Job query failure must refuse before helper resolution or
+   catalog/launch/lease/operation reservation. A caller Job that prevents direct
+   breakaway, or a permissive inner Job with a restrictive caller ancestor,
+   uses the bounded local WMI starter route. All initial Job membership takes
+   this route; a verified successor never takes another hop. Verify exact parent/
+   successor user, logon/session, elevation/integrity and executable context;
+   one-hop recursion refusal and expiry; no environment/argument logging; and
+   no retry or replacement on WMI/PID/timeout uncertainty. Existing Running and
+   Unknown behavior must remain intact. The native CI test excludes the daemon
+   from its exact caller-owned Job and performs real same-generation PTY I/O
+   after terminating that Job. OS-owned Job membership or permissive flags alone
+   supplies no durability proof. Separately qualify signed native GUI close,
+   normal HOST Disable/Task stop and reconnect while preserving the same shell.
+   Do not classify the earlier uncertain native operation as repaired or infer
+   its cause from a later successful attempt.
+
+The opt-in service-client OFF campaign additionally requires a separate shared
+profile that is NotStarted in a complete authenticated inventory: no session and
+no uncertain target for its exact logical identity. One actual `EnsureProfile`
+RPC must return exact `Denied`, and the same catalog identity/revision must still
+have neither a session nor uncertainty afterward. Require its distinct stopped
+negative marker as well as the ordinary marker. Older optional fixtures without
+this check do not satisfy the full OFF matrix. The generic OFF `Ensure` likewise
+requires server `Denied` and post-inventory absence without uncertainty; client
+button disabling or locally refused explicit Create is insufficient. Pure
+fixture/marker regressions do not qualify native service execution.
 
 These are pending native/manual checks, not results from the headless recipe
 button, memory-vault/protected-file or framed-session fixtures.
@@ -5524,6 +5571,20 @@ These native/service checks remain pending.
 
 
 Native Dev Tunnels workflow campaign follow-up (HOSTSETUP-01 / GUI:HOST-04):
+Windows task registration must separately qualify fresh preparation and recovery
+of an older submitted reservation with no stored snapshot. In a disposable lab,
+confirm that the unregistered preparation includes the checked owner/SYSTEM
+security descriptor and exactly matches the registered raw XML. Recover the
+original pending reservation without Create, Run, task edits or receipt repair;
+verify both XML fields are atomically recorded and an existing raw snapshot is
+unchanged. Exercise the previously released helper against the resulting v4
+receipt, then perform ordinary explicit Start and service/session checks.
+Changed command, arguments, principal, URI, settings, reservation or ACL and
+concurrent receipt changes must refuse. Check that `D:PAI` metadata retains
+exactly two explicit ACEs with zero flags; inherited/inheritable ACEs, `AR` or
+a missing protected bit remain refused. Portable models and Windows compilation
+do not establish these native or older-helper passes.
+
 Linux native screenshots exposed pending setup presented as On, unrelated host
 failures on private profile drafts, and recovery buttons collapsing into narrow
 text columns. Settings now reports the recorded phase (Configured still makes
@@ -5584,3 +5645,72 @@ tests validate collection, privacy and restoration only; they do not establish
 client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
+
+
+### HOST-04/HOST-05/HOST-06 Windows Desktop managed execution revision6
+
+Portable tests use synthetic schema-2 Windows inventories and a fake native
+publisher/Scheduler. They check fixed HOST/worker bundle membership and retained
+file identity, tamper/cross-release/wrong-role refusal, exact legacy2–5
+serialization/commands, raw pending snapshot adoption, stopped4→6 selection,
+legacy pending5 continuation and rejection of invented6→5 downgrade history.
+The public native publication path still requires the actual OS/architecture
+and publisher; the portable target seam is not native Windows qualification.
+
+Native signed acceptance remains pending: perform supported stopped replacement
+of an existing Windows Desktop console HOST, verify the exact new worker Task
+and an in-process HOST with no blank console/window, then test normal startup,
+restart suppression, revoke/drain and explicit reenable. Retain original durable
+PID/birth/generation evidence across update, worker exit and managed restart;
+check that no second console HOST or custom restart/Job tree appears. Also
+qualify unchanged legacy worker routing/asInvoker and console Headless/default
+CLI operation. Native ARM64, x64 CI/emulation and native x64 OS evidence remain
+separate; a PE subsystem check or portable fixture cannot close these gates.
+### HOST-04/HOST-06 Desktop stopped component update
+
+Automated coverage exercises recorded version without native side effects,
+strict old/new signed authentication, stale reviewed snapshot/metadata and
+pending-target refusal, explicit review/confirm, disabled/newer controls and
+cancelled-worker drain. The same shared transaction preserves identity, binding,
+grants, original cache/helper and independent durable state.
+
+Pending native acceptance: install an older genuine signed Desktop-owned HOST
+and retain a running durable shell. Open the newer signed Desktop, inspect the
+recorded/target versions, explicitly Disable and wait for native stop, then
+review/confirm Update using its exact current-build signed bundle. Verify the
+original account/identity/sharing/settings and daemon PID/generation survive,
+new registration is the exact reserved target, and access stays Disabled.
+Enable separately; verify local hosted-profile launch and remote attach. Test
+wrong-version/signature/publisher, foreign origin/state, interrupted update,
+same-intent retry, changed target, unavailable bundle and cancellation while a
+native operation drains. No cache edits, CLI origin switch, automatic rollback,
+reenable or replacement shell qualifies recovery. Model/render/compilation and
+metadata projection are not genuine native publisher/service/vault evidence.
+### HOST-01/HOST-02 privacy preparation diagnostics
+
+Portable fixtures cover loss-before-installation-error ordering, discarded late
+success, retained fixed failure, stale generation/account refusal and ordinary
+user cancellation. Signed native rendering and real OS preparation failures for
+this diagnostic route remain pending; fixtures do not qualify a Windows privacy
+provider or authorize a connection.
+
+The controlled Windows .17.8 client campaign found TermService stopped (Manual)
+while the interactive Session1 app was otherwise available. Its existing native
+monitor requires that service running as well as an active/unlocked WTS session.
+The operator temporarily started the preinstalled service under the lab setup
+authorization, preserving Manual startup and denied RDP policy; restoration
+after monitor drain is operator-owned. This was lab preparation, not a product
+workaround or instruction to enable Remote Desktop. A generic monitor failure
+must not claim this exact service cause without separate evidence.
+
+DT-02 / HOST-02 / DIAG-01 startup diagnostics: on the next signed Windows
+local-profile and remote-created session attempts, retain the existing bounded
+sessiond lifecycle ring before any retry. Correlate exact generation and actor
+PID; check the fixed pre-Ready stage plus numeric OS/child exit code when
+available (known independent-spawn access denial retains OS code 5). No raw
+error, argv, cwd, environment, credentials or terminal content may be added.
+A diagnostic or missing ring must not authorize replacement, infer absence,
+repair Unknown or change the original outcome. The existing exact-daemon reader
+does not attribute starter entries to a daemon; no automatic pane display is
+claimed. Portable tests cover privacy, bounded storage and non-interference;
+actual signed native failure classification remains pending.

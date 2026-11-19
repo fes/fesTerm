@@ -1,5 +1,6 @@
 [package]
 name = "festerm-host"
+default-run = "festerm-host"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -26,3 +27,10 @@ festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-s
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "festerm-tunnel-worker"
+path = "src/worker.rs"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
