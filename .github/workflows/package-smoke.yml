@@ -510,6 +510,7 @@ jobs:
         if: matrix.platform == 'linux'
         env:
           FESTERM_INSTALLATION_KIND: appimage
+          DEVELOPMENT_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
@@ -548,8 +549,103 @@ jobs:
           if "text/plain" in desktop:
               raise SystemExit("AppImage desktop entry must not register broad text/plain")
           PY
+            if [ "${{ matrix.name }}" = "linux-aarch64" ]; then
+              python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import stat
+          import struct
+          import subprocess
+          from pathlib import Path
+
+          checkout, tree = subprocess.check_output(
+              ["git", "show", "-s", "--format=%H%n%T", "HEAD"], text=True
+          ).splitlines()
+          if checkout != os.environ["GITHUB_SHA"]:
+              raise SystemExit("Development runtime checkout identity is unavailable")
+          binaries = {f"usr/bin/{name}" for name in (
+              "festerm", "festerm-automation-js-worker", "festerm-sessiond",
+              "festerm-tunnel-bridge", "festerm-tunnel-setup",
+          )}
+          expected = binaries | {
+              "usr/lib/festerm/THIRD_PARTY_NOTICES.txt",
+              "usr/share/applications/festerm.desktop",
+          } | {f"usr/share/icons/hicolor/{size}x{size}/apps/festerm.png"
+               for size in (16, 32, 128, 256, 512, 1024)}
+          # cargo-packager 0.11.8 creates these core files with the AppImage
+          # build, before linuxdeploy augments its separate final AppDir.
+          source = Path(".cargo-packager/appimage_deb/data")
+          entries = list((source / "usr").rglob("*"))
+          if (any(parent.is_symlink() for parent in (source, *source.parents))
+                  or (source / "usr").is_symlink()
+                  or any(path.is_symlink() for path in entries)):
+              raise SystemExit("Development runtime must not contain aliases")
+          files = {path.relative_to(source).as_posix(): path
+                   for path in entries if not path.is_dir()}
+          if set(files) != expected:
+              missing, extra = sorted(expected - files.keys()), sorted(files.keys() - expected)
+              detail = {"missing_count": len(missing), "extra_count": len(extra),
+                        "missing": [name[:96] for name in missing[:16]],
+                        "extra": [name[:96] for name in extra[:16]]}
+              raise SystemExit("Development core requires exactly 13 files: " + json.dumps(detail))
+          destination = Path(
+              f"development-linux-aarch64-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+          )
+          destination.mkdir()
+          inventory = {}
+          for name, path in sorted(files.items()):
+              info = path.stat()
+              mode = stat.S_IMODE(info.st_mode)
+              if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                      or mode != (0o755 if name in binaries else 0o644)):
+                  raise SystemExit("Development runtime requires regular, unaliased files")
+              data = path.read_bytes()
+              if name in binaries and (
+                  data[:6] != b"\x7fELF\x02\x01"
+                  or len(data) < 20 or struct.unpack_from("<H", data, 18)[0] != 183
+                  or not info.st_mode & 0o111
+              ):
+                  raise SystemExit("Development runtime requires executable AArch64 ELF files")
+              target = destination / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              with target.open("xb") as output:
+                  output.write(data)
+              target.chmod(mode)
+              inventory[name] = {
+                  "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                  "mode": mode,
+              }
+          receipt = {
+              "purpose": "development-appimage-core-prefix-only-not-signed-release",
+              "installation_kind": "appimage",
+              "feature_scope": "existing normal AppImage package build",
+              "source_stage": "cargo-packager-0.11.8 appimage_deb/data before linuxdeploy",
+              "checkout_commit": checkout, "checkout_tree": tree,
+              "candidate_head": os.environ["DEVELOPMENT_SOURCE_HEAD"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "binary": "usr/bin/festerm", **inventory["usr/bin/festerm"],
+              "host_bundle_key_sha256": hashlib.sha256(
+                  Path("../../packaging/updater.pub").read_bytes()
+              ).hexdigest(),
+              "files": inventory,
+          }
+          (destination / "development-runtime-provenance.json").write_text(
+              json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+            fi
             rm -rf squashfs-root
           )
+      - name: Retain existing Linux ARM64 development runtime
+        if: matrix.name == 'linux-aarch64'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: development-linux-aarch64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/release/development-linux-aarch64-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 7
       - name: Rebuild package-managed Linux binary and Debian package
         if: matrix.platform == 'linux'
         env:

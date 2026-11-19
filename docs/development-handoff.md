@@ -116,6 +116,16 @@ protected `release` environment. Use
 release and end-to-end upgrade evidence remain
 [#62](https://github.com/fes/fesTerm/issues/62).
 
+Package-smoke retains the existing unsigned Windows ARM64 frontend and Linux
+ARM64 AppImage runtime for native development validation. The Linux export
+contains five executables and eight resources from cargo-packager's
+pre-linuxdeploy core data, created during the AppImage build and captured
+before the Debian build changes the installation kind. It is a selected core
+prefix, not the final AppImage with AppRun and deployment-added libraries.
+Receipts bind checkout commit/tree, candidate head, run/attempt, file hashes
+and the HOST verification-key hash. These short-lived development artifacts
+are not signed releases or authenticated HOST bundles.
+
 ## Bootstrap
 
 The repository pins the stable Rust toolchain in `rust-toolchain.toml`.
