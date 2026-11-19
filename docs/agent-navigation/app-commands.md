@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0204db1b29bb6ee5a9a6496842e7846dddd27bb584f7c81d4989ea2f18ba57b7"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b68c0f29d5064f1f01e7ab600b298cf7dbd505401c50bbe53dd55e1dd3b2fb0a"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

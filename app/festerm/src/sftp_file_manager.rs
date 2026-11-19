@@ -1836,7 +1836,6 @@ pub(crate) mod gallery;
 #[derive(Clone, Debug)]
 pub(crate) struct SftpCollisionDialogState {
     pub(crate) collision: SftpCollision,
-    pub(crate) apply_to_all: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -3677,7 +3676,6 @@ impl SftpFileManagerTab {
                                             .pending_collision
                                             .clone()
                                             .expect("checked pending collision"),
-                                        apply_to_all: false,
                                     });
                                 }
                                 if matches!(
@@ -3726,13 +3724,12 @@ impl SftpFileManagerTab {
             &collision.destination,
             &collision.allowed_decisions,
             collision.can_apply_to_all,
-            &mut dialog.apply_to_all,
         );
-        if let Some(decision) = decision {
+        if let Some((decision, scope)) = decision {
             let resolution = SftpCollisionResolution {
                 collision_id: collision.id,
                 decision,
-                scope: collision_scope(dialog.apply_to_all),
+                scope,
             };
             if self
                 .submit_worker_command(WorkerCommand::ResolveCollision(resolution))
@@ -4182,10 +4179,7 @@ impl SftpFileManagerTab {
                     item.pending_collision = Some(collision.clone());
                     item.state = SftpTransferState::AwaitingCollision(collision.id);
                 }
-                self.collision_dialog = Some(SftpCollisionDialogState {
-                    collision,
-                    apply_to_all: false,
-                });
+                self.collision_dialog = Some(SftpCollisionDialogState { collision });
             }
             SftpTransferEvent::DestinationDirectoryRefreshRequested { directory, .. } => {
                 if directory.location() == SftpLocation::Local
@@ -6059,6 +6053,8 @@ fn folder_rank(file_type: SftpEntryType) -> u8 {
     }
 }
 
+type CollisionChoice = (SftpCollisionDecision, SftpCollisionScope);
+
 fn show_collision_modal(
     ctx: &egui::Context,
     label: &str,
@@ -6066,8 +6062,7 @@ fn show_collision_modal(
     destination: &SftpPathMetadata,
     allowed_decisions: &[SftpCollisionDecision],
     can_apply_to_all: bool,
-    apply_to_all: &mut bool,
-) -> (Option<SftpCollisionDecision>, bool) {
+) -> (Option<CollisionChoice>, bool) {
     let mut decision = None;
     let mut close = false;
     crate::software_background::show_modal(
@@ -6099,7 +6094,7 @@ fn show_collision_modal(
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!(
-                            "Choose what to do with {}. Nothing is overwritten until you choose Replace.",
+                            "Choose what to do with {}. Nothing is overwritten until you choose Replace or Replace all.",
                             source.path.file_name().unwrap_or_else(|_| source.path.display())
                         ))
                         .font(font_for_text_role(SftpTextRole::DialogBody))
@@ -6108,8 +6103,8 @@ fn show_collision_modal(
                     ui.add_space(12.0);
                     ui.columns(2, |columns| {
                         for (column, (title, metadata)) in columns.iter_mut().zip([
-                            ("Source · Local", source),
-                            ("Destination · Remote", destination),
+                            ("Source", source),
+                            ("Destination", destination),
                         ]) {
                             egui::Frame::new()
                                 .fill(theme::SURFACE_TAB_INACTIVE)
@@ -6118,7 +6113,10 @@ fn show_collision_modal(
                                 .inner_margin(egui::Margin::same(10))
                                 .show(column, |ui| {
                                     ui.label(
-                                        RichText::new(title)
+                                        RichText::new(format!("{title} · {}", match metadata.path.location() {
+                                            SftpLocation::Local => "Local",
+                                            SftpLocation::Remote => "Remote",
+                                        }))
                                             .font(font_for_text_role(SftpTextRole::Footer))
                                             .color(theme::TEXT_MUTED),
                                     );
@@ -6145,10 +6143,17 @@ fn show_collision_modal(
                     });
                     if can_apply_to_all {
                         ui.add_space(12.0);
-                        ui.checkbox(
-                            apply_to_all,
-                            "Apply this choice to all conflicts in this batch",
-                        );
+                        ui.label("Remaining conflicts in this batch");
+                        ui.horizontal_wrapped(|ui| {
+                            for (label, candidate) in [
+                                ("Skip all", SftpCollisionDecision::Skip),
+                                ("Replace all", SftpCollisionDecision::Replace),
+                            ] {
+                                if allowed_decisions.contains(&candidate) && ui.button(label).clicked() {
+                                    decision = Some((candidate, SftpCollisionScope::RemainingConflictsInBatch));
+                                }
+                            }
+                        });
                     }
                     ui.add_space(12.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -6170,7 +6175,7 @@ fn show_collision_modal(
                                 button.request_focus();
                             }
                             if button.clicked() {
-                                decision = Some(candidate);
+                                decision = Some((candidate, SftpCollisionScope::ThisItem));
                             }
                         }
                     });
@@ -6190,15 +6195,6 @@ fn collision_decision_order() -> [SftpCollisionDecision; 4] {
         SftpCollisionDecision::KeepBoth,
         SftpCollisionDecision::MergeFolders,
     ]
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const fn collision_scope(apply_to_all: bool) -> SftpCollisionScope {
-    if apply_to_all {
-        SftpCollisionScope::RemainingConflictsInBatch
-    } else {
-        SftpCollisionScope::ThisItem
-    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -9274,12 +9270,155 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn collision_resolution_wires_apply_to_all_scope() {
-        assert_eq!(
-            collision_scope(true),
-            SftpCollisionScope::RemainingConflictsInBatch
-        );
-        assert_eq!(collision_scope(false), SftpCollisionScope::ThisItem);
+    fn collision_modal_actions_keep_explicit_item_and_batch_scopes() {
+        for download in [false, true] {
+            for (label, expected) in [
+                (
+                    "Replace",
+                    Some((SftpCollisionDecision::Replace, SftpCollisionScope::ThisItem)),
+                ),
+                (
+                    "Skip",
+                    Some((SftpCollisionDecision::Skip, SftpCollisionScope::ThisItem)),
+                ),
+                (
+                    "Keep Both",
+                    Some((
+                        SftpCollisionDecision::KeepBoth,
+                        SftpCollisionScope::ThisItem,
+                    )),
+                ),
+                (
+                    "Skip all",
+                    Some((
+                        SftpCollisionDecision::Skip,
+                        SftpCollisionScope::RemainingConflictsInBatch,
+                    )),
+                ),
+                (
+                    "Replace all",
+                    Some((
+                        SftpCollisionDecision::Replace,
+                        SftpCollisionScope::RemainingConflictsInBatch,
+                    )),
+                ),
+                ("Cancel", None),
+            ] {
+                let metadata = |local| SftpPathMetadata {
+                    path: if local {
+                        SftpPath::local("owned.txt")
+                    } else {
+                        SftpPath::remote("/owned.txt")
+                    },
+                    file_type: SftpEntryType::File,
+                    size: Some(12),
+                    modified_at: None,
+                    permissions: None,
+                };
+                let source = metadata(!download);
+                let destination = metadata(download);
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(700.0, 700.0))
+                    .build_ui_state(
+                        |ui, outcome: &mut (Option<CollisionChoice>, bool)| {
+                            if outcome.0.is_some() || outcome.1 {
+                                return;
+                            }
+                            let (decision, close) = show_collision_modal(
+                                ui.ctx(),
+                                "owned-collision",
+                                &source,
+                                &destination,
+                                &[
+                                    SftpCollisionDecision::Replace,
+                                    SftpCollisionDecision::Skip,
+                                    SftpCollisionDecision::KeepBoth,
+                                ],
+                                true,
+                            );
+                            outcome.0 = decision;
+                            outcome.1 = close;
+                        },
+                        (None, false),
+                    );
+                harness.run();
+                harness.get_by_label(if download {
+                    "Source · Remote"
+                } else {
+                    "Source · Local"
+                });
+                harness.get_by_label(if download {
+                    "Destination · Local"
+                } else {
+                    "Destination · Remote"
+                });
+                assert!(harness.get_by_label("Skip").is_focused());
+                assert!(harness
+                    .query_by_label("Apply this choice to all conflicts in this batch")
+                    .is_none());
+                harness.get_by_label(label).click();
+                harness.run();
+                assert_eq!(harness.state().0, expected, "{label}, download={download}");
+                assert_eq!(harness.state().1, label == "Cancel");
+            }
+        }
+    }
+
+    #[test]
+    fn collision_modal_batch_actions_require_batch_and_allowed_decisions() {
+        for (batch, replace) in [(false, true), (true, false)] {
+            let source = SftpPathMetadata {
+                path: SftpPath::local("owned"),
+                file_type: SftpEntryType::Directory,
+                size: None,
+                modified_at: None,
+                permissions: None,
+            };
+            let destination = SftpPathMetadata {
+                path: SftpPath::remote("/owned"),
+                ..source.clone()
+            };
+            let mut allowed = vec![
+                SftpCollisionDecision::Skip,
+                SftpCollisionDecision::KeepBoth,
+                SftpCollisionDecision::MergeFolders,
+            ];
+            if replace {
+                allowed.push(SftpCollisionDecision::Replace);
+            }
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(700.0, 700.0))
+                .build_ui_state(
+                    |ui, outcome: &mut (Option<CollisionChoice>, bool)| {
+                        if outcome.0.is_some() || outcome.1 {
+                            return;
+                        }
+                        let (decision, close) = show_collision_modal(
+                            ui.ctx(),
+                            "owned-collision",
+                            &source,
+                            &destination,
+                            &allowed,
+                            batch,
+                        );
+                        outcome.0 = decision;
+                        outcome.1 = close;
+                    },
+                    (None, false),
+                );
+            harness.run();
+            assert_eq!(harness.query_by_label("Skip all").is_some(), batch);
+            assert!(harness.query_by_label("Replace all").is_none());
+            harness.get_by_label("Merge folders").click();
+            harness.run();
+            assert_eq!(
+                harness.state().0,
+                Some((
+                    SftpCollisionDecision::MergeFolders,
+                    SftpCollisionScope::ThisItem
+                ))
+            );
+        }
     }
 
     #[cfg(all(windows, target_arch = "x86_64"))]
@@ -9315,7 +9454,7 @@ pub(crate) mod tests {
                     .with_pixels_per_point(scale)
                     .renderer(WgpuTestRenderer::from_render_state(state.clone()))
                     .build_ui_state(
-                        |ui, outcome: &mut (Option<SftpCollisionDecision>, bool, bool)| {
+                        |ui, outcome: &mut (Option<CollisionChoice>, bool)| {
                             if outcome.1 {
                                 return;
                             }
@@ -9328,12 +9467,11 @@ pub(crate) mod tests {
                                 &destination,
                                 &allowed,
                                 true,
-                                &mut outcome.2,
                             );
                             outcome.0 = decision.or(outcome.0);
                             outcome.1 |= close;
                         },
-                        (None, false, false),
+                        (None, false),
                     );
                 set_picker_backdrops_enabled(&harness.ctx, false);
                 set_picker_frames_enabled(&harness.ctx, false);
@@ -9355,15 +9493,6 @@ pub(crate) mod tests {
                     ordinary_paints + if width == 900.0 { 2 } else { 1 },
                     "width={width}, scale={scale}"
                 );
-                harness
-                    .get_by_label("Apply this choice to all conflicts in this batch")
-                    .click();
-                harness.run();
-                assert!(harness.state().2);
-                assert_eq!(
-                    collision_scope(harness.state().2),
-                    SftpCollisionScope::RemainingConflictsInBatch
-                );
                 harness.get_by_label("Cancel").click();
                 harness.run();
                 assert!(harness.state().1);
@@ -9376,14 +9505,16 @@ pub(crate) mod tests {
                     ("Skip", SftpCollisionDecision::Skip),
                     ("Keep Both", SftpCollisionDecision::KeepBoth),
                 ] {
-                    *harness.state_mut() = (None, false, false);
+                    *harness.state_mut() = (None, false);
                     harness.run();
                     harness.get_by_label(label).click();
                     harness.run();
-                    assert_eq!(harness.state().0, Some(expected));
-                    assert!(!harness.state().2);
+                    assert_eq!(
+                        harness.state().0,
+                        Some((expected, SftpCollisionScope::ThisItem))
+                    );
                 }
-                *harness.state_mut() = (None, false, false);
+                *harness.state_mut() = (None, false);
                 harness.run();
                 harness.key_press(Key::Escape);
                 harness.run();
