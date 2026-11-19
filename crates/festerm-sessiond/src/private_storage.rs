@@ -250,7 +250,7 @@ pub fn read_private(directory: &File, name: &Path, max: usize) -> io::Result<Zer
 
 /// Removes only an existing private regular file inside the retained directory.
 /// The caller must fence every writer and prove the artifact is retired.
-pub(crate) fn remove_private_file(directory: &File, name: &Path) -> io::Result<()> {
+pub fn remove_private_file(directory: &File, name: &Path) -> io::Result<()> {
     let file = match open_private_file(directory, name, false) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),

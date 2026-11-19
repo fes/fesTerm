@@ -326,7 +326,9 @@ pub enum ChromeAction {
     Close(ChipId),
     NewTab,
     NewTextDocument,
+    NewJavaScriptWorkflowDraft,
     OpenMarkdownFile,
+    OpenJavaScriptWorkflowEditorPicker,
     OpenSettings,
     OpenRecording,
     OpenProfiles,
@@ -2675,10 +2677,14 @@ mod tests {
         harness.get_by_label("Session inspector").click();
         harness.run();
 
-        assert!(harness
-            .state()
-            .observed
-            .contains(&ChromeAction::ToggleInspector));
+        assert!(
+            harness
+                .state()
+                .observed
+                .contains(&ChromeAction::ToggleInspector),
+            "{:?}",
+            harness.state().observed
+        );
     }
 
     #[test]

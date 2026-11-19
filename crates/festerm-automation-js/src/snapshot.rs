@@ -6,6 +6,48 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 pub const MAX_SNAPSHOT_BYTES: usize = 2 * MAX_SOURCE_BYTES;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnapshotValidationIssue {
+    Manifest(&'static str),
+    ModuleGraph(&'static str),
+    Item {
+        subject: &'static str,
+        item: String,
+        reason: &'static str,
+    },
+    Source {
+        module: String,
+        line: usize,
+        column: usize,
+        reason: &'static str,
+    },
+}
+
+impl std::fmt::Display for SnapshotValidationIssue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Manifest(reason) => write!(formatter, "invalid workflow manifest: {reason}"),
+            Self::ModuleGraph(reason) => {
+                write!(formatter, "invalid workflow module graph: {reason}")
+            }
+            Self::Item {
+                subject,
+                item,
+                reason,
+            } => write!(formatter, "invalid workflow {subject} `{item}`: {reason}"),
+            Self::Source {
+                module,
+                line,
+                column,
+                reason,
+            } => write!(
+                formatter,
+                "{module}, line {line}, column {column}: {reason}"
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
@@ -174,10 +216,17 @@ impl std::fmt::Debug for ApprovedBundle {
 
 impl ApprovedBundle {
     pub fn new(snapshot: SourceSnapshot) -> Result<Self, Error> {
+        Self::new_diagnosed(snapshot).map_err(|_| Error::Snapshot)
+    }
+
+    pub fn new_diagnosed(snapshot: SourceSnapshot) -> Result<Self, SnapshotValidationIssue> {
         validate(&snapshot)?;
-        let canonical = serde_json::to_vec(&snapshot).map_err(|_| Error::Snapshot)?;
+        let canonical = serde_json::to_vec(&snapshot)
+            .map_err(|_| SnapshotValidationIssue::Manifest("snapshot could not be serialized"))?;
         if canonical.len() > MAX_SNAPSHOT_BYTES {
-            return Err(Error::Snapshot);
+            return Err(SnapshotValidationIssue::Manifest(
+                "serialized snapshot exceeds 2 MiB",
+            ));
         }
         let digest = format!("{:x}", Sha256::digest(&canonical));
         Ok(Self { snapshot, digest })
@@ -248,6 +297,16 @@ pub(crate) fn token(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
 }
 
+fn short_item(value: &str) -> String {
+    let mut characters = value.chars();
+    let prefix = characters.by_ref().take(80).collect::<String>();
+    if characters.next().is_some() {
+        format!("{prefix}\u{2026}")
+    } else {
+        prefix
+    }
+}
+
 fn path(value: &str) -> bool {
     value.len() <= 256
         && value.ends_with(".js")
@@ -261,46 +320,128 @@ fn path(value: &str) -> bool {
         })
 }
 
-fn validate(snapshot: &SourceSnapshot) -> Result<(), Error> {
+fn validate(snapshot: &SourceSnapshot) -> Result<(), SnapshotValidationIssue> {
     let m = &snapshot.manifest;
-    if m.version != 1
-        || m.api_version != 1
-        || !token(&m.name)
-        || m.modules.is_empty()
-        || m.modules.len() > 64
-        || m.parameters.len() > 64
-        || !m.parameters.keys().all(|key| token(key))
-        || !m.parameters.values().all(|ty| match ty {
-            ParameterType::Text { max_bytes } => *max_bytes <= 16_384,
-            ParameterType::Integer { min, max } => {
-                min <= max
-                    && *min >= -(crate::protocol::MAX_SAFE_INTEGER as i64)
-                    && *max <= crate::protocol::MAX_SAFE_INTEGER as i64
-            }
-            _ => true,
-        })
-        || serde_json::to_vec(m).map_err(|_| Error::Snapshot)?.len() > 65_536
+    if m.version != 1 {
+        return Err(SnapshotValidationIssue::Manifest("version must be 1"));
+    }
+    if m.api_version != 1 {
+        return Err(SnapshotValidationIssue::Manifest("apiVersion must be 1"));
+    }
+    if !token(&m.name) {
+        return Err(SnapshotValidationIssue::Manifest(
+            "name must be 1-256 token characters",
+        ));
+    }
+    if m.modules.is_empty() {
+        return Err(SnapshotValidationIssue::Manifest(
+            "modules must not be empty",
+        ));
+    }
+    if m.modules.len() > 64 {
+        return Err(SnapshotValidationIssue::Manifest(
+            "modules may contain at most 64 entries",
+        ));
+    }
+    if m.parameters.len() > 64 {
+        return Err(SnapshotValidationIssue::Manifest(
+            "parameters may contain at most 64 entries",
+        ));
+    }
+    if let Some(key) = m.parameters.keys().find(|key| !token(key)) {
+        return Err(SnapshotValidationIssue::Item {
+            subject: "parameter",
+            item: short_item(key),
+            reason: "name must be 1-256 token characters",
+        });
+    }
+    if let Some((name, _)) = m.parameters.iter().find(|(_, ty)| !match ty {
+        ParameterType::Text { max_bytes } => *max_bytes <= 16_384,
+        ParameterType::Integer { min, max } => {
+            min <= max
+                && *min >= -(crate::protocol::MAX_SAFE_INTEGER as i64)
+                && *max <= crate::protocol::MAX_SAFE_INTEGER as i64
+        }
+        _ => true,
+    }) {
+        return Err(SnapshotValidationIssue::Item {
+            subject: "parameter",
+            item: short_item(name),
+            reason: "type or range is invalid",
+        });
+    }
+    if serde_json::to_vec(m)
+        .map_err(|_| SnapshotValidationIssue::Manifest("manifest could not be serialized"))?
+        .len()
+        > 65_536
     {
-        return Err(Error::Snapshot);
+        return Err(SnapshotValidationIssue::Manifest(
+            "serialized manifest exceeds 64 KiB",
+        ));
     }
     let paths: BTreeSet<_> = m.modules.iter().collect();
     let folded: BTreeSet<_> = m.modules.iter().map(|p| p.to_ascii_lowercase()).collect();
-    if paths.len() != m.modules.len()
-        || folded.len() != m.modules.len()
-        || m.modules.windows(2).any(|p| p[0] >= p[1])
-        || !m.modules.iter().all(|p| path(p))
-        || !paths.contains(&m.entry)
-        || snapshot.modules.keys().collect::<BTreeSet<_>>() != paths
-        || snapshot.modules.values().map(String::len).sum::<usize>() > MAX_SOURCE_BYTES
-        || snapshot.modules.values().any(|s| s.contains('\0'))
-    {
-        return Err(Error::Snapshot);
+    if paths.len() != m.modules.len() {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "manifest modules contain a duplicate path",
+        ));
+    }
+    if folded.len() != m.modules.len() {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "module paths differ only by letter case",
+        ));
+    }
+    if m.modules.windows(2).any(|p| p[0] >= p[1]) {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "manifest modules must be sorted",
+        ));
+    }
+    if let Some(module) = m.modules.iter().find(|module| !path(module)) {
+        return Err(SnapshotValidationIssue::Item {
+            subject: "module",
+            item: short_item(module),
+            reason: "path is not a permitted .js filename",
+        });
+    }
+    if !paths.contains(&m.entry) {
+        return Err(SnapshotValidationIssue::Item {
+            subject: "entry",
+            item: short_item(&m.entry),
+            reason: "not listed in manifest modules",
+        });
+    }
+    if snapshot.modules.keys().collect::<BTreeSet<_>>() != paths {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "modules must exactly match manifest modules",
+        ));
+    }
+    if snapshot.modules.values().map(String::len).sum::<usize>() > MAX_SOURCE_BYTES {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "combined JavaScript source exceeds 1 MiB",
+        ));
+    }
+    if snapshot.modules.values().any(|s| s.contains('\0')) {
+        return Err(SnapshotValidationIssue::ModuleGraph(
+            "JavaScript source contains a null byte",
+        ));
     }
     let mut graph = BTreeMap::new();
     for (name, source) in &snapshot.modules {
-        let imports = static_imports(source)?;
-        if imports.iter().any(|p| !snapshot.modules.contains_key(p)) {
-            return Err(Error::Snapshot);
+        let imports = static_imports(source).map_err(|issue| SnapshotValidationIssue::Source {
+            module: name.clone(),
+            line: issue.line,
+            column: issue.column,
+            reason: issue.reason,
+        })?;
+        if let Some(import) = imports
+            .iter()
+            .find(|path| !snapshot.modules.contains_key(*path))
+        {
+            return Err(SnapshotValidationIssue::Item {
+                subject: "import",
+                item: short_item(import),
+                reason: "not present in modules",
+            });
         }
         graph.insert(name.clone(), imports);
     }
@@ -312,21 +453,49 @@ fn validate(snapshot: &SourceSnapshot) -> Result<(), Error> {
         }
     }
     if seen.len() != snapshot.modules.len() {
-        return Err(Error::Snapshot);
+        let module = snapshot
+            .modules
+            .keys()
+            .find(|module| !seen.contains(*module))
+            .expect("a missing module must exist");
+        return Err(SnapshotValidationIssue::Item {
+            subject: "module",
+            item: short_item(module),
+            reason: "unreachable from entry",
+        });
     }
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct SourceValidationIssue {
+    line: usize,
+    column: usize,
+    reason: &'static str,
+}
+
 /// Parse actual syntax, not a regexp/string scan (comments, templates and
 /// escaped identifiers must not bypass the dynamic-import prohibition).
-fn static_imports(source: &str) -> Result<BTreeSet<String>, Error> {
+fn static_imports(source: &str) -> Result<BTreeSet<String>, SourceValidationIssue> {
+    let issue = |line, column, reason| SourceValidationIssue {
+        line,
+        column,
+        reason,
+    };
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_javascript::LANGUAGE.into())
-        .map_err(|_| Error::Snapshot)?;
-    let tree = parser.parse(source, None).ok_or(Error::Snapshot)?;
+        .map_err(|_| issue(1, 1, "JavaScript parser unavailable"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| issue(1, 1, "JavaScript parser unavailable"))?;
     if tree.root_node().has_error() {
-        return Err(Error::Snapshot);
+        let error = first_error(&tree).unwrap_or_else(|| tree.root_node());
+        return Err(issue(
+            error.start_position().row + 1,
+            error.start_position().column + 1,
+            "JavaScript syntax error",
+        ));
     }
     let mut imports = BTreeSet::new();
     let mut cursor = tree.walk();
@@ -349,32 +518,56 @@ fn static_imports(source: &str) -> Result<BTreeSet<String>, Error> {
                 parent = p.parent();
             }
             if !function {
-                return Err(Error::Snapshot);
+                return Err(issue(
+                    node.start_position().row + 1,
+                    node.start_position().column + 1,
+                    "top-level await is not allowed",
+                ));
             }
         }
         if node.kind() == "import" && node.parent().is_some_and(|p| p.kind() == "call_expression") {
-            return Err(Error::Snapshot);
+            return Err(issue(
+                node.start_position().row + 1,
+                node.start_position().column + 1,
+                "dynamic import is not allowed",
+            ));
         }
         if matches!(node.kind(), "import_statement" | "export_statement") {
             if let Some(value) = node.child_by_field_name("source") {
                 let raw = &source[value.byte_range()];
                 // Deliberately disallow escaped module names and all aliases.
-                let p = raw
-                    .get(1..raw.len().saturating_sub(1))
-                    .ok_or(Error::Snapshot)?;
+                let p = raw.get(1..raw.len().saturating_sub(1)).ok_or_else(|| {
+                    issue(
+                        value.start_position().row + 1,
+                        value.start_position().column + 1,
+                        "module import path is invalid",
+                    )
+                })?;
                 if !path(p) {
-                    return Err(Error::Snapshot);
+                    return Err(issue(
+                        value.start_position().row + 1,
+                        value.start_position().column + 1,
+                        "module import path is not a permitted .js filename",
+                    ));
                 }
                 imports.insert(p.to_owned());
             }
             if node.kind() == "import_statement" && node.child_by_field_name("source").is_none() {
-                return Err(Error::Snapshot);
+                return Err(issue(
+                    node.start_position().row + 1,
+                    node.start_position().column + 1,
+                    "import statement is missing a source",
+                ));
             }
             if (0..node.named_child_count()).any(|i| {
                 node.named_child(i as u32)
                     .is_some_and(|n| n.kind() == "import_attribute")
             }) {
-                return Err(Error::Snapshot);
+                return Err(issue(
+                    node.start_position().row + 1,
+                    node.start_position().column + 1,
+                    "import attributes are not allowed",
+                ));
             }
         }
         if cursor.goto_first_child() {
@@ -383,6 +576,24 @@ fn static_imports(source: &str) -> Result<BTreeSet<String>, Error> {
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
                 return Ok(imports);
+            }
+        }
+    }
+}
+
+fn first_error(tree: &tree_sitter::Tree) -> Option<tree_sitter::Node<'_>> {
+    let mut cursor = tree.walk();
+    loop {
+        let node = cursor.node();
+        if node.is_error() || node.is_missing() {
+            return Some(node);
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return None;
             }
         }
     }

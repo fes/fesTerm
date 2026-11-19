@@ -341,9 +341,13 @@ pub enum CommandAreaEvent {
     /// The input changed; a search prompt should re-run its incremental match.
     Changed,
     /// Enter was pressed with this line.
-    Run { prompt: CommandPrompt, line: String },
+    Run {
+        prompt: CommandPrompt,
+        line: String,
+    },
     /// Esc was pressed, or focus was lost.
     Cancelled,
+    Dismissed,
 }
 
 /// The single-line area that sits immediately above the persistent status bar
@@ -371,6 +375,7 @@ pub struct CommandArea {
     /// Whether the field held focus last frame, so that losing it can be told
     /// apart from never having had it.
     was_focused: bool,
+    rendered_height: f32,
 }
 
 /// What to show where the hint was, once a command has run.
@@ -382,6 +387,8 @@ pub enum CommandOutcome {
 }
 
 const HISTORY_LIMIT: usize = 50;
+const MAX_OUTCOME_HEIGHT: f32 = 110.0;
+const MAX_OUTCOME_DETAIL_HEIGHT: f32 = 56.0;
 
 impl CommandArea {
     pub fn is_open(&self) -> bool {
@@ -401,6 +408,24 @@ impl CommandArea {
         self.result.as_ref()
     }
 
+    pub fn has_result(&self) -> bool {
+        self.result.is_some()
+    }
+
+    pub fn has_workflow_result(&self) -> bool {
+        matches!(
+            &self.result,
+            Some(CommandOutcome::Message(message))
+                if message == "Validating workflow…"
+                    || message.starts_with("Workflow valid")
+        ) || matches!(
+            &self.result,
+            Some(CommandOutcome::Warning(error) | CommandOutcome::Failed(error))
+                if error.headline() == "Workflow invalid"
+                    || error.headline() == "Workflow validation unavailable"
+        )
+    }
+
     /// Opens the area with an empty line, discarding whatever the last command
     /// reported: a stale `3 matches` beside a half-typed new command would be
     /// read as belonging to the new one.
@@ -410,6 +435,7 @@ impl CommandArea {
         self.recall = None;
         self.result = None;
         self.focus_pending = true;
+        self.rendered_height = 0.0;
     }
 
     /// Opens with a line already in it, for the state gallery.
@@ -432,6 +458,12 @@ impl CommandArea {
     /// anything outside the matrix.
     pub fn report(&mut self, outcome: CommandOutcome) {
         self.result = Some(outcome);
+        self.rendered_height = 0.0;
+    }
+
+    pub fn clear_result(&mut self) {
+        self.result = None;
+        self.rendered_height = 0.0;
     }
 
     /// Closes the area and leaves a message where the hint was.
@@ -440,6 +472,7 @@ impl CommandArea {
         self.close();
         self.remember(line);
         self.result = Some(outcome);
+        self.rendered_height = 0.0;
     }
 
     fn remember(&mut self, line: String) {
@@ -519,7 +552,16 @@ impl CommandArea {
         if !self.is_open() && self.result.is_none() {
             return 0.0;
         }
-        f32::from(AREA_PADDING_Y) * 2.0 + AREA_TEXT_SIZE + 6.0
+        let base = f32::from(AREA_PADDING_Y) * 2.0 + AREA_TEXT_SIZE + 6.0;
+        if self.is_open() {
+            base
+        } else {
+            if self.rendered_height == 0.0 {
+                MAX_OUTCOME_HEIGHT
+            } else {
+                base.max(self.rendered_height)
+            }
+        }
     }
 
     /// Renders the area, or the result of the last command when it is closed.
@@ -536,15 +578,29 @@ impl CommandArea {
         if !self.is_open() && self.result.is_none() {
             return None;
         }
+        let command_open = self.is_open();
         let mut event = None;
-        egui::Frame::new()
+        let rendered = egui::Frame::new()
             .fill(theme::SURFACE_CHROME)
             .inner_margin(egui::Margin::symmetric(AREA_PADDING_X, AREA_PADDING_Y))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    event = self.show_row(ui, tab, summary);
-                });
+                if command_open {
+                    ui.horizontal(|ui| {
+                        event = self.show_row(ui, tab, summary);
+                    });
+                } else {
+                    ui.vertical(|ui| {
+                        if self.show_outcome(ui) {
+                            event = Some(CommandAreaEvent::Dismissed);
+                        }
+                    });
+                }
             });
+        let height = rendered.response.rect.height();
+        if (height - self.rendered_height).abs() > 0.5 {
+            ui.ctx().request_repaint();
+        }
+        self.rendered_height = height;
         event
     }
 
@@ -676,14 +732,19 @@ impl CommandArea {
         None
     }
 
-    fn show_outcome(&self, ui: &mut egui::Ui) {
+    fn show_outcome(&self, ui: &mut egui::Ui) -> bool {
+        let mut dismissed = false;
         match &self.result {
             Some(CommandOutcome::Message(message)) => {
-                ui.label(
-                    egui::RichText::new(message)
-                        .size(AREA_TEXT_SIZE - 1.0)
-                        .color(theme::TEXT_SECONDARY),
+                let response = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(message)
+                            .size(AREA_TEXT_SIZE - 1.0)
+                            .color(theme::TEXT_SECONDARY),
+                    )
+                    .wrap(),
                 );
+                response.on_hover_text(message);
             }
             Some(CommandOutcome::Warning(error) | CommandOutcome::Failed(error)) => {
                 // The reason is shown, not hovered: a refusal a reader has to
@@ -697,19 +758,28 @@ impl CommandArea {
                             theme::STATUS_ERROR
                         }),
                 );
-                ui.label(
-                    egui::RichText::new("·")
-                        .size(AREA_TEXT_SIZE - 1.0)
-                        .color(theme::TEXT_MUTED),
-                );
-                ui.label(
-                    egui::RichText::new(error.detail())
-                        .size(AREA_TEXT_SIZE - 1.0)
-                        .color(theme::TEXT_SECONDARY),
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt("command-outcome-detail")
+                    .max_height(MAX_OUTCOME_DETAIL_HEIGHT)
+                    .show(ui, |ui| {
+                        let response = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(error.detail())
+                                    .size(AREA_TEXT_SIZE - 1.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            )
+                            .wrap(),
+                        );
+                        response.on_hover_text(error.detail());
+                    });
             }
             None => {}
         }
+        if self.result.is_some() {
+            let response = ui.button("Dismiss");
+            dismissed |= response.clicked();
+        }
+        dismissed
     }
 }
 
@@ -989,6 +1059,31 @@ mod tests {
         area.open(CommandPrompt::Ex);
         assert_eq!(area.outcome(), None);
         assert_eq!(area.input(), "");
+    }
+
+    #[test]
+    fn a_long_outcome_stays_inside_the_viewport_and_retains_its_full_name() {
+        let detail =
+            "JSON source line 12, column 14; main.js, line 3, column 13: dynamic import is not allowed"
+                .repeat(3);
+        let mut area = CommandArea::default();
+        area.report(CommandOutcome::Failed(CommandError::new(
+            "Workflow invalid",
+            &detail,
+        )));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 240.0))
+            .build_ui_state(
+                |ui, area: &mut CommandArea| {
+                    area.show(ui, TabId::next_for_test(), None);
+                },
+                area,
+            );
+        harness.run();
+
+        let row = harness.get_by_label(&detail).rect();
+        assert!(row.left() >= 0.0 && row.right() <= 360.0);
+        assert!(row.bottom() <= 240.0);
     }
 
     #[test]

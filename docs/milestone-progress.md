@@ -5997,19 +5997,43 @@ native handoff, leases, human takeover and broker integration for SSH targets
 and real-target lifecycle evidence remain open. Text-mode SFTP, sessiond,
 tunnels and serial still refuse automation reservations.
 
-## Proposed automation authoring, application hooks and debugging
+## Partial native workflow authoring, with hooks and debugging proposed
+
+The authoring slice now also distinguishes source files, registered immutable
+artifacts and approved runs. **Register…** is explicit and available only after
+a local workflow is saved; it copies the canonical snapshot into a bounded
+private digest-addressed registry. Settings lists those entries, Review Run
+loads only the managed artifact through the existing native approval path, and
+normal startup restores inert metadata without workers, grants or source-path
+fallbacks. Removing an entry never modifies the editor source.
+
+`--safe-mode` and About's **Restart in Safe Mode…** dominate persisted MCP and
+JavaScript opt-ins for that process, preserve configuration/files/registry,
+disable automation initialization and retain inert editor validation. The
+restart route uses ordinary dirty-document and live-session confirmation.
 
 Beyond the shipped desktop JavaScript workflow beta, which runs one bundle
-captured in Settings, the automation proposal now specifies workflow authoring
-in the existing native editor, explicit immutable-version Run/Stop/status and a
+captured in Settings, the first `AUT-10` authoring subset now creates dirty
+untitled `.workflow.json` drafts, opens local workflow sources and validates
+dirty buffers in the existing native editor. This reuses the beta's JSON
+`SourceSnapshot` and `ApprovedBundle` validation, including while execution is
+disabled, without Settings capture, broker commands or execution authority.
+The authoring actions live only in More actions; opening is one atomic state
+command, `*.workflow.json` is visibly marked as `WORKFLOW`, and generic JSON
+remains ordinary. Validation runs off the UI thread and discards stale results
+after edits. The per-view marker survives ordinary Save As, duplicate and
+window moves, and measured headless containment keeps Validate visible at both
+752 and 360 px.
+
+The remaining proposal specifies explicit immutable-version Run/Stop/status and a
 discoverable catalog of application event attachment points. Editor runs reuse
 the beta's intake validation, native Run review and Stop path. Saving is not
 execution; configuring a binding is not arming it. Automatic lifecycle hooks
 retain a separate P4 authority, lifecycle, disclosure and bounded-delivery gate.
 Static built-in API completion and broader typed UI control come later.
-ADR 0065, the action graph (`AUT-10` through `AUT-12`) and deferred validation
-inventory (`AUTO-06` through `AUTO-08`) remain aligned; none of this implements
-or enables these surfaces or accepts the Proposed ADR.
+ADR 0065, the action graph (`AUT-10` through `AUT-12`) and validation inventory
+(`AUTO-06` through `AUTO-08`) remain aligned: `AUT-10` is partial only for
+authoring. Execution, status, hooks, completion and Debug remain unimplemented.
 
 The same proposal includes an explicit script Debug mode: source breakpoints,
 stepping, call stacks and read-only variable inspection in the reused editor.
