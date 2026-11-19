@@ -83,7 +83,7 @@ def application_environment(root: Path) -> dict[str, str]:
     }
     for directory in directories.values():
         directory.mkdir(mode=0o700)
-    return {
+    environment = {
         **{key: str(value) for key, value in directories.items()},
         "ZDOTDIR": str(directories["HOME"]),
         "FESTERM_CONFIG_PATH": str(root / "config" / "festerm.toml"),
@@ -91,6 +91,10 @@ def application_environment(root: Path) -> dict[str, str]:
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
     }
+    for key in ("FESTERM_TW2K2_SNAPSHOT", "FESTERM_JAVASCRIPT_PROGRAM_DATA_DIR"):
+        if value := os.environ.get(key):
+            environment[key] = value
+    return environment
 
 
 def validate_root(root: Path) -> None:
