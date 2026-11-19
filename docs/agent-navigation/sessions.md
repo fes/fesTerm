@@ -1,20 +1,19 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1a789a7e8e073e17b4ad8653c3e7cc2b1dbbef4dc77838e47b2012fd3fe05393"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "da9d67d2ec3fea92aba7e3b0573080798e95eeededea2409ad5c37bf232ba842"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the shared session contract, backend lifecycles, PTY and daemon-backed persistence, and the event flow that keeps terminal state consistent across local, remote, and JavaScript backends.
+This domain owns the shared session contract, PTY-backed transport adapters, and daemon recovery flow that keep terminal output consistent across local, remote, and JavaScript sessions.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 ## Session contract
 
-Use for: Choosing the lifecycle, queue, and reply rules for every backend session.
+Use for: Choosing lifecycle, queue, and reply rules for a backend session.
 
-- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — terminal vs disconnected lifecycle boundaries
-- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — ordered output, recovery, resize, and control events
-- [`Session`](../../crates/festerm-session/src/lib.rs) — backend API with terminal reply ownership contract
+- [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — terminal-vs-disconnected lifecycle boundary and transition rules
+- [`Session`](../../crates/festerm-session/src/lib.rs) — backend contract with queue, shutdown, and reply ownership semantics
 
 Evidence:
 - [`automation_epoch_invalidates_on_every_transition`](../../crates/festerm-session/src/lib.rs) — proves lifecycle and admission epochs stay ordered
@@ -26,19 +25,19 @@ Caveats:
 
 ## Terminal flow
 
-Use for: Tracing backend bytes and resize events into a single terminal state without duplicate replies.
+Use for: Tracing backend output and resize events into one terminal state without duplicate replies.
 
-- [`SessionController`](../../app/festerm/src/session_controller.rs) — host-owned session bridge and event pump
-- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — applies output and resize in wire order
-- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — intentional backend-owned recovery terminal mutation
+- [`SessionController`](../../app/festerm/src/session_controller.rs) — host-owned bridge that pumps session events into the UI terminal
+- [`pump_session_events`](../../app/festerm/src/session_controller.rs) — applies output and resize in wire order while enforcing the slice limit
+- [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — backend-owned recovery mirror mutates terminal state intentionally
 
 Evidence:
 - [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — proves output and resize ordering while suppressing backend duplicates
 
 Caveats:
-- terminal_replies_owned_by_backend blocks duplicate forwarding.
-- pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
-- Controller shutdown and reconnect preserve generation and recovery invariants.
+- Output and resize are applied in wire order, not by command arrival timing.
+- terminal_replies_owned_by_backend suppresses duplicate forwarding.
+- MAX_INGEST_BYTES_PER_SESSION_SLICE bounds a single event-drain slice.
 
 ## Persistent daemon
 
@@ -55,12 +54,11 @@ Caveats:
 - Reconnects intentionally keep same-generation takeover policy.
 - RecoverySync is session-ordered and not shell-controlled output.
 
-## JavaScript runtime
+## Runtime backends
 
-Use for: Auditing embedded JavaScript sessions whose output and revocation need strict delivery ownership rules.
+Use for: Auditing JavaScript sessions whose output and authority revocation need strict delivery ownership rules.
 
 - [`JavaScriptSession`](../../crates/festerm-javascript-session/src/lib.rs) — bounded worker adapter for injected JavaScript runtimes
-- [`runtime_worker`](../../crates/festerm-javascript-session/src/lib.rs) — drives startup, commands, shutdown, and output delivery
 
 Evidence:
 - [`privacy_revocation_suppresses_output_already_queued_for_delivery`](../../crates/festerm-javascript-session/src/lib.rs) — proves queued output is dropped when runtime authority is revoked
