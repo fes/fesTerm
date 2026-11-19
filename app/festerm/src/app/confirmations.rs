@@ -298,6 +298,125 @@ impl FesTermApp {
         });
     }
 
+    pub(crate) fn request_safe_mode_restart(&mut self, context: &egui::Context) {
+        if self.safe_mode {
+            self.report_configuration_notice("fesTerm is already running in Safe Mode.");
+            return;
+        }
+        if self.role == crate::app::WindowRole::Secondary {
+            self.safe_restart_requested = true;
+            context.request_repaint();
+            return;
+        }
+        if self.overlays.pending_document_close.is_some()
+            || self.overlays.pending_quit.is_some()
+            || self.state.has_recovery_notices()
+            || self
+                .overlays
+                .open_refusal
+                .as_ref()
+                .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement)
+        {
+            return;
+        }
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(
+                tab,
+                AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::RestartInSafeMode),
+            );
+            return;
+        }
+        if self.refuse_application_action_for_dirty_document("Restarting in Safe Mode") {
+            return;
+        }
+        let counts = self.close_session_counts();
+        self.overlays.pending_quit = Some(PendingQuitConfirmation {
+            counts,
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::RestartInSafeMode,
+        });
+    }
+
+    fn finish_safe_mode_restart(&mut self, context: &egui::Context) {
+        let Ok(executable) = std::env::current_exe() else {
+            self.report_configuration_notice(
+                "Safe Mode restart could not locate the fesTerm executable.",
+            );
+            return;
+        };
+        match std::process::Command::new(executable)
+            .arg("--safe-mode")
+            .spawn()
+        {
+            Ok(_) => {
+                self.quit_confirmed = true;
+                crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UserQuit);
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(_) => self.report_configuration_notice(
+                "Safe Mode restart could not start. fesTerm remains open and unchanged.",
+            ),
+        }
+    }
+
+    pub(crate) fn request_normal_restart(&mut self, context: &egui::Context) {
+        if !self.safe_mode {
+            self.report_configuration_notice("fesTerm is already running normally.");
+            return;
+        }
+        if self.role == crate::app::WindowRole::Secondary {
+            self.normal_restart_requested = true;
+            context.request_repaint();
+            return;
+        }
+        if self.overlays.pending_document_close.is_some()
+            || self.overlays.pending_quit.is_some()
+            || self.state.has_recovery_notices()
+            || self
+                .overlays
+                .open_refusal
+                .as_ref()
+                .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement)
+        {
+            return;
+        }
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(
+                tab,
+                AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::RestartNormally),
+            );
+            return;
+        }
+        if self.refuse_application_action_for_dirty_document("Restarting normally") {
+            return;
+        }
+        let counts = self.close_session_counts();
+        self.overlays.pending_quit = Some(PendingQuitConfirmation {
+            counts,
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::RestartNormally,
+        });
+    }
+
+    fn finish_normal_restart(&mut self, context: &egui::Context) {
+        let Ok(executable) = std::env::current_exe() else {
+            self.report_configuration_notice(
+                "Normal restart could not locate the fesTerm executable.",
+            );
+            return;
+        };
+        match std::process::Command::new(executable).spawn() {
+            Ok(_) => {
+                self.quit_confirmed = true;
+                crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UserQuit);
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(_) => self.report_configuration_notice(
+                "Normal restart could not start. fesTerm remains in Safe Mode.",
+            ),
+        }
+    }
+
     fn finish_update_restart(&mut self, context: &egui::Context) {
         self.update_exit_requested = true;
         self.quit_confirmed = true;
@@ -738,6 +857,8 @@ impl FesTermApp {
         match purpose {
             QuitConfirmationPurpose::InstallUpdate => self.request_update_install(),
             QuitConfirmationPurpose::RestartAfterUpdate => self.request_update_restart(context),
+            QuitConfirmationPurpose::RestartInSafeMode => self.request_safe_mode_restart(context),
+            QuitConfirmationPurpose::RestartNormally => self.request_normal_restart(context),
             QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
                 // Re-requesting the close rather than confirming it here: the
                 // session confirmation this interrupted has still not been
@@ -802,6 +923,16 @@ impl FesTermApp {
                         "The installed update will close every session.",
                         "Restart fesTerm",
                     ),
+                    QuitConfirmationPurpose::RestartInSafeMode => (
+                        "Restart fesTerm in Safe Mode?",
+                        "Open sessions will close and unsaved terminal history will be discarded. MCP and JavaScript will be disabled in the new process; saved settings and files will not change.",
+                        "Restart in Safe Mode",
+                    ),
+                    QuitConfirmationPurpose::RestartNormally => (
+                        "Restart fesTerm normally?",
+                        "Open sessions will close and unsaved terminal history will be discarded. The saved MCP and JavaScript settings will take effect in the new process.",
+                        "Restart Normally",
+                    ),
                 };
                 confirmation_body(ui, |ui| {
                     ui.heading(heading);
@@ -847,6 +978,7 @@ impl FesTermApp {
                         crate::diagnostics::ExitIntent::UserQuit,
                     );
                 }
+
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             QuitConfirmationPurpose::InstallUpdate => {
@@ -856,7 +988,41 @@ impl FesTermApp {
             QuitConfirmationPurpose::RestartAfterUpdate => {
                 self.finish_update_restart(context);
             }
+            QuitConfirmationPurpose::RestartInSafeMode => {
+                if self.revalidate_restart_before_spawn("Restarting in Safe Mode") {
+                    self.finish_safe_mode_restart(context);
+                }
+            }
+            QuitConfirmationPurpose::RestartNormally => {
+                if self.revalidate_restart_before_spawn("Restarting normally") {
+                    self.finish_normal_restart(context);
+                }
+            }
         }
+    }
+
+    fn revalidate_restart_before_spawn(&mut self, action: &str) -> bool {
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(
+                tab,
+                AfterDocumentClose::ResumeClose(if self.safe_mode {
+                    QuitConfirmationPurpose::RestartNormally
+                } else {
+                    QuitConfirmationPurpose::RestartInSafeMode
+                }),
+            );
+            return false;
+        }
+        !self.refuse_application_action_for_dirty_document(action)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn confirm_quit_purpose_for_test(
+        &mut self,
+        purpose: QuitConfirmationPurpose,
+        context: &egui::Context,
+    ) {
+        self.confirm_quit_purpose(purpose, context);
     }
 
     pub(super) fn cancel_paste_confirmation(&mut self) {

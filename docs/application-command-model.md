@@ -112,6 +112,28 @@ OpenWorkspace(workspace)
 
 These names are illustrative rather than a required Rust API, but the current `AppCommand` vocabulary follows this shape closely. The implementation may use enums, typed command objects, or another explicit representation provided that the following properties hold.
 
+`NewJavaScriptWorkflowDraft`, `OpenJavaScriptWorkflowEditorPicker`,
+`OpenJavaScriptWorkflowSource` and `ValidateJavaScriptWorkflowSource` are
+native authoring commands, distinct from Settings' execution capture. The
+picker collects a local path, while the state owner opens and marks the source
+atomically. Validation runs off the UI thread and publishes only for the exact
+document revision it checked; edits and undo/reload/rebind invalidate the
+verdict. These commands work while the JavaScript workflow preference is off.
+They do not construct `NativeCommand::CaptureWorkflow`, approve scopes or start
+automation. `*.workflow.json` is recognized by the editor as workflow source;
+ordinary Open File behavior remains unchanged for generic JSON.
+
+`RegisterJavaScriptWorkflowSource` is an explicit non-authorizing bridge from
+one saved, unconflicted local editor document to the private registry. It
+queues bounded import work, never rereads a mutable path for execution, and
+opens Settings for the exact managed digest. `RegisterWorkflow`,
+`SelectRegisteredWorkflow` and `DeleteRegisteredWorkflow` are native
+automation commands: registration copies an immutable artifact, selection only
+loads that artifact for the existing review, and deletion updates metadata
+without touching the editor file. `--safe-mode` dominates these commands and
+prevents the registry or automation coordinator from activating for that
+process.
+
 ## Required Properties
 
 1. **Single semantic implementation.** The same operation invoked from two UI surfaces must converge on the same command handling path.
