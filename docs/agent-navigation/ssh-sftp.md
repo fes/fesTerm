@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4b845fc749db5cc127281ec9bd8a0b7a6601b5f27193745870ac3765ce05ea00"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6001f1c2a22539629597d4b3630dc18e2289a029a460a6889d723fc28b0fa324"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

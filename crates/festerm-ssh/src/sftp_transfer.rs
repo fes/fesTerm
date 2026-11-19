@@ -3325,6 +3325,25 @@ mod tests {
         }
     }
 
+    // TestBackend maps protocol paths back onto the native filesystem. Keep
+    // remote basenames slash-separated even when the fixture lives on Windows.
+    fn protocol_fixture_path(path: &Path) -> SftpPath {
+        SftpPath::remote(display_path(path).replace('\\', "/"))
+    }
+
+    #[test]
+    fn protocol_fixture_paths_keep_windows_native_basename_separate() {
+        let windows = SftpPath::remote(r"D:\fixture\source\a");
+        let native_basename = windows.file_name().unwrap();
+        assert_ne!(native_basename, "a");
+        assert!(validate_remote_local_file_name(&native_basename, "fixture basename").is_err());
+        for native in [r"D:\fixture\source\a", "D:/fixture/source/a"] {
+            let path = protocol_fixture_path(Path::new(native));
+            assert_eq!(path.file_name().unwrap(), "a");
+            assert_eq!(path, SftpPath::remote("D:/fixture/source/a"));
+        }
+    }
+
     fn upload_request(source: &Path, destination_directory: &Path) -> SftpTransferRequest {
         SftpTransferRequest::new(
             SftpPath::local(source.to_path_buf()),
@@ -4981,33 +5000,49 @@ mod tests {
                     stdfs::write(destination.join(name), b"old").unwrap();
                 }
                 test_runtime().block_on(async {
-                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    let stage = std::cell::Cell::new("starting fixture");
+                    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                         let (commands, mut events, _) = spawn_worker(TestBackend::default()).await;
-                        let request = |name| {
+                        let request = |name: &str| {
                             let source = source.join(name);
-                            SftpTransferRequest::new(
-                                if download { SftpPath::remote(display_path(&source)) } else { SftpPath::local(source) },
-                                if download { SftpPath::local(&destination) } else { SftpPath::remote(display_path(&destination)) },
-                            ).unwrap()
+                            let request = SftpTransferRequest::new(
+                                if download { protocol_fixture_path(&source) } else { SftpPath::local(source) },
+                                if download { SftpPath::local(&destination) } else { protocol_fixture_path(&destination) },
+                            ).unwrap();
+                            assert_eq!(request.source.file_name().unwrap(), name,
+                                "fixture source must have one protocol/native basename");
+                            request
                         };
                         let first = queue_batch(&commands, vec![request("a"), request("b")]);
                         let second = queue_numbered_batch(&commands, 3, request("separate"));
                         let mut collisions = Vec::new();
-                        for _ in 0..3 {
-                            collisions.push(next_collision(&mut events).await.1);
+                        stage.set("waiting for three initial collisions");
+                        while collisions.len() < 3 {
+                            match events.recv().await.expect("fixture event channel closed") {
+                                SftpTransferEvent::Collision(collision) => collisions.push(collision),
+                                event @ (SftpTransferEvent::ItemFailed { .. }
+                                    | SftpTransferEvent::ItemCancelled { .. }
+                                    | SftpTransferEvent::ItemSkipped { .. }
+                                    | SftpTransferEvent::ItemCompleted { .. }
+                                    | SftpTransferEvent::BatchFinished { .. }) => {
+                                    panic!("unexpected event before collision: {event:?}; decision={decision:?}, download={download}");
+                                }
+                                _ => {}
+                            }
                         }
                         let chosen = collisions.iter().find(|c| c.batch_id == first.batch_id).unwrap();
                         let separate = collisions.iter().find(|c| c.batch_id == second.batch_id).unwrap();
                         commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                             collision_id: chosen.id, decision, scope: SftpCollisionScope::RemainingConflictsInBatch,
                         })).await.unwrap();
+                        stage.set("waiting for selected batch resolution");
                         let first_events = collect_until_batch_finished(&mut events, first.batch_id).await;
                         let resolved = first_events.iter().filter(|event| match (decision, event) {
                             (SftpCollisionDecision::Skip, SftpTransferEvent::ItemSkipped { batch_id, .. }) |
                             (SftpCollisionDecision::Replace, SftpTransferEvent::ItemCompleted { batch_id, .. }) => *batch_id == first.batch_id,
                             _ => false,
                         }).count();
-                        assert_eq!(resolved, 2, "one decision resolves both paused conflicts");
+                        assert_eq!(resolved, 2, "one decision resolves both paused conflicts; decision={decision:?}, download={download}, events={first_events:?}");
                         assert!(!first_events.iter().any(|event| matches!(event,
                             SftpTransferEvent::BatchFinished { batch_id } if *batch_id == second.batch_id)));
                         assert_eq!(stdfs::read(destination.join("separate")).unwrap(), b"old");
@@ -5015,10 +5050,13 @@ mod tests {
                         commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                             collision_id: separate.id, decision: SftpCollisionDecision::Skip, scope: SftpCollisionScope::ThisItem,
                         })).await.unwrap();
+                        stage.set("waiting for separate batch's explicit Skip");
                         let second_events = collect_until_batch_finished(&mut events, second.batch_id).await;
                         assert!(second_events.iter().any(|event| matches!(event,
-                            SftpTransferEvent::ItemSkipped { transfer_id, .. } if *transfer_id == second.transfer_ids[0])));
-                    }).await.expect("batch decisions must not resolve or strand a separate batch");
+                            SftpTransferEvent::ItemSkipped { transfer_id, .. } if *transfer_id == second.transfer_ids[0])),
+                            "separate batch must resolve only after its own Skip; events={second_events:?}");
+                    }).await;
+                    assert!(result.is_ok(), "batch decisions must not resolve or strand a separate batch; decision={decision:?}, download={download}, stage={}", stage.get());
                 });
                 for name in ["a", "b"] {
                     assert_eq!(
