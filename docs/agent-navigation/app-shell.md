@@ -1,19 +1,20 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9d4df16a75901795f2bb5a5b40e4663c62b987b7a51170074493b0acc44b974c"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "432cb51f9d783c5d1b61f17ff8031039ac6cd4ff585178994fc9dede1decf586"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns desktop shell lifecycle, pane rendering, and screen-to-command routing for fesTerm.
+Owns the desktop shell lifecycle, egui frame loop, and profile/settings/host command routing for fesTerm.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## Startup flow
 
-Use for: Startup, restored windows, and saved workspace recovery
+Use for: App starts, restores windows, and reopens a saved workspace
 
-- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native viewport startup
+- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap, native viewport setup, and startup restore
 - [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns every window and cross-window policy
+- [`with_startup_configuration`](../../app/festerm/src/app.rs) — Builds the primary window from saved configuration
 
 Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent through lifecycle churn
@@ -25,7 +26,7 @@ Caveats:
 
 ## Frame loop
 
-Use for: Frame logic, close requests, and focused pane rendering
+Use for: A frame is being built and terminal input is routed to the focused pane
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and records geometry
 - [`ui_content`](../../app/festerm/src/app.rs) — Builds the egui frame and routes pane overlays
@@ -40,9 +41,9 @@ Caveats:
 
 ## Screen routing
 
-Use for: Profiles, settings, and typed app command dispatch
+Use for: Users open profile/settings screens and trigger typed app commands
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect or save dispatch flow
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect/save dispatch flow
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, bindings, and automation preferences
 
 Evidence:
@@ -56,7 +57,7 @@ Caveats:
 
 ## Host and lifecycle
 
-Use for: Host review, consent, and durable exit diagnostics
+Use for: A host is reviewed for consent or the process must preserve durable exit evidence
 
 - [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, approval, and review actions
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the durable lifecycle journal and panic hook

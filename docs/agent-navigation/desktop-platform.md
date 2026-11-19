@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "c81177036b2fc793b2d651fcfed01d1bab2ecaea2a4410b270c8152b8e54c984"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "51e3fd921acb8f26128cb9e09daa4bd6a38daf6e04677594d30a318ce12e6e1c"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged self-update gates, real native smoke checks, macOS Finder/AppKit bridges, and wake/privacy notifications across platforms.
+Desktop platform integration owns packaging gates, real native smoke checks, AppKit/Finder bridges, and wake/privacy callbacks across desktop platforms.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
