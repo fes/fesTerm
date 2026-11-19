@@ -49,6 +49,10 @@ qualifies the two existing controlled OFF/ON cases using composed functional,
 visual and persistence evidence. It retains the original cleanup uncertainty
 and the separate successful followup; it does not complete the 24-case matrix.
 
+The [Windows 0.17.12 pending-Disable recovery record](../validation/dev-tunnels/windows-disable-0.17.12.json)
+records same-epoch completion and a fresh Disable/Enable cycle. This lifecycle
+qualification does not execute the full Linux-client/Windows-server pair.
+
 ## Fresh Copilot visual parity in every case
 
 Fresh actual GitHub Copilot CLI visual parity is an active acceptance requirement

@@ -60,9 +60,10 @@ existing-session attachment with native-vault credentials, bounded transport,
 frontend-owned terminal adoption and account fencing. Its original manually
 paired owner path is advanced administration and does not qualify normal
 account-based remoting. The ordinary provider-authorized server/client and UI
-integration has focused regression and controlled native-helper coverage; all
-24 normal native matrix cases and
-matched-grid Copilot initial-screen comparisons remain unaccepted. Explicit
+integration has focused regression and controlled native-helper coverage. The
+[two controlled Windows-client/Linux-server cases](validation/dev-tunnels/windows-client-linux-0.17.12.json)
+include both creation policies and matched-grid Copilot comparisons; the full
+24-case native matrix remains incomplete. Explicit
 creation keeps its issued action after an uncertain result, with no replacement
 create, automatic enrollment or legacy fallback. This is not stage-6 completion.
 The opt-in mobile client has a protected native-vault original-action checkpoint:
