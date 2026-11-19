@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "cell_density"
 harness = false
+
+[[test]]
+name = "character_input_allocations"
+harness = false

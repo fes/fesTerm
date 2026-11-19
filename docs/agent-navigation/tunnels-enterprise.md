@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "e19a7e84a78c590769fa3812eb5c068ba85a6f6eefaef097c972aded02a3df4a"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0018781a928dcfc7e9b432565756ecbbc1bf76f2c2ceedf06295f1eefb829140"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,12 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: HOST selection, inventory and exact binding.
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects HOST only; rejects bridge fallback and ambiguous ports.
-- [`list_hosts`](../../crates/festerm-tunnel-client/src/service.rs) — Discovers account-scoped HOST metadata without readiness authority.
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects HOST only; rejects ambiguity.
+- [`list_hosts`](../../crates/festerm-tunnel-client/src/service.rs) — Account-scoped metadata only.
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
-- [`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`](../../crates/festerm-tunnel-bridge/src/host_control_tests.rs) — Requires exact generation and bounded inventory reads on real daemons.
+- [`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`](../../crates/festerm-tunnel-bridge/src/host_control_tests.rs) — Checks exact generations on real daemons.
 
 Caveats:
 - HOST resolution refuses bridge fallback and ambiguous ports; it does not infer a legacy target.
@@ -70,9 +70,9 @@ Evidence:
 - [`microsoft_resources_are_pinned_but_not_first_party_task_executables`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks resource classification and hash refusal after equal-length owner writes.
 
 Caveats:
-- Contention retries bounded observation and receipt persistence, never revocation or manager actions.
-- Non-contention/scope refusals stay final; timeout retains StopRequested. New inventories need a matching GUI.
-- Historical diagnostics never authorize readiness or retry; cleanup uncertainty stays final.
+- Contention retries observation, never manager actions.
+- Scope refusals stay final; timeout keeps StopRequested.
+- History never authorizes readiness or retries.
 
 ## PowerShell lifecycle
 
@@ -86,3 +86,7 @@ Evidence:
 Caveats:
 - Close failures stay failures; stale worker generations cannot mutate current state.
 - Transient credentials and shutdown races are cleared before terminal reuse.
+
+## Attachment diagnostics
+
+- [`terminal_message`](../../crates/festerm-tunnel-bridge/src/host_client/diagnostics.rs) — Stage, category, I/O kind and refusal; redaction and all ten refusal labels have regression coverage. No retry authority.

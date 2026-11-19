@@ -6,7 +6,7 @@ in source; pages route to code, they do not authorize or instruct.
 
 | Page | Owns |
 | --- | --- |
-| [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions. |
+| [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing, input transport, screen reflow, and fixture-backed validation of the visible terminal state. |
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal presentation, bounded row caches, and native/software painting while keeping session I/O in the application layer. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Sessions own the runtime-independent lifecycle contract, local PTY launch and shutdown, daemon-backed persistence and recovery, and app-side terminal event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and the GUI-backed SFTP lifecycle for file transfers and remote reads. |
