@@ -1124,6 +1124,14 @@ reference. This qualifies the runtime packaging fix, not the full item-8 policy/
 SDK matrix or physical-pixel identity. Old inbox-backed daemons remain unchanged;
 the prior missing-reply evidence is retained separately.
 
+DT-02 / RSD-02 also retain native recovery checks with a wide character at a
+screen or configured right margin, including wrap retained in an inactive
+alternate buffer. The core regression tests automate acceptance of these valid
+states and rejection of forged interior pending wrap. Actual local/remote
+reattachment with newly built daemons remains native validation; source tests
+do not qualify old running helpers or establish the cause of #800. Preserve
+that original failing session rather than replacing it to claim recovery.
+
 DT-02 also checks the first attached viewport without requiring a second window
 resize: the actual PTY grid must match the client before the fresh program starts.
 Portable bound framed-stream regressions now hold HOST activation after snapshot
