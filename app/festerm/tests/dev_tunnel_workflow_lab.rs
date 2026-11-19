@@ -3,7 +3,7 @@
 #![cfg(feature = "experimental-dev-tunnels")]
 
 use festerm_config::Configuration;
-use festerm_core::{Dimensions, Terminal};
+use festerm_core::{CellWidth, Dimensions, Terminal};
 use festerm_host_protocol::{
     AttachmentId, ContractError, Epoch, Lifetime, LogicalSessionId, OperationId, Recipe, Refusal,
 };
@@ -130,13 +130,34 @@ fn probe(shell: Shell, nonce: &str) -> (Vec<u8>, Vec<u8>) {
     (command.into_bytes(), marker.into_bytes())
 }
 
-fn proof_received(output: &[u8], marker: &[u8]) -> bool {
-    // Require a terminated complete output line, never a wrapped input prefix.
-    output.split_inclusive(|byte| *byte == b'\n').any(|line| {
-        line.strip_suffix(b"\n")
-            .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
-            == Some(marker)
-    })
+fn proof_received(terminal: &Terminal, marker: &[u8]) -> bool {
+    // ConPTY may redraw a completed line using VT cursor movement rather than
+    // emitting a standalone raw marker + CRLF. Inspect the same parsed screen
+    // as the app, requiring a whole, unwrapped row behind the current cursor.
+    // The random marker is absent from every supported probe's echoed input.
+    !marker.is_empty()
+        && marker.is_ascii()
+        && (0..terminal.cursor().row()).any(|row| {
+            let screen = terminal.screen();
+            if screen.row_soft_wrapped(row) != Some(false)
+                || (row > 0 && screen.row_soft_wrapped(row - 1) != Some(false))
+            {
+                return false;
+            }
+            // Compare complete cell text: character() alone drops combining
+            // marks. Reject wide/continuation cells and ignore only plain
+            // trailing padding, never a prefix or decorated/suffixed marker.
+            marker.iter().enumerate().all(|(column, expected)| {
+                terminal.cell_ref(column, row).is_some_and(|cell| {
+                    cell.width() == CellWidth::Single
+                        && cell.text().as_bytes() == std::slice::from_ref(expected)
+                })
+            }) && (marker.len()..screen.dimensions().columns()).all(|column| {
+                terminal
+                    .cell_ref(column, row)
+                    .is_some_and(|cell| cell.width() == CellWidth::Single && cell.text() == " ")
+            })
+        })
 }
 
 #[test]
@@ -144,16 +165,69 @@ fn roundtrip_proof_is_absent_from_every_supported_input_and_requires_complete_li
     for shell in [Shell::Posix, Shell::Powershell, Shell::Cmd] {
         let (input, marker) = probe(shell, "0123456789abcdef0123456789abcdef");
         assert!(!input.windows(marker.len()).any(|bytes| bytes == marker));
-        assert!(!proof_received(&input, &marker));
-        let mut output = b"\r\n".to_vec();
-        output.extend(&marker);
-        assert!(!proof_received(&output, &marker));
-        output.extend(b"-wrong\r\n");
-        assert!(!proof_received(&output, &marker));
-        output.extend(&marker);
-        output.extend(b"\r\n");
-        assert!(proof_received(&output, &marker));
+        let mut echoed = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+        echoed.ingest(&input);
+        assert!(!proof_received(&echoed, &marker));
+        let mut terminal = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+        terminal.ingest(b"\r\n");
+        terminal.ingest(&marker);
+        assert!(!proof_received(&terminal, &marker));
+        terminal.ingest(b"-wrong\r\n");
+        assert!(!proof_received(&terminal, &marker));
+        terminal.ingest(&marker);
+        terminal.ingest(b"\r\n");
+        assert!(proof_received(&terminal, &marker));
     }
+}
+
+#[test]
+fn roundtrip_proof_accepts_chunked_vt_redraw_without_raw_newline() {
+    let marker = b"FESTERM_LAB_0123456789abcdef0123456789abcdef";
+    let mut terminal = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+    let mut redraw = b"\x1b[2;1H\x1b[0K\x1b[32m".to_vec();
+    redraw.extend(marker);
+    redraw.extend(b"\x1b[0m");
+    for byte in redraw {
+        terminal.ingest(&[byte]);
+        assert!(!proof_received(&terminal, marker));
+    }
+    // A subsequent prompt on the following row establishes completed output.
+    terminal.ingest(b"\x1b[3;1HC:\\lab>");
+    assert!(proof_received(&terminal, marker));
+}
+
+#[test]
+fn roundtrip_proof_refuses_prefixed_suffixed_and_wrapped_screen_rows() {
+    let marker = b"FESTERM_LAB_0123456789abcdef0123456789abcdef";
+    for prefix in [b"echo ".as_slice(), b"".as_slice()] {
+        let mut terminal = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+        terminal.ingest(prefix);
+        terminal.ingest(marker);
+        if prefix.is_empty() {
+            terminal.ingest(b"-wrong");
+        }
+        terminal.ingest(b"\r\n");
+        assert!(!proof_received(&terminal, marker));
+    }
+    let mut wrapped = Terminal::new(Dimensions::new(20, 30).unwrap()).unwrap();
+    wrapped.ingest(marker);
+    wrapped.ingest(b"\r\n");
+    assert!(!proof_received(&wrapped, marker));
+}
+
+#[test]
+fn roundtrip_proof_refuses_wrapped_prefix_and_combining_suffix() {
+    let marker = b"FESTERM_LAB_0123456789abcdef0123456789abcdef";
+    let mut wrapped_prefix = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+    wrapped_prefix.ingest(&[b'x'; 120]);
+    wrapped_prefix.ingest(marker);
+    wrapped_prefix.ingest(b"\r\n");
+    assert!(!proof_received(&wrapped_prefix, marker));
+
+    let mut decorated = Terminal::new(Dimensions::new(120, 30).unwrap()).unwrap();
+    decorated.ingest(marker);
+    decorated.ingest("\u{0301}\r\n".as_bytes());
+    assert!(!proof_received(&decorated, marker));
 }
 
 #[track_caller]
@@ -286,20 +360,27 @@ impl Peer {
                 );
                 require(session.adopt_into(&mut terminal));
                 let _ = session.try_recv_event();
-                assert!(!session.lifecycle().is_terminal(), "HOST attachment failed");
+                // HostSession retains finite, content-free attachment stage
+                // and cause diagnostics. Do not discard them at this boundary.
+                let lifecycle = session.lifecycle();
+                assert!(
+                    !lifecycle.is_terminal(),
+                    "HOST attachment failed: {lifecycle:?}"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             let (input, marker) = probe(self.shell, &uuid::Uuid::new_v4().simple().to_string());
             require(session.try_send_input(&input));
-            let mut output = Vec::new();
-            while !proof_received(&output, &marker) {
+            let mut output_bytes = 0usize;
+            while !proof_received(&terminal, &marker) {
                 assert!(
                     Instant::now() < self.deadline,
                     "bounded shell roundtrip deadline"
                 );
                 if let Ok(SessionEvent::Output(bytes)) = session.try_recv_event() {
-                    output.extend(bytes);
-                    assert!(output.len() <= 1024 * 1024, "bounded lab shell output");
+                    output_bytes = output_bytes.saturating_add(bytes.len());
+                    assert!(output_bytes <= 1024 * 1024, "bounded lab shell output");
+                    terminal.ingest(&bytes);
                 }
                 assert_eq!(
                     session.lifecycle(),
