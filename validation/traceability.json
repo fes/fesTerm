@@ -1719,7 +1719,12 @@
         "native_ssh_remote_sessiond_rejects_an_untrusted_host_key",
         "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
         "remote_pending_adoption_refuses_competing_bridge_before_corrupt_payload_delivery",
-        "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
+        "invalid_remote_snapshots_never_adopt_or_displace_the_live_session",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_screen_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer",
+        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster"
       ],
       "manual_scenarios": [
         "CP-24"
@@ -2156,7 +2161,12 @@
         "authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies",
         "malformed_authoritative_control_is_reported",
         "backend_owned_resize_waits_for_acknowledgement_and_does_not_repeat_requests",
-        "isolated_multiplexer_discovery_churn"
+        "isolated_multiplexer_discovery_churn",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_screen_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer",
+        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster"
       ],
       "manual_scenarios": [
         "CP-12",
@@ -6369,7 +6379,12 @@
         "starter_diagnostics_are_numeric_bounded_and_never_daemon_identity",
         "startup_failure_diagnostics_keep_stage_code_and_original_result",
         "startup_diagnostic_storage_failure_never_changes_success_or_failure",
-        "startup_stages_and_opaque_breakaway_refusal_preserve_numeric_cause"
+        "startup_stages_and_opaque_breakaway_refusal_preserve_numeric_cause",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_screen_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin",
+        "recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster",
+        "recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer",
+        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster"
       ],
       "manual_scenarios": [
         "DT-05",

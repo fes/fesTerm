@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "108fe1174bc7ddfcd399b797c849bbba2f9385c819361f3825f4fcf2d7b519ff"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "e870672513fc8281f4842b8d8e6d440704d38c836947e5998e5fdb7db991d736"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -87,3 +87,7 @@ Evidence:
 
 Caveats:
 - GUI and setup/operator processes never set this fence; native behavior remains a separate gate.
+
+## Native recovery qualification
+
+- [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
