@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-agent", "sources": "11a7b08568f8213b4e707d3fd0f0c0d3f31afba6bae7f22fc22545b3e9cd56d9"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-agent", "sources": "a1fa0537ea8f2be1f8c329f3db317c744a4b724ee91aaccbd4277450cf1034a2"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -54,7 +54,7 @@ Evidence:
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
 - Background updates never unlock or fall back to interactive methods.
-- Secret references are opaque and must remain canonical UUIDv4 strings.
+- Opaque canonical refs only; native no-UI qualification remains separate.
 
 ## File security
 

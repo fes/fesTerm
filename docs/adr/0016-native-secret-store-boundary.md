@@ -48,3 +48,17 @@ private keys, passphrases, agents, key files, or host trust.
   on Linux; KWallet is usable only through its Secret Service integration.
 - TOML remains secret-free: it can contain only an opaque reference for a
   native stored SSH password.
+
+## Validation impact
+
+Secret-store unit regressions cover unsupported backends without fallback,
+existing-reference updates, size/missing refusal, the exact unlocked-item
+selector and failed macOS fence setup/readback. Synthetic HOST regressions
+cover persistence before readiness, changed scope, cancellation, retained-work
+draining and fatal uncertain renewal without replay. Platform typechecks do
+not establish native vault behavior.
+
+DT-05 additionally requires actual native noninteractive renewal in the same
+protected run, with no prompt and unchanged session/policy identity. macOS
+qualification must use the dedicated serving entrypoint; GUI and foreground
+setup remain unfenced. These native gates remain unrun for this change.
