@@ -4,11 +4,22 @@ This is the independent authenticity foundation of [ADR 0084 §9](adr/0084-host-
 tracked in [#681](https://github.com/fes/fesTerm/issues/681), not completion of
 stage 7. The separate schema-2 host package contains sessiond, tunnel bridge, setup and
 the GUI-free `festerm-host` CLI (plus the Windows worker), VERSION, LICENSE and
-THIRD_PARTY_NOTICES.txt. These six native targets use the existing helper build,
+THIRD_PARTY_NOTICES.txt. New Windows HOST bundles additionally retain the pinned
+ConPTY pair and its Microsoft attribution/MIT terms (ADR 0011). These six native targets use the existing helper build,
 macOS signing/notarization and Windows Authenticode paths; Linux uses the shared
 updater signature. Native release qualification is not established by fixtures.
 Normal CI runs `python scripts/check_host_notices.py` against actual native
 Cargo metadata, including `app/festerm-host` workspace membership.
+
+The two Windows HOST layouts retain schema 2 and the existing updater key.
+New production archives require the complete pair at the fixed `runtime/conpty`
+paths, with manifest-pinned SHA-512 bytes and original Microsoft signatures;
+these mode-0644 resources are not first-party signing inputs or Task targets.
+Private staging revalidates their immutable bytes and the existing loader checks
+both pins before execution. Partial, mixed-architecture, aliased or extra entries
+are refused. Historical no-sidecar bundles remain readable with inbox fallback;
+older consumers may reject the new layout, so a matching current GUI/verifier is
+required. Legacy helper payloads and other platforms are unchanged.
 
 ## Wire contract and trust
 
@@ -85,10 +96,11 @@ Bounds: manifest/signature each 4 KiB, compressed archive 256 MiB, expanded
 archive 512 MiB, executable entry 128 MiB, each metadata/notice entry 16 MiB;
 version at most 32 bytes. Downloaders must enforce the same limits while
 receiving bytes and apply their own time/cancellation limits.
-The verifier enforces the exact seven Unix/eight Windows host entries or the
-unchanged six Unix/seven Windows legacy helper entries,
+The verifier enforces the exact seven Unix HOST entries, either the historical
+eight Windows HOST entries or those eight plus the complete architecture-matched
+pinned ConPTY pair, and the unchanged six Unix/seven Windows legacy helper entries,
 nonempty regular files, exact 0755/0644 modes and exact VERSION contents.
-It refuses duplicates, missing/extra/nested/absolute/traversal names,
+It refuses duplicates, missing/extra/unlisted-nested/absolute/traversal names,
 symlinks, hardlinks, special files, tar extension records, encrypted ZIPs,
 ZIP64/multidisk/commented ZIPs, oversized headers, nonzero data after TAR end
 markers and trailing gzip streams.

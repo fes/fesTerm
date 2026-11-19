@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "4bcb622c1ae5c2210f7efdd7a86732f3955522f1d161f9d4140205c1faf48e13"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "bd6bf34ff4d4b2430ce7e1f25de81d2d1da6cd6270f3daa4ebbceffcc06a3777"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -45,9 +45,11 @@ Use for: How is a named session resumed, reconnected, or mirrored for persistenc
 
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery synchronization.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Intentional backend-owned mirror drains replies while ingesting bytes.
+- [`stage_windows_daemon`](../../crates/festerm-sessiond/src/lib.rs) — Copies the helper and its fixed ConPTY sidecar into the per-release generation.
 
 Evidence:
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect policy, and explicit attach semantics.
+- [`the_conpty_sidecar_is_staged_beside_the_helper_that_loads_it`](../../crates/festerm-sessiond/src/lib.rs) — Checks executable-relative sidecar retention.
 
 Caveats:
 - Daemon protocol and recovery schema versions must remain compatible.

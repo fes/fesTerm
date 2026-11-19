@@ -53,6 +53,69 @@ pub mod layout {
 
 pub use layout::{bundled_runtime_relative_paths, BUNDLED_CONPTY_RUNTIME_DIRECTORY};
 
+/// Fixed archive-relative paths and hashes shared by HOST packaging validation
+/// and the loader. No caller-supplied path or pin participates in selection.
+pub fn bundled_runtime_assets_for_arch(architecture: &str) -> Option<[(String, String); 2]> {
+    let (rid, host) = match architecture {
+        "x86_64" => ("win-x64", "x64"),
+        "aarch64" => ("win-arm64", "arm64"),
+        _ => return None,
+    };
+    let dll_asset = format!("{rid}/conpty.dll");
+    let host_asset = format!("{host}/OpenConsole.exe");
+    Some([
+        (
+            format!("runtime/conpty/{dll_asset}"),
+            manifest_file_hash(&dll_asset)?.to_owned(),
+        ),
+        (
+            format!("runtime/conpty/{rid}/{host_asset}"),
+            manifest_file_hash(&host_asset)?.to_owned(),
+        ),
+    ])
+}
+
+fn manifest_file_hash(asset: &str) -> Option<&'static str> {
+    const MANIFEST: &str = include_str!("../../../third_party/conpty/manifest.json");
+    let section = MANIFEST.get(MANIFEST.find(&format!("\"{asset}\":"))?..)?;
+    let marker = "\"sha512\": \"";
+    let offset = section.find(marker)? + marker.len();
+    section
+        .get(offset..offset + 128)
+        .filter(|hash| hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+#[cfg(test)]
+mod asset_tests {
+    #[test]
+    fn portable_host_resources_use_the_loader_manifest_and_closed_architecture_layout() {
+        for (arch, rid, host) in [
+            ("x86_64", "win-x64", "x64"),
+            ("aarch64", "win-arm64", "arm64"),
+        ] {
+            let assets = super::bundled_runtime_assets_for_arch(arch).unwrap();
+            assert_eq!(assets[0].0, format!("runtime/conpty/{rid}/conpty.dll"));
+            assert_eq!(
+                assets[1].0,
+                format!("runtime/conpty/{rid}/{host}/OpenConsole.exe")
+            );
+            assert_eq!(
+                assets[0].1,
+                super::manifest_file_hash(&format!("{rid}/conpty.dll")).unwrap()
+            );
+            assert_eq!(
+                assets[1].1,
+                super::manifest_file_hash(&format!("{host}/OpenConsole.exe")).unwrap()
+            );
+            assert!(assets
+                .iter()
+                .all(|(_, hash)| hash.len() == 128
+                    && hash.bytes().all(|byte| byte.is_ascii_hexdigit())));
+        }
+        assert!(super::bundled_runtime_assets_for_arch("other").is_none());
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::{
@@ -79,7 +142,6 @@ mod imp {
 
     use crate::layout::{runtime_architecture, BUNDLED_CONPTY_RUNTIME_DIRECTORY};
 
-    const MANIFEST: &str = include_str!("../../../third_party/conpty/manifest.json");
     const CONPTY_MODULE_NAME: &[u16] = &[
         b'c' as u16,
         b'o' as u16,
@@ -256,24 +318,11 @@ mod imp {
     }
 
     fn manifest_file_sha512(asset: &str) -> Result<String, ConptyRuntimeError> {
-        let asset_marker = format!("\"{asset}\":");
-        let asset_offset = MANIFEST.find(&asset_marker).ok_or_else(|| {
-            ConptyRuntimeError::new("the ConPTY manifest lacks a required runtime file hash")
-        })?;
-        let sha_marker = "\"sha512\": \"";
-        let hash_offset = MANIFEST[asset_offset..]
-            .find(sha_marker)
-            .map(|offset| asset_offset + offset + sha_marker.len())
+        super::manifest_file_hash(asset)
+            .map(str::to_owned)
             .ok_or_else(|| {
-                ConptyRuntimeError::new("the ConPTY manifest has an invalid runtime file hash")
-            })?;
-        let hash = MANIFEST
-            .get(hash_offset..hash_offset + 128)
-            .filter(|hash| hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(|| {
-                ConptyRuntimeError::new("the ConPTY manifest has an invalid runtime file hash")
-            })?;
-        Ok(hash.to_owned())
+                ConptyRuntimeError::new("the ConPTY manifest lacks a valid runtime file hash")
+            })
     }
 
     fn bundled_runtime_is_valid(runtime: &BundledRuntime) -> bool {

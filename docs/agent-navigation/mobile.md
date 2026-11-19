@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d6d5653c02f6ab004c9895b1e751c2d5c5a82b6d479f13e7c1f12dac65522cc6"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-agent", "sources": "3e0241e3ca77e3bf0dbce6eeba0d720b106fc655191a5734b6bf3c1f8f19e4b5"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -25,16 +25,16 @@ Caveats:
 
 ## Host client flow
 
-Use for: When a task needs host discovery, approval, session inventory, or save-before-connect.
+Use for: Host discovery, inventory and save-before-connect.
 
-- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns discovered hosts, session selection, creation review, and local profile metadata.
+- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns host inventory, reviewed creation and local metadata.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
 
 Evidence:
-- [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Proves adoption before running and lock fencing for installed HOST sessions.
+- [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Checks adoption before Running and lock fencing.
 
 Caveats:
-- Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration.
+- Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration. Desktop HOST packaging does not qualify mobile runtime behavior.
 - Saving a local profile grants neither host creation authority nor filesystem or observation access.
 - Lock and suspension fence input while committed operations retain their original identity.
 

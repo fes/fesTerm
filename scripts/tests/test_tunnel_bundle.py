@@ -33,11 +33,28 @@ class TunnelBundleTests(unittest.TestCase):
             f'[workspace.package]\nversion = "{VERSION}"\nlicense = "MIT"\n',
             encoding="utf-8",
         )
+        # Synthetic pins exercise the producer without downloading Microsoft bytes.
+        for relative in ("third_party/conpty/manifest.json", "packaging/license-fallbacks.toml",
+                         "packaging/license-fallbacks/declared-mit-terms.txt"):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
         self.binaries = self.root / "bin"
         self.binaries.mkdir()
         for platform in bundle.PLATFORMS:
             for name in bundle.binary_names(platform, host=True):
                 (self.binaries / name).write_bytes(f"mock binary {name}".encode())
+        manifest_path = self.root / "third_party/conpty/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for arch, (rid, host_arch) in {"x86_64": ("win-x64", "x64"), "aarch64": ("win-arm64", "arm64")}.items():
+            for relative, asset in ((f"runtime/conpty/{rid}/conpty.dll", f"{rid}/conpty.dll"),
+                                    (f"runtime/conpty/{rid}/{host_arch}/OpenConsole.exe", f"{host_arch}/OpenConsole.exe")):
+                path = self.binaries / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                data = f"synthetic pinned {asset}".encode()
+                path.write_bytes(data)
+                manifest["files"][asset]["sha512"] = hashlib.sha512(data).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
         dependency = self.root / "dependency"
         dependency.mkdir()
         (dependency / "LICENSE-MIT").write_text("actual upstream license\n", encoding="utf-8")
@@ -87,7 +104,7 @@ class TunnelBundleTests(unittest.TestCase):
 
     def install_objc_fallbacks(self):
         fallbacks = self.root / "packaging/license-fallbacks"
-        fallbacks.mkdir(parents=True)
+        fallbacks.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(
             ROOT / "packaging/license-fallbacks.toml",
             self.root / "packaging/license-fallbacks.toml",
@@ -131,8 +148,9 @@ class TunnelBundleTests(unittest.TestCase):
             with self.subTest(platform=platform):
                 first = self.build(platform, output=f"first-{platform}")
                 for path in self.binaries.iterdir():
-                    path.chmod(0o600)
-                    path.touch()
+                    if path.is_file():
+                        path.chmod(0o600)
+                        path.touch()
                 second = self.build(platform, output=f"second-{platform}")
                 self.assertEqual(first.read_bytes(), second.read_bytes())
 
@@ -180,13 +198,61 @@ class TunnelBundleTests(unittest.TestCase):
                 hosted = self.build(platform, output=f"host-{platform}", host=True)
                 self.assertIn(host, self.contents(hosted, platform))
                 self.assertTrue(hosted.name.startswith("fesTerm-host-"))
-                bundle.verify_bundle(hosted, VERSION, platform, host=True)
+                bundle.verify_bundle(hosted, VERSION, platform, host=True, root=self.root)
                 with self.assertRaisesRegex(ValueError, "exactly"):
                     bundle.verify_bundle(hosted, VERSION, platform)
                 (self.binaries / host).unlink(missing_ok=True)
                 with self.assertRaisesRegex(ValueError, host):
                     self.build(platform, output=f"current-{platform}", host=True)
                 (self.binaries / host).write_bytes(b"synthetic host")
+
+    def test_windows_host_requires_verified_pair_and_retains_microsoft_notice(self):
+        for arch in bundle.ARCHITECTURES:
+            archive = self.build("windows", arch, output=f"pinned-{arch}", host=True)
+            contents = self.contents(archive, "windows")
+            self.assertEqual(set(contents), set(bundle.entry_names("windows", host=True)) |
+                             set(bundle.conpty_assets(self.root, arch)))
+            self.assertIn(b"Microsoft Corporation", contents["THIRD_PARTY_NOTICES.txt"][0])
+            self.assertIn(b"Permission is hereby granted", contents["THIRD_PARTY_NOTICES.txt"][0])
+            for name in bundle.conpty_assets(self.root, arch):
+                self.assertEqual(stat.S_IMODE(contents[name][1]), 0o644)
+            name = next(iter(bundle.conpty_assets(self.root, arch)))
+            path = self.binaries / name
+            original = path.read_bytes()
+            path.write_bytes(b"wrong pinned bytes")
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                self.build("windows", arch, output=f"bad-{arch}", host=True)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, "missing regular ConPTY"):
+                self.build("windows", arch, output=f"missing-{arch}", host=True)
+            path.write_bytes(original)
+
+    def test_windows_host_legacy_and_new_layouts_are_closed(self):
+        archive = self.build("windows", host=True)
+        contents = self.contents(archive, "windows")
+        base = set(bundle.entry_names("windows", host=True))
+        assets = list(bundle.conpty_assets(self.root, "x86_64"))
+        def rewrite(label, selected):
+            path = self.root / f"{label}.zip"
+            with zipfile.ZipFile(path, "w") as output:
+                for name, (data, mode) in selected.items():
+                    info = zipfile.ZipInfo(name)
+                    info.create_system = 3
+                    info.external_attr = mode << 16
+                    output.writestr(info, data)
+            return path
+        legacy = rewrite("legacy-host", {name: contents[name] for name in base})
+        bundle.verify_bundle(legacy, VERSION, "windows", host=True, root=self.root)
+        cases = {
+            "partial": {name: value for name, value in contents.items() if name != assets[1]},
+            "mixed": {**{name: value for name, value in contents.items() if name != assets[1]},
+                      "runtime/conpty/win-arm64/arm64/OpenConsole.exe": contents[assets[1]]},
+            "path": {**contents, "runtime/conpty/win-x64/../conpty.dll": contents[assets[0]]},
+            "bytes": {**contents, assets[0]: (b"wrong", contents[assets[0]][1])},
+        }
+        for label, selected in cases.items():
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                bundle.verify_bundle(rewrite(label, selected), VERSION, "windows", host=True, root=self.root)
 
     def test_windows_legacy_worker_notices_include_composition_package_dependencies(self):
         metadata = copy.deepcopy(self.metadata)

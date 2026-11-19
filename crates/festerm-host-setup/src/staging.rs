@@ -138,7 +138,8 @@ pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<St
     };
     let _lease = Lease::exclusive(lock)?;
     for entry in artifact.entries() {
-        publish(&directory, Path::new(entry.name()), entry.bytes())?;
+        let (parent, leaf) = entry_parent(&path, entry.name(), true)?;
+        publish(&parent, Path::new(&leaf), entry.bytes())?;
     }
     publish(
         &directory,
@@ -160,6 +161,32 @@ pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<St
         path,
         _directory: directory,
     })
+}
+
+/// Only authenticated flat entries or the two closed ConPTY layouts can reach
+/// this publication boundary. Each directory is separately opened no-follow;
+/// this is not a general archive-tree extractor.
+pub(crate) fn entry_parent(root: &Path, name: &str, create: bool) -> io::Result<(File, String)> {
+    let parts: Vec<_> = name.split('/').collect();
+    if parts.len() > 1
+        && !["x86_64", "aarch64"].iter().any(|arch| {
+            festerm_windows_runtime::bundled_runtime_assets_for_arch(arch)
+                .is_some_and(|assets| assets.iter().any(|(path, _)| path == name))
+        })
+    {
+        return Err(io::Error::other("host.staged_resource_path"));
+    }
+    let mut path = root.to_owned();
+    let mut directory = storage::private_directory(&path, false)?;
+    for part in &parts[..parts.len() - 1] {
+        path.push(part);
+        directory = storage::private_directory(&path, create)?;
+    }
+    let leaf = parts
+        .last()
+        .filter(|leaf| !leaf.is_empty() && !leaf.contains('\\') && **leaf != "." && **leaf != "..")
+        .ok_or_else(|| io::Error::other("host.staged_resource_path"))?;
+    Ok((directory, (*leaf).to_owned()))
 }
 
 fn publish(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -208,6 +235,35 @@ pub(crate) fn stage_cli_bytes(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn pinned_resource_staging_is_nested_immutable_and_refuses_aliases() {
+        let root = storage::private_test_directory();
+        let artifact = crate::artifacts::windows_conpty_staging_fixture();
+        let cache = root.path().join("cache");
+        let staged = stage_artifact(&artifact, &cache).unwrap();
+        let entry = artifact
+            .entries()
+            .iter()
+            .find(|entry| entry.name().ends_with("conpty.dll"))
+            .unwrap();
+        let resource = staged.path().join(entry.name());
+        assert_eq!(std::fs::read(&resource).unwrap(), entry.bytes());
+        assert!(stage_artifact(&artifact, &cache).is_ok());
+        std::fs::write(&resource, b"changed resource").unwrap();
+        assert!(stage_artifact(&artifact, &cache).is_err());
+        assert!(entry_parent(staged.path(), "runtime/conpty/other/conpty.dll", true).is_err());
+        #[cfg(unix)]
+        {
+            let other = root.path().join("aliased");
+            storage::private_directory(&other, true).unwrap();
+            let alias_cache = root.path().join("alias-cache");
+            let alias_stage = stage_artifact(&artifact, &alias_cache).unwrap();
+            std::fs::remove_dir_all(alias_stage.path().join("runtime")).unwrap();
+            std::os::unix::fs::symlink(&other, alias_stage.path().join("runtime")).unwrap();
+            assert!(stage_artifact(&artifact, &alias_cache).is_err());
+        }
+    }
 
     #[test]
     fn host_staging_keeps_package_identity_separate_from_legacy_helpers() {

@@ -8,7 +8,7 @@ use std::io::{Cursor, Read};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 pub const MAX_MANIFEST_BYTES: usize = 4096;
 pub const MAX_SIGNATURE_BYTES: usize = 4096;
@@ -217,6 +217,24 @@ fn verify_with_key(
     expected: &ExpectedArtifact<'_>,
     key: &str,
 ) -> Result<VerifiedArtifact, ArtifactError> {
+    verify_with_key_using(
+        manifest_bytes,
+        signature_bytes,
+        archive,
+        expected,
+        key,
+        validate_archive,
+    )
+}
+
+fn verify_with_key_using(
+    manifest_bytes: &[u8],
+    signature_bytes: &[u8],
+    archive: &[u8],
+    expected: &ExpectedArtifact<'_>,
+    key: &str,
+    validate: impl FnOnce(&[u8], &Manifest) -> Result<Vec<VerifiedEntry>, ArtifactError>,
+) -> Result<VerifiedArtifact, ArtifactError> {
     if manifest_bytes.is_empty()
         || manifest_bytes.len() > MAX_MANIFEST_BYTES
         || signature_bytes.is_empty()
@@ -271,7 +289,7 @@ fn verify_with_key(
     if manifest.sha256 != digest {
         return Err(ArtifactError::Hash);
     }
-    let entries = validate_archive(archive, &manifest)?;
+    let entries = validate(archive, &manifest)?;
     Ok(VerifiedArtifact {
         manifest,
         entries,
@@ -323,10 +341,12 @@ fn read_entry(
     mode: u32,
     manifest: &Manifest,
     entries: &mut Vec<VerifiedEntry>,
+    resources: &[(String, String)],
 ) -> Result<(), ArtifactError> {
-    let allowed = allowed_names(manifest.platform, manifest.package);
+    let mut allowed = allowed_names(manifest.platform, manifest.package);
+    allowed.extend(resources.iter().map(|(name, _)| name.clone()));
     let executable = name.starts_with("festerm-");
-    let limit = if executable {
+    let limit = if executable || resources.iter().any(|(path, _)| path == name) {
         MAX_ENTRY_BYTES
     } else {
         MAX_NOTICE_BYTES
@@ -371,7 +391,26 @@ fn validate_archive(
     archive: &[u8],
     manifest: &Manifest,
 ) -> Result<Vec<VerifiedEntry>, ArtifactError> {
+    let resources = if manifest.platform == Platform::Windows && manifest.package == Package::Host {
+        festerm_windows_runtime::bundled_runtime_assets_for_arch(manifest.architecture.name())
+            .ok_or(ArtifactError::Target)?
+            .to_vec()
+    } else {
+        Vec::new()
+    };
+    validate_archive_with_resources(archive, manifest, &resources)
+}
+
+// Private seam permits synthetic pin bytes in archive-boundary regressions;
+// all production callers supply only the existing runtime owner's fixed pins.
+fn validate_archive_with_resources(
+    archive: &[u8],
+    manifest: &Manifest,
+    resources: &[(String, String)],
+) -> Result<Vec<VerifiedEntry>, ArtifactError> {
     let mut entries = Vec::new();
+    let base_count = allowed_names(manifest.platform, manifest.package).len();
+    let complete_count = base_count + resources.len();
     if manifest.platform == Platform::Windows {
         // Reject ZIP64/multi-disk/comments and bound central-directory work
         // before ZipArchive allocates from attacker-controlled entry counts.
@@ -384,7 +423,10 @@ fn validate_archive(
                     .ok_or(ArtifactError::Archive)?..,
             )
             .ok_or(ArtifactError::Archive)?;
-        let count = allowed_names(manifest.platform, manifest.package).len() as u16;
+        let count = u16::from_le_bytes([eocd[8], eocd[9]]);
+        if usize::from(count) != base_count && usize::from(count) != complete_count {
+            return Err(ArtifactError::Archive);
+        }
         if eocd[..4] != *b"PK\x05\x06"
             || eocd[4..8] != [0; 4]
             || u16::from_le_bytes([eocd[8], eocd[9]]) != count
@@ -402,7 +444,7 @@ fn validate_archive(
         }
         let mut zip =
             zip::ZipArchive::new(Cursor::new(archive)).map_err(|_| ArtifactError::Archive)?;
-        if zip.len() != allowed_names(manifest.platform, manifest.package).len() {
+        if zip.len() != usize::from(count) {
             return Err(ArtifactError::Archive);
         }
         for index in 0..zip.len() {
@@ -415,7 +457,15 @@ fn validate_archive(
                 .map_err(|_| ArtifactError::Archive)?
                 .to_owned();
             let size = entry.size();
-            read_entry(entry, &name, size, mode & 0o7777, manifest, &mut entries)?;
+            read_entry(
+                entry,
+                &name,
+                size,
+                mode & 0o7777,
+                manifest,
+                &mut entries,
+                resources,
+            )?;
         }
     } else {
         // Bound the *whole* decompressed stream too, including padding/headers.
@@ -444,7 +494,7 @@ fn validate_archive(
                 .to_owned();
             let size = entry.size();
             let mode = entry.header().mode().map_err(|_| ArtifactError::Archive)?;
-            read_entry(entry, &name, size, mode, manifest, &mut entries)?;
+            read_entry(entry, &name, size, mode, manifest, &mut entries, resources)?;
         }
         let cursor = tar.into_inner();
         if cursor.get_ref()[cursor.position() as usize..]
@@ -454,10 +504,37 @@ fn validate_archive(
             return Err(ArtifactError::Archive);
         }
     }
-    if entries.len() != allowed_names(manifest.platform, manifest.package).len() {
+    if !allowed_names(manifest.platform, manifest.package)
+        .iter()
+        .all(|name| entries.iter().any(|entry| &entry.name == name))
+    {
         return Err(ArtifactError::Archive);
     }
+    if entries.len() != base_count {
+        if entries.len() != complete_count {
+            return Err(ArtifactError::Archive);
+        }
+        for (name, hash) in resources {
+            let entry = entries
+                .iter()
+                .find(|entry| &entry.name == name)
+                .ok_or(ArtifactError::Archive)?;
+            if !Sha512::digest(&entry.bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                .eq_ignore_ascii_case(hash)
+            {
+                return Err(ArtifactError::Hash);
+            }
+        }
+    }
     Ok(entries)
+}
+
+#[cfg(all(test, feature = "lifecycle"))]
+pub(crate) fn windows_conpty_staging_fixture() -> VerifiedArtifact {
+    tests::windows_conpty_fixture()
 }
 
 #[cfg(all(test, feature = "lifecycle"))]
@@ -665,6 +742,111 @@ mod tests {
         let data = serde_json::to_vec(manifest).unwrap();
         let (key, signature) = sign(&data, 42);
         verify_with_key(&data, &signature, archive, expected, &key)
+    }
+
+    type ArchiveFiles = Vec<(String, Vec<u8>, u32, tar::EntryType)>;
+    type ResourcePins = Vec<(String, String)>;
+
+    fn synthetic_conpty_files() -> (ArchiveFiles, ResourcePins) {
+        let assets = festerm_windows_runtime::bundled_runtime_assets_for_arch("aarch64").unwrap();
+        let mut files = files(Platform::Windows);
+        let pins = assets
+            .into_iter()
+            .map(|(name, _)| {
+                let bytes = format!("synthetic pinned resource {name}").into_bytes();
+                let hash = Sha512::digest(&bytes)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                files.push((name.clone(), bytes, 0o644, tar::EntryType::Regular));
+                (name, hash)
+            })
+            .collect();
+        (files, pins)
+    }
+
+    fn verify_conpty_fixture(
+        files: &[(String, Vec<u8>, u32, tar::EntryType)],
+        pins: &[(String, String)],
+    ) -> Result<VerifiedArtifact, ArtifactError> {
+        let expected = expected(Platform::Windows, Architecture::Aarch64);
+        let archive = zip(files);
+        let metadata = manifest(&archive, &expected);
+        let data = serde_json::to_vec(&metadata).unwrap();
+        let (key, signature) = sign(&data, 42);
+        verify_with_key_using(
+            &data,
+            &signature,
+            &archive,
+            &expected,
+            &key,
+            |archive, manifest| validate_archive_with_resources(archive, manifest, pins),
+        )
+    }
+
+    #[cfg(feature = "lifecycle")]
+    pub(super) fn windows_conpty_fixture() -> VerifiedArtifact {
+        let (files, pins) = synthetic_conpty_files();
+        verify_conpty_fixture(&files, &pins).unwrap()
+    }
+
+    #[test]
+    fn windows_host_accepts_only_legacy_or_complete_pinned_resource_inventory() {
+        let (files, pins) = synthetic_conpty_files();
+        let complete = verify_conpty_fixture(&files, &pins).unwrap();
+        assert_eq!(complete.entries().len(), 10);
+        assert_eq!(
+            complete
+                .entries()
+                .iter()
+                .filter(|entry| entry.executable())
+                .count(),
+            5
+        );
+        assert!(complete
+            .entries()
+            .iter()
+            .filter(|entry| entry.name().starts_with("runtime/"))
+            .all(|entry| !entry.executable()));
+        assert_eq!(
+            verify_conpty_fixture(&files[..8], &pins)
+                .unwrap()
+                .entries()
+                .len(),
+            8
+        );
+        for kind in ["partial", "mixed", "bytes", "mode", "path"] {
+            let mut changed = files.clone();
+            match kind {
+                "partial" => {
+                    changed.pop();
+                }
+                "mixed" => {
+                    changed[9].0 = changed[9].0.replace("win-arm64/arm64", "win-x64/x64");
+                }
+                "bytes" => {
+                    changed[8].1.push(0);
+                }
+                "mode" => {
+                    changed[8].2 = 0o755;
+                }
+                "path" => {
+                    changed[8].0 = changed[8].0.replace("/conpty.dll", "/../conpty.dll");
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                verify_conpty_fixture(&changed, &pins).is_err(),
+                "accepted {kind}"
+            );
+        }
+        // Production pins reject even correctly signed synthetic native bytes.
+        let archive = zip(&files);
+        let expected = expected(Platform::Windows, Architecture::Aarch64);
+        assert_eq!(
+            verify_fixture(&manifest(&archive, &expected), &archive, &expected).unwrap_err(),
+            ArtifactError::Hash
+        );
     }
 
     #[cfg(any(feature = "acquisition", feature = "native-services"))]

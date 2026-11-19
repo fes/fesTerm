@@ -2802,3 +2802,20 @@ then reattaches the same generation and verifies shell execution. Signed native
 normal HOST Disable/Task stop/GUI close and reconnect remain separate gates.
 Validation impact: DT-02 / HOST-02 / ADR0084; command/marker bounds, one-hop
 routing and native lifecycle tests do not repair an earlier Unknown operation.
+
+### Windows HOST ConPTY resources
+
+Signed schema-2 Windows HOST archives accept exactly two closed inventories:
+the historical eight files, or those files plus the complete architecture-matched
+ConPTY pair defined by ADR 0011. Partial pairs, other architectures, aliases,
+path variants, extra entries and bytes differing from the existing runtime pins
+are refused. New producers always emit the complete pair with Microsoft
+attribution and reviewed MIT terms; legacy helper archives and other platforms
+are unchanged. No signing key or manifest field changes.
+
+These mode-0644 native resources are published immutably under separately
+validated private directories and rechecked with retained artifact bytes. They
+are not first-party helper executables or Task targets, and do not enter the
+first-party publisher predicate. Existing runtime hash verification remains the
+execution boundary. Older consumers may reject the new inventory; acceptance
+of historical archives is not a claim of backwards execution compatibility.

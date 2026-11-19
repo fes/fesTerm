@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Produce synthetic bundles through the real Python release producers.
+"""Produce synthetic interoperability bundles, including historical Windows HOST8.
 
-Invoked by Rust interoperability tests. No downloaded binaries, native signing,
-release credentials or mutable upstream metadata participate.
+Other layouts use the real release producer. Current Windows HOST production
+requires genuine pinned Microsoft bytes; its synthetic pin seam is tested
+separately. No download, native signing or release credentials participate.
 """
 
 import argparse
+import hashlib
+import stat
+import zipfile
 import sys
 from pathlib import Path
 
@@ -31,10 +35,30 @@ def produce(destination, version):
     for platform in build_tunnel_bundle.PLATFORMS:
         for arch in build_tunnel_bundle.ARCHITECTURES:
             for host in (False, True):
-                archive = build_tunnel_bundle.build_bundle(
-                    destination, binaries, output, version, platform, arch,
-                    notices=b"Repository-owned synthetic dependency notice.\n", host=host,
-                )
+                if platform == "windows" and host:
+                    # Historical schema-2 HOST8 interoperability fixture. New
+                    # production HOSTs require genuine Microsoft-pinned bytes;
+                    # these synthetic fixtures must not counterfeit those pins.
+                    output.mkdir(exist_ok=True)
+                    archive = output / f"fesTerm-host-{version}-windows-{arch}.zip"
+                    entries = {name: (binaries / name).read_bytes()
+                               for name in build_tunnel_bundle.binary_names(platform, host=True)}
+                    entries.update(VERSION=f"{version}\n".encode(), LICENSE=build_tunnel_bundle.MIT_LICENSE.encode())
+                    entries["THIRD_PARTY_NOTICES.txt"] = b"Repository-owned synthetic dependency notice.\n"
+                    with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
+                        for name, data in sorted(entries.items()):
+                            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                            info.create_system = 3
+                            mode = 0o755 if name in build_tunnel_bundle.binary_names(platform, host=True) else 0o644
+                            info.external_attr = (stat.S_IFREG | mode) << 16
+                            bundle.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED)
+                    archive.with_name(archive.name + ".sha256").write_text(
+                        f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+                else:
+                    archive = build_tunnel_bundle.build_bundle(
+                        destination, binaries, output, version, platform, arch,
+                        notices=b"Repository-owned synthetic dependency notice.\n", host=host,
+                    )
                 build_host_manifest.build_manifest(archive, version, platform, arch, host=host)
 
 

@@ -2,6 +2,9 @@
 param(
     [switch]$RunSmoke,
 
+    # Stage verified native files without compiling unrelated workspace packages.
+    [switch]$StageOnly,
+
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'
 )
@@ -53,6 +56,8 @@ function Assert-ManifestSha512 {
         throw "$Description must be a 128-character SHA-512 hex digest"
     }
 }
+
+if ($StageOnly -and $RunSmoke) { throw '-StageOnly cannot run the build-dependent smoke' }
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $manifestPath = Join-Path $repositoryRoot 'third_party\conpty\manifest.json'
@@ -177,9 +182,11 @@ try {
     if ($Configuration -eq 'Release') {
         $cargoArguments += '--release'
     }
-    & cargo @cargoArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --workspace failed with exit code $LASTEXITCODE"
+    if (-not $StageOnly) {
+        & cargo @cargoArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo build --workspace failed with exit code $LASTEXITCODE"
+        }
     }
 
     $profileDirectory = $Configuration.ToLowerInvariant()
