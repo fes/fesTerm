@@ -1271,6 +1271,12 @@ daemon spawn route that bypassed local-PTY cwd spelling; it does not qualify a
 new signed helper or alter existing running shells. Native qualification must
 use a fresh explicitly created session from the updated authenticated helper.
 
+The [0.17.13 native cwd qualification](../validation/dev-tunnels/windows-cwd-0.17.13.json)
+records the genuine stopped HOST update and one fresh signed-daemon `cmd.exe`
+session on Windows ARM64, with an unchanged selected cwd, no manual `cd` or UNC
+warning, and fresh I/O. This qualifies the `HOST-02`/`HOST-03` fix; final cleanup,
+lifetime and full `DT-02` OFF/ON/Copilot qualification remain separate.
+
 Windows background hosting has deterministic task-action/legacy-upgrade
 coverage and native, task-free console probes:
 `windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`
