@@ -1109,6 +1109,10 @@ and source/hash provenance do not qualify account readiness or host policy.
 Before native use, verify the exact artifact and use the existing private
 fixture, explicit consent and bounded campaign runner. A static blocked marker
 reports only its source callsite, never error details or credentials.
+Shell roundtrip proof uses the existing terminal parser and requires the exact
+random marker on a completed, unwrapped screen row. ConPTY cursor redraws need
+not contain a standalone raw marker line. Echoed input, partial rows and
+prefixed/suffixed markers cannot satisfy the proof; output remains bounded.
 
 Within DT-02 / DT-05, Windows HOST runtime provenance requires a fresh approved
 daemon from a signed bundle carrying the complete architecture-matched pinned
