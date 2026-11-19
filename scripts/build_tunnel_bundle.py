@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package only the standalone helpers; never the desktop app or a ConPTY sidecar.
+"""Package standalone helpers; Windows HOST bundles also carry pinned ConPTY.
 
 Checksums provide integrity, not an independent publisher signature. macOS and
 Windows executables must be signed and verified by the protected release job
@@ -181,7 +181,46 @@ def binary_names(platform, *, host=False):
     return names + (WINDOWS_WORKER,) if platform == "windows" else names
 
 
-def verify_bundle(archive, version, platform, *, host=False):
+def conpty_assets(root, arch):
+    runtime, host_arch = {"x86_64": ("win-x64", "x64"), "aarch64": ("win-arm64", "arm64")}[arch]
+    manifest = json.loads((root / "third_party/conpty/manifest.json").read_text(encoding="utf-8"))
+    if manifest["license"] != "MIT":
+        raise ValueError("review changed ConPTY license before packaging")
+    return {
+        f"runtime/conpty/{runtime}/conpty.dll": manifest["files"][f"{runtime}/conpty.dll"]["sha512"].lower(),
+        f"runtime/conpty/{runtime}/{host_arch}/OpenConsole.exe": manifest["files"][f"{host_arch}/OpenConsole.exe"]["sha512"].lower(),
+    }
+
+
+def verified_conpty_bytes(root, binary_dir, arch):
+    entries = {}
+    if binary_dir.is_symlink():
+        raise ValueError("aliased ConPTY input root")
+    for name, expected in conpty_assets(root, arch).items():
+        path = binary_dir
+        for part in Path(name).parts:
+            path = path / part
+            if path.is_symlink():
+                raise ValueError(f"aliased ConPTY input: {name}")
+        if not path.is_file():
+            raise ValueError(f"missing regular ConPTY input: {name}")
+        data = path.read_bytes()
+        if hashlib.sha512(data).hexdigest() != expected:
+            raise ValueError(f"pinned ConPTY hash mismatch: {name}")
+        entries[name] = data
+    return entries
+
+
+def conpty_notices(root):
+    manifest = json.loads((root / "third_party/conpty/manifest.json").read_text(encoding="utf-8"))
+    sources, _ = reviewed_notices.load_fallbacks(root)
+    terms = reviewed_notices.read_source(sources["declared-mit-terms"], root).decode("utf-8")
+    return (f"\n=== {manifest['package']} {manifest['version']} (Windows HOST) ===\n"
+            f"Source: {manifest['source_url']}\nPackage SHA-512: {manifest['sha512']}\n"
+            "Copyright Microsoft Corporation; licensed under MIT.\n" + terms).encode("utf-8")
+
+
+def verify_bundle(archive, version, platform, *, host=False, root=ROOT, arch=None):
     expected = entry_names(platform, host=host)
     if platform != "windows":
         with tarfile.open(archive, "r:gz") as bundle:
@@ -198,7 +237,19 @@ def verify_bundle(archive, version, platform, *, host=False):
                     raise ValueError("bundle VERSION does not match release version")
     else:
         with zipfile.ZipFile(archive) as bundle:
-            if sorted(bundle.namelist()) != sorted(expected):
+            names = bundle.namelist()
+            # Two closed layouts: historical HOST8 or HOST8 plus a complete,
+            # architecture-matched pinned pair. Legacy helper archives stay flat.
+            if host and set(names) != set(expected):
+                matches = [assets for target in ((arch,) if arch else ARCHITECTURES)
+                           if set(names) == set(expected) | set(assets := conpty_assets(root, target))]
+                if len(matches) != 1:
+                    raise ValueError("bundle must contain exactly one allowlisted HOST layout")
+                for name, digest in matches[0].items():
+                    if hashlib.sha512(bundle.read(name)).hexdigest() != digest:
+                        raise ValueError(f"pinned ConPTY hash mismatch: {name}")
+                expected += tuple(matches[0])
+            if sorted(names) != sorted(expected):
                 raise ValueError("bundle must contain exactly the allowlisted entries")
             if bundle.read("VERSION") != f"{version}\n".encode("ascii"):
                 raise ValueError("bundle VERSION does not match release version")
@@ -225,6 +276,8 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
         entries[name] = path.read_bytes()
         if not entries[name]:
             raise ValueError(f"empty helper binary: {name}")
+    if host and platform == "windows":
+        entries.update(verified_conpty_bytes(root, binary_dir, arch))
     entries["VERSION"] = f"{version}\n".encode("ascii")
     entries["LICENSE"] = MIT_LICENSE.encode("utf-8")
     if (metadata is None) == (notices is None):
@@ -232,6 +285,8 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
     entries["THIRD_PARTY_NOTICES.txt"] = (
         third_party_notices(metadata, version, root, host=host, windows_worker=platform == "windows") if metadata is not None else notices
     )
+    if host and platform == "windows":
+        entries["THIRD_PARTY_NOTICES.txt"] += conpty_notices(root)
     if not entries["THIRD_PARTY_NOTICES.txt"].strip():
         raise ValueError("empty dependency notices")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -264,7 +319,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
                         info.size = len(entries[name])
                         bundle.addfile(info, io.BytesIO(entries[name]))
         archive_file.close()
-        verify_bundle(archive, version, platform, host=host)
+        verify_bundle(archive, version, platform, host=host, root=root, arch=arch)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         with checksum.open("x", encoding="ascii", newline="\n") as output:
             owns_checksum = True

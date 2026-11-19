@@ -513,12 +513,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn private_fixture_short_unix_parent_supports_native_socket_and_owned_cleanup() {
-        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let root = private_test_directory_in(parent);
+        // Checkout names can exceed the native socket path bound. Use the
+        // ordinary user's short home, subject to the same trusted-parent gate.
+        let parent =
+            std::path::PathBuf::from(std::env::var_os("HOME").expect("fixture HOME is required"));
+        let root = private_test_directory_in(&parent);
         let path = root.path().to_owned();
         let socket = std::os::unix::net::UnixListener::bind(path.join(format!(
             "{}-{}.sock",

@@ -20,6 +20,7 @@ pub struct TrustedStage {
     _directory: File,
     _staged: StagedArtifact,
     helpers: Vec<TrustedExecutable>,
+    resources: Vec<TrustedExecutable>,
     release_version: String,
     bundle_digest: String,
     platform: Platform,
@@ -162,6 +163,32 @@ impl TrustedStage {
                 file: helper,
             });
         }
+        // Microsoft sidecars are pinned native resources, not first-party
+        // executables or Task targets. Artifact verification already checked
+        // both SHA-512 pins; keep their immutable private bytes beside sessiond.
+        let mut resources = Vec::new();
+        for entry in artifact
+            .entries()
+            .iter()
+            .filter(|entry| entry.name().starts_with("runtime/"))
+        {
+            let (parent, leaf) = staging::entry_parent(&publication, entry.name(), true)?;
+            crate::protected_state::publish_immutable(
+                &parent,
+                Path::new(&leaf),
+                entry.bytes(),
+                "host.service_authenticated_resource_changed",
+            )?;
+            let resource_path = publication.join(entry.name());
+            let resource = storage::open_private_file(&parent, Path::new(&leaf), false)?;
+            let expected = digest(entry.bytes());
+            check(&resource, entry.bytes().len() as u64, &expected)?;
+            resources.push(TrustedExecutable {
+                path: resource_path,
+                digest: expected,
+                file: resource,
+            });
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -182,6 +209,7 @@ impl TrustedStage {
             _directory: directory,
             _staged: staged,
             helpers,
+            resources,
             release_version: manifest.version.clone(),
             bundle_digest: manifest.sha256.clone(),
             platform,
@@ -342,6 +370,7 @@ pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
         _directory: directory,
         _staged: staged,
         helpers: Vec::new(),
+        resources: Vec::new(),
         release_version: crate::VERSION.into(),
         bundle_digest: artifact.manifest().sha256.clone(),
         platform: artifact.manifest().platform,
@@ -433,6 +462,15 @@ impl TrustedStage {
                 return Err(refused("host.service_authenticated_bundle_changed"));
             }
             qualify(&file, &path)?;
+        }
+        for entry in artifact
+            .entries()
+            .iter()
+            .filter(|entry| entry.name().starts_with("runtime/"))
+        {
+            let (parent, leaf) = staging::entry_parent(directory, entry.name(), false)?;
+            let file = storage::open_private_file(&parent, Path::new(&leaf), false)?;
+            check(&file, entry.bytes().len() as u64, &digest(entry.bytes()))?;
         }
         Ok(())
     }
@@ -542,7 +580,7 @@ impl TrustedStage {
             return Err(refused("host.service_executable_replaced"));
         }
         check(&current, self.file.metadata()?.len(), &self.digest)?;
-        for helper in &self.helpers {
+        for helper in self.helpers.iter().chain(&self.resources) {
             let current = open(&helper.path)?;
             if !same(&current, &helper.file)? {
                 return Err(refused("host.service_executable_replaced"));
@@ -642,6 +680,41 @@ pub(super) fn same(left: &File, right: &File) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn microsoft_resources_are_pinned_but_not_first_party_task_executables() {
+        let root = storage::private_test_directory();
+        let artifact = crate::artifacts::windows_conpty_staging_fixture();
+        let mut qualified = Vec::new();
+        let stage = TrustedStage::publish_target_with(
+            &artifact,
+            &root.path().join("runtime"),
+            "1.2.3",
+            Platform::Windows,
+            Architecture::Aarch64,
+            |_, path| {
+                qualified.push(path.file_name().unwrap().to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(qualified.len(), 5);
+        assert!(!qualified
+            .iter()
+            .any(|name| name == "conpty.dll" || name == "OpenConsole.exe"));
+        assert_eq!(stage.resources.len(), 2);
+        assert!(stage
+            .sessiond_path()
+            .unwrap()
+            .ends_with("festerm-sessiond.exe"));
+        let resource = &stage.resources[0].path;
+        // Owner writes are permitted; retained identity alone is not trust.
+        // Keep length and identity unchanged so the digest check must catch it.
+        let mut changed = std::fs::read(resource).unwrap();
+        changed[0] ^= 1;
+        std::fs::write(resource, changed).unwrap();
+        assert!(stage.revalidate().is_err());
+    }
 
     #[test]
     fn native_publisher_admission_never_substitutes_generic_signature_trust() {

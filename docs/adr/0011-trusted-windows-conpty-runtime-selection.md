@@ -97,3 +97,20 @@ processes.
 - **Manual validation:** The pinned-sidecar resize smoke remains the acceptance
   path for the resize regression and must now be run against a durable
   sessiond-backed session, not only an in-process tab.
+
+## Amendment: authenticated Windows HOST bundles retain the pinned runtime
+
+The standalone Windows HOST producer carries the complete architecture-matched
+ConPTY pair at the same fixed `runtime/conpty` paths. It verifies the existing
+manifest hashes and original Microsoft signatures, retains the MIT notice, and
+never submits these resources to first-party executable signing. The host's
+private runtime publication and per-release daemon staging retain both files;
+the loader's hash checks and secure DLL search remain unchanged.
+
+Historical authenticated HOST bundles without the pair remain readable and
+keep the documented inbox fallback. New production bundles require both files.
+A matching current GUI/verifier is required for the expanded inventory; older
+consumers may reject it. This corrects a packaging difference, not proof that
+inbox ConPTY caused a particular missing query reply. Native qualification must
+compare all ten application-visible capability replies and normal TUI rendering
+through a newly created daemon using the pinned runtime.

@@ -670,7 +670,7 @@ jobs:
             throw "Native LLVM is unavailable at $llvmBin"
           }
           $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Build only native standalone helpers with inbox ConPTY
+      - name: Build only native standalone helpers
         run: |
           set -euo pipefail
           host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
@@ -686,6 +686,10 @@ jobs:
           fi
           cargo build --locked --release "${packages[@]}" --no-default-features --features "$features" --bins
           cargo metadata --locked --format-version 1 --no-default-features --features "$features" --filter-platform "$host" > helper-metadata.json
+      - name: Stage the pinned Windows HOST ConPTY pair without rebuilding
+        if: matrix.platform == 'windows' && needs.validate.outputs.headless_helpers == 'true'
+        shell: pwsh
+        run: ./scripts/stage-conpty.ps1 -Configuration Release -StageOnly
       - name: Stage native Windows signing input and dependency notices
         if: matrix.platform == 'windows'
         run: |
@@ -713,6 +717,10 @@ jobs:
               shutil.copyfile(source, destination / name)
           (destination / "THIRD_PARTY_NOTICES.txt").write_bytes(notices)
           if headless:
+              for relative, data in bundle.verified_conpty_bytes(root, Path("target/release"), "${{ matrix.arch }}").items():
+                  target = destination / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
               (destination / "HOST_NOTICES.txt").write_bytes(
                   bundle.third_party_notices(metadata, os.environ["VERSION"], root, host=True)
               )
@@ -862,15 +870,32 @@ jobs:
             'festerm-tunnel-setup.exe', 'festerm-tunnel-worker.exe', 'THIRD_PARTY_NOTICES.txt', 'VERSION'
           )
           if ($env:HEADLESS_HELPERS -eq 'true') { $expected += @('festerm-host.exe', 'HOST_NOTICES.txt') }
-          $actual = @(Get-ChildItem helper-input -Force)
-          if ($actual.Count -ne $expected.Count -or
-              @(Compare-Object ($expected | Sort-Object) ($actual.Name | Sort-Object)).Count -ne 0) {
+          $directories = @()
+          $sidecars = @()
+          if ($env:HEADLESS_HELPERS -eq 'true') {
+            $rid = if ('${{ matrix.arch }}' -eq 'aarch64') { 'win-arm64' } else { 'win-x64' }
+            $hostArch = if ('${{ matrix.arch }}' -eq 'aarch64') { 'arm64' } else { 'x64' }
+            $directories = @('runtime', 'runtime/conpty', "runtime/conpty/$rid", "runtime/conpty/$rid/$hostArch")
+            $sidecars = @("runtime/conpty/$rid/conpty.dll", "runtime/conpty/$rid/$hostArch/OpenConsole.exe")
+            $expected += $sidecars
+          }
+          $actual = @(Get-ChildItem helper-input -Force -Recurse)
+          $base = (Resolve-Path helper-input).Path
+          $actualNames = @($actual | ForEach-Object { [IO.Path]::GetRelativePath($base, $_.FullName).Replace('\', '/') })
+          if (@(Compare-Object (($expected + $directories) | Sort-Object) ($actualNames | Sort-Object)).Count -ne 0) {
             throw 'Unexpected helper signing input'
           }
           foreach ($file in $actual) {
-            if ($file.PSIsContainer -or $file.Length -eq 0 -or
-                ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-              throw 'Expected nonempty regular signing input files'
+            if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                (-not $file.PSIsContainer -and $file.Length -eq 0)) {
+              throw 'Expected nonempty regular signing input without aliases'
+            }
+          }
+          # The pinned Microsoft bytes retain their original signature; they
+          # are never submitted to the first-party signing action below.
+          foreach ($sidecar in $sidecars) {
+            if ((Get-AuthenticodeSignature "helper-input/$sidecar").Status -ne 'Valid') {
+              throw "Pinned Microsoft ConPTY signature is invalid: $sidecar"
             }
           }
           if ([IO.File]::ReadAllText((Resolve-Path helper-input/VERSION)) -cne "$env:VERSION`n") {
