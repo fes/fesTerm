@@ -126,6 +126,17 @@ Receipts bind checkout commit/tree, candidate head, run/attempt, file hashes
 and the HOST verification-key hash. These short-lived development artifacts
 are not signed releases or authenticated HOST bundles.
 
+Manual package-smoke dispatch accepts `platform=all` (the existing default
+matrix) or `platform=linux-aarch64`. The Linux ARM64 lane also compiles the
+existing `dev_tunnel_workflow_lab` integration test in release mode without
+executing it, reusing the normal GUI dependencies on `ubuntu-24.04-arm`.
+A separate seven-day `development-linux-aarch64-sdk-RUN-ATTEMPT` artifact
+contains only the selected AArch64 ELF test executable and a receipt binding
+its hash/features to checkout commit/tree, candidate head and run/attempt.
+This does not change the 13-file core export. It is an unsigned development
+test, not a signed release or native workflow result; actual invocation still
+requires the existing controlled-account fixture, consent and bounded runner.
+
 ## Bootstrap
 
 The repository pins the stable Rust toolchain in `rust-toolchain.toml`.

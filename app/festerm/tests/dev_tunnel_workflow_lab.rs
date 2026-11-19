@@ -156,12 +156,18 @@ fn roundtrip_proof_is_absent_from_every_supported_input_and_requires_complete_li
     }
 }
 
+#[track_caller]
 fn blocked() -> ! {
     panic!("FESTERM_DEV_TUNNEL_LAB_BLOCKED");
 }
 
+#[track_caller]
 fn require<T, E>(result: Result<T, E>) -> T {
-    result.unwrap_or_else(|_| blocked())
+    match result {
+        Ok(value) => value,
+        // Callsite only: never format the error or its potentially secret data.
+        Err(_) => blocked(),
+    }
 }
 
 fn private_bytes(path: &Path) -> Vec<u8> {
@@ -663,6 +669,23 @@ fn controlled_github_host_service_client_workflow() {
 mod stopped_policy_tests {
     use super::*;
     use festerm_host_protocol::{Capabilities, GenerationId, ProfileSummary, SessionSummary};
+
+    #[test]
+    fn blocked_diagnostic_never_formats_sensitive_errors() {
+        struct Sensitive;
+        impl std::fmt::Debug for Sensitive {
+            fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                panic!("sensitive error must never be formatted")
+            }
+        }
+        assert_eq!(require::<_, Sensitive>(Ok(7)), 7);
+        let payload = std::panic::catch_unwind(|| require::<(), _>(Err(Sensitive)))
+            .expect_err("refusal must remain a failure");
+        assert_eq!(
+            payload.downcast_ref::<&str>(),
+            Some(&"FESTERM_DEV_TUNNEL_LAB_BLOCKED")
+        );
+    }
 
     fn fixture_inventory() -> (Fixture, Inventory) {
         let fixture = Fixture {

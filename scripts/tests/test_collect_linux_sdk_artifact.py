@@ -1,0 +1,132 @@
+"""Artifact admission and workflow contracts; no compilation or SDK execution."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location("collect_sdk", ROOT / "scripts/collect_linux_sdk_artifact.py")
+collector = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(collector)
+
+
+class CollectorTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.binary = self.root / "target/release/deps/dev_tunnel_workflow_lab-0123456789abcdef"
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_bytes(b"\x7fELF\x02\x01" + bytes(12) + b"\xb7\x00" + b"test artifact")
+        self.binary.chmod(0o755)
+        self.message = {
+            "reason": "compiler-artifact",
+            "target": {"name": collector.TEST, "kind": ["test"],
+                       "src_path": str(self.root / "app/festerm/tests/dev_tunnel_workflow_lab.rs")},
+            "profile": {"test": True}, "executable": str(self.binary),
+            "features": ["default", "experimental-dev-tunnels", "local-host-settings"],
+        }
+        self.messages = self.root / "messages.jsonl"
+        self.output = self.root / "export"
+        self.environment = {"DEVELOPMENT_SOURCE_HEAD": "a" * 40, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}
+
+    def collect(self, messages=None):
+        self.messages.write_text("\n".join(json.dumps(value) for value in (messages or [self.message])))
+        with patch.object(collector.subprocess, "check_output", side_effect=["b" * 40, "c" * 40]):
+            return collector.collect(self.root, self.messages, self.output, self.environment)
+
+    def test_exports_only_exact_binary_and_source_bound_receipt_without_execution(self):
+        receipt = self.collect([{"reason": "build-finished", "success": True}, self.message])
+        self.assertEqual(sorted(path.name for path in self.output.iterdir()),
+                         [collector.TEST, "development-sdk-provenance.json"])
+        self.assertEqual((self.output / collector.TEST).read_bytes(), self.binary.read_bytes())
+        self.assertEqual(receipt["candidate_head"], "a" * 40)
+        self.assertEqual(receipt["checkout_commit"], "b" * 40)
+        self.assertEqual(receipt["checkout_tree"], "c" * 40)
+        self.assertEqual(receipt["run_attempt"], "2")
+        self.assertEqual(receipt["features"], self.message["features"])
+
+    def test_rejects_missing_duplicate_wrong_target_and_non_test(self):
+        for mutation in ["missing", "duplicate", "name", "source", "kind", "profile"]:
+            with self.subTest(mutation=mutation):
+                message = json.loads(json.dumps(self.message))
+                messages = [message]
+                if mutation == "missing": messages = [{"reason": "build-finished"}]
+                elif mutation == "duplicate": messages *= 2
+                elif mutation == "name": message["target"]["name"] = "other"
+                elif mutation == "source": message["target"]["src_path"] = "/foreign/test.rs"
+                elif mutation == "kind": message["target"]["kind"] = ["bin"]
+                elif mutation == "profile": message["profile"]["test"] = False
+                with self.assertRaises(ValueError): self.collect(messages)
+                self.assertFalse(self.output.exists())
+
+    def test_rejects_wrong_elf_features_and_provenance(self):
+        original = self.binary.read_bytes()
+        for mutation in ["machine", "truncated", "features", "head", "run"]:
+            with self.subTest(mutation=mutation):
+                self.binary.write_bytes(original)
+                self.message["features"] = ["experimental-dev-tunnels", "local-host-settings"]
+                self.environment.update(DEVELOPMENT_SOURCE_HEAD="a" * 40, GITHUB_RUN_ID="123")
+                if mutation == "machine": self.binary.write_bytes(original[:18] + b"\x3e\x00" + original[20:])
+                elif mutation == "truncated": self.binary.write_bytes(b"\x7fELF")
+                elif mutation == "features": self.message["features"] = []
+                elif mutation == "head": self.environment["DEVELOPMENT_SOURCE_HEAD"] = "main"
+                elif mutation == "run": self.environment["GITHUB_RUN_ID"] = "../123"
+                with self.assertRaises(ValueError): self.collect()
+                self.assertFalse(self.output.exists())
+
+    def test_rejects_wrong_path_symlink_and_hardlink(self):
+        other = self.root / "foreign"
+        self.binary.rename(other)
+        self.message["executable"] = str(other)
+        with self.assertRaises(ValueError): self.collect()
+        self.message["executable"] = str(self.binary)
+        self.binary.symlink_to(other)
+        with self.assertRaises(ValueError): self.collect()
+        self.binary.unlink()
+        os.link(other, self.binary)
+        with self.assertRaises(ValueError): self.collect()
+
+    def test_existing_output_is_never_overwritten(self):
+        self.output.mkdir()
+        sentinel = self.output / "keep"
+        sentinel.write_text("original")
+        with self.assertRaises(FileExistsError): self.collect()
+        self.assertEqual(sentinel.read_text(), "original")
+
+
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (ROOT / ".github/workflows/package-smoke.yml").read_text()
+
+    def test_manual_arm_selection_preserves_default_five_platform_matrix(self):
+        line = next(line for line in self.workflow.splitlines() if "matrix: ${{ fromJSON(" in line)
+        matrices = [json.loads(value)["include"] for value in re.findall(r"'(\{\"include\".*?\})'", line)]
+        self.assertEqual(len(matrices), 2)
+        self.assertEqual(matrices[0], [{"name": "linux-aarch64", "platform": "linux", "runner": "ubuntu-24.04-arm"}])
+        self.assertEqual([value["name"] for value in matrices[1]],
+                         ["macos", "windows-x86_64", "windows-aarch64", "linux-x86_64", "linux-aarch64"])
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.platform == 'linux-aarch64'", line)
+        self.assertIn("default: all\n        options:\n          - all\n          - linux-aarch64", self.workflow)
+
+    def test_sdk_compile_only_export_is_separate_after_existing_core_export(self):
+        compile_step = self.workflow.split("      - name: Compile and retain the Linux ARM64 controlled SDK test\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: matrix.name == 'linux-aarch64'", compile_step)
+        self.assertIn("--test dev_tunnel_workflow_lab --no-run", compile_step)
+        self.assertIn("--message-format=json-render-diagnostics", compile_step)
+        self.assertNotIn("--ignored", compile_step)
+        self.assertNotIn("FESTERM_RUN_DEV_TUNNEL_LAB", compile_step)
+        self.assertLess(self.workflow.index("Retain existing Linux ARM64 development runtime"),
+                        self.workflow.index("Compile and retain the Linux ARM64 controlled SDK test"))
+        upload = self.workflow.split("      - name: Retain the Linux ARM64 controlled SDK executable\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4", upload)
+        self.assertIn("retention-days: 7", upload)
+        self.assertIn("development-linux-aarch64-sdk-", upload)
+
+
+if __name__ == "__main__":
+    unittest.main()

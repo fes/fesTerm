@@ -16,6 +16,8 @@ on:
       - 'assets/app-icon/**'
       - 'packaging/**'
       - 'scripts/check_packaging.py'
+      - 'scripts/collect_linux_sdk_artifact.py'
+      - 'scripts/tests/test_collect_linux_sdk_artifact.py'
       - 'scripts/run-cargo-packager.py'
       - 'scripts/smoke_linux_automation_worker.py'
       - 'scripts/tests/test_check_packaging.py'
@@ -24,6 +26,15 @@ on:
       - 'scripts/stage-windows-sessiond.ps1'
       - 'third_party/conpty/**'
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Package platforms to build
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - linux-aarch64
   pull_request:
     paths:
       - '.github/workflows/package-smoke.yml'
@@ -38,6 +49,8 @@ on:
       - 'assets/app-icon/**'
       - 'packaging/**'
       - 'scripts/check_packaging.py'
+      - 'scripts/collect_linux_sdk_artifact.py'
+      - 'scripts/tests/test_collect_linux_sdk_artifact.py'
       - 'scripts/run-cargo-packager.py'
       - 'scripts/smoke_linux_automation_worker.py'
       - 'scripts/tests/test_check_packaging.py'
@@ -59,27 +72,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macos
-            platform: macos
-            runner: macos-latest
-          - name: windows-x86_64
-            platform: windows
-            runner: windows-latest
-            conpty_runtime: win-x64
-            package_arch: x86_64
-          - name: windows-aarch64
-            platform: windows
-            runner: windows-11-vs2026-arm
-            conpty_runtime: win-arm64
-            package_arch: aarch64
-          - name: linux-x86_64
-            platform: linux
-            runner: ubuntu-latest
-          - name: linux-aarch64
-            platform: linux
-            runner: ubuntu-24.04-arm
+      matrix: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform == 'linux-aarch64' && '{"include":[{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}' || '{"include":[{"name":"macos","platform":"macos","runner":"macos-latest"},{"name":"windows-x86_64","platform":"windows","runner":"windows-latest","conpty_runtime":"win-x64","package_arch":"x86_64"},{"name":"windows-aarch64","platform":"windows","runner":"windows-11-vs2026-arm","conpty_runtime":"win-arm64","package_arch":"aarch64"},{"name":"linux-x86_64","platform":"linux","runner":"ubuntu-latest"},{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}') }}
     env:
       FESTERM_UPDATE_PUBLIC_KEY: unsigned-package-smoke-key
     steps:
@@ -644,6 +637,24 @@ jobs:
         with:
           name: development-linux-aarch64-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/release/development-linux-aarch64-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Compile and retain the Linux ARM64 controlled SDK test
+        if: matrix.name == 'linux-aarch64'
+        env:
+          DEVELOPMENT_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cargo test --locked --release -p festerm --test dev_tunnel_workflow_lab --no-run \
+            --message-format=json-render-diagnostics > target/release/linux-arm-sdk-build.jsonl
+          python3 scripts/collect_linux_sdk_artifact.py \
+            --messages target/release/linux-arm-sdk-build.jsonl \
+            --output target/release/development-linux-aarch64-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Retain the Linux ARM64 controlled SDK executable
+        if: matrix.name == 'linux-aarch64'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: development-linux-aarch64-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/release/development-linux-aarch64-sdk-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 7
       - name: Rebuild package-managed Linux binary and Debian package
