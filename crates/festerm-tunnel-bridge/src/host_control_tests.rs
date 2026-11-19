@@ -1194,14 +1194,56 @@ pub(crate) mod native_routes {
                 "{found:?}"
             );
         }
-        let inventory = client
-            .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-            .await
-            .unwrap();
-        let Response::Inventory { page } = inventory.body else {
-            panic!("inventory")
-        };
+        let inventory_deadline = Instant::now() + Duration::from_secs(8);
+        let page =
+            loop {
+                let inventory = client
+                    .request(OperationId::new(), Request::List { cursor: None }, &cancel)
+                    .await
+                    .unwrap();
+                match inventory.body {
+                    Response::Refused {
+                        reason: Refusal::Busy,
+                    } => {
+                        assert!(
+                            Instant::now() < inventory_deadline,
+                            "native inventory remained Busy at fixture deadline"
+                        );
+                    }
+                    Response::Inventory { page } => {
+                        assert!(page.next.is_none(), "unexpected native page: {page:?}");
+                        // Only explicit uncertainty for these already-created exact
+                        // generations permits another read. Omission, replacement,
+                        // foreign targets and duplicate projections fail immediately.
+                        let visible: Vec<_> = page.sessions.iter().map(|s| &s.target).collect();
+                        assert!(
+                            visible.iter().all(|target| targets.contains(target)),
+                            "foreign or replaced native summary: {page:?}; expected {targets:?}"
+                        );
+                        assert!(
+                            page.unknown.iter().all(|target| targets.contains(target)),
+                            "foreign or replaced native unknown: {page:?}; expected {targets:?}"
+                        );
+                        for target in &targets {
+                            assert_eq!(visible.iter().filter(|seen| **seen == target).count()
+                            + page.unknown.iter().filter(|seen| *seen == target).count(), 1,
+                            "missing or duplicate native target: {page:?}; expected {targets:?}");
+                        }
+                        if page.unknown.is_empty() {
+                            assert_eq!(page.sessions.len(), targets.len(), "{page:?}");
+                            break page;
+                        }
+                        assert!(
+                            Instant::now() < inventory_deadline,
+                            "exact native targets remained Unknown at fixture deadline: {page:?}"
+                        );
+                    }
+                    other => panic!("unexpected native inventory response: {other:?}"),
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            };
         assert_eq!(page.sessions.len(), 2);
+        assert!(page.unknown.is_empty());
         assert!(page.sessions.iter().all(|session| !session.attached));
         assert_eq!(
             festerm_sessiond::list_running_sessions_in(&fixture.root)

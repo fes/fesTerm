@@ -1,26 +1,27 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "6e2a9d381d8cc7ee4e83ec53879d3b29b94c052c289cf4e0eac171ab383aca46"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "94119ea5761c28ae3ea504c896dc3f50d39315d9d9751ec1ce1281a700eb8b49"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns host-based tunnel discovery, enterprise inventory and trust boundaries, portable public recipe semantics, signed host replacement, and PowerShell lifecycle gating across host/client flows.
+Routes HOST discovery, public session recipes, native stop/replacement and enterprise PowerShell lifecycle.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host discovery
+## Host discovery and inventory
 
-Use for: Which tunnel qualifies as HOST and what exact binding does it carry?
+Use for: HOST selection is ambiguous or native inventory reports uncertainty for an existing generation.
 
 - [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Resolves only HOST-marked tunnels after exact binding review.
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
+- [`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`](../../crates/festerm-tunnel-bridge/src/host_control_tests.rs) — Requires both created generations; bounded inventory reads tolerate only Busy or explicit exact-target Unknown.
 
 Caveats:
-- HOST resolution never falls back to the legacy bridge label.
-- Ambiguous labeled ports are errors instead of silent picks.
-- Discovery strips secrets and keeps only host metadata.
+- HOST resolution has no legacy bridge fallback; ambiguous ports refuse.
+- Inventory omission or a foreign generation fails the native fixture instead of permitting another read.
+- Discovery exposes metadata rather than credentials; Unknown is never absence.
 
 ## Enterprise inventory
 
@@ -33,9 +34,8 @@ Evidence:
 - [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Bounds enterprise rows and output rather than retaining unbounded inventory.
 
 Caveats:
-- Inventory is worker-owned and bounded; it is not a generic failure path.
-- Project and Dev Box data stay off the UI thread until explicit selection.
-- Monotonic state transitions prevent reusing a failed or closed tab.
+- Inventory workers bound results; stale or cancelled completions cannot mutate a new tab.
+- Project and Dev Box rows stay off the UI thread until selection.
 
 ## Portable recipes
 
@@ -80,6 +80,5 @@ Evidence:
 - [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — A failed close remains a failure, not a success-shaped result.
 
 Caveats:
-- Failure and success states stay distinct even when both are lifecycle-end events.
-- Stale worker generations do not mutate the current active state.
-- Transient credentials and shutdown races are intentionally cleaned up before terminal reuse.
+- Close failures remain failures; stale worker generations cannot mutate current state.
+- Transient credentials and shutdown races are cleared before terminal reuse.
