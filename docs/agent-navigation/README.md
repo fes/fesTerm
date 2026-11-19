@@ -13,7 +13,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries. |
 | [Application commands, tabs, and input routing](app-commands.md) | Owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns brokered automation authority, workflow intake validation, and MCP protocol-state gating for observation and control. |
-| [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
+| [Documents, editor, and Markdown](documents.md) | This domain owns shared document identity, editor/viewer routing, and Markdown parsing and preview state for open text files. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, Finder/AppKit integration, and OS wake/privacy hooks for the desktop app. |
