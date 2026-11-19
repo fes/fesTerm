@@ -19,6 +19,53 @@ accounts, automate password entry, accept credentials in job payloads or enroll
 owners. Source integration and real-service execution must pass before using
 this runner as normal-flow evidence; do not reinterpret its old fixture.
 
+## Controlled GitHub identities
+
+Use normal, owner-controlled GitHub accounts. This campaign does not depend on
+a provider-issued pool of test accounts. Assign the existing identities these
+roles without adding organization membership or anonymous tunnel access:
+
+| Role | Campaign identity | Expected result |
+| --- | --- | --- |
+| Host owner and authorized client | `fes-festerm1` | Same-account host discovery and authorized inventory/attachment. |
+| Unrelated client | `fes-festerm2` | The first account's private hosts are unavailable; direct access is refused. |
+
+For a newly required identity, its responsible human owner should:
+
+1. Use [GitHub signup](https://docs.github.com/en/account-and-profile/how-tos/account-management/creating-an-account-on-github)
+   with a controlled email address, complete email verification, and configure
+   two-factor authentication and owner-controlled recovery access.
+2. Choose an account arrangement consistent with
+   [GitHub's account requirements](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#3-account-requirements).
+   Signup must be human-operated. The free-account allowance is one personal
+   account plus one machine account used exclusively for automated tasks;
+   do not create an unrestricted collection of additional free personal accounts.
+   Existing campaign names do not establish their ownership or billing plan.
+3. Keep passwords, second factors and recovery material in private storage
+   outside the repository, fixtures, job payloads and screenshots. Record only
+   the public login, expected numeric GitHub ID and assigned VM/client role in
+   nonsecret campaign metadata. Do not copy native credential stores between VMs.
+
+On each host/client, use fesTerm Settings to add the intended GitHub account and
+complete its official browser/device authorization. Check the browser's signed-in
+account before approving the request. Ordinary discovery needs no PAT, client
+secret, manually entered host fingerprint or copied owner binding. A successful
+GitHub login alone does not enable the host or opt a local profile into sharing;
+complete those explicit fesTerm steps below.
+
+Keep the tunnel private: Microsoft's
+[default access model](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security)
+requires the creating account to host/connect. Test the owner on both ends,
+then switch the client through the normal account UI to the unrelated identity
+and verify exclusion. Shared-profile visibility and creation OFF/ON are separate
+host policy checks, even for the authorized account. Never grant anonymous access
+to make a negative case pass.
+
+Capture application results after authorization, excluding passwords, device
+codes, tokens and recovery material. Copilot's initial-screen comparison below
+does not require enabling a subscription or sending a paid model request.
+These are setup instructions, not evidence that a fresh native identity test ran.
+
 ## Desktop and mobile matrix
 
 The native campaign covers 24 cases: each direction below with generic shell
