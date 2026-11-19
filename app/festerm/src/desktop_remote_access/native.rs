@@ -237,6 +237,7 @@ fn report(store: Option<&Store>, root: &Path) -> Result<Report, Failure> {
     Ok(Report {
         release,
         last_run,
+        runtime_history: controller::runtime_diagnostics::read(store, root),
         scope: Scope::Present(snapshot.into()),
         cleanup,
         ..Report::default()

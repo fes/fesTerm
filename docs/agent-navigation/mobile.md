@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-agent", "sources": "3e9fe4a76c6e893cd937f0d823002d275325aff82a5b59fed44dc576fe0d5aff"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-agent", "sources": "c16c8f37d3e5ec5c298d00e3fe18a9049cbab426e59ff0322ec0d9f5198b8cf0"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -70,7 +70,7 @@ Caveats:
 Use for: When Android-only services, insets, gestures, or secrets touch the native boundary.
 
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
-- [`app/festerm-android/AndroidManifest.xml`](../../app/festerm-android/AndroidManifest.xml) — Pins Android release name and upload code; version metadata does not qualify native input behavior.
+- [`app/festerm-android/AndroidManifest.xml`](../../app/festerm-android/AndroidManifest.xml) — Pins the current release name and upload code; native input behavior remains a separate qualification.
 
 Evidence:
 - [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording service boundaries.

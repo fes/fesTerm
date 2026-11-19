@@ -3604,7 +3604,8 @@
         "docs/gui-design.md#diagnostic-content"
       ],
       "decisions": [
-        "ADR-0009"
+        "ADR-0009",
+        "ADR-0084"
       ],
       "automated_tests": [
         "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
@@ -3617,15 +3618,26 @@
         "attached_diagnostic_preserves_kind_display_and_nested_source_markers",
         "diagnostic_debug_is_content_free_and_outermost_diagnostic_wins",
         "bare_and_wrapped_client_failures_have_typed_stage_and_status",
-        "headless_harness_drives_terminal_view_input_resize_and_diagnostics"
+        "headless_harness_drives_terminal_view_input_resize_and_diagnostics",
+        "host_runtime_diagnostics_preserve_primary_cleanup_and_original_retry_policy",
+        "host_runtime_diagnostics_use_post_cleanup_observation_without_inventing_primary",
+        "host_runtime_diagnostics_log_failure_never_changes_product_error_or_retries",
+        "host_runtime_diagnostics_watch_and_history_errors_remain_fail_closed",
+        "host_runtime_diagnostics_are_typed_private_bounded_and_correlated_history_only",
+        "desktop_remote_access_runtime_history_is_separate_and_clears_on_refresh_failure",
+        "desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim",
+        "desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_scope",
+        "host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution"
       ],
       "manual_scenarios": [
-        "TI-06"
+        "TI-06",
+        "DT-05"
       ],
       "status": "partial",
       "prerequisites": [
         "About and Remote access display only typed last-setup stage, available HTTP status, fixed category and recovery guidance. Provider text, credentials, URLs and arbitrary native errors never enter the metadata. Original create uncertainty/cancellation/transient semantics remain intact. Owned installation/origin/epoch, current worker and cancel/draft/success fences reject stale diagnostics; no readiness claim. Native provider/store/cancel captures remain required.",
-        "event emphasis and complete redacted Copy Details"
+        "event emphasis and complete redacted Copy Details",
+        "Explicit Refresh loads only recognized bounded runtime-log history correlated with protected runtime/managed records. Primary and cleanup classifications remain separate; diagnostic failures do not alter readiness, retry, cancellation or authority. Native failure cause and longevity qualification remain open under #780; historical evidence is not a current process observation."
       ]
     },
     {

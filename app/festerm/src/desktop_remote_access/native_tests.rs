@@ -738,3 +738,25 @@ fn desktop_remote_access_update_metadata_change_and_invalid_version_refuse_origi
         Err(Failure::UpdateBlocked)
     );
 }
+
+#[test]
+fn desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_scope() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    let directory = storage::private_directory(&path, false).unwrap();
+    for bytes in [
+        b"legacy worker.exit reason=old\n".to_vec(),
+        vec![0xff; 128],
+        vec![b'x'; 265_000],
+    ] {
+        storage::replace_private(&directory, Path::new("worker.log"), &bytes).unwrap();
+        let report = execute(request(&path, Operation::Refresh, Scope::Unobserved)).unwrap();
+        assert_eq!(report.scope, Scope::Present(before.clone().into()));
+        assert!(report.runtime_history.is_empty());
+        assert!(report.failure.is_none());
+        assert!(report.process.is_none());
+        assert_eq!(store.snapshot().unwrap(), before);
+    }
+}

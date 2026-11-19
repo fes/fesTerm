@@ -396,6 +396,38 @@ recording terminal content.
 
 ## Diagnostics and Safety
 
+**Capture remote access runtime failures before restarting.**
+
+Before **Start**, **Enable**, **Disable**, update, or reprovisioning, capture
+the failure evidence: subsequent runs can rotate logs or replace the protected
+run correlation used to display history. Open **Settings → DEV TUNNELS →
+Remote access**, select **Refresh local status**, then expand **Remote access
+runtime history**. **About** shows the same cached snapshot; it does not
+refresh the report. Runtime history requires **0.17.12 HOST helpers** or newer;
+upgrading the GUI alone does not add the backend logger.
+
+Collect only `worker.log` and `worker.log.1`, if present, from the server's
+remote access state directory. The default directory is:
+
+| Host OS | Default state directory |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\fes\fesTerm\data\remote-access-desktop-v1` |
+| macOS | `~/Library/Application Support/com.fes.fesTerm/remote-access-desktop-v1` |
+| Linux | `${XDG_DATA_HOME:-$HOME/.local/share}/festerm/remote-access-desktop-v1` |
+
+Linux uses `XDG_DATA_HOME` only when it is absolute; otherwise it uses
+`$HOME/.local/share`. Each log rotates at 256 KiB with at most one bounded
+line of overshoot. Runtime records contain closed, typed fields and numeric
+codes rather than raw error messages or terminal content. Include the app
+and HOST-helper versions, failure time and timezone, host and client OS,
+the action taken, and an error screenshot. Review screenshots before sharing;
+do not upload the complete state directory, vault contents, or configuration.
+
+The HOST can retry typed transient relay failures internally. A terminal
+runtime failure stops that run under the current policy; a generic
+`RuntimeFailed` result alone does not establish its cause. Historical events
+do not establish current readiness or permission to retry an uncertain action.
+
 - [ADR 0046](adr/0046-opt-in-retained-document-frame.md) complete-frame
   retention defaults on for the qualified WARP route. Set
   `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` to disable it; unset/empty/`1`

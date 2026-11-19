@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "94119ea5761c28ae3ea504c896dc3f50d39315d9d9751ec1ce1281a700eb8b49"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "21c66df2f4556f961a7ab77d07ae236418cb6d69af04579ce4725e5b6e148924"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Routes HOST discovery, public session recipes, native stop/replacement and enterprise PowerShell lifecycle.
+Routes HOST discovery, recipes, runtime diagnostics, native stop/replacement and enterprise PowerShell.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -59,16 +59,17 @@ Use for: A Windows Disable remains pending, or a stopped native host replacement
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Host-local approval only after the client reviewed the exact binding.
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only availability metadata; it does not grant replacement authority.
 - [`windows_stop_observation`](../../crates/festerm-host-setup/src/services.rs) — Retries same-epoch contention and fenced receipt reconciliation within one shared stop deadline.
+- [`read`](../../crates/festerm-host-setup/src/controller/runtime_diagnostics.rs) — Copies protected run correlation, then reads bounded optional worker history without holding the authority lease.
 
 Evidence:
 - [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Replacement preserves identity grants and helper provenance while authenticated.
-- [`host_update_release_metadata_preserves_pending_original_and_refuses_other_target`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Manifest verification keeps original provenances and rejects out-of-band targets.
+- [`host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution`](../../crates/festerm-host-setup/src/controller.rs) — Requires actual serve entry; preserves cleanup and original failure priority.
 - [`native_service_windows_stop_retries_transient_read_contention_without_task_mutation`](../../crates/festerm-host-setup/src/services/tests.rs) — Recovers a transient native-query Busy without Start, Stop or other manager mutations.
 
 Caveats:
 - Contention may retry bounded observations and exact receipt persistence, never revocation or manager actions.
 - Changed scope and non-contention refusals remain final; timeout retains StopRequested.
-- Replacement still requires signed bundles and the original durable intent.
+- Historical diagnostics never authorize readiness or retry; cleanup uncertainty stays final.
 
 ## PowerShell lifecycle
 

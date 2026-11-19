@@ -1582,7 +1582,7 @@ fn desktop_remote_access_diagnostics_render_static_details_without_readiness_cla
     let mut harness = Harness::builder()
         .with_size(egui::vec2(340.0, 600.0))
         .build_ui_state(
-            |ui, state: &mut Option<HostSetupDiagnostic>| diagnostics::show(ui, *state),
+            |ui, state: &mut Option<HostSetupDiagnostic>| diagnostics::show(ui, *state, &[]),
             Some(expected),
         );
     harness.run();
@@ -1712,6 +1712,86 @@ fn desktop_remote_access_normal_status_shows_recorded_state_and_checked_process_
     assert!(harness.query_by_label("Check host process…").is_none());
     assert!(harness
         .query_by_label("Remote access is enabled. No current host report is available.")
+        .is_none());
+}
+
+fn runtime_history_fixture() -> festerm_host_setup::controller::runtime_diagnostics::Record {
+    use festerm_host_setup::controller::runtime_diagnostics::{
+        Correlation, Outcome, Phase, Record,
+    };
+    Record {
+        timestamp: "2026-11-19T00:00:00Z".into(),
+        pid: 42,
+        epoch: 16,
+        run_id: uuid::Uuid::new_v4(),
+        phase: Phase::RelayCleanup,
+        outcome: Outcome::Error,
+        outer: Some("host.outer_timeout"),
+        disposition: Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient),
+        category: None,
+        http_status: None,
+        os_code: Some(5),
+        correlation: Correlation::ManagedHistory,
+    }
+}
+
+#[test]
+fn desktop_remote_access_runtime_history_is_separate_and_clears_on_refresh_failure() {
+    let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_failed = failed.clone();
+    let history = runtime_history_fixture();
+    let supplied = history.clone();
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        if worker_failed.load(Ordering::Acquire) {
+            return Err(Failure::ScopeChanged);
+        }
+        Ok(Report {
+            scope: provisioned_scope(),
+            runtime_history: vec![supplied.clone()],
+            ..Report::default()
+        })
+    })));
+    controller.view.diagnostic = Some(setup_diagnostic());
+    let context = egui::Context::default();
+    controller.action(Action::Refresh, &context);
+    assert!(controller.view.diagnostic.is_none());
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.runtime_history, vec![history]);
+    assert!(controller.view.diagnostic.is_none());
+    assert!(controller.view.process.is_none());
+    assert!(controller.view.last_run.is_none());
+    failed.store(true, Ordering::Release);
+    controller.action(Action::Refresh, &context);
+    assert!(controller.view.runtime_history.is_empty());
+    drain(&mut controller, &context);
+    assert!(controller.view.runtime_history.is_empty());
+    assert_eq!(controller.view.failure, Some(Failure::ScopeChanged));
+}
+
+#[test]
+fn desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 650.0))
+        .build_ui_state(
+            |ui, history: &mut Vec<festerm_host_setup::controller::runtime_diagnostics::Record>| {
+                diagnostics::show(ui, None, history)
+            },
+            vec![runtime_history_fixture()],
+        );
+    harness.run();
+    harness
+        .get_by_label("Remote access runtime history")
+        .click();
+    harness.run();
+    harness.get_by_label("Recorded events; use Refresh local status for an updated report.");
+    harness.get_by_label("2026-11-19T00:00:00Z · relay_cleanup · error");
+    harness.get_by_label("Numeric OS code: 5");
+    assert!(harness.query_by_label("Last setup operation").is_none());
+    harness.state_mut().clear();
+    harness.run();
+    assert!(harness
+        .query_by_label("Remote access runtime history")
         .is_none());
 }
 
