@@ -573,15 +573,22 @@ jobs:
               "usr/share/applications/festerm.desktop",
           } | {f"usr/share/icons/hicolor/{size}x{size}/apps/festerm.png"
                for size in (16, 32, 128, 256, 512, 1024)}
-          source = Path("squashfs-root")
+          # cargo-packager 0.11.8 creates these core files with the AppImage
+          # build, before linuxdeploy augments its separate final AppDir.
+          source = Path(".cargo-packager/appimage_deb/data")
           entries = list((source / "usr").rglob("*"))
-          if (source.is_symlink() or (source / "usr").is_symlink()
+          if (any(parent.is_symlink() for parent in (source, *source.parents))
+                  or (source / "usr").is_symlink()
                   or any(path.is_symlink() for path in entries)):
               raise SystemExit("Development runtime must not contain aliases")
           files = {path.relative_to(source).as_posix(): path
                    for path in entries if not path.is_dir()}
           if set(files) != expected:
-              raise SystemExit("Development runtime must contain exactly the 13 packaged files")
+              missing, extra = sorted(expected - files.keys()), sorted(files.keys() - expected)
+              detail = {"missing_count": len(missing), "extra_count": len(extra),
+                        "missing": [name[:96] for name in missing[:16]],
+                        "extra": [name[:96] for name in extra[:16]]}
+              raise SystemExit("Development core requires exactly 13 files: " + json.dumps(detail))
           destination = Path(
               f"development-linux-aarch64-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
           )
@@ -610,9 +617,10 @@ jobs:
                   "mode": mode,
               }
           receipt = {
-              "purpose": "development-appimage-runtime-only-not-signed-release",
+              "purpose": "development-appimage-core-prefix-only-not-signed-release",
               "installation_kind": "appimage",
               "feature_scope": "existing normal AppImage package build",
+              "source_stage": "cargo-packager-0.11.8 appimage_deb/data before linuxdeploy",
               "checkout_commit": checkout, "checkout_tree": tree,
               "candidate_head": os.environ["DEVELOPMENT_SOURCE_HEAD"],
               "run_id": os.environ["GITHUB_RUN_ID"],
