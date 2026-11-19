@@ -49,8 +49,36 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(receipt["checkout_tree"], "c" * 40)
         self.assertEqual(receipt["run_attempt"], "2")
         self.assertEqual(receipt["features"], self.message["features"])
+        self.assertEqual(receipt["build_layout"], "release-deps")
         self.assertEqual(receipt["build_paths"]["canonical_executable"], str(self.binary))
         self.assertEqual(receipt["build_paths"]["alias_paths"], [])
+
+    def test_exports_exact_modern_package_build_layout(self):
+        # Actual Cargo layout from run44589993880, artifact14563977465.
+        modern = self.root / "target/release/build/festerm/f6ab84ea3b491ff1/out/dev_tunnel_workflow_lab-f6ab84ea3b491ff1"
+        modern.parent.mkdir(parents=True)
+        self.binary.rename(modern)
+        self.message["executable"] = str(modern)
+        receipt = self.collect()
+        self.assertEqual(receipt["build_layout"], "release-package-build")
+        self.assertEqual(receipt["build_paths"]["expected_parent"], str(modern.parent))
+        self.assertEqual(receipt["build_paths"]["canonical_executable"], str(modern))
+        self.assertEqual((self.output / collector.TEST).read_bytes(), modern.read_bytes())
+
+    def test_modern_layout_refuses_mismatched_hash_package_profile_and_outside_root(self):
+        valid = self.root / "target/release/build/festerm/f6ab84ea3b491ff1/out/dev_tunnel_workflow_lab-f6ab84ea3b491ff1"
+        for binary, reason in [
+            (valid.with_name("dev_tunnel_workflow_lab-0123456789abcdef"), "sdk.package_hash_mismatch"),
+            (Path(str(valid).replace("/build/festerm/", "/build/foreign/")), "sdk.release_parent_mismatch"),
+            (Path(str(valid).replace("/target/release/", "/target/debug/")), "sdk.release_parent_mismatch"),
+            (self.root / "outside/build/festerm/f6ab84ea3b491ff1/out" / valid.name, "sdk.release_parent_mismatch"),
+            (Path(str(valid).replace("f6ab84ea3b491ff1", "f6ab")), "sdk.release_parent_mismatch"),
+        ]:
+            with self.subTest(binary=binary):
+                with self.assertRaises(collector.BuildPathError) as failure:
+                    collector.validate_build_path(self.root, binary)
+                self.assertEqual(str(failure.exception), reason)
+                self.assertFalse(self.output.exists())
 
     def test_rejects_missing_duplicate_wrong_target_and_non_test(self):
         for mutation in ["missing", "duplicate", "name", "source", "kind", "profile"]:

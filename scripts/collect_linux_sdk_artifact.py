@@ -37,12 +37,26 @@ def validate_build_path(root, binary):
     }
     if not binary.is_absolute():
         raise BuildPathError("sdk.executable_relative", paths)
-    if binary.parent != expected:
-        raise BuildPathError("sdk.release_parent_mismatch", paths)
+    if binary.parent == expected:
+        layout = "release-deps"
+    else:
+        try:
+            parent = binary.parent.relative_to(root / "target/release").as_posix()
+        except ValueError:
+            parent = ""
+        package = re.fullmatch(r"build/festerm/([0-9a-f]{16})/out", parent)
+        if package is None:
+            raise BuildPathError("sdk.release_parent_mismatch", paths)
+        if binary.name != f"{TEST}-{package[1]}":
+            raise BuildPathError("sdk.package_hash_mismatch", paths)
+        layout = "release-package-build"
+        paths["expected_parent"] = str(binary.parent)[:2048]
+        paths["canonical_expected_parent"] = canonical(binary.parent)
     if not re.fullmatch(TEST + r"-[0-9a-f]+", binary.name):
         raise BuildPathError("sdk.test_basename_mismatch", paths)
     if aliases:
         raise BuildPathError("sdk.path_alias", paths)
+    paths["build_layout"] = layout
     return paths
 
 
@@ -89,6 +103,7 @@ def collect(root, messages, output, environment):
         "build": "cargo test --locked --release -p festerm --test dev_tunnel_workflow_lab --no-run --message-format=json-render-diagnostics",
         "binary": TEST, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
         "mode": 0o755,
+        "build_layout": build_paths["build_layout"],
         "build_paths": build_paths,
     }
     output.mkdir()  # Exclusive: retained output is never repaired or overwritten.
