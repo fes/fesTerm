@@ -1,0 +1,102 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/792",
+  "status": "qualified: fresh signed Windows HOST daemon uses pinned ConPTY and matches capability replies and normal Copilot at two grids",
+  "scope": "Windows HOST runtime packaging fix only; full Linux-client/Windows-server policy and SDK matrix remains separate.",
+  "sources": {
+    "product_commit": "870d83674bd55d23eb6af14b451de121047ac325",
+    "version": "0.17.14",
+    "reviewed_PR_commit": "ea76f48b3b693444b2a2fc736f46071718f69059",
+    "PR_delta": "cfg(test) owner-write assertion and generated retrieval map only; native artifacts were built from the product commit",
+    "Windows_GUI": {
+      "kind": "unsigned development frontend; not a signed Desktop release",
+      "run": 44547027133,
+      "artifact": 14542405740,
+      "archive_sha256": "8d8bb700cc8d2b0d32f7b6a976f8deb42b8dd28feba19a6f03d467a050fbe63f",
+      "binary_sha256": "960f1c658b02c1655bfd717f85163be56565a5da791f4edcfcf1993b8e9a0d52"
+    },
+    "signed_HOST": {
+      "run": 44547464850,
+      "attempt": 1,
+      "artifact": 14544213682,
+      "global_archive_sha256": "68a228d14fb00fcf7a8623598f67a3551de0d5950803c8c0809cbceacf9cf305",
+      "HOST_archive_sha256": "8c46c1814bd5e73448c8eb0f3bb552e750df06db002d9690707d227d929f6609",
+      "sessiond_sha256": "7a9f4b11112e247354cd8bb890b0277e09deb9b2b4473175d29465813a503e08",
+      "Windows_HOST_validated_files": 10
+    },
+    "Linux_client": {
+      "source": "4b37e60f88013ffd9000be08f9b4b8cfd61e2809",
+      "version": "0.17.12"
+    },
+    "Copilot": {
+      "version": "1.0.112",
+      "Windows_binary_sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62"
+    },
+    "native_console_collector_sha256": "d8f556bbf0828acb23c8be14dec18c8911b6e5f8dde723fcc4d8d0944de50abf"
+  },
+  "native_runtime": {
+    "platform": "Windows ARM64 dedicated controlled VM; Linux GUI client",
+    "fresh_approved_daemon_created_once": true,
+    "actual_per_release_ConPTY_module_observed": true,
+    "conpty_DLL_sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+    "OpenConsole_sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+    "old_inbox_backed_daemon_retrofit_claimed": false,
+    "helper_and_loaded_DLL_Authenticode_metadata": "Valid",
+    "runtime_source_manifest_pins_match": true
+  },
+  "paired_checks": [
+    {
+      "grid": "74x19",
+      "local_and_remote_reply_bytes": 202,
+      "ten_single_replies": true,
+      "six_environment_fields_equal": true,
+      "no_normalization_or_reply_injection": true,
+      "restored_and_drained": true,
+      "normal_Copilot_initial_screen": "root accepted text/layout/wrapping/colors/prompt at matched terminal grid; vendor avatar animation may differ",
+      "physical_pixel_equality_claimed": false,
+      "query_L_sha256": "47e92cebc8bc214877f2938e388a821dbf3470d78da1a38df7e546bfeb96e195",
+      "query_R_sha256": "2075548cfa32ffc7a4f4b9e0f35efce4172ecfef3893c20fc0422e861ea61181",
+      "pair_manifest_sha256": "3ad3ad66711e4bfc927cda6056d5048e8f3431ac457a7ec47da88fc27dbcd6f7",
+      "screenshots": {
+        "LOCAL-normal-Copilot.png": "47dd21c4dc454b6e179c430edac2f2255114470169f4c357ab5b5207d762ce43",
+        "REMOTE-normal-Copilot.png": "aed3889e1154feedee736b6c89589a32b617440c74fe5670d316789f15cacc63"
+      }
+    },
+    {
+      "grid": "79x20",
+      "local_and_remote_reply_bytes": 202,
+      "ten_single_replies": true,
+      "six_environment_fields_equal": true,
+      "no_normalization_or_reply_injection": true,
+      "restored_and_drained": true,
+      "normal_Copilot_initial_screen": "root accepted text/layout/wrapping/colors/prompt at matched terminal grid; vendor avatar animation may differ",
+      "physical_pixel_equality_claimed": false,
+      "query_L_sha256": "86f778b263cb1fa38310dca24f00e6679f1c1683d917bc44dc0665bebbf7b1ae",
+      "query_R_sha256": "98bdb79b870848e144bc232dde9b5a3eee257d1d1580d3000b32c64eff82250a",
+      "pair_manifest_sha256": "fda5efd29597c9146ff3ab008afc022199539f8d24e33d07f874190d17f5aa42",
+      "screenshots": {
+        "LOCAL-normal-Copilot.png": "acd383439fe432ebe0b6bcedc17caa05c94fec05ddd213c5dfbd7cd6fa67848d",
+        "REMOTE-normal-Copilot.png": "120ab383cc737cde5618f94dcb401f582f3cc98ea9c7bb6e1e406182bd94bccf"
+      }
+    }
+  ],
+  "prior_divergence": {
+    "local_reply_bytes": 202,
+    "remote_reply_bytes": 47,
+    "missing_OSC_color_replies": 7,
+    "original_private_receipt_sha256": "cb5e0619fddd02363e1b73e859314ec6e815ba81ee3b5537f2d57d8bf91c9741",
+    "historical_failure_preserved": true
+  },
+  "private_evidence": {
+    "actual_module_manifest_sha256": "3d593af9b0427e756ccf0d5adc6af6f17371cbcf4a57bf089c017b77612fc32c",
+    "post_pair_Windows_preservation_sha256": "c9804588a302fe17a274b88f94dd6e7cdff1a7ed3dc451143934ce2e352084e6",
+    "owned_Copilot_retirement_and_new_daemon_preservation_sha256": "a4fe22df199fa5ad1d725e18f52cf92cfc013d8e79bb8d87037a2845a981fff7",
+    "post_pair_Linux_preservation_sha256": "6f4e15b4f9b201728b9df9aeab45f5577f9898c2e9b7ed6b9bccd4bc8e965635",
+    "publication": "Hashes and safe screenshot leaf names only; raw captures, host metadata, bindings and process records stay private."
+  },
+  "post_pair_preservation": "All four owned Copilot processes retired normally; old twelve Windows durable actors, new three daemon actors, HOST, seventeen Linux actors and six Linux journals preserved. Both supervised GUIs intentionally remain live for the next policy checks; GUI exit/drain is not claimed.",
+  "accepted_matrix_cases_unchanged": 2,
+  "full_item8_qualified": false,
+  "matrix_complete": false,
+  "public_release_qualification_claimed": false
+}

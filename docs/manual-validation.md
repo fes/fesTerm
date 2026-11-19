@@ -1103,14 +1103,15 @@ screens do not establish a fresh Copilot result. Mobile must flush its pending
 viewport before input or explicitly report input not sent and disconnect on
 persistent resize refusal, preserving the existing no-replay policy.
 
-Within DT-02 / DT-05, the 0.17.14 Windows HOST runtime-provenance check is
-**native UNRUN**. Use a fresh approved daemon from the newly signed HOST bundle
-with its complete architecture-matched pinned ConPTY pair; record actual loaded
-runtime selection, not merely staged-file presence. Repeat the existing ten
-single-reply capability queries and normal Copilot initial-screen comparison at
-74×19 and 79×20 against the server-local reference. Preserve old inbox-backed
-daemons and their sessions: adding the pair does not retrofit an existing
-process or establish the cause of its historical query divergence.
+Within DT-02 / DT-05, Windows HOST runtime provenance requires a fresh approved
+daemon from a signed bundle carrying the complete architecture-matched pinned
+ConPTY pair, with actual loaded-module evidence rather than staged files alone.
+The [0.17.14 native runtime qualification](../validation/dev-tunnels/windows-conpty-0.17.14.json)
+records ten single replies, matching six environment fields and root-reviewed
+normal Copilot initial screens at 74×19 and 79×20 against the server-local
+reference. This qualifies the runtime packaging fix, not the full item-8 policy/
+SDK matrix or physical-pixel identity. Old inbox-backed daemons remain unchanged;
+the prior missing-reply evidence is retained separately.
 
 DT-02 also checks the first attached viewport without requiring a second window
 resize: the actual PTY grid must match the client before the fresh program starts.
