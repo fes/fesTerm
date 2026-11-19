@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use crate::workflow_registry::WorkflowRegistry;
 use eframe::egui;
 use festerm_automation_js::snapshot::ApprovedBundle;
 use festerm_automation_workflow::intake::load_user_selected_bundle;
@@ -89,6 +90,8 @@ pub(super) struct Selection {
     bundle: Option<Arc<ApprovedBundle>>,
     error: Option<String>,
     cancelled: Option<Arc<AtomicBool>>,
+    selected_digest: Option<String>,
+    revision: u64,
 }
 
 impl Selection {
@@ -96,6 +99,41 @@ impl Selection {
         self.begin(context, move || {
             load_user_selected_bundle(&path).map_err(|error| error.to_string())
         });
+    }
+
+    pub(super) const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) fn capture_registered(
+        &mut self,
+        digest: String,
+        registry: Option<WorkflowRegistry>,
+        context: &egui::Context,
+    ) {
+        let Some(registry) = registry else {
+            self.refuse("Registered workflows are unavailable in Safe Mode.");
+            return;
+        };
+        let selected = digest.clone();
+        self.begin(context, move || {
+            registry.load(&digest).map_err(|error| error.to_string())
+        });
+        self.selected_digest = Some(selected);
+    }
+
+    pub(super) fn cancel_if_digest(&mut self, digest: &str) {
+        if self
+            .selected_digest
+            .as_deref()
+            .is_some_and(|selected| selected == digest)
+            || self
+                .bundle
+                .as_ref()
+                .is_some_and(|bundle| bundle.digest() == digest)
+        {
+            self.cancel();
+        }
     }
 
     #[cfg(test)]
@@ -128,6 +166,8 @@ impl Selection {
         context: &egui::Context,
         capture: impl FnOnce() -> Result<ApprovedBundle, String> + Send + 'static,
     ) {
+        self.revision = self.revision.saturating_add(1);
+        self.selected_digest = None;
         self.cancel();
         let cancelled = Arc::new(AtomicBool::new(false));
         self.cancelled = Some(cancelled.clone());
@@ -180,7 +220,9 @@ impl Selection {
     }
 
     pub(super) fn cancel(&mut self) {
+        self.revision = self.revision.saturating_add(1);
         self.disarm();
+        self.selected_digest = None;
         self.bundle = None;
         self.error = None;
         self.queued = None;
@@ -190,6 +232,12 @@ impl Selection {
         self.cancel();
         self.cancelled = None;
         self.error = Some(message.into());
+    }
+
+    pub(super) fn refuse_owned(&mut self, message: String) {
+        self.cancel();
+        self.cancelled = None;
+        self.error = Some(message);
     }
 
     pub(super) fn poll(&mut self, context: &egui::Context) {
@@ -298,6 +346,25 @@ mod tests {
         assert!(view.current_bundle().is_some());
         selection.disarm();
         assert!(view.current_bundle().is_none());
+        assert!(selection.view().current_bundle().is_none());
+    }
+
+    #[test]
+    fn deleting_a_requested_registered_digest_cancels_inflight_selection() {
+        let context = egui::Context::default();
+        let (release, blocked) = mpsc::sync_channel::<()>(1);
+        let mut selection = Selection::default();
+        selection.begin(&context, move || {
+            blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(bundle())
+        });
+        selection.selected_digest = Some(bundle().digest().to_owned());
+
+        selection.cancel_if_digest(bundle().digest());
+        release.send(()).unwrap();
+        wait_for_capture(&mut selection, &context);
+
+        assert_eq!(selection.view().status, Status::Empty);
         assert!(selection.view().current_bundle().is_none());
     }
 

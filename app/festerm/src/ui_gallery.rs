@@ -1648,6 +1648,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         automatic_update_checks: true,
+        safe_mode: false,
+        open_automation_activity: false,
         mcp_enabled: false,
         javascript_enabled: false,
         automation_mcp_enabled: false,

@@ -72,6 +72,7 @@ mod text_editor;
 mod ui_gallery;
 mod updates;
 mod vi_command;
+mod workflow_registry;
 
 use app::FesTermApp;
 use application::FesTermApplication;
@@ -148,6 +149,27 @@ fn primary_viewport_builder(
 
 fn main() -> eframe::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let safe_mode = args
+        .iter()
+        .any(|argument| argument == std::ffi::OsStr::new("--safe-mode"));
+    if safe_mode
+        && args.iter().any(|argument| {
+            matches!(
+                argument.to_str(),
+                Some(
+                    "--automation-worker"
+                        | "--javascript-program-worker"
+                        | "--mcp"
+                        | "--mcp-keygen"
+                )
+            )
+        })
+    {
+        eprintln!(
+            "fesTerm --safe-mode cannot be combined with an automation worker or MCP command."
+        );
+        std::process::exit(2);
+    }
     #[cfg(feature = "javascript-program-dev")]
     if args
         .first()
@@ -220,14 +242,35 @@ fn main() -> eframe::Result<()> {
     let tunnel_requested = tunnel_launch.is_some();
     #[cfg(not(feature = "experimental-dev-tunnels"))]
     let tunnel_requested = false;
-    let activation = if tunnel_requested {
+    let parsed_activation = if tunnel_requested {
         Ok(document_activation::StartupAction::IndependentNoActivation)
     } else {
-        document_activation::parse_env_activation_args()
-            .and_then(|cli| document_activation::prepare_startup(cli, None))
+        document_activation::parse_env_activation_args().and_then(|cli| {
+            if safe_mode {
+                let queue = document_activation::ActivationQueue::default();
+                match cli {
+                    document_activation::CliActivation::None => {
+                        Ok(document_activation::StartupAction::IndependentNoActivation)
+                    }
+                    document_activation::CliActivation::Open { paths } => {
+                        queue.enqueue(paths)?;
+                        Ok(document_activation::StartupAction::SafeMode { queue })
+                    }
+                    document_activation::CliActivation::Help => {
+                        Ok(document_activation::StartupAction::Help)
+                    }
+                    document_activation::CliActivation::Version => {
+                        Ok(document_activation::StartupAction::Version)
+                    }
+                }
+            } else {
+                document_activation::prepare_startup(cli, None)
+            }
+        })
     };
-    let (activation_queue, _activation_server) = match activation {
+    let (activation_queue, _activation_server) = match parsed_activation {
         Ok(document_activation::StartupAction::Primary { queue, server }) => (queue, Some(server)),
+        Ok(document_activation::StartupAction::SafeMode { queue }) => (queue, None),
         Ok(document_activation::StartupAction::IndependentNoActivation) => {
             (document_activation::ActivationQueue::default(), None)
         }
@@ -303,6 +346,7 @@ fn main() -> eframe::Result<()> {
             let mut app = FesTermApp::with_startup_configuration(
                 &creation_context.egui_ctx,
                 startup_configuration,
+                safe_mode,
             );
             app.install_native_menu(&creation_context.egui_ctx);
             app.install_wake_monitor(&creation_context.egui_ctx);

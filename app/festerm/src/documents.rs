@@ -653,13 +653,23 @@ impl DocumentRegistry {
         qualified_label: &str,
         bytes: &[u8],
     ) -> DocumentId {
+        self.create_untitled_with_extension(name_prefix, "txt", qualified_label, bytes)
+    }
+
+    pub(crate) fn create_untitled_with_extension(
+        &mut self,
+        name_prefix: &str,
+        extension: &str,
+        qualified_label: &str,
+        bytes: &[u8],
+    ) -> DocumentId {
         let next = self
             .next_untitled_by_prefix
             .entry(name_prefix.to_owned())
             .and_modify(|next| *next += 1)
             .or_insert(1);
         let key = format!("{name_prefix}-{next}");
-        let file_name = format!("{name_prefix}-{next}.txt");
+        let file_name = format!("{name_prefix}-{next}.{extension}");
         let origin = UntitledOrigin::new(key, file_name, qualified_label)
             .expect("generated untitled origins are valid");
         let text = TextDocument::from_unsaved_bytes(bytes, self.bounds)
@@ -3087,6 +3097,24 @@ mod tests {
         assert!(document.status().can_save());
         assert!(document.status().can_save_as());
         assert_eq!(document.status().auto_save(), AutoSaveControl::Unavailable);
+    }
+
+    #[test]
+    fn workflow_untitled_document_keeps_its_json_extension() {
+        let registry = Rc::new(RefCell::new(DocumentRegistry::new()));
+        let id = registry.borrow_mut().create_untitled_with_extension(
+            "Untitled-Workflow",
+            "workflow.json",
+            "New unsaved JavaScript workflow",
+            b"{}",
+        );
+        let registry = registry.borrow();
+        let open = registry.get(id).unwrap();
+        assert_eq!(
+            open.origin().file_name(),
+            "Untitled-Workflow-1.workflow.json"
+        );
+        assert!(open.text().is_dirty());
     }
 
     #[test]

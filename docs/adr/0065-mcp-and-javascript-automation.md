@@ -334,18 +334,77 @@ to bypass another's restrictions.
    deferred until platform confinement, distribution and lifecycle gates are
    resolved; no indefinite background execution or App Store acceptance is
    promised.
-9. **Reuse the native editor for future workflow authoring.** The shipped
-   desktop beta runs one bundle captured in Settings; editor authoring is
-   later work that must reuse its intake validation, canonical digest, native
-   Run review, worker supervisor and Stop path. Preserve the editor's shared
-   documents, save/conflict/undo and multi-view contract. Explicit Run freezes
+9. **Reuse the native editor for workflow authoring.** The shipped
+   desktop beta runs one bundle captured in Settings. The first implemented
+   authoring slice creates or opens the same JSON `SourceSnapshot` in the
+   existing editor and validates current dirty content against
+   `ApprovedBundle`. Authoring is available with execution disabled and never
+   captures or grants a workflow. Preserve the editor's shared documents,
+   save/conflict/undo and multi-view contract. A future editor execution slice
+   must still reuse the intake validation, canonical digest, native Run review,
+   worker supervisor and Stop path. Explicit Run will freeze
    and reviews a saved workflow version; Stop and content-free run status are
    broker-owned and remain available after editor views close. Save/import and
    auto-save never execute or approve code. Later completion/signature help
    uses a static versioned built-in API catalog, not code execution or an
    implicit general language server. Broader UI control remains separately
    reviewed typed application commands, not widget access or synthetic input.
-10. **Specify application event hooks without enabling them.** Discoverable
+10. **Keep editable source, registered artifacts and runtime authority
+    separate.** Saving or auto-saving a `.workflow.json` file only writes an
+    ordinary editor document at the user's chosen path. It does not install,
+    import, register, arm, capture, start or authorize a workflow, and it adds
+    no entry to configuration or workspace authorization. Workspace restore
+    may reopen editor views, but reopening a source file has the same
+    non-executing meaning as Save: neither the path nor restored editor state
+    is a durable workflow selection or grant. Ordinary file deletion, rename,
+    conflict or permission failure therefore cannot silently change an
+    approved run.
+
+    A future workflow registry requires a separate explicit **Import/Register**
+    step and a versioned, bounded, application-owned index. Import validates
+    the complete `SourceSnapshot`, freezes and verifies its canonical digest,
+    and stores an immutable managed artifact in the application data
+    namespace; the index contains metadata and the artifact digest, not
+    executable authority. It must not trust a mutable authoring path or
+    automatically re-import changes. Reimport creates a new version; update,
+    replacement and deletion are distinct deliberate operations. Registry
+    entries may persist across launches, but grants, approved parameter values,
+    target bindings, active runs, worker handles and arming state do not.
+    Malformed, oversized, unsupported-version or digest-mismatched entries are
+    refused/quarantined individually and visible in a recovery surface; the
+    application must not skip directly from a corrupt registry to an older
+    mutable path. Normal startup may restore only inert registry metadata. It
+    never starts a worker, captures a file, approves scopes or invokes a
+    workflow merely because `javascript_enabled` is on.
+
+    Explicit Run resolves one exact registered digest, verifies the managed
+    artifact again and enters the existing native review. No automatic launch
+    path exists: a future P4 hook must add its own explicit arming decision
+    before it can invoke a registered artifact. An editable file is never
+    promoted to the registry by being present in a directory, restored in a
+    tab, named with a suffix, discovered by a watcher or selected for display.
+11. **Provide safe startup as a process-local automation fence.** A future
+    cross-platform safe-mode startup entry (`--safe-mode` and a native "Restart
+    in Safe Mode" route) forcibly makes JavaScript and MCP ineffective for that
+    process. It must suppress registry activation, workflow-worker startup,
+    workflow/hook arming, automation listeners and automatic restoration of
+    pending automation UI. It does not delete or rewrite the user's
+    `javascript_enabled`, `mcp_enabled`, registry, bindings or source files;
+    the saved choices remain available after a normal restart. Toggling those
+    preferences in safe mode cannot override the process fence, and no saved
+    "safe mode" bit may make the recovery state permanent.
+
+    Ordinary text editing and source-file validation may remain available as
+    inert editor operations, but they cannot cross into capture, Run or worker
+    admission. Safe mode is visibly labelled in the application, reports what
+    it suppressed, and restores normal operation only after an explicit normal
+    restart. Crash-loop/repeated-start recovery may offer safe mode; it must not
+    silently mutate automation preferences or authorize a different state.
+    Startup must fail closed before registry or automation initialization,
+    rather than attempting a weaker in-process execution mode. Safe mode is
+    therefore a recovery boundary, not a permission and not a substitute for
+    the broker, confinement or native grants.
+12. **Specify application event hooks without enabling them.** Discoverable
     versioned lifecycle hooks attach immutable workflows through native binding
     management. Binding configuration is not authorization: automatic delivery
     requires a separately qualified P4 arming grant with exact targets,
@@ -355,7 +414,7 @@ to bypass another's restrictions.
     not persist grants. Post-close metadata delivery requires its own policy.
     Explicit user-invoked workflow commands remain manual invocations, not
     permission to enable background/lifecycle triggers.
-11. **Design a separately qualified native script debugger.** Explicit Debug
+13. **Design a separately qualified native script debugger.** Explicit Debug
     supports source breakpoints, stepping, stack navigation and inert bounded
     variable inspection of a frozen workflow in its confined worker. The
     native inspector is an explicit disclosure recipient, not a privileged
@@ -430,6 +489,15 @@ per-stage acceptance, independent reviews or platform evidence.
 - **Make the authority kernel depend on session implementations or add a
   second admission mutex:** rejected. A dependency-neutral shared boundary
   retains the existing process-wide serialization and non-forgeable guard.
+- **Scan a workflow directory, extension folder or workspace and load matching
+  files at startup:** rejected. Filesystem presence is not installation,
+  review or consent; implicit source execution and mutation races would
+  broaden authority and make recovery ambiguous. A managed, versioned registry
+  requires explicit import instead.
+- **Persist a safe-mode off switch into normal automation settings:** rejected
+  as a default because uncertain startup and stale sibling writes could
+  confuse user intent with current-process recovery. Safe mode must dominate a
+  live process without rewriting the durable opt-ins.
 
 ## Consequences
 
@@ -455,6 +523,16 @@ obligations. The engine and platform
 containment remain substantial qualification work, not checklist claims.
 Desktop and mobile may qualify at different times.
 
+Workflow persistence therefore has three meanings with different authority:
+an editable user file, an immutable managed registry artifact and a transient
+broker run. The first can be saved, moved or deleted without granting
+authority; the second is created only by explicit import and never follows a
+mutable path; the third exists only for the approved run. A future registry
+adds bounded application-data storage and cleanup work, including schema
+migration and corrupt-entry recovery, but does not turn JavaScript into a
+plugin directory. Safe mode is process-local and may disable capabilities
+without deleting the user's source, registry or settings.
+
 Once later stages qualify, users can have manual scripting and assistant-driven
 workflows, but grants can legitimately refuse a run that lacks a data-read or
 control scope. Revocation stops future broker effects; it cannot erase already
@@ -470,7 +548,12 @@ in the design must be visible in implementation/release review.
   lifecycle behavior. Existing single-writer, secret-store and trust/recovery
   boundaries remain in force. Proposed editor-backed immutable runs and
   separately gated event binding/arming and debug inspection extend the UX
-  contract, not ambient authority; none is implemented by the desktop beta.
+  contract, not ambient authority. The non-authorizing draft/open/validate
+  subset is implemented; explicit immutable registry import and process-local
+  safe-mode startup are also implemented. Run, Stop/status, hooks and debugging
+  are not. Saving remains file-only:
+  startup restores no executable authority, and a managed registry, when
+  implemented, owns immutable artifacts rather than mutable source paths.
 - **GUI/action edges affected:** `AUT-01` through `AUT-04` remain deferred for
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
@@ -479,9 +562,15 @@ in the design must be visible in implementation/release review.
   selection route; authenticated bootstrap and native qualification remain
   deferred. `AUT-09`
   covers the bounded presentation/revalidation seam and its unavailable client
-  contract. `AUT-10` through `AUT-12` are deferred proposal edges for
-  editor authoring, application event hooks and script Debug mode; no
-  current interaction changes.
+  contract. `AUT-10` is partial for non-authorizing native editor
+  draft/open/validation: More-only entry points, atomic source-open commands,
+  visible workflow mode and off-UI, exact-revision local validation are
+  implemented; explicit editor **Register…**, managed registry listing/removal,
+  inert artifact startup and CLI/About Safe Mode are implemented. Its
+  Run/Stop/status and reviewed-version lifecycle remain deferred. The edge
+  must prove that Save/Open/workspace restore/registry startup do not capture,
+  register or execute. `AUT-11` and `AUT-12` remain deferred proposal edges for
+  hooks and Debug mode.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
@@ -507,7 +596,13 @@ in the design must be visible in implementation/release review.
   same-pass conflict handling, competing workflow selections, and cancellation
   before approval. A persisted
   disable is checked after reload; failure cannot promise a durable off bit
-  across restart. MCP protocol, private framing, bounded
+  across restart. Future registry tests must cover strict index parsing,
+  bounded entries, atomic import/reimport/delete, digest verification, corrupt
+  and unsupported-version quarantine, stale-path refusal and inert startup.
+  Future safe-mode tests must prove it dominates persisted opt-ins before any
+  registry/worker/listener initialization, preserves files/settings, resists
+  stale UI toggles and restores normal state only after an explicit restart.
+  MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path.
   The outbound ownership extraction adds queue capacity/FIFO/disconnect and
   guard-freshness checks plus app connection full/closed regressions. An
