@@ -102,6 +102,23 @@ use crate::text_editor::TextEditorTab;
 const TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX: &str = "terminal-history";
 const NEW_TEXT_DOCUMENT_NAME_PREFIX: &str = "Untitled";
 const NEW_TEXT_DOCUMENT_LABEL: &str = "New unsaved file";
+const NEW_WORKFLOW_DOCUMENT_NAME_PREFIX: &str = "Untitled-Workflow";
+const NEW_WORKFLOW_DOCUMENT_LABEL: &str = "New unsaved JavaScript workflow";
+pub(crate) const MINIMAL_JAVASCRIPT_WORKFLOW: &str = r#"{
+  "manifest": {
+    "version": 1,
+    "apiVersion": 1,
+    "name": "untitled-workflow",
+    "entry": "main.js",
+    "modules": ["main.js"],
+    "parameters": {},
+    "capabilities": []
+  },
+  "modules": {
+    "main.js": "export async function main() {\n  return;\n}\n"
+  }
+}
+"#;
 
 /// Stable application-level tab identifier.
 ///
@@ -2982,6 +2999,7 @@ pub enum AppCommand {
     /// Opens the shared file picker. The composition root routes Markdown to
     /// editor Preview and other bounded text to Edit.
     OpenMarkdownWorkspace,
+    OpenJavaScriptWorkflowEditorPicker,
     OpenLocalMarkdownFile {
         path: PathBuf,
         /// Legacy caller context retained for command compatibility. Local
@@ -3149,6 +3167,12 @@ pub enum AppCommand {
     },
     /// Opens a new empty untitled document in the native editor.
     NewTextDocument,
+    NewJavaScriptWorkflowDraft,
+    OpenJavaScriptWorkflowSource {
+        path: PathBuf,
+    },
+    ValidateJavaScriptWorkflowSource,
+    RegisterJavaScriptWorkflowSource,
     /// Freezes the active terminal's retained text into a new independent
     /// editor snapshot.
     OpenTerminalHistoryInEditor,
@@ -5376,6 +5400,8 @@ impl AppState {
             // this command ever reaches here the picker was unavailable, so
             // there is nothing to open.
             AppCommand::OpenMarkdownWorkspace => {}
+            AppCommand::OpenJavaScriptWorkflowEditorPicker => {}
+            AppCommand::RegisterJavaScriptWorkflowSource => {}
             AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                 self.open_local_markdown(path, replacing);
             }
@@ -5513,6 +5539,23 @@ impl AppState {
                 }
             }
             AppCommand::NewTextDocument => self.new_text_document(),
+            AppCommand::NewJavaScriptWorkflowDraft => self.new_javascript_workflow_draft(),
+            AppCommand::OpenJavaScriptWorkflowSource { path } => {
+                if let Some(failure) = self.open_text_editor(&path) {
+                    self.open_refusal = Some((path, failure));
+                } else if let Some(tab) = self.local_document_tab(&path) {
+                    self.set_active(tab);
+                    if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                        editor.mark_workflow_source();
+                    }
+                }
+            }
+            AppCommand::ValidateJavaScriptWorkflowSource => {
+                let documents = self.documents.clone();
+                if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                    editor.validate_workflow_source(&documents);
+                }
+            }
             AppCommand::OpenTerminalHistoryInEditor => self.open_terminal_history_snapshot(false),
             AppCommand::SaveTerminalHistoryAs => self.open_terminal_history_snapshot(true),
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
@@ -6289,6 +6332,19 @@ impl AppState {
         self.open_text_document(document);
     }
 
+    fn new_javascript_workflow_draft(&mut self) {
+        let document = self.documents.borrow_mut().create_untitled_with_extension(
+            NEW_WORKFLOW_DOCUMENT_NAME_PREFIX,
+            "workflow.json",
+            NEW_WORKFLOW_DOCUMENT_LABEL,
+            MINIMAL_JAVASCRIPT_WORKFLOW.as_bytes(),
+        );
+        self.open_text_document(document);
+        if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+            editor.mark_workflow_source();
+        }
+    }
+
     fn open_text_document(&mut self, document: DocumentId) {
         let id = TabId::next();
         let editor = TextEditorTab::with_options(
@@ -6336,8 +6392,17 @@ impl AppState {
         let Some(document) = self.active_document() else {
             return;
         };
+        let workflow_source = matches!(
+            &self.active_tab().content,
+            TabContent::TextEditor(editor) if editor.is_workflow_source()
+        );
         self.documents.borrow_mut().retain(document);
         self.open_text_document(document);
+        if workflow_source {
+            if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                editor.mark_workflow_source();
+            }
+        }
     }
 
     fn active_terminal_history_snapshot(
@@ -13160,6 +13225,81 @@ mod tests {
         assert_eq!(text_editor_tabs, 1);
         assert_eq!(state.active_document(), Some(document));
         assert_eq!(state.documents.borrow().get(document).unwrap().views(), 1);
+    }
+
+    #[test]
+    fn new_javascript_workflow_draft_is_dirty_valid_and_marked() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+
+        let document = state.active_document().unwrap();
+        {
+            let registry = state.documents.borrow();
+            let open = registry.get(document).unwrap();
+            assert_eq!(
+                open.origin().file_name(),
+                "Untitled-Workflow-1.workflow.json"
+            );
+            assert!(open.text().is_dirty());
+            let snapshot: festerm_automation_js::snapshot::SourceSnapshot =
+                serde_json::from_str(open.text().text()).unwrap();
+            festerm_automation_js::snapshot::ApprovedBundle::new(snapshot).unwrap();
+        }
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("new workflow must use the shared native editor");
+        };
+        assert!(editor.is_workflow_source());
+    }
+
+    #[test]
+    fn ordinary_new_file_remains_an_unmarked_empty_text_document() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewTextDocument, &context);
+        let document = state.active_document().unwrap();
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("new file must use the shared native editor");
+        };
+        assert!(!editor.is_workflow_source());
+        assert_eq!(
+            state
+                .documents
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .text(),
+            ""
+        );
+        assert_eq!(editor.title(), "Untitled-1.txt");
+    }
+
+    #[test]
+    fn duplicate_editor_view_preserves_workflow_source_marker() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        state.dispatch(AppCommand::OpenAnotherEditorView, &context);
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("duplicate must be an editor");
+        };
+        assert!(editor.is_workflow_source());
+    }
+
+    #[test]
+    fn workflow_source_marker_survives_save_as_rebind() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("saved.workflow.json");
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        let confirmed = crate::document_store::observe_destination(&destination).unwrap();
+        state.save_active_text_document_to(&destination, &confirmed);
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("saved workflow must remain in the editor");
+        };
+        assert!(editor.is_workflow_source());
     }
 
     #[test]

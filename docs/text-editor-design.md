@@ -28,12 +28,26 @@ registry is implemented first; native Files/editor integration is not implied.
 The owner's iOS-specific override excludes Edit/Preview split panes, without
 changing desktop Split.
 
-### Proposed automation authoring (not implemented)
+### Automation authoring
 
 The [automation design](automation-design.md#script-authoring-and-execution-surfaces)
-proposes reusing this editor for JavaScript workflows, with contextual Run,
-Debug, Stop, status and hook-binding commands. The shipped desktop workflow
-beta does not use this editor; it captures one bundle from Settings. The
+reuses this editor for non-executing JavaScript workflow authoring. More
+actions owns **New JavaScript Workflow** and **Open JavaScript Workflow
+Source…**; they are intentionally not duplicated in the command palette.
+Workflow documents have a visible `WORKFLOW` origin marker and a contextual
+**Validate** action. `*.workflow.json` files enter that mode automatically,
+while an explicit workflow-source open can mark a JSON file with another
+name. Generic JSON opened normally remains ordinary.
+
+The same command group offers **Register…** only after a local workflow view
+is saved and conflict-free. Register copies the current canonical snapshot into
+the managed registry, opens Settings and never changes or grants the source.
+The original editable file remains an ordinary document and is not reopened
+for execution. In Safe Mode the command refuses without changing files or
+settings.
+
+Run, Debug, Stop, status and hook-binding remain proposed. The shipped desktop
+workflow beta still captures one bundle from Settings for execution. The
 separately qualified [script debugger](automation-design.md#script-debug-mode)
 adds source breakpoints, stepping and native stack/variable panels tied to a
 read-only frozen run snapshot, not another mutable buffer for the same file.
@@ -94,9 +108,14 @@ command bar, the Find bar when it is open, a state banner when there is
 something to say, the body with its line-number gutter, and the status bar.
 
 The command bar reads left to right as: **Save**, **Auto-save**, a separator,
-**Save As…**, **Find**, **Replace**, a separator, **Duplicate view**,
-**Refresh**, and — right-aligned — a summary of this view's options beside the
-**Editor options** menu that changes them.
+**Save As…**, **Find**, **Replace**, a separator, then the workflow-only
+**Validate** group when applicable, **Duplicate view**, **Refresh**, and —
+right-aligned — a summary of this view's options beside the **Editor options**
+menu that changes them. Below the measured one-row budget, view actions move
+to a second row and the compact controls omit the summary; below the measured
+primary-row budget, Save As, Find, Replace, Duplicate view and Refresh move
+into a 30 px **Editor actions** overflow while Validate remains visible. Every
+control stays disjoint rather than overlapping.
 
 Auto-save sits beside Save rather than beside `Edit | Preview | Split`, because
 it belongs to the document every view shares, not to the view that happens to

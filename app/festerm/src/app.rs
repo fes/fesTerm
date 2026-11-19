@@ -436,6 +436,8 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    safe_mode: bool,
+    open_automation_settings: bool,
     last_session_pump: Option<TabId>,
     recording_view: crate::application::recording::WindowView,
     recording_request: Option<crate::application::recording::Request>,
@@ -532,6 +534,8 @@ pub struct FesTermApp {
     /// down the window is let through instead of being intercepted again
     /// (`docs/gui-action-graph.md` `QUIT-03`).
     quit_confirmed: bool,
+    safe_restart_requested: bool,
+    normal_restart_requested: bool,
     powershell_shutdown_started: Option<Instant>,
     #[cfg(feature = "javascript-program-dev")]
     javascript_shutdown_settled: bool,
@@ -571,6 +575,24 @@ pub struct FesTermApp {
     palette_build_count: Cell<usize>,
     #[cfg(test)]
     native_menu_shortcut_build_count: Cell<usize>,
+}
+
+impl FesTermApp {
+    pub(crate) fn set_safe_mode(&mut self, safe_mode: bool) {
+        self.safe_mode = safe_mode;
+    }
+
+    pub(crate) const fn safe_mode(&self) -> bool {
+        self.safe_mode
+    }
+
+    pub(crate) fn take_safe_restart_request(&mut self) -> bool {
+        std::mem::take(&mut self.safe_restart_requested)
+    }
+
+    pub(crate) fn take_normal_restart_request(&mut self) -> bool {
+        std::mem::take(&mut self.normal_restart_requested)
+    }
 }
 
 #[cfg(feature = "experimental-dev-tunnels")]
@@ -760,11 +782,13 @@ impl FesTermApp {
     pub(crate) fn with_startup_configuration(
         context: &egui::Context,
         startup_configuration: StartupConfiguration,
+        safe_mode: bool,
     ) -> Self {
         let (configuration, status, configuration_reloader) = startup_configuration.into_parts();
         let mut app = Self::with_configuration(context, configuration);
         app.configuration_status = status;
         app.configuration_reloader = configuration_reloader;
+        app.safe_mode = safe_mode;
         app
     }
 
@@ -806,6 +830,7 @@ impl FesTermApp {
         // The registry is application-scoped: a second window joins the one
         // that already exists rather than starting its own.
         window.state.adopt_documents(documents);
+        window.safe_mode = false;
         window.role = WindowRole::Secondary;
         // The native menu bar, the wake monitor, and native-window smoke stay
         // with the primary window; a secondary window shares the process and
@@ -1012,6 +1037,8 @@ impl FesTermApp {
             automation_settings: Default::default(),
             automation_commands: Vec::new(),
             automation_command_overflow: false,
+            safe_mode: false,
+            open_automation_settings: false,
             focus_mode: false,
             terminal_fonts_installed: true,
             effective_terminal_font,
@@ -1023,6 +1050,8 @@ impl FesTermApp {
             update_restart_authorized: false,
             update_restart_declined: false,
             quit_confirmed: false,
+            safe_restart_requested: false,
+            normal_restart_requested: false,
             powershell_shutdown_started: None,
             #[cfg(feature = "javascript-program-dev")]
             javascript_shutdown_settled: false,
@@ -3112,7 +3141,11 @@ impl FesTermApp {
     }
 
     fn update_window_title(&mut self, context: &egui::Context) {
-        let title = Self::window_title();
+        let title = if self.safe_mode {
+            format!("{} — Safe Mode", Self::window_title())
+        } else {
+            Self::window_title()
+        };
         if self.window_title != title {
             context.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
@@ -3324,7 +3357,15 @@ impl FesTermApp {
                 ChromeAction::NewTextDocument => {
                     self.state.dispatch(AppCommand::NewTextDocument, context)
                 }
+                ChromeAction::NewJavaScriptWorkflowDraft => self
+                    .state
+                    .dispatch(AppCommand::NewJavaScriptWorkflowDraft, context),
                 ChromeAction::OpenMarkdownFile => self.open_markdown_file_picker(context),
+                ChromeAction::OpenJavaScriptWorkflowEditorPicker => self
+                    .dispatch_authoring_command(
+                        AppCommand::OpenJavaScriptWorkflowEditorPicker,
+                        context,
+                    ),
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
                 }
@@ -3459,6 +3500,15 @@ impl FesTermApp {
         }
     }
 
+    fn dispatch_authoring_command(&mut self, command: AppCommand, context: &egui::Context) {
+        match command {
+            AppCommand::OpenJavaScriptWorkflowEditorPicker => {
+                self.open_workflow_editor_file_picker(context)
+            }
+            command => self.state.dispatch(command, context),
+        }
+    }
+
     fn toggle_inspector_from_current_focus(&mut self, context: &egui::Context) {
         if !self.state.inspector_open() {
             self.inspector_restore_focus = context.memory(|memory| memory.focused());
@@ -3542,24 +3592,26 @@ impl FesTermApp {
             },
         ];
         #[cfg(feature = "javascript-program-dev")]
-        items.extend([
-            PaletteItem {
-                id: 4,
-                category: C::Sessions,
-                label: "Start JavaScript Save Fixture (developer)".to_owned(),
-                hint: None,
-                is_tab: false,
-                shortcut_label: None,
-            },
-            PaletteItem {
-                id: 48,
-                category: C::Sessions,
-                label: "Resume JavaScript Save Fixture (developer)".to_owned(),
-                hint: None,
-                is_tab: false,
-                shortcut_label: None,
-            },
-        ]);
+        if !self.safe_mode {
+            items.extend([
+                PaletteItem {
+                    id: 4,
+                    category: C::Sessions,
+                    label: "Start JavaScript Save Fixture (developer)".to_owned(),
+                    hint: None,
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: 48,
+                    category: C::Sessions,
+                    label: "Resume JavaScript Save Fixture (developer)".to_owned(),
+                    hint: None,
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+            ]);
+        }
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.extend([
                 PaletteItem {
@@ -3986,14 +4038,14 @@ impl FesTermApp {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
             #[cfg(feature = "javascript-program-dev")]
-            4 => self.state.dispatch(
+            4 if !self.safe_mode => self.state.dispatch(
                 AppCommand::StartJavaScriptSave {
                     mode: festerm_javascript_session::ProgramLaunchMode::New,
                 },
                 context,
             ),
             #[cfg(feature = "javascript-program-dev")]
-            48 => self.state.dispatch(
+            48 if !self.safe_mode => self.state.dispatch(
                 AppCommand::StartJavaScriptSave {
                     mode: festerm_javascript_session::ProgramLaunchMode::Resume,
                 },
@@ -5005,6 +5057,8 @@ impl FesTermApp {
         }
 
         let mut close = false;
+        let mut restart_safe_mode = false;
+        let mut restart_normally = false;
         let mut update_action = None;
         let update_status = self.updates.status().clone();
         let installation_kind = self.updates.installation_kind();
@@ -5048,6 +5102,14 @@ impl FesTermApp {
                 });
                 ui.add_space(6.0);
                 ui.label("An AI-friendly local, SSH, and serial terminal.");
+                if self.safe_mode {
+                    ui.label(
+                        egui::RichText::new(
+                            "Safe Mode is active. MCP, JavaScript workflows and workflow registry activation are disabled for this process; saved settings and files are unchanged.",
+                        )
+                        .color(theme::TEXT_SECONDARY),
+                    );
+                }
                 ui.label(egui::RichText::new(AI_AUTHORSHIP_SUMMARY).strong());
                 ui.label(
                     egui::RichText::new(AI_AUTHORSHIP_DETAIL)
@@ -5295,6 +5357,21 @@ impl FesTermApp {
                         {
                             self.overlays.about_licenses_open = true;
                         }
+                        if self.safe_mode {
+                            if action_button(ui, ActionButtonRole::Secondary, "Restart Normally…")
+                                .clicked()
+                            {
+                                restart_normally = true;
+                            }
+                        } else if action_button(
+                            ui,
+                            ActionButtonRole::Secondary,
+                            "Restart in Safe Mode…",
+                        )
+                        .clicked()
+                        {
+                            restart_safe_mode = true;
+                        }
                     },
                 );
             },
@@ -5309,6 +5386,16 @@ impl FesTermApp {
             self.overlays.about_open = false;
             self.overlays.about_licenses_open = false;
             self.restore_active_terminal_focus();
+        }
+        if restart_safe_mode {
+            self.overlays.about_open = false;
+            self.overlays.about_licenses_open = false;
+            self.request_safe_mode_restart(context);
+        }
+        if restart_normally {
+            self.overlays.about_open = false;
+            self.overlays.about_licenses_open = false;
+            self.request_normal_restart(context);
         }
     }
 
@@ -5419,6 +5506,7 @@ impl FesTermApp {
     /// `Ctrl+O` behaves the way it does in every other document viewer.
     fn open_markdown_file_picker(&mut self, context: &egui::Context) {
         self.overlays.workflow_file_picker = false;
+        self.overlays.workflow_editor_file_picker = false;
         let active = self.state.active();
         self.overlays.markdown_file_picker_replaces = matches!(
             self.state.active_tab().content,
@@ -5438,6 +5526,18 @@ impl FesTermApp {
             return;
         }
         self.overlays.workflow_file_picker = true;
+        self.overlays.workflow_editor_file_picker = false;
+        self.overlays.markdown_file_picker_replaces = None;
+        self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
+            self.markdown_file_picker_start_directory(),
+            context.clone(),
+        ));
+        context.request_repaint();
+    }
+
+    fn open_workflow_editor_file_picker(&mut self, context: &egui::Context) {
+        self.overlays.workflow_file_picker = false;
+        self.overlays.workflow_editor_file_picker = true;
         self.overlays.markdown_file_picker_replaces = None;
         self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
             self.markdown_file_picker_start_directory(),
@@ -5478,6 +5578,7 @@ impl FesTermApp {
         if self.overlays.markdown_file_picker.take().is_some() {
             self.overlays.markdown_file_picker_replaces = None;
             self.overlays.workflow_file_picker = false;
+            self.overlays.workflow_editor_file_picker = false;
             self.restore_active_terminal_focus();
             context.request_repaint();
         }
@@ -5605,6 +5706,7 @@ impl FesTermApp {
 
     fn show_markdown_file_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let selecting_workflow = self.overlays.workflow_file_picker;
+        let editing_workflow = self.overlays.workflow_editor_file_picker;
         if selecting_workflow && !self.automation_javascript_enabled() {
             self.close_markdown_file_picker(ctx);
             return;
@@ -5635,6 +5737,8 @@ impl FesTermApp {
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading(if selecting_workflow {
                     "Select JavaScript Workflow"
+                } else if editing_workflow {
+                    "Open JavaScript Workflow Source"
                 } else {
                     "Open File"
                 });
@@ -5648,20 +5752,12 @@ impl FesTermApp {
                 let replacing = self.overlays.markdown_file_picker_replaces.take();
                 self.overlays.markdown_file_picker = None;
                 self.overlays.workflow_file_picker = false;
+                self.overlays.workflow_editor_file_picker = false;
                 self.restore_active_terminal_focus();
-                if selecting_workflow {
-                    if self.automation_javascript_enabled() {
-                        self.queue_automation_command(
-                            crate::automation::NativeCommand::CaptureWorkflow(
-                                crate::automation::SelectedWorkflow(path),
-                            ),
-                        );
-                    } else {
-                        tracing::warn!("workflow selection refused while JavaScript is disabled");
-                    }
+                if editing_workflow {
+                    self.finish_workflow_editor_file_pick(path, ctx);
                 } else {
-                    self.state
-                        .dispatch(picked_file_command(path, replacing), ctx);
+                    self.finish_markdown_file_pick(path, replacing, selecting_workflow, ctx);
                 }
             }
             Some(MarkdownPickerOutcome::Cancelled) => {
@@ -5669,6 +5765,32 @@ impl FesTermApp {
             }
             Some(MarkdownPickerOutcome::Pending) | None => {}
         }
+    }
+
+    fn finish_markdown_file_pick(
+        &mut self,
+        path: std::path::PathBuf,
+        replacing: Option<TabId>,
+        selecting_workflow: bool,
+        ctx: &egui::Context,
+    ) {
+        if selecting_workflow {
+            if self.automation_javascript_enabled() {
+                self.queue_automation_command(crate::automation::NativeCommand::CaptureWorkflow(
+                    crate::automation::SelectedWorkflow(path),
+                ));
+            } else {
+                tracing::warn!("workflow selection refused while JavaScript is disabled");
+            }
+        } else {
+            self.state
+                .dispatch(picked_file_command(path, replacing), ctx);
+        }
+    }
+
+    fn finish_workflow_editor_file_pick(&mut self, path: std::path::PathBuf, ctx: &egui::Context) {
+        self.state
+            .dispatch(AppCommand::OpenJavaScriptWorkflowSource { path }, ctx);
     }
 
     fn port_forward_direction_label(direction: SshPortForwardDirection) -> &'static str {
@@ -7651,6 +7773,7 @@ impl FesTermApp {
                     ui.visuals_mut().disabled_alpha = 1.0;
                     ui.disable();
                 }
+                let open_automation_activity = std::mem::take(&mut self.open_automation_settings);
                 let tab = self.state.active_tab_mut();
                 match &mut tab.content {
                     TabContent::Launcher => {
@@ -7726,8 +7849,11 @@ impl FesTermApp {
                                     .state
                                     .show_durable_session_in_status_bar(),
                                 automatic_update_checks: self.state.automatic_update_checks(),
-                                mcp_enabled: self.state.mcp_enabled(),
-                                javascript_enabled: self.state.javascript_enabled(),
+                                safe_mode: self.safe_mode,
+                                open_automation_activity,
+                                mcp_enabled: !self.safe_mode && self.state.mcp_enabled(),
+                                javascript_enabled: !self.safe_mode
+                                    && self.state.javascript_enabled(),
                                 automation_mcp_enabled: self.automation_mcp_enabled(),
                                 automation_javascript_enabled: self.automation_javascript_enabled(),
                                 automation_mcp_ui_revision: self.automation_preference_ui_revision(
@@ -8319,6 +8445,20 @@ impl FesTermApp {
                 AppCommand::OpenWorkflowPicker => {
                     self.open_workflow_file_picker(&ui.ctx().clone());
                 }
+                AppCommand::OpenJavaScriptWorkflowEditorPicker => {
+                    self.open_workflow_editor_file_picker(&ui.ctx().clone());
+                }
+                AppCommand::RegisterJavaScriptWorkflowSource => {
+                    self.register_active_workflow(ui.ctx());
+                }
+                #[cfg(feature = "javascript-program-dev")]
+                AppCommand::StartJavaScriptProgram | AppCommand::StartJavaScriptSave { .. }
+                    if self.safe_mode =>
+                {
+                    self.report_configuration_notice(
+                        "Safe Mode blocks JavaScript developer programs. Restart normally to launch one.",
+                    );
+                }
                 AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(
@@ -8880,6 +9020,14 @@ impl FesTermApp {
         self.state.active()
     }
 
+    #[cfg(test)]
+    pub(crate) fn active_editor_is_workflow_source_for_test(&self) -> bool {
+        matches!(
+            &self.state.active_tab().content,
+            TabContent::TextEditor(editor) if editor.is_workflow_source()
+        )
+    }
+
     #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn begin_javascript_cleanup_for_test(&mut self, context: &egui::Context) {
         self.state.request_background_shutdown();
@@ -8954,6 +9102,13 @@ impl FesTermApp {
     #[cfg(test)]
     pub(crate) fn pending_quit_counts_for_test(&self) -> Option<crate::tabs::LiveSessionCounts> {
         self.overlays.pending_quit.map(|pending| pending.counts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_quit_purpose_for_test(
+        &self,
+    ) -> Option<crate::overlay_state::QuitConfirmationPurpose> {
+        self.overlays.pending_quit.map(|pending| pending.purpose)
     }
 
     #[cfg(test)]
@@ -9208,6 +9363,8 @@ impl FesTermApp {
             automation_settings: Default::default(),
             automation_commands: Vec::new(),
             automation_command_overflow: false,
+            safe_mode: false,
+            open_automation_settings: false,
             focus_mode: false,
             terminal_fonts_installed: false,
             window_was_focused: true,
@@ -9220,6 +9377,8 @@ impl FesTermApp {
             update_restart_authorized: false,
             update_restart_declined: false,
             quit_confirmed: false,
+            safe_restart_requested: false,
+            normal_restart_requested: false,
             powershell_shutdown_started: None,
             #[cfg(feature = "javascript-program-dev")]
             javascript_shutdown_settled: false,
@@ -9274,6 +9433,149 @@ mod tests {
     use std::{fs, path::PathBuf, thread, time::Duration};
 
     use super::*;
+
+    #[test]
+    fn safe_mode_dominates_saved_automation_without_rewriting_it() {
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(true)
+                    .with_javascript_enabled(true),
+            )
+            .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        app.set_safe_mode(true);
+        app.initialize_automation_preferences();
+        let context = egui::Context::default();
+
+        assert!(!app.automation_mcp_enabled());
+        assert!(!app.automation_javascript_enabled());
+        assert!(app.state.configuration().interface_settings().mcp_enabled());
+        assert!(app
+            .state
+            .configuration()
+            .interface_settings()
+            .javascript_enabled());
+
+        app.toggle_automation_preference_for_test(
+            crate::automation::preferences::Feature::Javascript,
+            &context,
+        );
+        assert!(app.take_automation_command().is_none());
+        assert_eq!(app.state.configuration(), &configuration);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn safe_mode_hides_javascript_developer_commands() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.set_safe_mode(true);
+        let labels = app
+            .palette_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>();
+
+        assert!(!labels
+            .iter()
+            .any(|label| label.starts_with("Start JavaScript Save Fixture")));
+        assert!(!labels
+            .iter()
+            .any(|label| label.starts_with("Resume JavaScript Save Fixture")));
+    }
+
+    #[test]
+    fn safe_mode_restart_reuses_session_and_document_confirmation() {
+        let context = egui::Context::default();
+        let (mut app, _) = FesTermApp::for_test_with_live_session(&context);
+        app.request_safe_mode_restart(&context);
+
+        assert!(app.overlays.pending_quit.is_some_and(|pending| {
+            pending.purpose == crate::overlay_state::QuitConfirmationPurpose::RestartInSafeMode
+        }));
+        assert!(!app.quit_confirmed);
+    }
+
+    #[test]
+    fn safe_mode_restart_revalidates_documents_after_confirmation() {
+        let context = egui::Context::default();
+        let (mut app, _) = FesTermApp::for_test_with_live_session(&context);
+        app.request_safe_mode_restart(&context);
+        assert!(app.overlays.pending_quit.is_some());
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        app.state
+            .dispatch(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        let document = app.state.active_document().unwrap();
+        app.state
+            .documents()
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("after\n")
+            .unwrap();
+
+        app.confirm_quit_purpose_for_test(
+            crate::overlay_state::QuitConfirmationPurpose::RestartInSafeMode,
+            &context,
+        );
+        assert!(!app.quit_confirmed);
+        assert!(app.overlays.pending_document_close.is_some());
+    }
+
+    #[test]
+    fn about_safe_mode_restart_uses_the_same_confirmed_exit() {
+        let context = egui::Context::default();
+        let (mut app, _) = FesTermApp::for_test_with_live_session(&context);
+        app.overlays.about_open = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 700.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label("Restart in Safe Mode…").click();
+        harness.run();
+        assert!(harness
+            .state()
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| {
+                pending.purpose == crate::overlay_state::QuitConfirmationPurpose::RestartInSafeMode
+            }));
+    }
+
+    #[test]
+    fn about_explains_safe_mode_and_offers_normal_restart() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.set_safe_mode(true);
+        app.overlays.about_open = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label_contains("Safe Mode is active");
+        harness.get_by_label("Restart Normally…");
+        assert!(harness.query_by_label("Restart in Safe Mode…").is_none());
+    }
+
+    #[test]
+    fn workflow_registration_opens_automation_activity_directly() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.open_automation_settings = true;
+        app.state
+            .dispatch(AppCommand::OpenSettings, &egui::Context::default());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 516.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label("Registered workflows");
+        assert!(harness.query_by_label("Keyboard shortcuts").is_none());
+    }
 
     #[test]
     fn dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save() {
@@ -17336,7 +17638,13 @@ mod tests {
         assert!(
             !items.iter().any(|item| matches!(
                 item.label.as_str(),
-                "New File" | "About fesTerm" | "Show Session Inspector" | "Hide Session Inspector"
+                "New File"
+                    | "Open File…"
+                    | "New JavaScript Workflow"
+                    | "Open JavaScript Workflow Source…"
+                    | "About fesTerm"
+                    | "Show Session Inspector"
+                    | "Hide Session Inspector"
             )),
             "More actions entries must not be duplicated in the command palette"
         );
@@ -17732,6 +18040,80 @@ mod tests {
         assert!(!enabled.overlays.workflow_file_picker);
         enabled.open_markdown_file_picker(&context);
         assert!(!enabled.overlays.workflow_file_picker);
+    }
+
+    #[test]
+    fn workflow_editor_picker_never_queues_capture() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("draft.json");
+        std::fs::write(&source, crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW).unwrap();
+        let context = egui::Context::default();
+        for configuration in [
+            Configuration::empty(),
+            Configuration::empty()
+                .with_interface_settings(InterfaceSettings::DEFAULT.with_javascript_enabled(true))
+                .unwrap(),
+        ] {
+            let mut app = FesTermApp::for_test_with_configuration(configuration);
+            app.open_workflow_editor_file_picker(&context);
+            assert!(app.overlays.workflow_editor_file_picker);
+            app.finish_workflow_editor_file_pick(source.clone(), &context);
+
+            assert!(matches!(
+                &app.state.active_tab().content,
+                TabContent::TextEditor(editor) if editor.is_workflow_source()
+            ));
+            assert!(app.take_automation_command().is_none());
+        }
+    }
+
+    #[test]
+    fn ordinary_json_picker_open_does_not_mark_workflow_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("ordinary.json");
+        std::fs::write(&source, "{}\n").unwrap();
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.finish_markdown_file_pick(source, None, false, &context);
+
+        assert!(matches!(
+            &app.state.active_tab().content,
+            TabContent::TextEditor(editor) if !editor.is_workflow_source()
+        ));
+    }
+
+    #[test]
+    fn ordinary_open_recognizes_workflow_named_json_without_authoring_picker() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("draft.workflow.json");
+        std::fs::write(&source, crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW).unwrap();
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.finish_markdown_file_pick(source, None, false, &context);
+
+        assert!(matches!(
+            &app.state.active_tab().content,
+            TabContent::TextEditor(editor) if editor.is_workflow_source()
+        ));
+        assert!(app.take_automation_command().is_none());
+    }
+
+    #[test]
+    fn workflow_authoring_commands_are_not_duplicated_in_the_palette() {
+        let app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let labels: Vec<_> = app
+            .palette_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert!(!labels
+            .iter()
+            .any(|label| label == "New JavaScript Workflow"));
+        assert!(!labels
+            .iter()
+            .any(|label| label == "Open JavaScript Workflow Source…"));
     }
 
     #[test]

@@ -188,6 +188,8 @@ pub(crate) enum QuitConfirmationPurpose {
     CloseWindow,
     InstallUpdate,
     RestartAfterUpdate,
+    RestartInSafeMode,
+    RestartNormally,
 }
 
 /// Aggregate confirmation shown once, for the whole application, before an
@@ -408,6 +410,7 @@ pub(crate) struct OverlayState {
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
     pub(crate) workflow_file_picker: bool,
+    pub(crate) workflow_editor_file_picker: bool,
     /// The editor's "Save As" destination sheet (ADR 0034 §3).
     pub(crate) save_as_picker: Option<crate::save_as::SaveAsPicker>,
     /// The directory the last Save As sheet was browsing when it closed, so

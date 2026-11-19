@@ -214,48 +214,70 @@ pub(super) fn paint_overflow_menu(
 
     Popup::menu(&response).show(|ui| {
         style_context_menu(ui);
-        if let Some(version) = available_update {
-            if ui.button(format!("Update to fesTerm {version}…")).clicked() {
-                actions.push(ChromeAction::OpenAbout);
-                ui.close();
-            }
-            ui.separator();
-        }
-        if ui.button("New File").clicked() {
-            actions.push(ChromeAction::NewTextDocument);
-            ui.close();
-        }
-        if ui.button("Open File…").clicked() {
-            actions.push(ChromeAction::OpenMarkdownFile);
-            ui.close();
-        }
-        if ui.button("Open Profiles").clicked() {
-            actions.push(ChromeAction::OpenProfiles);
-            ui.close();
-        }
-        if ui.button("Open Settings").clicked() {
-            actions.push(ChromeAction::OpenSettings);
-            ui.close();
-        }
-        if ui.button("Terminal recordings…").clicked() {
-            actions.push(ChromeAction::OpenRecording);
-            ui.close();
-        }
-        if include_inspector && ui.button("Session inspector").clicked() {
-            actions.push(ChromeAction::ToggleInspector);
-            ui.close();
-        }
-        if ui.button("About fesTerm").clicked() {
-            actions.push(ChromeAction::OpenAbout);
-            ui.close();
-        }
-        if include_palette {
-            ui.separator();
-        }
-        if include_palette && ui.button("Command palette").clicked() {
-            actions.push(ChromeAction::TogglePalette);
-            ui.close();
-        }
+        let max_height = (ui.ctx().content_rect().height() - 16.0).max(120.0);
+        egui::ScrollArea::vertical()
+            .id_salt("more-actions-scroll")
+            .auto_shrink([false, true])
+            .max_height(max_height)
+            .show(ui, |ui| {
+                style_context_menu(ui);
+                if let Some(version) = available_update {
+                    if ui.button(format!("Update to fesTerm {version}…")).clicked() {
+                        actions.push(ChromeAction::OpenAbout);
+                        ui.close();
+                    }
+                    ui.separator();
+                }
+                if ui.button("New File").clicked() {
+                    actions.push(ChromeAction::NewTextDocument);
+                    ui.close();
+                }
+                if ui.button("Open File…").clicked() {
+                    actions.push(ChromeAction::OpenMarkdownFile);
+                    ui.close();
+                }
+                if include_inspector && ui.button("Session inspector").clicked() {
+                    actions.push(ChromeAction::ToggleInspector);
+                    ui.close();
+                }
+                let workflow_menu = ui.menu_button("JavaScript Workflows", |ui| {
+                    style_context_menu(ui);
+                    if ui.button("New JavaScript Workflow").clicked() {
+                        actions.push(ChromeAction::NewJavaScriptWorkflowDraft);
+                        ui.close();
+                    }
+                    if ui.button("Open JavaScript Workflow Source…").clicked() {
+                        actions.push(ChromeAction::OpenJavaScriptWorkflowEditorPicker);
+                        ui.close();
+                    }
+                });
+                workflow_menu.response.widget_info(|| {
+                    WidgetInfo::labeled(WidgetType::Button, true, "JavaScript Workflows")
+                });
+                if ui.button("Open Profiles").clicked() {
+                    actions.push(ChromeAction::OpenProfiles);
+                    ui.close();
+                }
+                if ui.button("Open Settings").clicked() {
+                    actions.push(ChromeAction::OpenSettings);
+                    ui.close();
+                }
+                if ui.button("Terminal recordings…").clicked() {
+                    actions.push(ChromeAction::OpenRecording);
+                    ui.close();
+                }
+                if ui.button("About fesTerm").clicked() {
+                    actions.push(ChromeAction::OpenAbout);
+                    ui.close();
+                }
+                if include_palette {
+                    ui.separator();
+                }
+                if include_palette && ui.button("Command palette").clicked() {
+                    actions.push(ChromeAction::TogglePalette);
+                    ui.close();
+                }
+            });
     });
 }
 /// Small accent dot in the icon's top-right corner, outlined in the chrome
@@ -298,9 +320,20 @@ mod tests {
             for label in [
                 "New File",
                 "Open File…",
+                "JavaScript Workflows",
                 "Open Profiles",
                 "Open Settings",
                 "About fesTerm",
+            ] {
+                let row = harness.get_by_label(label).rect();
+                assert!(root.contains_rect(row), "{size:?}: {label}: {row:?}");
+                assert!(row.height() >= 30.0);
+            }
+            harness.get_by_label("JavaScript Workflows").click();
+            harness.run();
+            for label in [
+                "New JavaScript Workflow",
+                "Open JavaScript Workflow Source…",
             ] {
                 let row = harness.get_by_label(label).rect();
                 assert!(root.contains_rect(row), "{size:?}: {label}: {row:?}");

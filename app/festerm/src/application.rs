@@ -175,6 +175,7 @@ impl FesTermApplication {
     }
 
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        let safe_mode = primary.safe_mode();
         #[cfg(feature = "javascript-program-dev")]
         let javascript_program_coordinator = primary.javascript_program_coordinator();
         let recording_allowed = primary.session_recording_allowed();
@@ -184,6 +185,7 @@ impl FesTermApplication {
         let presentation_workspace = crate::automation::WorkspaceRevision::default();
         primary.set_presentation_workspace(&presentation_workspace);
         let mut automation = crate::automation::Coordinator::default();
+        automation.install_workflow_registry(safe_mode);
         automation
             .bind_presentation_workspace(&presentation_workspace)
             .expect("a new coordinator has no presentation workspace");
@@ -947,6 +949,7 @@ impl FesTermApplication {
             secret_store,
             documents,
         );
+        app.set_safe_mode(self.windows[0].app.safe_mode());
         app.set_automation_window(id);
         app.set_presentation_workspace(&self.presentation_workspace);
         #[cfg(feature = "javascript-program-dev")]
@@ -1012,6 +1015,22 @@ impl FesTermApplication {
         self.windows[0]
             .app
             .set_application_live_session_counts(counts);
+    }
+
+    fn route_safe_restart_requests(&mut self, context: &egui::Context) {
+        let mut requested = false;
+        let mut normal_requested = false;
+        for window in self.windows.iter_mut().skip(1) {
+            requested |= window.app.take_safe_restart_request();
+            normal_requested |= window.app.take_normal_restart_request();
+        }
+        if requested && !normal_requested {
+            self.windows[0].app.request_safe_mode_restart(context);
+            context.request_repaint();
+        } else if normal_requested {
+            self.windows[0].app.request_normal_restart(context);
+            context.request_repaint();
+        }
     }
 
     fn collect_automation_commands(
@@ -1253,6 +1272,7 @@ impl FesTermApplication {
         let choices = self.recording_choices(self.recording.recording_id(), WindowId::PRIMARY);
         self.recording.show(&context, WindowId::PRIMARY, &choices);
         self.show_secondary_windows(&context);
+        self.route_safe_restart_requests(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_recording(&context);
         self.settle_windows_and_drive_automation_inner(&context);
@@ -1328,7 +1348,34 @@ mod tests {
             Feature::Mcp => values.mcp = enabled,
             Feature::Javascript => values.javascript = enabled,
         }
+
         values
+    }
+
+    #[test]
+    fn workflow_editor_marker_survives_a_multi_window_move() {
+        let (mut application, context) = application();
+        let secondary = application.open_window(&context, None);
+        application.windows[secondary]
+            .app
+            .dispatch_for_test(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        let source = application.windows[secondary].id;
+        let moved = application.windows[secondary].app.active_tab_id_for_test();
+
+        application.move_tab(
+            source,
+            TabMoveRequest {
+                moved,
+                target: Some(egui::ViewportId::ROOT),
+                before: Some(application.windows[0].app.active_tab_id_for_test()),
+                screen_position: egui::Pos2::ZERO,
+            },
+            &context,
+        );
+
+        assert!(application.windows[0]
+            .app
+            .active_editor_is_workflow_source_for_test());
     }
 
     #[cfg(feature = "javascript-program-dev")]
@@ -5028,6 +5075,25 @@ mod tests {
             .pending_quit_counts_for_test()
             .expect("the secondary SSH session must be included in primary quit");
         assert_eq!(counts.ssh, 1);
+    }
+
+    #[test]
+    fn secondary_safe_restart_routes_through_the_primary_aggregate_quit() {
+        let (primary, _tab, _transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut application = FesTermApplication::new(primary);
+        let context = egui::Context::default();
+        let secondary = application.open_window(&context, None);
+        application.refresh_application_close_context();
+        application.windows[secondary]
+            .app
+            .request_safe_mode_restart(&context);
+        application.route_safe_restart_requests(&context);
+
+        assert_eq!(
+            application.windows[0].app.pending_quit_purpose_for_test(),
+            Some(crate::overlay_state::QuitConfirmationPurpose::RestartInSafeMode)
+        );
+        assert!(!application.windows[1].app.window_close_accepted());
     }
 
     #[test]

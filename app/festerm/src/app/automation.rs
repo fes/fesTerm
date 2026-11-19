@@ -10,6 +10,43 @@ use eframe::egui;
 use super::FesTermApp;
 
 impl FesTermApp {
+    pub(crate) fn register_active_workflow(&mut self, context: &egui::Context) {
+        if self.safe_mode {
+            self.report_configuration_notice(
+                "Safe Mode keeps workflow registration and execution disabled. Restart normally to register a workflow.",
+            );
+            return;
+        }
+        let Some(status) = self.state.active_document().and_then(|document| {
+            self.state
+                .documents()
+                .borrow()
+                .get(document)
+                .map(|open| open.status())
+        }) else {
+            self.report_configuration_notice("Open a saved workflow source before registering it.");
+            return;
+        };
+        let Some(source) = (match &self.state.active_tab().content {
+            TabContent::TextEditor(editor) => editor.saved_workflow_source(&status),
+            _ => None,
+        }) else {
+            self.report_configuration_notice(
+                "Save the workflow file and resolve any conflict before registering it.",
+            );
+            return;
+        };
+        if let TabContent::TextEditor(editor) = &mut self.state.active_tab_mut().content {
+            editor.report_workflow_registration_queued();
+        }
+        self.queue_automation_command(NativeCommand::RegisterWorkflow {
+            source,
+            review: true,
+        });
+        self.open_automation_settings = true;
+        self.state.dispatch(AppCommand::OpenSettings, context);
+    }
+
     pub(crate) fn set_automation_window(&mut self, window: crate::application::WindowId) {
         self.automation_window = window;
     }
@@ -38,7 +75,7 @@ impl FesTermApp {
     }
 
     pub(crate) fn initialize_automation_preferences(&mut self) {
-        self.automation_preferences();
+        let _ = self.automation_preferences();
     }
 
     #[cfg(test)]
@@ -173,6 +210,13 @@ impl FesTermApp {
         feature: Feature,
         context: &egui::Context,
     ) {
+        if self.safe_mode {
+            self.report_configuration_notice(
+                "Safe Mode keeps MCP and JavaScript disabled for this process. Restart normally to change them.",
+            );
+            context.request_repaint();
+            return;
+        }
         let preferences = self.automation_preferences();
         let Some(before) = preferences.toggle(feature) else {
             self.queue_automation_command(NativeCommand::SafetyStop);
@@ -240,6 +284,9 @@ impl FesTermApp {
     }
 
     pub(crate) fn automation_mcp_enabled(&self) -> bool {
+        if self.safe_mode {
+            return false;
+        }
         self.configuration_reloader
             .automation_preferences()
             .map_or_else(
@@ -249,6 +296,9 @@ impl FesTermApp {
     }
 
     pub(crate) fn automation_javascript_enabled(&self) -> bool {
+        if self.safe_mode {
+            return false;
+        }
         self.configuration_reloader
             .automation_preferences()
             .map_or_else(
@@ -373,6 +423,9 @@ impl FesTermApp {
             | NativeCommand::ConfirmControllerInput { .. }
             | NativeCommand::DisarmControllerInput { .. }
             | NativeCommand::CaptureWorkflow(_)
+            | NativeCommand::RegisterWorkflow { .. }
+            | NativeCommand::SelectRegisteredWorkflow { .. }
+            | NativeCommand::DeleteRegisteredWorkflow { .. }
             | NativeCommand::StartWorkflowMonitoring
             | NativeCommand::StartWorkflowRun { .. }
             | NativeCommand::CancelWorkflowRun { .. }

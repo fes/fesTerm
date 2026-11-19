@@ -7,6 +7,7 @@
 //! without either of them being in charge.
 
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::Arc;
 
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
@@ -50,6 +51,7 @@ const BAR_PADDING_X: i8 = 9;
 const BAR_PADDING_Y: i8 = 6;
 const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
+const OUTCOME_ONLY_EDITOR_HEIGHT: f32 = 360.0;
 const MODE_SEGMENT_GAP: f32 = 2.0;
 const FIND_FIELD_WIDTH: f32 = 170.0;
 /// Width reserved for the match counter, so the navigation beside it keeps
@@ -199,6 +201,170 @@ struct FindError {
     summary: &'static str,
     headline: String,
     detail: String,
+}
+
+enum WorkflowValidationError {
+    Oversize,
+    Json(serde_json::Error),
+    Schema(String),
+    Snapshot(String),
+    Unavailable,
+}
+
+impl WorkflowValidationError {
+    fn command_error(self) -> CommandError {
+        match self {
+            Self::Oversize => CommandError::new(
+                "Workflow invalid",
+                format!(
+                    "The workflow source exceeds the {} MiB snapshot limit.",
+                    festerm_automation_js::snapshot::MAX_SNAPSHOT_BYTES / (1024 * 1024)
+                ),
+            ),
+            Self::Json(error) => CommandError::new(
+                "Workflow invalid",
+                if error.line() == 0 {
+                    "Invalid JSON workflow source.".to_owned()
+                } else {
+                    format!(
+                        "Invalid JSON at line {}, column {}.",
+                        error.line(),
+                        error.column().max(1)
+                    )
+                },
+            ),
+            Self::Snapshot(detail) => CommandError::new("Workflow invalid", detail),
+            Self::Schema(detail) => CommandError::new("Workflow invalid", detail),
+            Self::Unavailable => CommandError::new(
+                "Workflow validation unavailable",
+                "The workflow validation worker could not complete. Try again.",
+            ),
+        }
+    }
+}
+
+struct PendingWorkflowValidation {
+    document: DocumentId,
+    revision: u64,
+    source: Arc<str>,
+    receiver: mpsc::Receiver<Result<String, WorkflowValidationError>>,
+}
+
+fn validate_workflow_source_text(source: &str) -> Result<String, WorkflowValidationError> {
+    let snapshot = serde_json::from_str::<festerm_automation_js::snapshot::SourceSnapshot>(source)
+        .map_err(|error| {
+            if error.is_syntax() || error.is_eof() {
+                WorkflowValidationError::Json(error)
+            } else {
+                let suffix = format!(" at line {} column {}", error.line(), error.column().max(1));
+                let raw = error.to_string();
+                let detail = raw.strip_suffix(&suffix).unwrap_or(&raw).to_owned();
+                WorkflowValidationError::Schema(format!(
+                    "Line {}, column {}: {}",
+                    error.line(),
+                    error.column().max(1),
+                    compact_validation_message(&detail)
+                ))
+            }
+        })?;
+    festerm_automation_js::snapshot::ApprovedBundle::new_diagnosed(snapshot)
+        .map(|bundle| bundle.digest().to_owned())
+        .map_err(|issue| {
+            let mut detail = issue.to_string();
+            if let festerm_automation_js::snapshot::SnapshotValidationIssue::Source {
+                module, ..
+            } = issue
+            {
+                if let Some((line, column)) = json_modules_key_position(source, &module) {
+                    detail = format!("JSON source line {line}, column {column}; {detail}");
+                }
+            }
+            WorkflowValidationError::Snapshot(detail)
+        })
+}
+
+fn compact_validation_message(message: &str) -> String {
+    let characters = message.chars().collect::<Vec<_>>();
+    if characters.len() <= 240 {
+        return message.to_owned();
+    }
+    let mut compact = characters[..170].iter().collect::<String>();
+    compact.push('\u{2026}');
+    compact.extend(characters[characters.len() - 60..].iter());
+    compact
+}
+
+fn json_modules_key_position(source: &str, key: &str) -> Option<(usize, usize)> {
+    let modules = json_object_after_key(source, "modules")?;
+    json_object_key_position(source, modules, key)
+}
+
+fn json_object_after_key(source: &str, key: &str) -> Option<std::ops::Range<usize>> {
+    let quoted = serde_json::to_string(key).ok()?;
+    for (offset, _) in source.match_indices(&quoted) {
+        let after = offset.saturating_add(quoted.len());
+        let rest = source.get(after..)?.trim_start_matches(char::is_whitespace);
+        let Some(rest) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let value_offset = rest.trim_start_matches(char::is_whitespace);
+        if !value_offset.starts_with('{') {
+            continue;
+        }
+        let start = source.len().saturating_sub(value_offset.len());
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        for (relative, character) in source.get(start..)?.char_indices() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match character {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(start..start + relative + 1);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn json_object_key_position(
+    source: &str,
+    range: std::ops::Range<usize>,
+    key: &str,
+) -> Option<(usize, usize)> {
+    let quoted = serde_json::to_string(key).ok()?;
+    for (relative, _) in source.get(range.clone())?.match_indices(&quoted) {
+        let offset = range.start + relative;
+        let after = offset.saturating_add(quoted.len());
+        let rest = source
+            .get(after..range.end)?
+            .trim_start_matches(char::is_whitespace);
+        if rest.starts_with(':') {
+            let prefix = source.get(..offset)?;
+            let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+            let column = prefix
+                .rsplit_once('\n')
+                .map_or(prefix.len(), |(_, tail)| tail.len())
+                + 1;
+            return Some((line, column));
+        }
+    }
+    None
 }
 
 impl FindError {
@@ -558,6 +724,7 @@ pub(crate) struct TextEditorTab {
     local_preview_source: Result<Option<SavedLocalPreviewSource>, String>,
     remote: bool,
     untitled: bool,
+    workflow_source: bool,
     /// The widget's copy of the text. egui's `TextEdit` needs a `String` it
     /// can own edits in; the document is told about them straight afterwards,
     /// so this never drifts by more than the inside of one frame.
@@ -583,6 +750,8 @@ pub(crate) struct TextEditorTab {
     compare: Option<ComparePane>,
     /// The `:` / `/` command area (ADR 0034 §10a).
     command: CommandArea,
+    workflow_validation: Option<PendingWorkflowValidation>,
+    workflow_validation_source: Option<(DocumentId, u64)>,
     /// Where the caret is in bytes, which is what `:s` needs in order to know
     /// which line "the current line" is.
     caret_offset: usize,
@@ -625,6 +794,7 @@ pub(crate) struct TextEditorTab {
     /// Where the engine wants the caret, applied to the widget on the next
     /// frame because the widget owns its own cursor.
     vi_caret: Option<usize>,
+    pending_body_focus: bool,
     /// Whether the matches on screen came from a vi search, which keeps them
     /// lit after the command area closes the way `n` and `N` will need.
     searching_with_vi: bool,
@@ -722,6 +892,10 @@ fn is_markdown_name(name: &str) -> bool {
     })
 }
 
+fn is_workflow_source_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".workflow.json")
+}
+
 impl TextEditorTab {
     /// A view with the built-in defaults, for tests and gallery renders that
     /// are not about what the reader last chose.
@@ -749,6 +923,7 @@ impl TextEditorTab {
         } else {
             EditorMode::Edit
         };
+        let workflow_source = is_workflow_source_name(&title);
         Self {
             document,
             title,
@@ -756,6 +931,7 @@ impl TextEditorTab {
             local_preview_source: saved_local_preview_source(open),
             remote: open.origin().is_remote(),
             untitled: matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_)),
+            workflow_source,
             buffer: open.text().text().to_owned(),
             layout: EditorLayoutPreparation::default(),
             options,
@@ -767,6 +943,8 @@ impl TextEditorTab {
             preview: None,
             compare: None,
             command: CommandArea::default(),
+            workflow_validation: None,
+            workflow_validation_source: None,
             caret_offset: 0,
             close_after_save: false,
             searching_with_vi: false,
@@ -774,6 +952,7 @@ impl TextEditorTab {
             vi_prefix: None,
             vi_pending_command: None,
             vi_caret: None,
+            pending_body_focus: false,
             vi_search_backward: false,
             sync_heading: None,
             pending_scroll_offset: None,
@@ -829,6 +1008,7 @@ impl TextEditorTab {
         self.local_preview_source = saved_local_preview_source(open);
         self.remote = open.origin().is_remote();
         self.untitled = matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_));
+        self.workflow_source |= is_workflow_source_name(&self.title);
         self.buffer = open.text().text().to_owned();
         self.layout.prepared = None;
         self.find = FindState::default();
@@ -842,6 +1022,113 @@ impl TextEditorTab {
 
     pub(crate) fn title(&self) -> &str {
         &self.title
+    }
+
+    pub(crate) const fn is_workflow_source(&self) -> bool {
+        self.workflow_source
+    }
+
+    pub(crate) fn saved_workflow_source(&self, status: &DocumentStatus) -> Option<Arc<str>> {
+        (self.workflow_source
+            && !self.untitled
+            && !self.remote
+            && matches!(status.short_label(), "Saved" | "Reloaded"))
+        .then(|| Arc::<str>::from(self.buffer.as_str()))
+    }
+
+    pub(crate) fn mark_workflow_source(&mut self) {
+        self.workflow_source = true;
+    }
+
+    pub(crate) fn report_workflow_registration_queued(&mut self) {
+        self.command.report(CommandOutcome::Message(
+            "Registration queued · Review opens in Settings".to_owned(),
+        ));
+    }
+
+    pub(crate) fn validate_workflow_source(&mut self, documents: &SharedDocuments) {
+        if self.workflow_validation.is_some() {
+            return;
+        }
+        let revision = documents
+            .borrow()
+            .get(self.document)
+            .map_or(0, |open| open.text().revision());
+        self.workflow_validation_source = Some((self.document, revision));
+        if self.buffer.len() > festerm_automation_js::snapshot::MAX_SNAPSHOT_BYTES {
+            self.command.report(CommandOutcome::Failed(
+                WorkflowValidationError::Oversize.command_error(),
+            ));
+            return;
+        }
+        let source: Arc<str> = Arc::from(self.buffer.as_str());
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let worker_source = source.clone();
+        let worker = std::thread::Builder::new()
+            .name("workflow-validation".to_owned())
+            .spawn(move || {
+                let result = validate_workflow_source_text(&worker_source);
+                let _ = sender.send(result);
+            });
+        if worker.is_err() {
+            self.command.report(CommandOutcome::Failed(
+                WorkflowValidationError::Unavailable.command_error(),
+            ));
+            return;
+        }
+        self.workflow_validation = Some(PendingWorkflowValidation {
+            document: self.document,
+            revision,
+            source,
+            receiver,
+        });
+        self.command
+            .report(CommandOutcome::Message("Validating workflow…".to_owned()));
+        if let Some(context) = &self.widget_context {
+            context.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    fn poll_workflow_validation(&mut self, documents: &SharedDocuments) {
+        let revision = documents
+            .borrow()
+            .get(self.document)
+            .map_or(0, |open| open.text().revision());
+        let source = (self.document, revision);
+        if self
+            .workflow_validation_source
+            .is_some_and(|validated| validated != source)
+        {
+            self.command.clear_result();
+            self.workflow_validation_source = None;
+        }
+        let result = match self.workflow_validation.as_ref() {
+            Some(pending) => match pending.receiver.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => Err(WorkflowValidationError::Unavailable),
+            },
+            None => return,
+        };
+        let validation = self.workflow_validation.take().unwrap();
+        if (validation.document, validation.revision) != source
+            || validation.source.as_ref() != self.buffer
+        {
+            return;
+        }
+        match result {
+            Ok(digest) => {
+                self.command.report(CommandOutcome::Message(format!(
+                    "Workflow valid · SHA-256 {}",
+                    digest.get(..12).unwrap_or(&digest)
+                )));
+            }
+            Err(error) => {
+                self.command
+                    .report(CommandOutcome::Failed(error.command_error()));
+            }
+        }
+        self.workflow_validation_source = Some(source);
     }
 
     pub(crate) fn origin_label(&self) -> &str {
@@ -973,11 +1260,30 @@ impl TextEditorTab {
             state.store(ui.ctx(), self.body_id());
             self.widget_context = Some(ui.ctx().clone());
         }
+        let short_mode = ui.available_height() < OUTCOME_ONLY_EDITOR_HEIGHT;
+        let mut workflow_result_without_body = short_mode && self.command.has_workflow_result();
+        if workflow_result_without_body {
+            self.vi_focused = false;
+            ui.memory_mut(|memory| {
+                if memory.has_focus(self.body_id()) {
+                    memory.surrender_focus(self.body_id());
+                    memory.stop_text_input();
+                }
+            });
+        }
         self.adopt_external_edits(documents);
+        self.poll_workflow_validation(documents);
+        if self.workflow_validation.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
         self.sync_compare(documents);
         self.route_find_shortcuts(ui);
-        self.route_command_area_keys(ui);
-        self.route_vi_keys(ui, documents);
+        self.route_command_area_keys(ui, documents);
+        workflow_result_without_body = short_mode && self.command.has_workflow_result();
+        if !workflow_result_without_body {
+            self.route_vi_keys(ui, documents);
+        }
         // Matches are collected wherever they are shown, because the Find bar
         // and a vi search are one search behind two surfaces.
         if self.highlighting_matches() {
@@ -995,6 +1301,33 @@ impl TextEditorTab {
             |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if short_mode {
+                        if let Some(bar_command) = self.show_short_workflow_bar(ui, &status) {
+                            command = Some(bar_command);
+                        }
+                        hairline(ui);
+                        if self.find.open {
+                            self.show_find_bar(ui, documents);
+                            hairline(ui);
+                        }
+                        if let Some(action) = show_banner(ui, &status, self.compare.is_some()) {
+                            match action {
+                                BannerAction::Compare => self.toggle_compare(documents),
+                                other => command = banner_command(other),
+                            }
+                            hairline(ui);
+                        }
+                        if !workflow_result_without_body {
+                            self.show_body(ui, documents);
+                        }
+                        if self.command.reserved_height() > 0.0 {
+                            hairline(ui);
+                        }
+                        if let Some(area_command) = self.show_command_area(ui, tab_id, documents) {
+                            command = Some(area_command);
+                        }
+                        return;
+                    }
                     self.show_origin_bar(ui);
                     hairline(ui);
                     if let Some(bar_command) = self.show_command_bar(ui, documents, &status) {
@@ -1027,6 +1360,10 @@ impl TextEditorTab {
                 });
             },
         );
+        if self.pending_body_focus && !workflow_result_without_body {
+            ui.memory_mut(|memory| memory.request_focus(self.body_id()));
+            self.pending_body_focus = false;
+        }
         if let Some(pending) = self.vi_pending_command.take() {
             command = self.dispatch_command(pending, tab_id, documents);
         }
@@ -1037,6 +1374,38 @@ impl TextEditorTab {
             self.options_changed = false;
             command = Some(AppCommand::SetEditorSettings(self.options.to_settings()));
         }
+        command
+    }
+
+    fn show_short_workflow_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        status: &DocumentStatus,
+    ) -> Option<AppCommand> {
+        let mut command = None;
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, BAR_PADDING_Y))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    if self.workflow_source {
+                        ui.horizontal(|ui| {
+                            label(ui, "WORKFLOW", theme::TEXT_SECONDARY, true);
+                            let path =
+                                monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            path.on_hover_text(&self.origin_label);
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                        self.show_workflow_control(ui, status, &mut command, false);
+                        self.show_compact_editor_actions(ui, status, &mut command);
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            self.show_options_menu(ui);
+                        });
+                    });
+                });
+            });
         command
     }
 
@@ -1296,6 +1665,7 @@ impl TextEditorTab {
         if self.options.vi_keys {
             self.vi_caret = Some(self.caret_offset);
         }
+        self.pending_body_focus = true;
     }
 
     /// Moves to another match and takes the caret with it.
@@ -1325,8 +1695,28 @@ impl TextEditorTab {
     /// The characters are consumed rather than observed so they cannot also
     /// reach the body as text, and they are only live with vi keys on: in an
     /// ordinary view a colon is a colon.
-    fn route_command_area_keys(&mut self, ui: &egui::Ui) {
-        if !self.options.vi_keys || self.command.is_open() {
+    fn route_command_area_keys(&mut self, ui: &egui::Ui, documents: &SharedDocuments) {
+        if self.command.is_open() {
+            return;
+        }
+        if self.command.has_result() {
+            if self.options.vi_keys && self.vi.mode() != ViMode::Normal {
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                {
+                    self.feed_vi_key(ViKey::Escape, documents);
+                }
+                return;
+            }
+            let dismissed =
+                ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            if dismissed {
+                self.command.clear_result();
+                self.return_focus_to_body();
+                ui.ctx().request_repaint();
+                return;
+            }
+        }
+        if !self.options.vi_keys {
             return;
         }
         let opened = ui.input_mut(|input| {
@@ -1377,6 +1767,12 @@ impl TextEditorTab {
                     self.searching_with_vi = false;
                 }
                 self.return_focus_to_body();
+                None
+            }
+            CommandAreaEvent::Dismissed => {
+                self.command.clear_result();
+                self.return_focus_to_body();
+                ui.ctx().request_repaint();
                 None
             }
             CommandAreaEvent::Run { prompt, line } => {
@@ -1688,6 +2084,7 @@ impl TextEditorTab {
                 self.local_preview_source = source;
             }
             if open.text().text() != self.buffer {
+                self.invalidate_workflow_validation_result();
                 self.buffer = open.text().text().to_owned();
                 if let Some(context) = &self.widget_context {
                     let id = self.body_id();
@@ -1702,6 +2099,13 @@ impl TextEditorTab {
                     }
                 }
             }
+        }
+    }
+
+    fn invalidate_workflow_validation_result(&mut self) {
+        if self.workflow_validation_source.is_some() {
+            self.command.clear_result();
+            self.workflow_validation_source = None;
         }
     }
 
@@ -1740,6 +2144,9 @@ impl TextEditorTab {
                                 theme::TEXT_PRIMARY,
                                 true,
                             );
+                            if self.workflow_source {
+                                label(ui, "WORKFLOW", theme::TEXT_SECONDARY, true);
+                            }
                             let path =
                                 monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
                             if !self.untitled {
@@ -1781,67 +2188,308 @@ impl TextEditorTab {
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, BAR_PADDING_Y))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.set_height(TOOLBAR_BUTTON_HEIGHT);
-                    ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
-                    ui.add_enabled_ui(status.can_save(), |ui| {
-                        if primary_button(ui, "Save", status.can_save()) {
-                            command = Some(AppCommand::SaveTextDocument);
-                        }
+                let available = ui.available_width();
+                let compact = available < self.compact_toolbar_width(ui, status);
+                let stacked = available < self.one_row_toolbar_width(ui, status);
+                if stacked {
+                    if compact {
+                        ui.horizontal(|ui| {
+                            ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                            self.show_save_controls(ui, documents, status, &mut command);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                            self.show_workflow_control(ui, status, &mut command, false);
+                            self.show_compact_editor_actions(ui, status, &mut command);
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                self.show_options_menu(ui);
+                            });
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                            self.show_save_controls(ui, documents, status, &mut command);
+                            self.show_edit_controls(ui, &mut command, true);
+                            self.show_workflow_control(ui, status, &mut command, true);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                            self.show_view_controls(ui, &mut command, false);
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                self.show_options_menu(ui);
+                                if self.options.vi_keys {
+                                    self.show_vi_marker(ui);
+                                }
+                            });
+                        });
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                        self.show_save_controls(ui, documents, status, &mut command);
+                        self.show_edit_controls(ui, &mut command, true);
+                        self.show_workflow_control(ui, status, &mut command, true);
+                        self.show_view_controls(ui, &mut command, true);
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            self.show_options_menu(ui);
+                            label(ui, &self.options.summary(), theme::TEXT_MUTED, false);
+                            if self.options.vi_keys {
+                                self.show_vi_marker(ui);
+                            }
+                        });
                     });
-                    ui.scope(|ui| {
-                        // Save and Auto-save are one group -- both answer
-                        // "what happens to this document's bytes" -- so they
-                        // sit closer to each other than to the view actions
-                        // beyond the separator.
-                        ui.spacing_mut().item_spacing.x = TOOLBAR_GROUP_GAP;
-                        self.show_auto_save_control(ui, documents, status);
-                    });
-                    ui.add_space(TOOLBAR_GROUP_GAP);
-                    ui.separator();
-                    ui.add_space(TOOLBAR_GROUP_GAP);
-                    // Save As is always offered, deliberately: it is the way
-                    // out of a conflict, an unavailable source, or lost
-                    // permissions, which are exactly the states in which Save
-                    // itself is disabled (ADR 0034 §3).
-                    if toolbar_button(ui, None, "Save As\u{2026}", "Save As", false) {
-                        command = Some(AppCommand::SaveTextDocumentAs);
-                    }
-                    if toolbar_button(ui, None, "Find", "Find", false) {
-                        self.find.open(false);
-                    }
-                    if toolbar_button(ui, None, "Replace", "Find and replace", false) {
-                        self.find.open(true);
-                    }
-                    ui.add_space(TOOLBAR_GROUP_GAP);
-                    ui.separator();
-                    ui.add_space(TOOLBAR_GROUP_GAP);
-                    if toolbar_button(
-                        ui,
-                        None,
-                        "Duplicate view",
-                        "Open another view of this document",
-                        false,
-                    ) {
-                        command = Some(AppCommand::OpenAnotherEditorView);
-                    }
-                    if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
-                        command = Some(AppCommand::RefreshTextDocument);
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        self.show_options_menu(ui);
-                        label(ui, &self.options.summary(), theme::TEXT_MUTED, false);
-                        // vi mode is marked rather than explained: the status
-                        // bar already names the mode, and a paragraph above
-                        // the text is a paragraph a reader has to scroll past
-                        // every time they look at the file.
-                        if self.options.vi_keys {
-                            self.show_vi_marker(ui);
-                        }
-                    });
-                });
+                }
             });
         command
+    }
+
+    fn compact_toolbar_width(&self, ui: &egui::Ui, status: &DocumentStatus) -> f32 {
+        let primary = self.primary_toolbar_width(ui, status);
+        let secondary = self.view_controls_width(ui)
+            + toolbar_button_width(ui, None, "Editor options")
+            + if self.options.vi_keys {
+                self.text_width(ui, "vi \u{00b7} NORMAL", LABEL_TEXT_SIZE) + 24.0
+            } else {
+                0.0
+            }
+            + TOOLBAR_BUTTON_GAP * 2.0;
+        primary.max(secondary)
+    }
+
+    fn one_row_toolbar_width(&self, ui: &egui::Ui, status: &DocumentStatus) -> f32 {
+        let options_summary = self.text_width(ui, &self.options.summary(), LABEL_TEXT_SIZE);
+        let vi_marker = if self.options.vi_keys {
+            self.text_width(ui, "vi \u{00b7} NORMAL", LABEL_TEXT_SIZE) + 24.0
+        } else {
+            0.0
+        };
+        let separator_supplement = (TOOLBAR_BUTTON_GAP * 3.0 - 0.5) * 2.0;
+        self.primary_toolbar_width(ui, status)
+            + self.view_controls_width(ui)
+            + toolbar_button_width(ui, None, "Editor options")
+            + options_summary
+            + vi_marker
+            + TOOLBAR_BUTTON_GAP
+            + separator_supplement
+    }
+
+    fn primary_toolbar_width(&self, ui: &egui::Ui, status: &DocumentStatus) -> f32 {
+        let separator_supplement =
+            (TOOLBAR_BUTTON_GAP * 3.0 - 0.5) * if self.workflow_source { 2.0 } else { 1.0 };
+        self.save_controls_width(ui, status)
+            + self.edit_controls_width(ui)
+            + self.workflow_control_width(ui)
+            + TOOLBAR_GROUP_GAP * 2.0
+            + separator_supplement
+    }
+
+    fn save_controls_width(&self, ui: &egui::Ui, status: &DocumentStatus) -> f32 {
+        let save = self.text_width(ui, "Save", LABEL_TEXT_SIZE) + PRIMARY_BUTTON_PADDING_X * 2.0;
+        let auto_save = ui.spacing().interact_size.y
+            + ui.spacing().item_spacing.x
+            + self.text_width(ui, status.auto_save().label(), TOOLBAR_TEXT_SIZE);
+        save + TOOLBAR_BUTTON_GAP + auto_save
+    }
+
+    fn edit_controls_width(&self, ui: &egui::Ui) -> f32 {
+        toolbar_button_width(ui, None, "Save As\u{2026}")
+            + toolbar_button_width(ui, None, "Find")
+            + toolbar_button_width(ui, None, "Replace")
+            + TOOLBAR_BUTTON_GAP * 2.0
+            + TOOLBAR_GROUP_GAP * 2.0
+    }
+
+    fn workflow_control_width(&self, ui: &egui::Ui) -> f32 {
+        if self.workflow_source {
+            toolbar_button_width(ui, None, "Validate")
+                + toolbar_button_width(ui, None, "Register\u{2026}")
+                + TOOLBAR_BUTTON_GAP
+                + TOOLBAR_GROUP_GAP * 2.0
+                + 1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn view_controls_width(&self, ui: &egui::Ui) -> f32 {
+        toolbar_button_width(ui, None, "Duplicate view")
+            + toolbar_button_width(ui, Some(Icon::Refresh), "Refresh")
+            + TOOLBAR_BUTTON_GAP
+            + TOOLBAR_GROUP_GAP * 2.0
+            + 1.0
+    }
+
+    fn text_width(&self, ui: &egui::Ui, text: &str, size: f32) -> f32 {
+        ui.painter()
+            .layout_no_wrap(
+                text.to_owned(),
+                FontId::proportional(size),
+                theme::TEXT_SECONDARY,
+            )
+            .size()
+            .x
+    }
+
+    fn show_save_controls(
+        &self,
+        ui: &mut egui::Ui,
+        documents: &SharedDocuments,
+        status: &DocumentStatus,
+        command: &mut Option<AppCommand>,
+    ) {
+        ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
+        ui.add_enabled_ui(status.can_save(), |ui| {
+            if primary_button(ui, "Save", status.can_save()) {
+                *command = Some(AppCommand::SaveTextDocument);
+            }
+        });
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = TOOLBAR_GROUP_GAP;
+            self.show_auto_save_control(ui, documents, status);
+        });
+    }
+
+    fn show_edit_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        command: &mut Option<AppCommand>,
+        separated: bool,
+    ) {
+        if separated {
+            ui.add_space(TOOLBAR_GROUP_GAP);
+            ui.separator();
+            ui.add_space(TOOLBAR_GROUP_GAP);
+        }
+        if toolbar_button(ui, None, "Save As\u{2026}", "Save As\u{2026}", false) {
+            *command = Some(AppCommand::SaveTextDocumentAs);
+        }
+        if toolbar_button(ui, None, "Find", "Find", false) {
+            self.find.open(false);
+        }
+        if toolbar_button(ui, None, "Replace", "Find and replace", false) {
+            self.find.open(true);
+        }
+    }
+
+    fn show_workflow_control(
+        &self,
+        ui: &mut egui::Ui,
+        status: &DocumentStatus,
+        command: &mut Option<AppCommand>,
+        separated: bool,
+    ) {
+        if !self.workflow_source {
+            return;
+        }
+        if separated {
+            ui.add_space(TOOLBAR_GROUP_GAP);
+            ui.separator();
+            ui.add_space(TOOLBAR_GROUP_GAP);
+        }
+        ui.add_enabled_ui(self.workflow_validation.is_none(), |ui| {
+            if toolbar_button(ui, None, "Validate", "Validate workflow source", false) {
+                *command = Some(AppCommand::ValidateJavaScriptWorkflowSource);
+            }
+        });
+        let saved = matches!(status.short_label(), "Saved" | "Reloaded");
+        ui.add_enabled_ui(saved && !self.untitled && !self.remote, |ui| {
+            let response = toolbar_button_response(
+                ui,
+                None,
+                "Register\u{2026}",
+                "Register saved workflow and review Run",
+                false,
+            );
+            response.clone().on_disabled_hover_text(if self.untitled {
+                "Save this workflow to a local file before registering it."
+            } else if self.remote {
+                "Save a local workflow copy before registering it."
+            } else {
+                "Save or resolve document conflicts before registering this workflow."
+            });
+            if response.clicked() {
+                *command = Some(AppCommand::RegisterJavaScriptWorkflowSource);
+            }
+        });
+    }
+
+    fn show_view_controls(
+        &self,
+        ui: &mut egui::Ui,
+        command: &mut Option<AppCommand>,
+        separated: bool,
+    ) {
+        if separated {
+            ui.add_space(TOOLBAR_GROUP_GAP);
+            ui.separator();
+            ui.add_space(TOOLBAR_GROUP_GAP);
+        }
+        if toolbar_button(
+            ui,
+            None,
+            "Duplicate view",
+            "Open another view of this document",
+            false,
+        ) {
+            *command = Some(AppCommand::OpenAnotherEditorView);
+        }
+        if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
+            *command = Some(AppCommand::RefreshTextDocument);
+        }
+    }
+
+    fn show_compact_editor_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        status: &DocumentStatus,
+        command: &mut Option<AppCommand>,
+    ) {
+        let button = toolbar_button_with_trailing(
+            ui,
+            None,
+            Some(Icon::Disclosure),
+            "Actions",
+            "Editor actions",
+            false,
+        );
+        egui::Popup::menu(&button).show(|ui| {
+            let max_height = (ui.ctx().content_rect().height() - 16.0).max(120.0);
+            egui::ScrollArea::vertical()
+                .id_salt("editor-actions-scroll")
+                .auto_shrink([false, true])
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    ui.set_min_width(176.0);
+                    ui.spacing_mut().interact_size.y = 30.0;
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add_enabled_ui(status.can_save(), |ui| {
+                        if ui.button("Save").clicked() {
+                            *command = Some(AppCommand::SaveTextDocument);
+                            ui.close();
+                        }
+                    });
+                    if ui.button("Save As\u{2026}").clicked() {
+                        *command = Some(AppCommand::SaveTextDocumentAs);
+                        ui.close();
+                    }
+                    if ui.button("Find").clicked() {
+                        self.find.open(false);
+                        ui.close();
+                    }
+                    if ui.button("Replace").clicked() {
+                        self.find.open(true);
+                        ui.close();
+                    }
+                    if ui.button("Duplicate view").clicked() {
+                        *command = Some(AppCommand::OpenAnotherEditorView);
+                        ui.close();
+                    }
+                    if ui.button("Refresh").clicked() {
+                        *command = Some(AppCommand::RefreshTextDocument);
+                        ui.close();
+                    }
+                });
+        });
     }
 
     /// Auto-save sits beside Save rather than beside `Edit | Preview | Split`,
@@ -2261,7 +2909,16 @@ impl TextEditorTab {
         // text happens to end (ADR 0034 §10a).
         let command_area = self.command.reserved_height();
         let separator = if command_area > 0.0 { 1.0 } else { 0.0 };
-        let height = (ui.available_height() - footer - command_area - separator).max(120.0);
+        let available = ui.available_height();
+        let minimum = if command_area > 0.0 || (available > 0.0 && available < 120.0) {
+            0.0
+        } else {
+            120.0
+        };
+        let height = (available - footer - command_area - separator).max(minimum);
+        if height <= 0.0 {
+            return;
+        }
         if let Some(compare) = self.compare.as_mut() {
             // Compare replaces the body rather than sitting beside it: two
             // versions side by side already use the whole width.
@@ -2352,7 +3009,9 @@ impl TextEditorTab {
     ) {
         {
             match mode {
-                EditorMode::Edit => self.show_edit_pane(ui, documents, ui.available_width()),
+                EditorMode::Edit => {
+                    self.show_edit_pane(ui, documents, ui.available_width(), height)
+                }
                 EditorMode::Preview => self.show_preview_pane(ui, height),
                 EditorMode::Split => {
                     let pane_width =
@@ -2361,7 +3020,7 @@ impl TextEditorTab {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.allocate_ui(vec2(pane_width, height), |ui| {
                             ui.set_height(height);
-                            self.show_edit_pane(ui, documents, pane_width);
+                            self.show_edit_pane(ui, documents, pane_width, height);
                         });
                         let (divider, _) = ui
                             .allocate_exact_size(vec2(SPLIT_DIVIDER_WIDTH, height), Sense::hover());
@@ -2380,11 +3039,18 @@ impl TextEditorTab {
         }
     }
 
-    fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
+    fn show_edit_pane(
+        &mut self,
+        ui: &mut egui::Ui,
+        documents: &SharedDocuments,
+        width: f32,
+        height: f32,
+    ) {
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt(("text-editor-body", self.document))
             .auto_shrink([false, false])
             .max_width(width)
+            .max_height(height)
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     self.show_text(ui, documents);
@@ -3525,6 +4191,21 @@ mod tests {
 
     use super::*;
 
+    fn finish_workflow_validation(editor: &mut TextEditorTab, documents: &SharedDocuments) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            editor.poll_workflow_validation(documents);
+            if editor.workflow_validation.is_none() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "workflow validation exceeded its 5 second test deadline"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
     fn document_layout_editor_pair(
         text: &str,
     ) -> [(egui::Context, SharedDocuments, TextEditorTab); 2] {
@@ -4124,7 +4805,14 @@ mod tests {
                     time: Some(frame as f64 / 60.0),
                     ..Default::default()
                 },
-                |ui| editor.show_edit_pane(ui, &documents, ui.available_width()),
+                |ui| {
+                    editor.show_edit_pane(
+                        ui,
+                        &documents,
+                        ui.available_width(),
+                        ui.available_height(),
+                    )
+                },
             );
             output.textures_delta.clear();
             output
@@ -5238,6 +5926,165 @@ mod tests {
     }
 
     #[test]
+    fn workflow_editor_keeps_its_mode_and_validation_controls_inside_the_viewport() {
+        let widths = (410..=460)
+            .map(|width| width as f32)
+            .chain([1100.0, 1050.0, 980.0, 910.0, 900.0, 752.0, 360.0]);
+        for width in widths {
+            let directory = TemporaryDirectory::new("workflow-chrome");
+            let path = directory.file(
+                "draft.workflow.json",
+                crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+            );
+            let (documents, editor) = editor_for(&path);
+            let tab_id = crate::tabs::TabId::next_for_test();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 516.0))
+                .build_ui_state(
+                    move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                        state.1.show(ui, tab_id, &state.0);
+                    },
+                    (documents, editor),
+                );
+            harness.run();
+
+            let marker = harness.get_by_label("WORKFLOW").rect();
+            assert!(marker.left() >= 0.0 && marker.right() <= width);
+            let labels = if width < 560.0 {
+                vec![
+                    "Validate workflow source",
+                    "Register saved workflow and review Run",
+                    "Editor actions",
+                    "Editor options",
+                ]
+            } else {
+                vec![
+                    "Save As\u{2026}",
+                    "Find",
+                    "Find and replace",
+                    "Validate workflow source",
+                    "Register saved workflow and review Run",
+                    "Open another view of this document",
+                    "Refresh",
+                    "Editor options",
+                ]
+            };
+            let mut controls = labels
+                .into_iter()
+                .map(|label| (label, harness.get_by_label(label).rect()))
+                .collect::<Vec<_>>();
+            let visible_buttons = controls.len();
+            if let Some(summary) = harness.query_by_label_contains("Lines") {
+                controls.push(("options summary", summary.rect()));
+            }
+            for &(label, rect) in &controls {
+                assert!(
+                    rect.left() >= 17.0 && rect.right() <= width - 17.0,
+                    "{label} at {rect:?} escaped the {width} px viewport"
+                );
+                assert!(rect.top() >= marker.top());
+            }
+            for first in 0..controls.len() {
+                for second in first + 1..controls.len() {
+                    let (first_label, first_rect) = controls[first];
+                    let (second_label, second_rect) = controls[second];
+                    let overlaps = (first_rect.right().min(second_rect.right())
+                        - first_rect.left().max(second_rect.left()))
+                        > 0.5
+                        && (first_rect.bottom().min(second_rect.bottom())
+                            - first_rect.top().max(second_rect.top()))
+                            > 0.5;
+                    assert!(
+                        !overlaps,
+                        "{width} px: {first_label} at {first_rect:?} overlaps \
+                         {second_label} at {second_rect:?}"
+                    );
+                }
+            }
+            if width >= 1050.0 {
+                assert!(
+                    controls[..visible_buttons]
+                        .windows(2)
+                        .all(|pair| { (pair[0].1.top() - pair[1].1.top()).abs() < 0.5 }),
+                    "{width} px should retain the one-row command bar: {controls:?}"
+                );
+            }
+            if width < 560.0 {
+                harness.get_by_label("Editor actions").click();
+                harness.run();
+                for label in [
+                    "Save As\u{2026}",
+                    "Find",
+                    "Replace",
+                    "Duplicate view",
+                    "Refresh",
+                ] {
+                    let row = harness.get_by_label(label).rect();
+                    assert!(row.left() >= 0.0 && row.right() <= width);
+                    assert!(row.height() >= 30.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plain_editor_keeps_one_row_when_controls_fit() {
+        let directory = TemporaryDirectory::new("plain-toolbar");
+        let path = directory.file("notes.txt", "alpha\n");
+        let (documents, editor) = editor_for(&path);
+        let tab_id = crate::tabs::TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(826.0, 516.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        let rows = [
+            "Save",
+            "Save As\u{2026}",
+            "Find",
+            "Find and replace",
+            "Open another view of this document",
+            "Refresh",
+            "Editor options",
+        ]
+        .map(|label| harness.get_by_label(label).rect().top());
+        assert!(rows.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 0.5));
+        assert!(harness.query_by_label_contains("Lines").is_some());
+    }
+
+    #[test]
+    fn narrow_vi_editor_uses_action_overflow_without_marker_overlap() {
+        let directory = TemporaryDirectory::new("plain-toolbar-vi");
+        let path = directory.file("notes.txt", "alpha\n");
+        let (documents, mut editor) = editor_for(&path);
+        editor.options.vi_keys = true;
+        editor.options.fixed_columns = Some(120);
+        let tab_id = crate::tabs::TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 240.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+
+        let actions = harness.get_by_label("Editor actions").rect();
+        let options = harness.get_by_label("Editor options").rect();
+        assert!(actions.right() <= 360.0);
+        assert!(options.right() <= 360.0);
+        assert!(harness
+            .query_by_label("Open another view of this document")
+            .is_none());
+        assert!(harness.query_by_label_contains("vi \u{00b7}").is_none());
+    }
+
+    #[test]
     fn editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch() {
         let directory = TemporaryDirectory::new("batched-drag");
         for (text, translation) in [
@@ -6165,6 +7012,94 @@ mod tests {
         harness.state_mut().1.options.vi_keys = true;
         harness.run();
         harness
+    }
+
+    #[test]
+    fn short_editor_renders_and_focuses_the_open_vi_command_area() {
+        let directory = TemporaryDirectory::new("short-vi-command");
+        let path = directory.file("notes.txt", "alpha\n");
+        let (documents, mut editor) = editor_for(&path);
+        editor.options.vi_keys = true;
+        editor.vi_focused = true;
+        let tab_id = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 160.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        harness.event(egui::Event::Text(":".to_owned()));
+        harness.run();
+
+        assert!(command_field(&harness).is_focused());
+        assert!(harness
+            .query_by_role(egui::accesskit::Role::MultilineTextInput)
+            .is_some_and(|body| !body.is_focused()));
+        harness.event(egui::Event::Text("w".to_owned()));
+        harness.run();
+        assert_eq!(command_field(&harness).value().unwrap(), "w");
+    }
+
+    #[test]
+    fn short_editor_renders_find_without_leaking_typing_to_the_document() {
+        let directory = TemporaryDirectory::new("short-find");
+        let path = directory.file("notes.txt", "alpha\n");
+        let (documents, editor) = editor_for(&path);
+        let tab_id = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 240.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+        harness.run();
+
+        find_field(&harness, 0).type_text("zz");
+        harness.run();
+        assert_eq!(document_text(&harness), "alpha\n");
+        assert!(find_field(&harness, 0).is_focused());
+    }
+
+    #[test]
+    fn short_workflow_result_preserves_find_focus() {
+        let directory = TemporaryDirectory::new("short-workflow-result-find");
+        let path = directory.file(
+            "workflow.workflow.json",
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+        );
+        let (documents, mut editor) = editor_for(&path);
+        editor.command.report(CommandOutcome::Failed(
+            crate::vi_command::CommandError::new(
+                "Workflow invalid",
+                "Line 1, column 1: invalid workflow",
+            ),
+        ));
+        let tab_id = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 160.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        harness.get_by_label("Editor actions").click();
+        harness.run();
+        harness.get_by_label("Find").click();
+        harness.run();
+        find_field(&harness, 0).type_text("main");
+        harness.run();
+
+        assert!(find_field(&harness, 0).is_focused());
+        assert_eq!(find_field(&harness, 0).value().unwrap(), "main");
     }
 
     fn command_field<'h>(
@@ -7832,6 +8767,338 @@ mod tests {
 
         assert!(markdown.renders_markdown());
         assert!(!plain.renders_markdown());
+    }
+
+    #[test]
+    fn workflow_validation_accepts_dirty_source_and_rejects_invalid_json_safely() {
+        let directory = TemporaryDirectory::new("workflow-validation");
+        let path = directory.file(
+            "workflow.workflow.json",
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+        );
+        let (documents, mut editor) = editor_for(&path);
+        assert!(editor.is_workflow_source());
+
+        editor.buffer.push('\n');
+        {
+            let mut registry = documents.borrow_mut();
+            registry
+                .get_mut(editor.document())
+                .unwrap()
+                .text_mut()
+                .sync_from_view(&editor.buffer)
+                .unwrap();
+            assert!(registry.get(editor.document()).unwrap().text().is_dirty());
+        }
+        editor.validate_workflow_source(&documents);
+        assert!(editor.workflow_validation.is_some());
+        assert_eq!(
+            editor.command.outcome(),
+            Some(&CommandOutcome::Message("Validating workflow…".to_owned()))
+        );
+        finish_workflow_validation(&mut editor, &documents);
+        assert!(documents
+            .borrow()
+            .get(editor.document())
+            .unwrap()
+            .text()
+            .is_dirty());
+        assert!(matches!(
+            editor.command.outcome(),
+            Some(CommandOutcome::Message(message))
+                if message.starts_with("Workflow valid · SHA-256 ")
+                    && message.len() <= "Workflow valid · SHA-256 ".len() + 12
+        ));
+
+        editor.buffer.push(' ');
+        documents
+            .borrow_mut()
+            .get_mut(editor.document())
+            .unwrap()
+            .text_mut()
+            .sync_from_view(&editor.buffer)
+            .unwrap();
+        editor.poll_workflow_validation(&documents);
+        assert_eq!(
+            editor.command.outcome(),
+            None,
+            "editing must invalidate the previous validation verdict"
+        );
+
+        editor.buffer = "{\n  \"manifest\":\n}".to_owned();
+        documents
+            .borrow_mut()
+            .get_mut(editor.document())
+            .unwrap()
+            .text_mut()
+            .sync_from_view(&editor.buffer)
+            .unwrap();
+        editor.validate_workflow_source(&documents);
+        finish_workflow_validation(&mut editor, &documents);
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("invalid JSON must report a failure");
+        };
+        assert_eq!(error.headline(), "Workflow invalid");
+        assert!(error.detail().contains("line"));
+        assert!(error.detail().contains("column"));
+        assert!(!error.detail().contains("manifest"));
+        assert!(documents.borrow().get(editor.document()).is_some());
+    }
+
+    #[test]
+    fn workflow_schema_failures_are_not_reported_as_json_syntax_errors() {
+        let directory = TemporaryDirectory::new("workflow-schema");
+        let path = directory.file("schema.workflow.json", "{\"manifest\":{}}\n");
+        let (documents, mut editor) = editor_for(&path);
+
+        editor.validate_workflow_source(&documents);
+        finish_workflow_validation(&mut editor, &documents);
+
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("invalid schema must report a failure");
+        };
+        assert_eq!(error.headline(), "Workflow invalid");
+        assert!(error.detail().contains("missing field"));
+        assert!(!error.detail().contains("syntax"));
+    }
+
+    #[test]
+    fn workflow_validation_rejects_duplicate_snapshot_fields() {
+        let directory = TemporaryDirectory::new("workflow-duplicate-field");
+        let source = crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW
+            .replace("\"version\": 1,", "\"version\": 1,\n    \"version\": 1,");
+        let path = directory.file("duplicate.workflow.json", &source);
+        let (documents, mut editor) = editor_for(&path);
+
+        editor.validate_workflow_source(&documents);
+        finish_workflow_validation(&mut editor, &documents);
+
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("duplicate snapshot field must report a schema failure");
+        };
+        assert!(error.detail().contains("duplicate field"));
+    }
+
+    #[test]
+    fn workflow_validation_reports_javascript_module_and_location() {
+        let directory = TemporaryDirectory::new("workflow-javascript-error");
+        let mut snapshot: festerm_automation_js::snapshot::SourceSnapshot =
+            serde_json::from_str(crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW).unwrap();
+        snapshot.manifest.parameters.insert(
+            "main.js".to_owned(),
+            festerm_automation_js::snapshot::ParameterType::Text { max_bytes: 16 },
+        );
+        snapshot.modules.insert(
+            "main.js".to_owned(),
+            "await broken;\nexport async function main() { return; }\n".to_owned(),
+        );
+        let source = serde_json::to_string_pretty(&snapshot).unwrap();
+        let module_offset = source.find("\"main.js\": \"await broken;").unwrap();
+        let module_line = source[..module_offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        let path = directory.file("syntax.workflow.json", &source);
+        let (documents, mut editor) = editor_for(&path);
+
+        editor.validate_workflow_source(&documents);
+        finish_workflow_validation(&mut editor, &documents);
+
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("top-level await must report a JavaScript rule failure");
+        };
+        assert!(error.detail().contains("main.js"));
+        assert!(error.detail().contains("line 1"));
+        assert!(error.detail().contains("top-level await"));
+        assert!(
+            error
+                .detail()
+                .contains(&format!("JSON source line {module_line}")),
+            "{}",
+            error.detail()
+        );
+    }
+
+    #[test]
+    fn workflow_validation_verdict_does_not_survive_an_external_reload() {
+        let directory = TemporaryDirectory::new("workflow-reload");
+        let path = directory.file(
+            "reload.workflow.json",
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+        );
+        let (documents, mut editor) = editor_for(&path);
+        editor.validate_workflow_source(&documents);
+        finish_workflow_validation(&mut editor, &documents);
+        assert!(matches!(
+            editor.command.outcome(),
+            Some(CommandOutcome::Message(message))
+                if message.starts_with("Workflow valid")
+        ));
+
+        fs::write(
+            &path,
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW.replace(
+                "\"name\": \"untitled-workflow\"",
+                "\"name\": \"reloaded-workflow\"",
+            ),
+        )
+        .unwrap();
+        documents.borrow_mut().refresh(editor.document());
+        editor.adopt_external_edits(&documents);
+
+        assert_eq!(editor.command.outcome(), None);
+        assert!(editor.buffer.contains("reloaded-workflow"));
+    }
+
+    #[test]
+    fn workflow_validation_outcome_is_visible_on_the_first_minimum_size_frame() {
+        let mut snapshot: festerm_automation_js::snapshot::SourceSnapshot =
+            serde_json::from_str(crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW).unwrap();
+        snapshot.modules.insert(
+            "main.js".to_owned(),
+            "export const invalid = import('missing.js');\n".to_owned(),
+        );
+        for height in [170.0, 240.0, 300.0, 360.0, 420.0] {
+            let directory = TemporaryDirectory::new("workflow-outcome-minimum");
+            let path = directory.file(
+                "minimum.workflow.json",
+                &serde_json::to_string_pretty(&snapshot).unwrap(),
+            );
+            let (documents, mut editor) = editor_for(&path);
+            editor.validate_workflow_source(&documents);
+            finish_workflow_validation(&mut editor, &documents);
+            let tab_id = TabId::next_for_test();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(360.0, height))
+                .build_ui_state(
+                    move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                        state.1.show(ui, tab_id, &state.0);
+                    },
+                    (documents, editor),
+                );
+
+            harness.run();
+            let detail = harness
+                .query_by_label_contains("JSON source line")
+                .expect("the failed validation detail is visible in the first frame");
+            assert!(
+                detail.rect().top() >= 0.0 && detail.rect().bottom() <= height,
+                "height {height}: detail {}",
+                detail.rect(),
+            );
+            harness.get_by_label("Workflow invalid");
+            if height >= 420.0 {
+                harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+            }
+            harness.get_by_label("Dismiss");
+
+            let before = document_text(&harness);
+            harness.key_press(egui::Key::Escape);
+            harness.run();
+            assert!(harness.query_by_label("Workflow invalid").is_none());
+            harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+            harness.event(egui::Event::Text("x".to_owned()));
+            harness.run();
+            assert!(
+                document_text(&harness) != before,
+                "typing immediately after Escape must return to the editor body at {height}"
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_outcome_does_not_keep_vi_keyboard_ownership() {
+        let directory = TemporaryDirectory::new("workflow-outcome-vi");
+        let path = directory.file(
+            "minimum.workflow.json",
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+        );
+        let (documents, mut editor) = editor_for(&path);
+        editor.options.vi_keys = true;
+        editor.vi_focused = true;
+        editor.feed_vi_key(ViKey::Char('i'), &documents);
+        assert_eq!(editor.vi.mode(), ViMode::Insert);
+        editor.command.report(CommandOutcome::Failed(
+            crate::vi_command::CommandError::new(
+                "Workflow invalid",
+                "Line 1, column 1: validation failed",
+            ),
+        ));
+        let original = editor.buffer.clone();
+        let tab_id = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 170.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+
+        harness.key_press(egui::Key::X);
+        harness.run();
+        assert_eq!(document_text(&harness), original);
+        assert_eq!(harness.state().1.vi.mode(), ViMode::Insert);
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().1.vi.mode(), ViMode::Normal);
+        assert!(harness.state().1.command.outcome().is_some());
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().1.command.outcome(), None);
+    }
+
+    #[test]
+    fn escape_leaves_vi_insert_before_dismissing_the_outcome() {
+        let directory = TemporaryDirectory::new("workflow-outcome-vi-escape");
+        let path = directory.file(
+            "minimum.workflow.json",
+            crate::tabs::MINIMAL_JAVASCRIPT_WORKFLOW,
+        );
+        let (documents, mut editor) = editor_for(&path);
+        editor.options.vi_keys = true;
+        editor.vi_focused = true;
+        editor.feed_vi_key(ViKey::Char('i'), &documents);
+        assert_eq!(editor.vi.mode(), ViMode::Insert);
+        editor
+            .command
+            .report(CommandOutcome::Message("Validated".to_owned()));
+        let tab_id = TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 420.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+
+        harness.event(egui::Event::Text("i".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().1.vi.mode(), ViMode::Insert);
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().1.vi.mode(), ViMode::Normal);
+        assert!(harness.state().1.command.outcome().is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().1.command.outcome(), None);
+    }
+
+    #[test]
+    fn ordinary_json_is_not_marked_as_workflow_source() {
+        let directory = TemporaryDirectory::new("ordinary-json");
+        let path = directory.file("settings.json", "{}\n");
+        let (_, editor) = editor_for(&path);
+        assert!(!editor.is_workflow_source());
     }
 
     #[test]
