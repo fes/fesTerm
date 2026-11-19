@@ -549,6 +549,12 @@ QuickJS echo program, ordinary session-tab composition, exact encoded
 input/resize/output checks, bounded control and a typed reviewed launch.
 The reviewed save fixture now adds opaque-slot load/commit, immutable start or
 resume parameters, exclusive writer ownership and recoverable schema migration.
+Per-program persistence is independently denied by default in Settings and is
+keyed by the approved program digest, not a mutable display name or source path.
+The reader may allow one bounded JSON byte envelope, choose a 4/8/12 KiB cap,
+inspect its disk size, reveal the exact private directory, or delete its
+confirmed payload while no writer is active. Disabling or deleting storage does
+not alter a captured bundle, source file or another digest's namespace.
 An application-owned delivery fence binds OS privacy/lock monitoring, launch
 generation and cancellation. It is checked before worker IPC, before session
 queue publication and when queued output is consumed; revocation stops and
@@ -576,7 +582,8 @@ TradeWars and platform acceptance in separately reviewed delivery slices.
   The lifecycle slice adds shared aggregate admission, one runtime through
   cross-window moves, privacy-first termination, bounded normal close/reap,
   explicit cleanup failure and idle-exit wakeup. Fresh-runtime Resume and
-  storage release/reopen are modeled separately; real process-crash evidence
+  storage release/reopen are modeled separately; digest-bound Settings policy,
+  quota refusal, reveal and deletion are explicit. Real process-crash evidence
   remains pending.
 - **GUI/action edges affected:** `JSP-01` launches only the repository-owned
   developer echo program through the typed command path; `JSP-02` carries

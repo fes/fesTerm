@@ -1447,6 +1447,7 @@ impl SessionTab {
         window_dimensions: Option<Dimensions>,
         launch: festerm_javascript_session::JavaScriptProgramLaunch,
         fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence>,
+        storage_setting: Option<festerm_config::JavaScriptProgramStorageSettings>,
     ) -> Self {
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
@@ -1455,15 +1456,30 @@ impl SessionTab {
             .capabilities()
             .contains(&festerm_automation_js::program::ProgramCapability::StorageLoad)
         {
-            directories::ProjectDirs::from("com", "fes", "fesTerm")
-                .map(|project| project.data_dir().to_path_buf())
+            crate::javascript_program_storage::application_data_root()
                 .map(|root| {
-                    Arc::new(
-                    crate::javascript_program_storage::ReviewedDeveloperStorageHost::from_application_data(
-                        root,
-                        launch.params().mode,
-                    ),
-                    ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    if launch.program().manifest().name == "developer-save-fixture" {
+                        Arc::new(
+                            crate::javascript_program_storage::ReviewedDeveloperStorageHost::from_application_data(
+                                root,
+                                launch.params().mode,
+                            ),
+                        ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    } else if let Some(setting) = storage_setting.filter(|setting| {
+                        setting.digest() == launch.digest() && setting.allowed()
+                    }) {
+                        Arc::new(
+                            crate::javascript_program_storage::ReviewedDeveloperStorageHost::for_program(
+                                root,
+                                launch.digest(),
+                                launch.params().mode,
+                                setting.max_bytes() as usize,
+                            ),
+                        ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    } else {
+                        Arc::new(festerm_javascript_session::UnavailableProgramStorage)
+                            as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    }
                 })
                 .ok_or_else(|| {
                     festerm_javascript_session::JavaScriptSessionError::Runtime(
@@ -3058,6 +3074,10 @@ pub enum AppCommand {
     StartJavaScriptSave {
         mode: festerm_javascript_session::ProgramLaunchMode,
     },
+    #[cfg(feature = "javascript-program-dev")]
+    StartTw2k2 {
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    },
     /// Starts one transient local session from explicit launcher metadata
     /// without creating or recording a saved profile.
     StartLocalSessionWithProfile {
@@ -3427,6 +3447,13 @@ pub enum AppCommand {
     ToggleAutomaticUpdateChecks,
     ToggleMcpEnabled,
     ToggleJavascriptEnabled,
+    SetJavaScriptProgramStorage(festerm_config::JavaScriptProgramStorageSettings),
+    DeleteJavaScriptProgramStorage {
+        digest: String,
+    },
+    RevealJavaScriptProgramStorage {
+        digest: String,
+    },
     RetryAutomationSettings,
     OpenWorkflowPicker,
     Automation(crate::automation::NativeCommand),
@@ -3757,6 +3784,22 @@ struct PendingJavaScriptProgram {
     delivery_gate: Arc<Mutex<()>>,
     delivery_wake: Arc<dyn Fn() + Send + Sync>,
     lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
+    storage_setting: Option<festerm_config::JavaScriptProgramStorageSettings>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+pub(crate) fn tw2k2_program_from_environment(
+) -> Result<festerm_automation_js::program::ApprovedProgram, String> {
+    let path = std::env::var_os("FESTERM_TW2K2_SNAPSHOT").ok_or_else(|| {
+        "Set FESTERM_TW2K2_SNAPSHOT to a reviewed TW2K2 snapshot before launching.".to_owned()
+    })?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Could not read the TW2K2 snapshot: {error}"))?;
+    let snapshot =
+        serde_json::from_slice::<festerm_automation_js::program::ProgramSourceSnapshot>(&bytes)
+            .map_err(|error| format!("The TW2K2 snapshot is invalid: {error}"))?;
+    festerm_automation_js::program::ApprovedProgram::new(snapshot)
+        .map_err(|_| "The TW2K2 snapshot does not satisfy fesTerm's bounds.".to_owned())
 }
 
 #[cfg(feature = "javascript-program-dev")]
@@ -3980,6 +4023,7 @@ pub struct AppState {
     automatic_update_checks: bool,
     mcp_enabled: bool,
     javascript_enabled: bool,
+    javascript_program_storage: Vec<festerm_config::JavaScriptProgramStorageSettings>,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -4155,6 +4199,7 @@ impl AppState {
             automatic_update_checks: settings.automatic_update_checks(),
             mcp_enabled: settings.mcp_enabled(),
             javascript_enabled: settings.javascript_enabled(),
+            javascript_program_storage: settings.javascript_program_storage().to_vec(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             #[cfg(test)]
             interface_settings_snapshot_count: std::cell::Cell::new(0),
@@ -4609,6 +4654,7 @@ impl AppState {
         self.automatic_update_checks = settings.automatic_update_checks();
         self.mcp_enabled = settings.mcp_enabled();
         self.javascript_enabled = settings.javascript_enabled();
+        self.javascript_program_storage = settings.javascript_program_storage().to_vec();
         self.keyboard_bindings = settings.keyboard_bindings().clone();
         self.sftp_pane_order = settings.sftp_pane_order();
         self.default_sftp_local_directory = settings
@@ -4876,6 +4922,23 @@ impl AppState {
         self.javascript_enabled = javascript;
     }
 
+    pub(crate) fn javascript_program_storage(
+        &self,
+    ) -> &[festerm_config::JavaScriptProgramStorageSettings] {
+        &self.javascript_program_storage
+    }
+
+    pub(crate) fn set_javascript_program_storage(
+        &mut self,
+        setting: festerm_config::JavaScriptProgramStorageSettings,
+    ) {
+        self.javascript_program_storage
+            .retain(|entry| entry.digest() != setting.digest());
+        self.javascript_program_storage.push(setting);
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest().cmp(right.digest()));
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -4944,6 +5007,7 @@ impl AppState {
         .with_automatic_update_checks(self.automatic_update_checks)
         .with_mcp_enabled(self.mcp_enabled)
         .with_javascript_enabled(self.javascript_enabled)
+        .with_javascript_program_storage_entries(self.javascript_program_storage.clone())
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -5440,6 +5504,8 @@ impl AppState {
             AppCommand::StartJavaScriptProgram => self.start_javascript_program(context),
             #[cfg(feature = "javascript-program-dev")]
             AppCommand::StartJavaScriptSave { mode } => self.start_javascript_save(context, mode),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartTw2k2 { mode } => self.start_tw2k2_program(context, mode),
             AppCommand::StartLocalSessionWithProfile { profile } => {
                 self.start_local_session_with_profile(profile, context)
             }
@@ -5826,6 +5892,11 @@ impl AppState {
             AppCommand::ToggleJavascriptEnabled => {
                 self.javascript_enabled = !self.javascript_enabled;
             }
+            AppCommand::SetJavaScriptProgramStorage(setting) => {
+                self.set_javascript_program_storage(setting);
+            }
+            AppCommand::DeleteJavaScriptProgramStorage { .. }
+            | AppCommand::RevealJavaScriptProgramStorage { .. } => {}
             AppCommand::RetryAutomationSettings => {}
             AppCommand::OpenWorkflowPicker => {}
             AppCommand::Automation(_) => {}
@@ -5960,6 +6031,7 @@ impl AppState {
                 self.automatic_update_checks = InterfaceSettings::DEFAULT.automatic_update_checks();
                 self.mcp_enabled = InterfaceSettings::DEFAULT.mcp_enabled();
                 self.javascript_enabled = InterfaceSettings::DEFAULT.javascript_enabled();
+                self.javascript_program_storage.clear();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
@@ -7070,12 +7142,71 @@ impl AppState {
     }
 
     #[cfg(feature = "javascript-program-dev")]
+    fn start_tw2k2_program(
+        &mut self,
+        context: &egui::Context,
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    ) {
+        let program = match tw2k2_program_from_environment() {
+            Ok(program) => program,
+            Err(error) => {
+                self.resume_error = Some(error);
+                return;
+            }
+        };
+        let setting = self
+            .javascript_program_storage
+            .iter()
+            .find(|setting| setting.digest() == program.digest())
+            .cloned()
+            .unwrap_or_else(|| {
+                festerm_config::JavaScriptProgramStorageSettings::new(
+                    program.digest().to_owned(),
+                    program.manifest().name.clone(),
+                )
+            });
+        self.set_javascript_program_storage(setting.clone());
+        if !setting.allowed() {
+            self.resume_error = Some(
+                "Open Settings > Automation and allow save data for tw2k2-js before launching."
+                    .into(),
+            );
+            return;
+        }
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_program(
+                program,
+                launch_generation,
+                festerm_automation_js::program::ProgramLaunchParams::new(mode),
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed TW2K2 snapshot has incompatible capabilities.".into());
+                    return;
+                }
+            };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
     fn begin_javascript_program(
         &mut self,
         context: &egui::Context,
         launch_generation: u64,
         launch: festerm_javascript_session::JavaScriptProgramLaunch,
     ) {
+        let storage_setting = self
+            .javascript_program_storage
+            .iter()
+            .find(|setting| setting.digest() == launch.digest())
+            .cloned();
         let lease = match self.javascript_program_coordinator.try_admit() {
             Ok(lease) => Arc::new(lease),
             Err(error) => {
@@ -7103,7 +7234,11 @@ impl AppState {
                     _lease: lease,
                 });
             self.place_user_session(SessionTab::start_javascript_program(
-                context, dimensions, launch, fence,
+                context,
+                dimensions,
+                launch,
+                fence,
+                storage_setting.clone(),
             ));
         }
         #[cfg(not(test))]
@@ -7146,6 +7281,7 @@ impl AppState {
                 delivery_gate,
                 delivery_wake,
                 lease,
+                storage_setting,
             });
         }
     }
@@ -7508,6 +7644,7 @@ impl AppState {
                         pending.dimensions,
                         pending.launch,
                         fence,
+                        pending.storage_setting,
                     ));
                 }
                 Ok(privacy) => {
@@ -14808,6 +14945,136 @@ mod tests {
         }
 
         state.dispatch(AppCommand::CloseTab(launcher), &context);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    #[ignore = "requires TW2K2_SNAPSHOT, TW2K2_SCREENSHOT_OUT and an isolated data root"]
+    fn capture_tw2k2_gameplay_in_festerm() {
+        use egui_kittest::Harness;
+
+        let snapshot_path =
+            std::path::PathBuf::from(std::env::var_os("TW2K2_SNAPSHOT").expect("snapshot"));
+        let snapshot: festerm_automation_js::program::ProgramSourceSnapshot =
+            serde_json::from_slice(&std::fs::read(&snapshot_path).expect("read snapshot"))
+                .expect("parse snapshot");
+        let approved =
+            festerm_automation_js::program::ApprovedProgram::new(snapshot).expect("approve");
+        let setting = festerm_config::JavaScriptProgramStorageSettings::new(
+            approved.digest().to_owned(),
+            approved.manifest().name.clone(),
+        )
+        .with_allowed(true)
+        .with_max_bytes(8 * 1024);
+        std::env::set_var("FESTERM_TW2K2_SNAPSHOT", &snapshot_path);
+
+        let context = egui::Context::default();
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_javascript_program_storage(setting),
+            )
+            .expect("store TW2K2 policy");
+        let mut app = crate::app::FesTermApp::for_test_with_configuration(configuration);
+        app.dispatch_for_test(
+            AppCommand::StartTw2k2 {
+                mode: festerm_javascript_session::ProgramLaunchMode::New,
+            },
+            &context,
+        );
+        let tab = app.state_for_test().active();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let resume_error = app.state_for_test().resume_error.clone();
+            let session = app
+                .state_mut_for_test()
+                .session_tab_mut(tab)
+                .expect("JavaScript session");
+            session.pump_session_events();
+            if session
+                .terminal
+                .text_snapshot()
+                .text()
+                .contains("Callsign:")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "TW2K2 login did not render: error={:?} lifecycle={:?} start={:?} text={:?}",
+                resume_error,
+                session.controller.lifecycle(),
+                session.controller.start_error(),
+                session.terminal.text_snapshot().text()
+            );
+            std::thread::yield_now();
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_ui_state(
+                |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+                app,
+            );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("TW2K2_SCREENSHOT_OUT").expect("screenshot output"),
+        );
+        std::fs::create_dir_all(&output).expect("create screenshot output");
+
+        harness.run();
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 login")
+            .save(output.join("tw2k2-login.png"))
+            .expect("save login screenshot");
+
+        let drive =
+            |harness: &mut Harness<'_, crate::app::FesTermApp>, input: &[u8], expected: &str| {
+                harness
+                    .state_mut()
+                    .state_mut_for_test()
+                    .session_tab_mut(tab)
+                    .expect("JavaScript session")
+                    .controller
+                    .session()
+                    .expect("live JavaScript backend")
+                    .try_send_input(input)
+                    .expect("send TW2K2 input");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let state = harness.state_mut().state_mut_for_test();
+                    let session = state.session_tab_mut(tab).expect("JavaScript session");
+                    session.pump_session_events();
+                    if session.terminal.text_snapshot().text().contains(expected) {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "missing TW2K2 output: {expected}"
+                    );
+                    std::thread::yield_now();
+                }
+                harness.run();
+            };
+
+        drive(&mut harness, b"Screen Pilot\r", "Ship");
+        drive(&mut harness, b"Far Horizons\r", "SECTOR");
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 sector")
+            .save(output.join("tw2k2-sector.png"))
+            .expect("save sector screenshot");
+
+        drive(&mut harness, b"M 2\r", "SECTOR 2");
+        drive(&mut harness, b"I\r", "Far Horizons");
+        drive(&mut harness, b"SAVE\r", "Checkpoint");
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 saved status")
+            .save(output.join("tw2k2-saved-status.png"))
+            .expect("save status screenshot");
     }
 
     #[cfg(feature = "javascript-program-dev")]
