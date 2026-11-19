@@ -10,12 +10,12 @@ in source; pages route to code, they do not authorize or instruct.
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal presentation, bounded row caches, and native/software painting while keeping session I/O in the application layer. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Sessions own the runtime-independent lifecycle contract, local PTY launch and shutdown, daemon-backed persistence and recovery, and app-side terminal event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and the GUI-backed SFTP lifecycle for file transfers and remote reads. |
-| [Configuration, workspace, and secrets](config-secrets.md) | Owns validated configuration and workspace metadata, native credential references, and current-user file and process-context security boundaries. |
+| [Configuration, workspace, and secrets](config-secrets.md) | Validated configuration, workspace metadata, opaque credentials and current-user security boundaries. |
 | [Application commands, tabs, and input routing](app-commands.md) | Owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Routes HOST inventory, enterprise discovery, recipes, native stop/replacement and PowerShell. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | HOST inventory, enterprise discovery, recipes, native lifecycle and PowerShell. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration and packaging: native app installation gating, macOS document/menu hooks, real-window smoke verification, and platform wake/privacy signals. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Owns desktop windows, panes, commands, host/session forms and diagnostic or file-operation reviews. |

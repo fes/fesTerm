@@ -25,6 +25,33 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Dedicated HOST entrypoint only, before runtime threads or any native vault.
+#[cfg(target_os = "macos")]
+pub fn initialize_headless_account_store() -> io::Result<()> {
+    festerm_secret_store::initialize_headless_keychain()
+        .map_err(|_| refused("host.headless_keychain_ui_fence_unavailable"))
+}
+
+#[cfg(feature = "host-runtime")]
+pub(crate) fn cancelled_account_work() -> io::Error {
+    refused("host.cloud_cancelled")
+}
+
+#[cfg(feature = "host-runtime")]
+pub(crate) fn terminal_ordinary_renewal(error: io::Error) -> io::Error {
+    if crate::diagnostics::contains_source_type::<CloudCancelled>(&error) {
+        return error;
+    }
+    // Provider refresh may already have rotated credentials. Preserve only the
+    // content-free diagnostic, not a TransientRelay marker that would replay
+    // refresh against the old/uncertain native value.
+    let terminal = refused("host.ordinary_account_renewal_failed");
+    match crate::diagnostics::from_io_error(&error) {
+        Some(diagnostic) => crate::diagnostics::attach(terminal, diagnostic),
+        None => terminal,
+    }
+}
+
 const RECORD: &str = "host-cloud.json";
 const LOCK: &str = "host-cloud.lock";
 pub const HOST_IDENTITY_FILE: &str = "host-identity";
@@ -194,6 +221,9 @@ impl PreparedOrdinaryObserver {
     pub(crate) fn is_ready(&self) -> bool {
         !self.identity.needs_sign_in()
     }
+    pub(crate) fn same_scope(&self, other: &Self) -> bool {
+        self.exact == other.exact && self.record_digest == other.record_digest
+    }
     pub(crate) fn resource(&self) -> &Resource {
         &self.exact.resource
     }
@@ -355,51 +385,191 @@ impl Network for NativeNetwork {
     }
 }
 
-impl<'a> CloudHostAdapter<'a> {
-    /// Credential loading/refresh and native I/O precede the short wire budget.
-    #[cfg(feature = "host-runtime")]
-    pub(crate) async fn prepare_ordinary_observer(
-        &self,
-        cancel: &CancellationToken,
-    ) -> io::Result<PreparedOrdinaryObserver> {
-        let _operation = self.operation()?;
-        let snapshot = self.store.snapshot()?;
-        if snapshot.phase != Phase::Provisioned
-            || snapshot.settings.ordinary_access != crate::lifecycle::OrdinaryAccess::ProviderOwner
-        {
-            return Err(refused("host.ordinary_policy_not_enabled"));
+#[cfg(feature = "host-runtime")]
+async fn ready_observer_identity(
+    mut identity: Identity,
+    account: u64,
+    network: &impl Network,
+    cancel: &CancellationToken,
+    persist: impl std::ops::AsyncFnOnce(SecretBytes) -> io::Result<()>,
+) -> io::Result<Identity> {
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    if identity.needs_sign_in() {
+        identity = network
+            .refresh(&identity, cancel)
+            .await
+            .map_err(account_error)?;
+        if identity.account.id != account {
+            return Err(refused("host.cloud_account_changed"));
         }
-        let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
-            .map_err(|_| refused("host.secure_store_unavailable"))?;
-        let mut record = self.load()?;
-        let exact = record
-            .receipt
-            .clone()
-            .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
-        if exact.resource.create_access != CreateAccess::OwnerDefault
-            || snapshot.binding.as_ref() != Some(&binding(&record, &exact))
-        {
-            return Err(refused("host.ordinary_creator_only_resource_required"));
+        let encoded = identity.encode_private().map_err(account_error)?;
+        // A provider may have rotated the old refresh token already. A failed
+        // or uncertain persistence result must never publish/replay readiness.
+        persist(SecretBytes::copy_from_slice(&encoded)).await?;
+    }
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    network
+        .confirm(&identity, cancel)
+        .await
+        .map_err(account_error)?;
+    require_ready_ordinary_identity(&identity)?;
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    Ok(identity)
+}
+
+#[cfg(feature = "host-runtime")]
+pub(crate) async fn owned_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> io::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    // Do not select cancellation/timeout against the JoinHandle: running
+    // native mutations cannot be aborted, so their owner always drains them.
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| refused("host.native_account_work_failed"))?
+}
+
+#[cfg(feature = "host-runtime")]
+fn ordinary_record_digest(
+    store: &Store,
+    expected: &Snapshot,
+    owner_digest: Option<[u8; 32]>,
+    cancel: &CancellationToken,
+) -> io::Result<[u8; 32]> {
+    use sha2::Digest;
+    store.with_locked(|directory, current| {
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
         }
-        let identity = self
-            .load_identity(&mut record, &network, &*secrets, cancel)
-            .await?;
-        if self.store.snapshot()? != snapshot || cancel.is_cancelled() {
+        if current != expected {
             return Err(refused("host.runtime_consent_changed"));
         }
-        let record_digest = self.store.with_locked(|directory, current| {
-            use sha2::Digest;
-            if current != &snapshot {
-                return Err(refused("host.runtime_consent_changed"));
-            }
-            Ok(sha2::Sha256::digest(storage::read_private(
+        if let Some(owner_digest) = owner_digest {
+            let owner: [u8; 32] = sha2::Sha256::digest(storage::read_private(
                 directory,
-                Path::new(RECORD),
+                Path::new("owner-enrollment.json"),
                 16 * 1024,
             )?)
-            .into())
-        })?;
+            .into();
+            if owner != owner_digest {
+                return Err(refused("host.ordinary_policy_changed"));
+            }
+        }
+        Ok(sha2::Sha256::digest(storage::read_private(
+            directory,
+            Path::new(RECORD),
+            16 * 1024,
+        )?)
+        .into())
+    })
+}
+
+impl<'a> CloudHostAdapter<'a> {
+    /// Native work is owned and drained, never polled on the relay executor or
+    /// abandoned on cancellation. The caller must likewise await this future.
+    #[cfg(feature = "host-runtime")]
+    pub(crate) async fn prepare_ordinary_observer(
+        store: std::sync::Arc<Store>,
+        expected: Snapshot,
+        expected_digest: Option<[u8; 32]>,
+        owner_digest: Option<[u8; 32]>,
+        cancel: &CancellationToken,
+    ) -> io::Result<PreparedOrdinaryObserver> {
+        let input_store = store.clone();
+        let input_expected = expected.clone();
+        let input_cancel = cancel.clone();
+        let (_operation, record, secrets, mut identity, exact, before) =
+            owned_blocking(move || {
+                let adapter = CloudHostAdapter::new(&input_store);
+                let operation = adapter.operation()?;
+                if input_expected.phase != Phase::Provisioned
+                    || input_expected.settings.ordinary_access
+                        != crate::lifecycle::OrdinaryAccess::ProviderOwner
+                {
+                    return Err(refused("host.ordinary_policy_not_enabled"));
+                }
+                let before = ordinary_record_digest(
+                    &input_store,
+                    &input_expected,
+                    owner_digest,
+                    &input_cancel,
+                )?;
+                if expected_digest.is_some_and(|expected| expected != before) {
+                    return Err(refused("host.ordinary_policy_changed"));
+                }
+                let record = adapter.load()?;
+                let exact = record
+                    .receipt
+                    .clone()
+                    .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
+                if !record.authenticated
+                    || exact.resource.create_access != CreateAccess::OwnerDefault
+                    || input_expected.binding.as_ref() != Some(&binding(&record, &exact))
+                {
+                    return Err(refused("host.ordinary_creator_only_resource_required"));
+                }
+                let secrets = festerm_secret_store::native_store()
+                    .map_err(|_| refused("host.secure_store_unavailable"))?;
+                let secret = secrets
+                    .get_noninteractive(&reference(&record)?)
+                    .map_err(|_| refused("host.sign_in_required"))?;
+                let identity = secret
+                    .with_bytes(|bytes| {
+                        Identity::decode_private(
+                            bytes,
+                            record.account_id,
+                            identity::SERVICE_CLIENT_ID,
+                        )
+                    })
+                    .map_err(account_error)?;
+                Ok((operation, record, secrets, identity, exact, before))
+            })
+            .await?;
+        let network = NativeNetwork::new()?;
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
+        }
+        let persist_store = store.clone();
+        let persist_expected = expected.clone();
+        let persist_cancel = cancel.clone();
+        identity = ready_observer_identity(
+            identity,
+            record.account_id,
+            &network,
+            cancel,
+            async move |bytes| {
+                owned_blocking(move || {
+                    if ordinary_record_digest(
+                        &persist_store,
+                        &persist_expected,
+                        owner_digest,
+                        &persist_cancel,
+                    )? != before
+                    {
+                        return Err(refused("host.ordinary_policy_changed"));
+                    }
+                    secrets
+                        .update_noninteractive(&reference(&record)?, &bytes)
+                        .map_err(|_| refused("host.secure_store_unavailable"))
+                })
+                .await
+            },
+        )
+        .await?;
+        let final_cancel = cancel.clone();
+        let record_digest = owned_blocking(move || {
+            let digest = ordinary_record_digest(&store, &expected, owner_digest, &final_cancel)?;
+            if digest != before {
+                return Err(refused("host.ordinary_policy_changed"));
+            }
+            Ok(digest)
+        })
+        .await?;
         Ok(PreparedOrdinaryObserver {
             identity,
             exact,
@@ -1738,6 +1908,7 @@ mod tests {
 
     #[derive(Default)]
     struct State {
+        refresh_ready: bool,
         created: Option<Receipt>,
         creates: usize,
         sign_ins: usize,
@@ -1848,10 +2019,13 @@ mod tests {
         }
         async fn refresh(
             &self,
-            _: &Identity,
-            _: &CancellationToken,
+            identity: &Identity,
+            cancel: &CancellationToken,
         ) -> Result<Identity, AccountError> {
-            Err(AccountError::Expired)
+            if !self.state.borrow().refresh_ready {
+                return Err(AccountError::Expired);
+            }
+            self.sign_in(identity.account.id, cancel, |_| {}).await
         }
         async fn recommend(
             &self,
@@ -2661,6 +2835,125 @@ mod tests {
                     .unwrap(),
                 cloud
             );
+        }
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[test]
+    fn ordinary_renewal_digest_refuses_changed_snapshot_and_cancelled_scope() {
+        let (_root, store, _secrets) = fixture();
+        let expected = store.snapshot().unwrap();
+        let cancel = CancellationToken::new();
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new(RECORD), b"first protected bytes")
+            })
+            .unwrap();
+        let original = ordinary_record_digest(&store, &expected, None, &cancel).unwrap();
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(
+                    directory,
+                    Path::new("owner-enrollment.json"),
+                    b"original owner bytes",
+                )
+            })
+            .unwrap();
+        let owner = {
+            use sha2::Digest;
+            sha2::Sha256::digest(b"original owner bytes").into()
+        };
+        assert_eq!(
+            ordinary_record_digest(&store, &expected, Some(owner), &cancel).unwrap(),
+            original
+        );
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(
+                    directory,
+                    Path::new("owner-enrollment.json"),
+                    b"changed owner bytes",
+                )
+            })
+            .unwrap();
+        assert!(ordinary_record_digest(&store, &expected, Some(owner), &cancel).is_err());
+        let mut changed = expected.clone();
+        changed.epoch += 1;
+        assert!(ordinary_record_digest(&store, &changed, None, &cancel).is_err());
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new(RECORD), b"other protected bytes")
+            })
+            .unwrap();
+        assert_ne!(
+            ordinary_record_digest(&store, &expected, None, &cancel).unwrap(),
+            original
+        );
+        cancel.cancel();
+        assert!(is_cancelled_for_test(
+            &ordinary_record_digest(&store, &expected, None, &cancel).unwrap_err()
+        ));
+    }
+
+    #[cfg(feature = "host-runtime")]
+    fn is_cancelled_for_test(error: &io::Error) -> bool {
+        crate::diagnostics::contains_source_type::<CloudCancelled>(error)
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[tokio::test(start_paused = true)]
+    async fn ordinary_observer_refresh_persists_before_ready_and_failed_write_or_cancel_refuses() {
+        for failure in [0, 1, 2] {
+            let (_root, store, secrets) = fixture();
+            let network = FixtureNetwork::new(&store);
+            network.state.borrow_mut().refresh_ready = true;
+            let cancel = CancellationToken::new();
+            let fresh = network.sign_in(42, &cancel, |_| {}).await.unwrap();
+            let encoded = fresh.encode_private().unwrap();
+            let prefix = b"FESTERM_GITHUB_IDENTITY_V2\0";
+            let mut value: serde_json::Value =
+                serde_json::from_slice(encoded.strip_prefix(prefix).unwrap()).unwrap();
+            value["expires_at"] = 1.into();
+            let expired = [prefix.as_slice(), &serde_json::to_vec(&value).unwrap()].concat();
+            let expired =
+                Identity::decode_private(&expired, 42, identity::SERVICE_CLIENT_ID).unwrap();
+            let reference = secrets
+                .put(&SecretBytes::copy_from_slice(b"old-native-value"))
+                .unwrap();
+            let writes = std::cell::Cell::new(0);
+            let result = ready_observer_identity(expired, 42, &network, &cancel, async |bytes| {
+                writes.set(writes.get() + 1);
+                if failure == 1 {
+                    return Err(refused("host.secure_store_unavailable"));
+                }
+                secrets.update_noninteractive(&reference, &bytes).unwrap();
+                if failure == 2 {
+                    cancel.cancel();
+                }
+                Ok(())
+            })
+            .await;
+            assert_eq!(writes.get(), 1);
+            if failure == 0 {
+                assert!(!result.unwrap().needs_sign_in());
+                let stored = secrets.get_noninteractive(&reference).unwrap();
+                assert!(!stored
+                    .with_bytes(|bytes| Identity::decode_private(
+                        bytes,
+                        42,
+                        identity::SERVICE_CLIENT_ID
+                    ))
+                    .unwrap()
+                    .needs_sign_in());
+            } else {
+                assert!(result.is_err());
+                if failure == 1 {
+                    secrets
+                        .get(&reference)
+                        .unwrap()
+                        .with_bytes(|bytes| assert_eq!(bytes, b"old-native-value"));
+                }
+            }
         }
     }
 

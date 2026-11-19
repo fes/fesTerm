@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "e3ea1d49d5c5ce57c691c7bbddfa5bd02eac27e17ce2c7c14c61ed55ebacda04"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "e19a7e84a78c590769fa3812eb5c068ba85a6f6eefaef097c972aded02a3df4a"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Routes HOST inventory, enterprise discovery, recipes, native stop/replacement and PowerShell.
+HOST inventory, enterprise discovery, recipes, native lifecycle and PowerShell.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -55,13 +55,14 @@ Caveats:
 
 ## Host stop and replacement
 
-Use for: Pending Windows stop or authenticated stopped replacement.
+Use for: Fenced stop/replacement and same-scope readiness renewal.
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Reports availability without replacement authority.
 - [`windows_stop_observation`](../../crates/festerm-host-setup/src/services.rs) — Retries fenced observation contention within one stop deadline.
 - [`read`](../../crates/festerm-host-setup/src/controller/runtime_diagnostics.rs) — Copies protected run correlation before bounded optional log I/O.
 - [`validate_archive`](../../crates/festerm-host-setup/src/artifacts.rs) — Accepts HOST8 or its complete pinned Windows pair; rejects foreign resources.
+- [`CurrentHostPolicySource`](../../crates/festerm-host-setup/src/ordinary.rs) — Renews prepared credentials within the original protected scope, outside admission.
 
 Evidence:
 - [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks preserved identity, grants and authenticated helper provenance.

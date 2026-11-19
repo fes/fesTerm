@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "bf8dd3a063792ec3fa1bb38f03cac2cebae02803d7c2d7db24b23b80c976683a"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "b52a5a071c5005a0fe16c252276bbf0ba5900df10059772326b055c8e33de18b"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -14,10 +14,12 @@ Use for: A packaged build is deciding whether self-update is allowed
 
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Build-time install marker and verification key gate self-update eligibility
 - [`from_build`](../../app/festerm/src/updates.rs) — Reads the install marker and updater public key from the build
+- [`packaging/windows.toml`](../../packaging/windows.toml) — Declares current package identity and the versioned sessiond filename.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Refuses self-update without a verification key
 - [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Limits in-place updates to app, appimage, and nsis
+- [`scripts/check_packaging.py`](../../scripts/check_packaging.py) — Checks package versions and binary roles against workspace metadata.
 
 Caveats:
 - Package-smoke binaries are not signed release bundles.
@@ -72,3 +74,15 @@ Caveats:
 - Wake logic treats resume as wake and ignores suspend; it does not generalize to network changes.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
+
+## Dedicated HOST Keychain fence
+
+Use for: A macOS HOST serving process starts before runtime threads or native vault access.
+
+- [`initialize_serving_store`](../../app/festerm-host/src/main.rs) — Applies the process-local no-UI fence only to serving commands.
+
+Evidence:
+- [`headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses`](../../app/festerm-host/src/main.rs) — Foreground routes remain unfenced and failed startup fencing refuses serving.
+
+Caveats:
+- GUI and setup/operator processes never set this fence; native behavior remains a separate gate.

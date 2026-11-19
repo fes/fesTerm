@@ -1113,6 +1113,16 @@ reference. This qualifies the runtime packaging fix, not the full item-8 policy/
 SDK matrix or physical-pixel identity. Old inbox-backed daemons remain unchanged;
 the prior missing-reply evidence is retained separately.
 
+DT-05 also requires long-lived ordinary readiness renewal in the same protected
+run without disconnecting a healthy relay. Verify unchanged creation policy,
+binding and durable generations; replacement must refuse changed/revoked scope,
+cancelled work and failed native credential persistence. No keychain prompts or
+interactive fallback are permitted. Retain the original error before Refresh;
+an expired prepared observer may refuse admission briefly until replacement.
+This new renewal gate is **UNRUN** natively; prior unchanged-file-digest refusals
+do not prove credential expiry or a root cause. Existing lifetime and no-replay
+checks remain required.
+
 DT-02 also checks the first attached viewport without requiring a second window
 resize: the actual PTY grid must match the client before the fresh program starts.
 Portable bound framed-stream regressions now hold HOST activation after snapshot

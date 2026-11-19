@@ -23,6 +23,18 @@ user-visible label are fixed, non-sensitive constants. It deliberately has no
 file, keyutils, plaintext, or in-memory production fallback. The deterministic
 memory implementation is injection-only for tests and future app composition.
 
+Background HOST readiness renewal uses explicit `get_noninteractive` and
+`update_noninteractive` operations; unsupported backends refuse rather than
+calling an interactive method. Updates retain the existing opaque reference.
+Linux updates exactly one unlocked Secret Service item through `SetSecret`,
+without unlock, creation or prompts. Windows retains the existing serialized
+generic CredRead/CredWrite contract, including its external-deletion race;
+this is not compare-and-swap. macOS updates require the dedicated HOST process
+to disable Keychain UI before runtime/vault initialization and verify that
+process-local fence. GUI and foreground setup/operator processes never set it.
+Native work remains owned and drained; a failed credential persistence never
+publishes the refreshed identity or authorizes replay of token refresh.
+
 The M8 password-credential slice persists only validated opaque SSH-password
 references in TOML. `festerm-ssh` resolves the secret on its background worker
 immediately before password authentication. It does not add persistence for

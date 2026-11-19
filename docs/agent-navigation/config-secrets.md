@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-agent", "sources": "ffbdbfcd7656c5ae4ba86cc6825e3b169b04b368bc407f52da8fa9df38a36f8e"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-agent", "sources": "11a7b08568f8213b4e707d3fd0f0c0d3f31afba6bae7f22fc22545b3e9cd56d9"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns validated configuration and workspace metadata, native credential references, and current-user file and process-context security boundaries.
+Validated configuration, workspace metadata, opaque credentials and current-user security boundaries.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
@@ -42,18 +42,18 @@ Caveats:
 
 ## Secret boundary
 
-Use for: When is a profile password, refresh token, or credential created, rotated, or loaded from native storage?
+Use for: Opaque native credentials and background updates without UI.
 
 - [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than a password or token value.
-- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
+- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native credentials and explicit noninteractive updates; unknown backends refuse.
 
 Evidence:
 - [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Shows config persists only the opaque reference and keeps the value opaque.
-- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Proves persisted references are canonical, random, and opaque.
+- [`noninteractive_update_retains_existing_reference_and_refuses_missing_or_oversize`](../../crates/festerm-secret-store/src/lib.rs) — Keeps the existing reference and refuses missing or oversized updates.
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
-- Unsupported, missing, locked, or unavailable native storage is a first-class error.
+- Background updates never unlock or fall back to interactive methods.
 - Secret references are opaque and must remain canonical UUIDv4 strings.
 
 ## File security
