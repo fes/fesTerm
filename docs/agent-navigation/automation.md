@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b64ca9c24338dfc77e03c3d43b225e5a05b8d9a0bf7f008f15497ad4c836f1e7"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "401d25f35cc9e438e39fbcbc3c7b1af220c64006fe64129fad410da4b201dcaa"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -16,7 +16,7 @@ Use for: When a native review decides whether a connection may observe or contro
 - [`NativeApproval`](../../crates/festerm-automation/src/types.rs) — Binds approved scope, exact target refs, and native handoff decisions
 
 Evidence:
-- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Proves approvals and starts are bounded and stale input is rejected
+- [`workflow_concurrency_is_bounded_per_principal_and_globally`](../../crates/festerm-automation/src/tests.rs) — Shows approvals and starts are bounded and stale input is rejected
 
 Caveats:
 - A connection is never a grant; only broker-owned approval yields authority.
@@ -42,8 +42,8 @@ Caveats:
 
 Use for: When adapter channels, privacy gates, and controller enrollment are checked before terminal actions are sent.
 
-- [`Connection`](../../app/festerm/src/automation/ipc.rs) — Enqueues adapter messages under admission and privacy checks before delivery
 - [`freeze_association`](../../app/festerm/src/automation/controller.rs) — Locks a reviewed controller enrollment to its exact target and valid window
+- [`FrozenAssociation`](../../app/festerm/src/automation/controller.rs) — Carries the exact identity, target, and validity token for a live enrollment
 
 Evidence:
 - [`automation_privacy_loss_revokes_every_principal_and_invalidates_targets`](../../app/festerm/src/automation/tests.rs) — Shows privacy loss and disconnects revoke grants without restoring them
