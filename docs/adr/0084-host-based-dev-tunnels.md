@@ -17,6 +17,15 @@ new authority merely by upgrading.
 
 ## Workflow repair validation impact
 
+For `HOST-02`/`HOST-03`, Windows daemon shell creation uses the existing local
+PTY cwd representation helper only at the final spawn boundary. Equivalent
+ordinary drive spelling lets `cmd.exe` retain the requested directory;
+canonical recipes, fingerprints and native binding remain unchanged. Paths
+requiring verbatim semantics are preserved, without a general UNC compatibility
+claim. The required Windows WMI daemon fixture checks real expanded `%CD%`
+after caller-Job exit, alongside same-generation I/O; signed-helper native
+qualification remains separate from source and CI coverage.
+
 The Desktop/iOS workflow repair covers GUI `HOST-01`–`HOST-04`: explicitly scoped
 discovery (including new editors), future-only recipe retargeting, one ordinary
 profile-catalog opt-in, mobile shared-profile Ensure/attachment, and GUI owner

@@ -145,6 +145,12 @@ fn assert_native_wmi_job_survival(with_inner: bool) {
     festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
     let root = root.join("sessiond");
     festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+    let cwd = root.join("cmd cwd caf\u{e9}");
+    festerm_sessiond::private_storage::private_directory(&cwd, true).unwrap();
+    let canonical_cwd = fs::canonicalize(&cwd).unwrap();
+    let expected_cwd = festerm_pty::shell_working_directory(&canonical_cwd);
+    assert_eq!(fs::canonicalize(expected_cwd).unwrap(), canonical_cwd);
+    assert!(!expected_cwd.to_str().unwrap().starts_with(r"\\?\"));
     let helper = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
     let _cleanup = BatchCleanup {
         executable: helper.clone(),
@@ -230,15 +236,38 @@ fn assert_native_wmi_job_survival(with_inner: bool) {
         noop_session_event_notifier(),
     )
     .unwrap();
+    let mut recovered = None;
     bounded_poll(
-        || session.take_recovered_terminal().is_some(),
+        || {
+            recovered = session.take_recovered_terminal();
+            recovered.is_some()
+        },
         "same-generation recovery",
     );
+    assert!(!terminal_text(recovered.as_ref().unwrap()).contains("UNC paths are not supported"));
     session.acknowledge_recovery_adoption();
+    session
+        .try_resize(festerm_session::TerminalSize::new(512, 24).unwrap())
+        .unwrap();
     session
         .try_send_input(b"set probe=WMI_\r\necho %probe%INDEPENDENT_OK\r\n")
         .unwrap();
     read_session_until(&session, "WMI_INDEPENDENT_OK");
+    // The expected directory is never typed: cmd must expand its actual cwd.
+    session
+        .try_send_input(b"set CD=\r\necho CWD:%CD%:END\r\n")
+        .unwrap();
+    read_session_until(&session, &format!("CWD:{}:END", expected_cwd.display()));
+    assert_eq!(
+        selected.working_directory.as_deref(),
+        canonical_cwd.to_str()
+    );
+    let profile = festerm_pty::LocalProfile::new(&selected.shell)
+        .with_arguments(selected.arguments.iter().cloned())
+        .with_working_directory(&canonical_cwd);
+    let fingerprint = festerm_sessiond::spawn_fingerprint(&profile).unwrap();
+    let identity = session.native_identity().unwrap();
+    festerm_sessiond::verify_spawn_fingerprint_in(&root, &identity, &fingerprint).unwrap();
     let after = festerm_sessiond::list_running_sessions_in(&root)
         .unwrap()
         .into_iter()
@@ -247,6 +276,8 @@ fn assert_native_wmi_job_survival(with_inner: bool) {
         .session;
     assert_eq!(after.pid, selected.pid);
     assert_eq!(after.created_at_unix_ms, selected.created_at_unix_ms);
+    assert_eq!(after.working_directory, selected.working_directory);
+    festerm_sessiond::verify_spawn_fingerprint_in(&root, &identity, &fingerprint).unwrap();
     drop(session);
 }
 
@@ -293,8 +324,8 @@ fn native_windows_wmi_owned_launcher_fixture() {
                     .unwrap()
                     .into(),
             ),
-            args: vec!["/Q".into()],
-            cwd: root.to_str().map(str::to_owned),
+            args: vec!["/D".into(), "/Q".into()],
+            cwd: root.join("cmd cwd caf\u{e9}").to_str().map(str::to_owned),
         },
         lifetime: Lifetime::Persistent {},
     };

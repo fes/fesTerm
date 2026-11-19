@@ -181,6 +181,13 @@ drive-directory spelling where equivalent, rather than passing canonical
 change; paths requiring verbatim semantics remain verbatim. Actual mapped-drive
 performance is separate from controlled child-cwd coverage (#733).
 
+The same spawn-only representation applies to `HOST-02`/`HOST-03` Windows
+persistent daemons. The required WMI/ConPTY fixture runs actual `cmd.exe` in a
+space- and Unicode-bearing directory, checks expanded `%CD%` after caller-Job
+exit, and retains canonical cwd/fingerprint/generation evidence. Verbatim-only
+paths and existing authorization rules are unchanged; this is not a claim that
+`cmd.exe` supports arbitrary UNC directories.
+
 The native CPU oracle for these edges and `TERM-01` must identify the real
 PID-owned application window, not winit's visible event-target tool window.
 Warmup or sample input invalidates a controlled measurement; loss of window
