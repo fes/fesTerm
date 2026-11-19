@@ -2032,6 +2032,119 @@ mod tests {
     }
 
     #[test]
+    fn recovery_snapshots_accept_pending_wrap_after_a_wide_screen_edge_cluster() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest("abcdef界".as_bytes());
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef界 "));
+        assert_eq!(terminal.cell(6, 0).unwrap().width(), CellWidth::Double);
+        assert!(terminal.cell(7, 0).unwrap().is_continuation());
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (6, 0)
+        );
+        let snapshot = terminal.recovery_clone();
+
+        // The next graphic proves that wrapping was armed at the wide
+        // cluster's leading cell, rather than at its continuation cell.
+        terminal.ingest(b"X");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef界 "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("X       "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (1, 1)
+        );
+        snapshot.validate_recovery_snapshot().unwrap();
+    }
+
+    #[test]
+    fn recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin() {
+        let mut terminal = terminal(8, 2);
+        with_margins(&mut terminal, 2, 5);
+        terminal.ingest(b"\x1b[1;5HX");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("    X   "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (4, 0)
+        );
+        let snapshot = terminal.recovery_clone();
+
+        terminal.ingest(b"Y");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("    X   "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some(" Y      "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (2, 1)
+        );
+        snapshot.validate_recovery_snapshot().unwrap();
+    }
+
+    #[test]
+    fn recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster() {
+        let mut terminal = terminal(8, 2);
+        with_margins(&mut terminal, 2, 5);
+        terminal.ingest("\x1b[1;4H界".as_bytes());
+        assert_eq!(terminal.row_text(0).as_deref(), Some("   界    "));
+        assert_eq!(terminal.cursor().column(), 3);
+        let snapshot = terminal.recovery_clone();
+
+        terminal.ingest(b"X");
+        assert_eq!(terminal.row_text(1).as_deref(), Some(" X      "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (2, 1)
+        );
+        snapshot.validate_recovery_snapshot().unwrap();
+    }
+
+    #[test]
+    fn recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[?47h");
+        terminal.ingest("abcdef界".as_bytes());
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (6, 0)
+        );
+        // Mode 47 retains the alternate buffer, including its pending wrap,
+        // while the primary buffer becomes the presented screen again.
+        terminal.ingest(b"\x1b[?47l");
+        assert!(!terminal.modes().alternate_screen());
+        assert_eq!(terminal.row_text(0).as_deref(), Some("        "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 0)
+        );
+        let snapshot = terminal.recovery_clone();
+
+        terminal.ingest(b"\x1b[?47hX");
+        assert!(terminal.modes().alternate_screen());
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef界 "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("X       "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (1, 1)
+        );
+        snapshot.validate_recovery_snapshot().unwrap();
+    }
+
+    #[test]
+    fn recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster() {
+        for (text, column) in [("abc", 1), ("abc界", 3), ("abc界", 4)] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(text.as_bytes());
+            let mut snapshot = serde_json::to_value(terminal.recovery_clone()).unwrap();
+            snapshot["primary"]["pending_wrap"] = serde_json::json!(true);
+            snapshot["primary"]["cursor"]["column"] = serde_json::json!(column);
+            let invalid: Terminal = serde_json::from_value(snapshot).unwrap();
+            assert!(invalid
+                .validate_recovery_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("pending wrap"));
+        }
+    }
+
+    #[test]
     fn recovery_snapshots_reject_queued_replies_and_input() {
         let mut invalid_reply = terminal(8, 2).recovery_clone();
         invalid_reply.set_transport_queues_for_test(vec![1, 2, 3], Vec::new());

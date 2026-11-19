@@ -687,8 +687,29 @@ impl BufferState {
             self.screen.dimensions().columns(),
             "buffer horizontal scroll region",
         )?;
-        if self.pending_wrap && self.cursor.column + 1 != self.screen.dimensions().columns() {
-            return Err("buffer stores pending wrap away from the last column".to_owned());
+        if self.pending_wrap {
+            let columns = self.screen.dimensions().columns();
+            // Printing leaves the cursor at the cluster's leading cell, so a
+            // wide cluster can arm wrapping before the final physical cell.
+            // Stored margins also remain relevant to an inactive buffer's
+            // pending wrap, even when the presented buffer has other margins.
+            let cluster_end = self
+                .screen
+                .cell(self.cursor.column, self.cursor.row)
+                .and_then(|cell| match cell.width() {
+                    CellWidth::Single => Some(self.cursor.column + 1),
+                    CellWidth::Double => Some(self.cursor.column + 2),
+                    CellWidth::Continuation => None,
+                });
+            let at_cluster_edge = cluster_end.is_some_and(|end| {
+                end == columns
+                    || (self.cursor.column >= self.scroll_left && end == self.scroll_right + 1)
+            });
+            // Retain the previously accepted final-column representation,
+            // including a cursor on a wide cluster's continuation cell.
+            if self.cursor.column + 1 != columns && !at_cluster_edge {
+                return Err("buffer stores pending wrap away from a wrap boundary".to_owned());
+            }
         }
         if let Some(anchor) = self.grapheme_anchor {
             validate_cursor(anchor, self.screen.dimensions(), "buffer grapheme anchor")?;

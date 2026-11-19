@@ -215,6 +215,12 @@ of creating a second, weaker "recovery state" format inside the daemon.
 
 Changes implementing this ADR must provide evidence for:
 
+- legitimate pending wrap at a wide cluster's leading cell, a recorded right
+  margin, and an inactive alternate buffer; recovery must preserve subsequent
+  wrapping while rejecting forged interior pending-wrap states. This core
+  validation regression does not qualify an already running older daemon or
+  establish the cause of a captured native recovery failure;
+
 - protocol-v2 snapshot decode/reattach handling in the library client,
 - released schema-2 fixtures preserving parser/UTF-8 fragments, primary and
   alternate screens, history accounting and subsequent schema-3 round trips;

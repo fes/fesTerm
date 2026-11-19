@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f07cea8fce3e4f0a526d43810686a427fd12989545beb31487e4814ffb0d93de"} -->
+<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "codex-agent", "sources": "51dfa5533e55104484dd24f8f57c6dbe06c6510028461caf98800df382c8a270"} -->
 # Terminal core and fixtures
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -68,3 +68,16 @@ Caveats:
 - Fixture input and replies must stay exact; escapes are easy to misread.
 - Dirty rows and cell width are often the only proof a bug was fixed.
 - Compatibility assumptions are encoded by the golden corpus across versions.
+
+## Recovery validation
+
+Use for: A live terminal cannot produce a recovery snapshot.
+
+- [`validate_recovery_snapshot`](../../crates/festerm-core/src/terminal.rs) — Validates both buffers, including wide cluster ends and stored margin wrap boundaries.
+
+Evidence:
+- [`recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer`](../../crates/festerm-core/src/lib.rs) — Preserves a legitimate armed wrap outside the presented buffer.
+- [`recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster`](../../crates/festerm-core/src/lib.rs) — Rejects forged interior wrap states.
+
+Caveats:
+- Core tests do not establish the cause of an older running daemon's native recovery failure.

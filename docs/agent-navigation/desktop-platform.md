@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ac6f590bf8ecd661f175defeaafeeb779d1e17cd33bebb7fb29b7e544209483e"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "d1a4309cbb8e80643d8363a440fb7cab20213b600f7be8a69c9163a8d8e65d26"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -72,3 +72,7 @@ Caveats:
 - Wake logic treats resume as wake and ignores suspend; it does not generalize to network changes.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
+
+## Native recovery qualification
+
+- [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
