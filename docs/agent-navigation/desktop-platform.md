@@ -1,19 +1,20 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "67706a92bbf0e9782c3b9af2ec99465cdaefd8fce15066bb9b601c2c2f9205e9"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "fbb5db64b4c6f8929d3dcac26a9decda0fbbe99e7004cb05ce7208f35681a231"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Routes desktop packaging and updater gates, native window checks, wake/privacy integration, and hosted Windows process-lifetime separation.
+Routes desktop packaging, updater trust, native windows, wake/privacy and Windows hosted process lifetime.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
 ## Packaging gate
 
-Use for: Which build metadata and update gate are required before a packaged release can self-update?
+Use for: Package version, installation kind and updater trust.
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Reads the installation marker and public key before enabling updater behavior.
-- [`from_build`](../../app/festerm/src/updates.rs) — Build-time environment decides installation kind and signing key.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Checks installation metadata and update verification key.
+- [`from_build`](../../app/festerm/src/updates.rs) — Loads package kind and signing key from build metadata.
+- [`packaging/windows.toml`](../../packaging/windows.toml) — Pins release version and the immutable versioned session daemon.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
@@ -27,7 +28,7 @@ Caveats:
 
 ## Native smoke
 
-Use for: Which real-window checks prove focus, resize, and PTY behavior without trusting headless tests?
+Use for: Real-window focus, resize and PTY checks.
 
 - [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs smoke in the real app event loop and PTY.
 - [`from_environment`](../../app/festerm/src/native_smoke.rs) — Enforces exactly one smoke mode and one result path for CI.
@@ -43,7 +44,7 @@ Caveats:
 
 ## macOS document bridge
 
-Use for: What should I read when a Finder open event or macOS menu action breaks?
+Use for: Finder document events and native menu routing.
 
 - [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder open-document events before UI attachment.
 - [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu actions into semantic app commands.
@@ -58,7 +59,7 @@ Caveats:
 
 ## Wake and privacy
 
-Use for: What should I read when resume-from-sleep, lock-screen, or privacy callbacks misfire?
+Use for: Native wake events and fail-closed privacy state.
 
 - [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Routes Windows resume broadcasts to wake.
 - [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Treats logind PrepareForSleep(false) as resume.
@@ -76,7 +77,7 @@ Caveats:
 
 ## Hosted Windows startup
 
-Use for: Windows persistent shells outlive GUI, bridge and HOST.
+Use for: Hosted Windows shells must outlive the GUI, bridge and HOST worker.
 
 - [`run_start_prepared`](../../crates/festerm-sessiond/src/main.rs) — Selects one WMI hop for an initial hosted starter in any Job, before taking start locks.
 - [`relaunch_current_starter`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Uses local WMI with bounded successor observation and preserved Unicode arguments and environment.
