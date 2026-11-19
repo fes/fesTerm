@@ -1,6 +1,10 @@
 //! Shared explicit foreground setup and restartable host composition.
 
 mod linux_login;
+pub mod runtime_diagnostics;
+use runtime_diagnostics::{
+    Log as RuntimeLog, Outcome as DiagnosticOutcome, Phase as DiagnosticPhase,
+};
 
 use crate::{
     cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
@@ -874,7 +878,8 @@ async fn run_to_completion(
     record: &mut RunRecord,
     cancel: CancellationToken,
 ) -> io::Result<()> {
-    persist(&store, record)?;
+    let log = RuntimeLog::new(state, record);
+    persist_diagnostic(&store, record, Some(&log))?;
     let result = run_reserved(store.clone(), state, snapshot, record, cancel.clone()).await;
     let result = if cancel.is_cancelled() && result.as_ref().is_err_and(crate::cloud::is_cancelled)
     {
@@ -899,7 +904,7 @@ async fn run_to_completion(
             });
         }
     }
-    persist(&store, record)?;
+    persist_diagnostic(&store, record, Some(&log))?;
     result
 }
 
@@ -1113,10 +1118,24 @@ async fn run_admitted(
         policy,
     };
     let shutdown = cancel.child_token();
-    let recovering = recover_relay(&store, expected, record, &shutdown, async |record| {
-        host.attempt(record, &shutdown).await
-    });
-    supervise(&store, expected, cancel, shutdown.clone(), recovering).await
+    let log = RuntimeLog::new(state, record);
+    let recovering = recover_relay_with_diagnostics(
+        &store,
+        expected,
+        record,
+        &shutdown,
+        async |record| host.attempt(record, &shutdown).await,
+        Some(&log),
+    );
+    supervise_with_diagnostics(
+        &store,
+        expected,
+        cancel,
+        shutdown.clone(),
+        recovering,
+        Some(&log),
+    )
+    .await
 }
 
 struct RunningHost<'a> {
@@ -1147,11 +1166,37 @@ impl RunningHost<'_> {
     async fn attempt(&self, record: &mut RunRecord, cancel: &CancellationToken) -> io::Result<()> {
         self.authorize(record)?;
         record.failure = Some(RunFailure::RelayUnavailable);
-        let mut relay = CloudHostAdapter::new(self.store).open_relay(cancel).await?;
+        let log = RuntimeLog::new(self.state, record);
+        let opened = CloudHostAdapter::new(self.store).open_relay(cancel).await;
+        log.event(
+            DiagnosticPhase::RelayOpen,
+            if opened.is_ok() {
+                DiagnosticOutcome::Ok
+            } else {
+                DiagnosticOutcome::Error
+            },
+            opened.as_ref().err(),
+            None,
+            None,
+        );
+        let mut relay = opened?;
+        let mut reached_runtime = false;
         let served = async {
             // Refresh the ready observer after relay credential refresh, before
             // accepting streams, without resetting aggregate runtime budgets.
-            self.policy.refresh(cancel).await?;
+            let refreshed = self.policy.refresh(cancel).await;
+            log.event(
+                DiagnosticPhase::PolicyRefresh,
+                if refreshed.is_ok() {
+                    DiagnosticOutcome::Ok
+                } else {
+                    DiagnosticOutcome::Error
+                },
+                refreshed.as_ref().err(),
+                None,
+                None,
+            );
+            refreshed?;
             startup_admission(self.expected.settings.startup, cancel).await?;
             self.authorize(record)?;
             if cancel.is_cancelled() {
@@ -1159,32 +1204,128 @@ impl RunningHost<'_> {
             }
             record.state = RunState::Listening;
             record.failure = None;
-            persist(self.store, record)?;
+            persist_diagnostic(self.store, record, Some(&log))?;
+            reached_runtime = true;
             Ok::<_, io::Error>(self.runtime.clone().serve(&mut relay, cancel.clone()).await)
         }
         .await;
-        relay.close().await?;
-        match served? {
-            Err(festerm_tunnel_client::host_control::Error::Cancelled) if cancel.is_cancelled() => {
-                Ok(())
-            }
-            Err(festerm_tunnel_client::host_control::Error::Closed)
-                if relay.failure_disposition()
-                    == Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient) =>
-            {
-                Err(crate::cloud::transient_relay("host.runtime_stream_closed"))
-            }
-            _ => Err(refused("host.runtime_stream_closed")),
-        }
+        let before = (relay.failure_category(), relay.failure_disposition());
+        finish_relay_attempt(
+            &log,
+            reached_runtime,
+            served,
+            before,
+            async {
+                let closed = relay.close().await;
+                (
+                    closed,
+                    relay.failure_category(),
+                    relay.failure_disposition(),
+                )
+            },
+            cancel,
+        )
+        .await
     }
 }
 
+fn persist_diagnostic(
+    store: &Store,
+    record: &RunRecord,
+    log: Option<&RuntimeLog>,
+) -> io::Result<()> {
+    let result = persist(store, record);
+    if let (Some(log), Err(error)) = (log, &result) {
+        log.event(
+            DiagnosticPhase::HistoryPersist,
+            DiagnosticOutcome::Error,
+            Some(error),
+            None,
+            None,
+        );
+    }
+    result
+}
+
+async fn finish_relay_attempt(
+    log: &RuntimeLog,
+    reached_runtime: bool,
+    served: io::Result<Result<(), festerm_tunnel_client::host_control::Error>>,
+    before: (
+        Option<&str>,
+        Option<festerm_tunnel_bridge::relay::HostFailureDisposition>,
+    ),
+    close: impl std::future::Future<
+        Output = (
+            io::Result<()>,
+            Option<&'static str>,
+            Option<festerm_tunnel_bridge::relay::HostFailureDisposition>,
+        ),
+    >,
+    cancel: &CancellationToken,
+) -> io::Result<()> {
+    use festerm_tunnel_client::host_control::Error;
+    if reached_runtime {
+        let outcome = match &served {
+            Err(_) => DiagnosticOutcome::Error,
+            Ok(Err(Error::Cancelled)) => DiagnosticOutcome::Cancelled,
+            Ok(Err(Error::Closed)) => DiagnosticOutcome::Closed,
+            Ok(Err(_)) => DiagnosticOutcome::Error,
+            Ok(Ok(())) => DiagnosticOutcome::Ok,
+        };
+        log.event(
+            DiagnosticPhase::RuntimeServe,
+            outcome,
+            served.as_ref().err(),
+            before.0,
+            before.1,
+        );
+    }
+    let (closed, category, disposition) = close.await;
+    log.event(
+        DiagnosticPhase::RelayCleanup,
+        if closed.is_ok() {
+            DiagnosticOutcome::Ok
+        } else {
+            DiagnosticOutcome::Error
+        },
+        closed.as_ref().err(),
+        category,
+        disposition,
+    );
+    // Cleanup uncertainty remains final. Observe disposition at the same POST-close
+    // point as the original code; logging cannot authorize a new relay attempt.
+    closed?;
+    match served? {
+        Err(Error::Cancelled) if cancel.is_cancelled() => Ok(()),
+        Err(Error::Closed)
+            if disposition
+                == Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient) =>
+        {
+            Err(crate::cloud::transient_relay("host.runtime_stream_closed"))
+        }
+        _ => Err(refused("host.runtime_stream_closed")),
+    }
+}
+
+#[cfg(test)]
 async fn recover_relay(
     store: &Store,
     expected: &Snapshot,
     record: &mut RunRecord,
     cancel: &CancellationToken,
+    attempt: impl std::ops::AsyncFnMut(&mut RunRecord) -> io::Result<()>,
+) -> io::Result<()> {
+    recover_relay_with_diagnostics(store, expected, record, cancel, attempt, None).await
+}
+
+async fn recover_relay_with_diagnostics(
+    store: &Store,
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    cancel: &CancellationToken,
     mut attempt: impl std::ops::AsyncFnMut(&mut RunRecord) -> io::Result<()>,
+    log: Option<&RuntimeLog>,
 ) -> io::Result<()> {
     loop {
         if cancel.is_cancelled() {
@@ -1195,12 +1336,12 @@ async fn recover_relay(
         }
         record.state = RunState::Starting;
         record.failure = None;
-        persist(store, record)?;
+        persist_diagnostic(store, record, log)?;
         match attempt(record).await {
             Err(error) if crate::cloud::is_transient_relay(&error) => {
                 record.state = RunState::Starting;
                 record.failure = None;
-                persist(store, record)?;
+                persist_diagnostic(store, record, log)?;
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return Ok(()),
@@ -1212,12 +1353,24 @@ async fn recover_relay(
     }
 }
 
+#[cfg(test)]
 async fn supervise(
     store: &Store,
     expected: &Snapshot,
     cancel: CancellationToken,
     shutdown: CancellationToken,
     served: impl std::future::Future<Output = io::Result<()>>,
+) -> io::Result<()> {
+    supervise_with_diagnostics(store, expected, cancel, shutdown, served, None).await
+}
+
+async fn supervise_with_diagnostics(
+    store: &Store,
+    expected: &Snapshot,
+    cancel: CancellationToken,
+    shutdown: CancellationToken,
+    served: impl std::future::Future<Output = io::Result<()>>,
+    log: Option<&RuntimeLog>,
 ) -> io::Result<()> {
     tokio::pin!(served);
     let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -1228,11 +1381,18 @@ async fn supervise(
             _ = cancel.cancelled() => break Ok(()),
             _ = interval.tick() => match store.snapshot() {
                 Ok(snapshot) if snapshot == *expected => {}
-                Ok(_) => break Err(refused("host.runtime_consent_changed")),
+                Ok(_) => {
+                    let error = refused("host.runtime_consent_changed");
+                    if let Some(log) = log { log.event(DiagnosticPhase::PolicyWatch, DiagnosticOutcome::Error, Some(&error), None, None); }
+                    break Err(error);
+                },
                 // A short current-policy guard owns this same installation
                 // lock. Contention is unobservable state, not revocation.
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) => break Err(error),
+                Err(error) => {
+                    if let Some(log) = log { log.event(DiagnosticPhase::PolicyWatch, DiagnosticOutcome::Error, Some(&error), None, None); }
+                    break Err(error);
+                },
             },
             result = &mut served => {
                 terminated = true;
@@ -1251,6 +1411,324 @@ async fn supervise(
 mod tests {
     use super::*;
     use crate::lifecycle::{Binding, Origin, Settings};
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_diagnostics_preserve_primary_cleanup_and_original_retry_policy() {
+        use festerm_tunnel_bridge::relay::HostFailureDisposition::{Permanent, Transient};
+        for (cleanup_ok, post, expected_calls) in [
+            (true, Transient, 2),
+            (false, Transient, 1),
+            (true, Permanent, 1),
+        ] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_lease, expected, mut record) = reserve(&store).unwrap();
+            let log = RuntimeLog::new(&root.path().join("host"), &record);
+            let calls = std::cell::Cell::new(0);
+            let cancel = CancellationToken::new();
+            let result = recover_relay_with_diagnostics(
+                &store,
+                &expected,
+                &mut record,
+                &cancel,
+                async |_| {
+                    calls.set(calls.get() + 1);
+                    if calls.get() > 1 {
+                        return Err(refused("host.fixture_terminal"));
+                    }
+                    finish_relay_attempt(
+                        &log,
+                        true,
+                        Ok(Err(festerm_tunnel_client::host_control::Error::Closed)),
+                        (Some("host.outer_peer_disconnected"), Some(Transient)),
+                        async {
+                            (
+                                if cleanup_ok {
+                                    Ok(())
+                                } else {
+                                    Err(io::Error::other("PRIVATE cleanup https://invalid.example"))
+                                },
+                                Some("host.outer_peer_disconnected"),
+                                Some(post),
+                            )
+                        },
+                        &cancel,
+                    )
+                    .await
+                },
+                Some(&log),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(calls.get(), expected_calls);
+            assert_eq!(store.snapshot().unwrap(), expected);
+            let records = runtime_diagnostics::read(&store, &root.path().join("host"));
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[0].phase, DiagnosticPhase::RuntimeServe);
+            assert_eq!(records[0].disposition, Some(Transient));
+            assert_eq!(records[1].phase, DiagnosticPhase::RelayCleanup);
+            assert_eq!(records[1].disposition, Some(post));
+            assert_eq!(
+                records[1].outcome,
+                if cleanup_ok {
+                    DiagnosticOutcome::Ok
+                } else {
+                    DiagnosticOutcome::Error
+                }
+            );
+            let text = std::fs::read_to_string(root.path().join("host/worker.log")).unwrap();
+            assert!(!text.contains("PRIVATE") && !text.contains("https://"));
+        }
+    }
+
+    #[tokio::test]
+    async fn host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution() {
+        for cleanup_ok in [true, false] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_lease, _, record) = reserve(&store).unwrap();
+            persist(&store, &record).unwrap();
+            let state = root.path().join("host");
+            let log = RuntimeLog::new(&state, &record);
+            let primary = io::Error::from_raw_os_error(13);
+            log.event(
+                DiagnosticPhase::PolicyRefresh,
+                DiagnosticOutcome::Error,
+                Some(&primary),
+                None,
+                None,
+            );
+            let closes = std::cell::Cell::new(0);
+            let error = finish_relay_attempt(
+                &log,
+                false,
+                Err(primary),
+                (None, None),
+                async {
+                    closes.set(closes.get() + 1);
+                    (
+                        if cleanup_ok {
+                            Ok(())
+                        } else {
+                            Err(io::Error::from_raw_os_error(5))
+                        },
+                        None,
+                        None,
+                    )
+                },
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(if cleanup_ok { 13 } else { 5 }));
+            assert_eq!(closes.get(), 1);
+            let rows = runtime_diagnostics::read(&store, &state);
+            assert_eq!(
+                rows.iter().map(|row| row.phase).collect::<Vec<_>>(),
+                [
+                    DiagnosticPhase::PolicyRefresh,
+                    DiagnosticPhase::RelayCleanup
+                ]
+            );
+            assert!(!rows
+                .iter()
+                .any(|row| row.phase == DiagnosticPhase::RuntimeServe));
+        }
+    }
+
+    #[tokio::test]
+    async fn host_runtime_diagnostics_use_post_cleanup_observation_without_inventing_primary() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, _, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let log = RuntimeLog::new(&root.path().join("host"), &record);
+        let result = finish_relay_attempt(
+            &log,
+            true,
+            Ok(Err(festerm_tunnel_client::host_control::Error::Closed)),
+            (None, None),
+            async {
+                (
+                    Ok(()),
+                    Some("host.outer_timeout"),
+                    Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient),
+                )
+            },
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(crate::cloud::is_transient_relay(&result.unwrap_err()));
+        let rows = runtime_diagnostics::read(&store, &root.path().join("host"));
+        assert_eq!(rows[0].outer, None);
+        assert_eq!(rows[0].disposition, None);
+        assert_eq!(rows[1].outer, Some("host.outer_timeout"));
+    }
+
+    #[tokio::test]
+    async fn host_runtime_diagnostics_log_failure_never_changes_product_error_or_retries() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, _, record) = reserve(&store).unwrap();
+        let log = RuntimeLog::new(&root.path().join("not-created"), &record);
+        let error = finish_relay_attempt(
+            &log,
+            true,
+            Ok(Err(festerm_tunnel_client::host_control::Error::Closed)),
+            (None, None),
+            async { (Err(io::Error::from_raw_os_error(5)), None, None) },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(5));
+        assert!(!root.path().join("not-created").exists());
+        assert!(runtime_diagnostics::read(&store, &root.path().join("not-created")).is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_runtime_diagnostics_watch_and_history_errors_remain_fail_closed() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, expected, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let state = root.path().join("host");
+        let log = RuntimeLog::new(&state, &record);
+        let mut foreign = record.clone();
+        foreign.installation = uuid::Uuid::new_v4().to_string();
+        let error = persist_diagnostic(&store, &foreign, Some(&log)).unwrap_err();
+        assert_eq!(error.to_string(), "host.runtime_installation_changed");
+        assert_eq!(last_run(&store).unwrap(), Some(record.clone()));
+        assert_eq!(store.snapshot().unwrap(), expected);
+        let directory = storage::private_directory(&state, false).unwrap();
+        let original = std::fs::read(state.join("host-lifecycle.json")).unwrap();
+        storage::replace_private(
+            &directory,
+            Path::new("host-lifecycle.json"),
+            b"invalid fixture",
+        )
+        .unwrap();
+        let kind = store.snapshot().unwrap_err().kind();
+        let shutdown = CancellationToken::new();
+        let drained = std::cell::Cell::new(false);
+        let serving = async {
+            shutdown.cancelled().await;
+            drained.set(true);
+            Ok(())
+        };
+        let error = supervise_with_diagnostics(
+            &store,
+            &expected,
+            CancellationToken::new(),
+            shutdown.clone(),
+            serving,
+            Some(&log),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), kind);
+        assert!(drained.get());
+        assert!(shutdown.is_cancelled());
+        storage::replace_private(&directory, Path::new("host-lifecycle.json"), &original).unwrap();
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(
+            rows.iter().map(|row| row.phase).collect::<Vec<_>>(),
+            [
+                DiagnosticPhase::HistoryPersist,
+                DiagnosticPhase::PolicyWatch
+            ]
+        );
+        assert_eq!(store.snapshot().unwrap(), expected);
+    }
+
+    #[test]
+    fn host_runtime_diagnostics_are_typed_private_bounded_and_correlated_history_only() {
+        use runtime_diagnostics::Correlation;
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, _, mut record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let state = root.path().join("host");
+        let old = record.clone();
+        let log = RuntimeLog::new(&state, &record);
+        let error = crate::diagnostics::attach(
+            io::Error::other("ghp_PRIVATE https://invalid.example/password"),
+            crate::diagnostics::HostSetupDiagnostic {
+                stage: crate::diagnostics::Stage::HostToken,
+                http_status: Some(403),
+                category: crate::diagnostics::Category::Denied,
+                recovery: crate::diagnostics::Recovery::CheckAccount,
+            },
+        );
+        log.event(
+            DiagnosticPhase::RelayOpen,
+            DiagnosticOutcome::Error,
+            Some(&error),
+            Some("private.lowercase.secret"),
+            None,
+        );
+        let original = std::fs::read_to_string(state.join("worker.log")).unwrap();
+        assert!(
+            !original.contains("PRIVATE")
+                && !original.contains("https://")
+                && !original.contains("private.lowercase.secret")
+        );
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].category, Some(crate::diagnostics::Category::Denied));
+        assert_eq!(rows[0].http_status, Some(403));
+        assert_eq!(rows[0].outer, None);
+        record.run_id = uuid::Uuid::new_v4().to_string();
+        persist(&store, &record).unwrap();
+        assert!(runtime_diagnostics::read(&store, &state).is_empty());
+        store.with_locked(|directory, _| storage::replace_private(directory, Path::new("host-managed-result.json"), &serde_json::to_vec(&serde_json::json!({
+            "version":1,"installation":old.installation,"origin":"headless","epoch":old.epoch,"run_id":old.run_id,"disposition":"failed","failure":"runtime-failed","product_success":false
+        })).unwrap())).unwrap();
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].correlation, Correlation::ManagedHistory);
+        let current = RuntimeLog::new(&state, &record);
+        for _ in 0..70 {
+            current.event(
+                DiagnosticPhase::PolicyWatch,
+                DiagnosticOutcome::Error,
+                None,
+                None,
+                None,
+            );
+        }
+        assert_eq!(runtime_diagnostics::read(&store, &state).len(), 64);
+        // Recognized event names do not make unknown/malformed fields safe.
+        for bad in [
+            original.replace("phase=relay_open", "phase=PRIVATE"),
+            original.replace("http=403", "http=999"),
+            original.replace("outcome=error", "outcome=error extra=private"),
+            original.replace("category=denied", "category=unknown"),
+            original.replace("outer=not_observed", "outer=private.secret"),
+            original.replace("os=none", "os=9999999999999999999999999999"),
+        ] {
+            store
+                .with_locked(|directory, _| {
+                    storage::replace_private(directory, Path::new("worker.log"), bad.as_bytes())
+                })
+                .unwrap();
+            assert!(runtime_diagnostics::read(&store, &state).is_empty());
+        }
+        let bad = original.replace("phase=relay_open", "phase=PRIVATE");
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new("worker.log"), bad.as_bytes())
+            })
+            .unwrap();
+        assert!(runtime_diagnostics::read(&store, &state).is_empty());
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new("worker.log"), &vec![b'x'; 265_000])
+            })
+            .unwrap();
+        assert!(runtime_diagnostics::read(&store, &state).is_empty());
+        assert!(store.snapshot().is_ok());
+    }
 
     #[tokio::test(start_paused = true)]
     async fn host_runtime_relay_recovery_keeps_run_identity_lease_and_fixed_delay() {

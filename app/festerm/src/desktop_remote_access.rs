@@ -302,6 +302,8 @@ pub struct View {
     pub failure: Option<Failure>,
     /// Last operation metadata only; never inferred from a generic local error.
     pub diagnostic: Option<HostSetupDiagnostic>,
+    /// Recognized historical runtime evidence, never readiness or operation authority.
+    pub runtime_history: Vec<festerm_host_setup::controller::runtime_diagnostics::Record>,
     pub process: Option<String>,
     pub release: Option<festerm_host_setup::services::ReleaseMetadata>,
     /// Protected current-epoch history; never a live endpoint observation.
@@ -466,6 +468,7 @@ struct Report {
     cleanup_verified_for_manual_review: bool,
     failure: Option<Failure>,
     diagnostic: Option<HostSetupDiagnostic>,
+    runtime_history: Vec<festerm_host_setup::controller::runtime_diagnostics::Record>,
     sharing: Option<ShareStatus>,
 }
 
@@ -872,6 +875,7 @@ impl Controller {
 
     fn start(&mut self, operation: Operation, fence: bool, context: &egui::Context) {
         self.view.diagnostic = None;
+        self.view.runtime_history.clear();
         self.view.review = None;
         if !matches!(operation, Operation::Share(_)) {
             self.view.share_review = None;
@@ -1075,6 +1079,20 @@ impl Controller {
                             self.view.release = report.release;
                             self.view.process = report.process;
                             self.view.last_run = report.last_run;
+                            self.view.runtime_history = if !self.view.cancelling
+                                && matches!(&self.view.scope, Scope::Present(_))
+                                && !matches!(
+                                    report.failure,
+                                    Some(
+                                        Failure::Cancelled
+                                            | Failure::ScopeChanged
+                                            | Failure::SessionChanged
+                                    )
+                                ) {
+                                report.runtime_history
+                            } else {
+                                Vec::new()
+                            };
                             self.view.owner_binding = report.owner_binding;
                             self.view.owner_approved = report.owner_approved;
                             self.view.owner_revision = report.owner_revision;
@@ -1102,6 +1120,7 @@ impl Controller {
                         }
                         Err(error) => {
                             self.view.last_run = None;
+                            self.view.runtime_history.clear();
                             self.view.process = None;
                             self.view.release = None;
                             self.view.diagnostic = None;

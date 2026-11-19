@@ -2461,6 +2461,31 @@ includes desktop and iOS/Android clients against all three desktop servers with
 creation disabled/enabled. Fresh matching signed helpers, native service/UI
 verification and physical-mobile evidence remain separate acceptance gates.
 
+### Validation impact: historical HOST runtime diagnostics
+
+HOST-04 and DIAG-01 retain six closed runtime phases in the existing bounded,
+owner-only worker log: relay open, policy refresh, runtime serve, relay cleanup,
+policy watch and history persistence. Serving records preserve the observed
+pre-cleanup outer category/disposition only after actual serving is reached;
+pre-serve admission failures never invent a serve event. Cleanup records preserve the separately
+observed post-cleanup result. Missing evidence stays unobserved. The original
+cleanup-error priority and post-successful-drain typed retry decision are unchanged.
+
+Explicit status Refresh reads only the two fixed worker-log files with byte,
+line, field and record limits. Recognized records must correlate with validated
+runtime or completed managed history. Missing, malformed, old or inaccessible
+logs are optional evidence and cannot fail Refresh. Settings and About render
+this history separately from the last setup-operation diagnostic, without
+per-frame filesystem access. No raw error text, provider response, path, account,
+credential or terminal content is retained. History grants no readiness, retry
+or creation authority; logging failure never replaces the product outcome.
+
+Focused regressions cover primary/cleanup distinctions, post-close classification,
+unchanged transient/permanent policy, history/privacy/parser bounds, optional-read
+and logging failures, scope clearing and presentation. Native HOST exit cause and
+longgevity remain separate qualification under issue #780; this increment adds
+observability rather than asserting that cause or fixing uptime.
+
 ### Validation impact: foreground native owner prompts
 
 Desktop `HOST-01`/`HOST-02` allow human-paced native vault prompts within a

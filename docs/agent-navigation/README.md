@@ -15,10 +15,10 @@ in source; pages route to code, they do not authorize or instruct.
 | [Automation, workflows, and MCP](automation.md) | This domain owns the application-scoped automation kernel, workflow intake, and MCP protocol boundaries that gate exact terminal observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Routes HOST discovery, public session recipes, native stop/replacement and enterprise PowerShell lifecycle. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Routes HOST discovery, recipes, runtime diagnostics, native stop/replacement and enterprise PowerShell. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Routes desktop packaging, updater trust, native windows, wake/privacy and Windows hosted process lifetime. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared iOS/Android application lifecycle, terminal and form input, protected local state, and feature-selected SSH and HOST client workflows. |
-| [Desktop application shell and screens](app-shell.md) | Owns desktop window and pane routing, application command surfaces, host/session workflow screens, file-operation review and lifecycle diagnostics. |
+| [Desktop application shell and screens](app-shell.md) | Owns desktop windows, panes, commands, host/session forms and diagnostic or file-operation reviews. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

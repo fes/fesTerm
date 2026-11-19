@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "fbb5db64b4c6f8929d3dcac26a9decda0fbbe99e7004cb05ce7208f35681a231"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "cffe5f671561b4701c52f9f8554473caa52bf95f8ac97f01505458dc064f2889"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -14,7 +14,7 @@ Use for: Package version, installation kind and updater trust.
 
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Checks installation metadata and update verification key.
 - [`from_build`](../../app/festerm/src/updates.rs) — Loads package kind and signing key from build metadata.
-- [`packaging/windows.toml`](../../packaging/windows.toml) — Pins release version and the immutable versioned session daemon.
+- [`packaging/windows.toml`](../../packaging/windows.toml) — Pins the current workspace release and versioned daemon for the diagnostics cohort.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
@@ -89,3 +89,4 @@ Evidence:
 Caveats:
 - A permissive immediate Job does not establish independence from caller-owned ancestors.
 - The successor marker bounds routing; it does not bypass protected creation or Ready checks.
+- HOST runtime history is diagnostic evidence; it cannot establish current worker or daemon liveness.
