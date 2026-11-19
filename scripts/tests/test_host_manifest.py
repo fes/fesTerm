@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import importlib.util
 import json
@@ -8,6 +9,8 @@ import subprocess
 import sys
 import textwrap
 import unittest
+import zipfile
+from unittest import mock
 import uuid
 from pathlib import Path
 
@@ -36,6 +39,36 @@ class HostManifestTests(unittest.TestCase):
             for name in bundle.binary_names(platform, host=True):
                 (self.binary_dir / name).write_bytes(f"synthetic {name}".encode())
 
+        # These fixtures exercise the current complete-pair layout with
+        # synthetic local pins; production pins and verification are untouched.
+        for relative in ("third_party/conpty/manifest.json", "packaging/license-fallbacks.toml",
+                         "packaging/license-fallbacks/declared-mit-terms.txt"):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        pins_path = self.root / "third_party/conpty/manifest.json"
+        pins = json.loads(pins_path.read_text())
+        for arch, (rid, host_arch) in {"x86_64": ("win-x64", "x64"), "aarch64": ("win-arm64", "arm64")}.items():
+            for relative, asset in ((f"runtime/conpty/{rid}/conpty.dll", f"{rid}/conpty.dll"),
+                                    (f"runtime/conpty/{rid}/{host_arch}/OpenConsole.exe", f"{host_arch}/OpenConsole.exe")):
+                path = self.binary_dir / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                data = f"synthetic pinned {asset}".encode()
+                path.write_bytes(data)
+                pins["files"][asset]["sha512"] = hashlib.sha512(data).hexdigest()
+        pins_path.write_text(json.dumps(pins))
+        # Direct manifest calls use the same verifier with this explicit fixture
+        # source root, rather than accepting synthetic bytes under real pins.
+        patch = mock.patch.object(manifest, "verify_bundle", functools.partial(bundle.verify_bundle, root=self.root))
+        patch.start()
+        self.addCleanup(patch.stop)
+        # Subprocesses run unchanged production scripts from a private copy, so
+        # their __file__ source root resolves these fixture pins too.
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("build_tunnel_bundle.py", "build_app_notices.py"):
+            shutil.copyfile(ROOT / "scripts" / name, scripts / name)
+
     def archive(self, platform="linux", arch="x86_64", *, host=True):
         return bundle.build_bundle(
             self.root, self.binary_dir, self.root / "dist", "1.2.3",
@@ -48,6 +81,10 @@ class HostManifestTests(unittest.TestCase):
                 with self.subTest(platform=platform, arch=arch):
                     archive = self.archive(platform, arch)
                     original = archive.read_bytes()
+                    if platform == "windows":
+                        with zipfile.ZipFile(archive) as current:
+                            self.assertEqual(set(current.namelist()), set(bundle.entry_names(platform, host=True)) |
+                                             set(bundle.conpty_assets(self.root, arch)))
                     checksum = archive.with_name(archive.name + ".sha256").read_bytes()
                     output = manifest.build_manifest(archive, "1.2.3", platform, arch, host=True)
                     encoded = output.read_bytes()
@@ -120,7 +157,6 @@ class HostManifestTests(unittest.TestCase):
                     )
         for name in re.findall(r'^\s+"([^"]+)"$', script, re.MULTILINE):
             (output / name.replace("${VERSION}", "1.2.3")).write_bytes(b"synthetic desktop/installer payload")
-        (self.root / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
         environment = {"PATH": os.environ["PATH"], "TMPDIR": str(self.root),
                        "VERSION": "1.2.3", "HEADLESS_HELPERS": "true"}
 
@@ -147,7 +183,6 @@ class HostManifestTests(unittest.TestCase):
                 for host in (False, True):
                     bundle.build_bundle(self.root, self.binary_dir, output, "1.2.3", platform, arch,
                                         notices=b"synthetic notices\n", host=host)
-        (self.root / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
         environment = {"PATH": os.environ["PATH"], "TMPDIR": str(self.root),
                        "VERSION": "1.2.3", "HEADLESS_HELPERS": "true"}
 
