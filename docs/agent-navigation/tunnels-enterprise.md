@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "a0c61b867c56eff9eaddecb6c5d7446fad00033e7c790cba294254387da5915d"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "e3ea1d49d5c5ce57c691c7bbddfa5bd02eac27e17ce2c7c14c61ed55ebacda04"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -66,7 +66,7 @@ Use for: Pending Windows stop or authenticated stopped replacement.
 Evidence:
 - [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks preserved identity, grants and authenticated helper provenance.
 - [`native_service_windows_stop_retries_transient_read_contention_without_task_mutation`](../../crates/festerm-host-setup/src/services/tests.rs) — Checks transient Busy observation without manager mutation.
-- [`microsoft_resources_are_pinned_but_not_first_party_task_executables`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks immutable resources remain outside first-party/Task qualification.
+- [`microsoft_resources_are_pinned_but_not_first_party_task_executables`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks resource classification and hash refusal after equal-length owner writes.
 
 Caveats:
 - Contention retries bounded observation and receipt persistence, never revocation or manager actions.

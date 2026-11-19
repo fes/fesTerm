@@ -708,17 +708,12 @@ mod tests {
             .unwrap()
             .ends_with("festerm-sessiond.exe"));
         let resource = &stage.resources[0].path;
-        #[cfg(unix)]
-        {
-            std::fs::write(resource, b"changed pinned resource").unwrap();
-            assert!(stage.revalidate().is_err());
-        }
-        #[cfg(windows)]
-        {
-            // Retained no-write-sharing handles protect live native resources.
-            assert!(std::fs::write(resource, b"changed pinned resource").is_err());
-            stage.revalidate().unwrap();
-        }
+        // Owner writes are permitted; retained identity alone is not trust.
+        // Keep length and identity unchanged so the digest check must catch it.
+        let mut changed = std::fs::read(resource).unwrap();
+        changed[0] ^= 1;
+        std::fs::write(resource, changed).unwrap();
+        assert!(stage.revalidate().is_err());
     }
 
     #[test]
