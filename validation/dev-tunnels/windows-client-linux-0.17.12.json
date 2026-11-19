@@ -1,0 +1,147 @@
+{
+  "record_version": 1,
+  "status": "accepted: two controlled Windows-client/Linux-server cases using composed evidence; original cleanup observation retained",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "server": "Linux",
+    "client": "Windows"
+  },
+  "case_complete": true,
+  "matrix_complete": false,
+  "sources": {
+    "Windows_GUI": {
+      "source": "a459c535ce1cf1f5d812ffb20d5dad7c78346a3a",
+      "version": "0.17.12",
+      "artifact_kind": "unsigned development frontend"
+    },
+    "Linux_GUI": {
+      "source": "4b37e60f88013ffd9000be08f9b4b8cfd61e2809",
+      "version": "0.17.12",
+      "artifact_kind": "unsigned pre-linuxdeploy AppImage core prefix"
+    },
+    "signed_HOST": {
+      "source": "a459c535ce1cf1f5d812ffb20d5dad7c78346a3a",
+      "version": "0.17.12",
+      "production_sources_equal_GUI": true
+    },
+    "supporting_SDK": {
+      "libraries_source": "cad1fab3f52811cef8028033d46a5513fa5b5e57",
+      "libraries_version": "0.17.8",
+      "PE_sha256": "36da0eb0f44983eecd3fa09abcd65a651b269f33dfe23157d9a3d0bdb80be3f8",
+      "test_sha256": "b309af7639e74cf38869b86cae9657bfe93fbbcf3e81eb95dc3273842170e960",
+      "relevant_API_paths_byte_identical": 36,
+      "attribution": "Historical SDK freshly exercised against the current server; not a current SDK build.",
+      "compatibility_receipt_sha256": "b9edbfc2b1c6e9e65e1022e13ef5eafeda47b9bdb5dfb2861abd9615e2b96618"
+    }
+  },
+  "current_session_provenance": {
+    "fixture_daemon_sha256": "c8786b4e8993469d72e825326e44615c3f1b2ad3e3dcaa32f72cbaf8e6a4cc3e",
+    "legacy_public_processes_preserved": 8,
+    "legacy_processes_qualify_current_helper": false,
+    "HOST_created_targets_surviving_final_cleanup": [
+      "stopped profile started in ON",
+      "GUI-created generic",
+      "separate SDK generic"
+    ],
+    "HOST_created_processes_surviving": 6,
+    "GUI_created_targets_first_observed_absent_after_cleanup": [
+      "shared fixture",
+      "private fixture"
+    ],
+    "GUI_created_processes_absent": 4,
+    "catalog_Running_records_are_live_proof": false
+  },
+  "creation_OFF": {
+    "functional_status": "passed before final cleanup",
+    "GUI": "automatic discovery, private exclusion, existing shared attach, fresh I/O and detach",
+    "SDK": "private exclusion/direct Denied or Stale; exact stopped-profile and generic Ensure Denied; unchanged stopped revision/NotStarted/no-Unknown; shared roundtrip/detach survival",
+    "SDK_attribution": "CAD0.17.8 supporting API test freshly exercised against current0.17.12 server, not currentSDK build"
+  },
+  "creation_ON": {
+    "functional_status": "passed before final cleanup",
+    "GUI": "one stopped-profile Start, one new generic with SaveLocal, saved attach-only reconnect to the same target and fresh I/O",
+    "SDK": "separate generic Ensure twice returned the same target/generation, with I/O/detach survival",
+    "idempotence_limit": "Per logical target. The SDK generic is separate from the GUI generic; no global no-duplicates claim."
+  },
+  "visual_and_query_subgates": {
+    "status": "four pairs passed within the limits below",
+    "grids_each_policy": [
+      [
+        74,
+        19
+      ],
+      [
+        79,
+        20
+      ]
+    ],
+    "collector": "10 queries, six environment fields, stable actual grids and restoration flags",
+    "OFF": "paired replies/environment equal apart from case label and elapsed time",
+    "ON_initial_raw_environment": "five of six fields matched; LC_ALL unset remotely versus en_US.UTF-8 locally. Raw observation retained.",
+    "ON_controlled_locale": "fresh collector and Copilot runs used env -u LC_ALL on both sides; parity is controlled-locale only, not automatic environment-transfer equivalence",
+    "visual_review": "both native PNGs in each pair reviewed for TUI layout, wrapping/truncation, colors and normal prompt at the matched character grid",
+    "pixel_matched_claimed": false,
+    "geometry_limit": "Native DPI/font and screenshot dimensions differ; equal columns/rows do not prove physical viewport or cell-pixel equality. CSI14t/16t are unsupported and frontend resize pixels are unset."
+  },
+  "cleanup": {
+    "Windows_GUI": "normal exit0; owned Job/input actors drained; protected state unchanged",
+    "Linux_GUI": "normal exit0 followed by supervisor/unit stop; unit inactive and cgroup empty; owned CLI/ephemeral actors drained",
+    "SDK_OFF_ON_Tasks": "Ready with exit0 and owned Jobs empty",
+    "TermService": {
+      "restored_state": "Stopped",
+      "final_PID": 0,
+      "startup": "Manual unchanged",
+      "RDP_denied": true,
+      "restore_evidence_sha256": "9cf9bcd9148fe782c1ed74edc5ee1b8cd95ac3ec53af59666e49c9d375af3745"
+    },
+    "privacy_limit": "Temporary preinstalled-service preparation was required; the earlier generic monitor refusal does not identify its exact native API cause. Default stopped-service Windows is not qualified."
+  },
+  "first_survival_failure": {
+    "observation": "The GUI-created shared/private daemon and shell processes were absent after ordinary GUI exit followed by KillMode=control-group unit stop.",
+    "cause": "Unknown: no actor read separated GUI exit from unit stop. Neither product Quit failure nor lab cleanup causation is established.",
+    "evidence_sha256": "368dc72f16327d8da1c8485daaac896d1bd33c78c4623a09988b8dee17670bce",
+    "no_recreation_retry_or_End": true
+  },
+  "private_evidence_sha256": {
+    "aggregate_25_references_rehashed": "aca97fcb0c87e7c109f75f8efe420d4c5894e2631bf5b29c48c3e6f6eac5e975",
+    "OFF_workflow": "0ca0c9b723387f9e89416e02bc8a430a2ca682120971cd7664df16bd7fc7bed1",
+    "ON_creation_and_SDK": "4de460cf251cd3befa249b32864fa7969a487ed2f3519cc1bd48cd9101ee0b13",
+    "OFF_primary_query_pair": "5ee4b63288fee326d45677333224efeeb3a621af40b3f9445ba1eaaac5f170aa",
+    "OFF_secondary_query_pair": "e4f957ab29c1ee66133d252b0c5d98b1e76ddb64abbe0630c993549a4773be21",
+    "ON_primary_query_pair": "3a1734b83a4def30cbbcc143b802b6327058d98a2d3f8a2e90ab752d9446b1dc",
+    "ON_secondary_query_pair": "2af59c5f80a81a415df70e85949cdaa914d49378e6e04e0abf849ddf39f61611",
+    "ON_raw_locale": "5e76da513940ab5433364cebb5cde00e60cd336dd6d18b0b1cba1a0a20b670c8",
+    "Linux_GUI_normal_cleanup": "dc5c624a4568cdc2893f4c011e45d50c064059a772bef4b98fb2166d7b134945",
+    "Windows_GUI_normal_cleanup": "99f7ccfc491b24baee118e6b11108a970160685ec9a4623573f509bf61d58a1a",
+    "separate_cleanup_followup": "83858760bd5228276d28a897c971675b6159c3314e9ca93ce80dd855a141531b"
+  },
+  "publication_privacy": "Raw captures, process logs, addresses, tunnel names, fingerprints, account references and credentials remain private. Public references contain only source/artifact/helper/evidence hashes and semantic labels.",
+  "separate_cleanup_followup": {
+    "status": "passed for a distinct new persistent fixture; not retroactive evidence of original actor survival",
+    "product_source_or_binary_change": false,
+    "only_lab_behavior_delta": "unit KillMode=process instead of control-group; existing finite supervisor termination and cleanup bounds retained",
+    "observations": "Same daemon/shell births and full session record before GUI Quit, immediately after confirmed frontend exit0 BEFORE unit stop, and after supervisor stop",
+    "unit": "inactive with main process absent and success result",
+    "intentional_persistent_processes_retained": 2,
+    "empty_cgroup_claim": false,
+    "legacy8_and_HOST_created6_preserved": true,
+    "original_missing_fixtures_recreated_retried_or_Ended": false,
+    "evidence_sha256": "83858760bd5228276d28a897c971675b6159c3314e9ca93ce80dd855a141531b"
+  },
+  "accepted_policy_cases": [
+    "creation_OFF",
+    "creation_ON"
+  ],
+  "acceptance_basis": {
+    "scope": "Current controlled native environment only; updates the existing two direction/policy rows, not additional matrix cases.",
+    "composition": "Current signed helper/cohort functional, policy, client detach/reconnect and four visual pairs, plus separate same-helper L2 normal server-GUI exit and supervisor-cleanup survival.",
+    "cleanup_boundary": "Survival of arbitrary lab control-group termination is not a product requirement. The original four processes were absent after combined cleanup; their exact exit instant remains unobserved and is not rewritten by L2.",
+    "excluded_qualifications": [
+      "default Windows with TermService stopped",
+      "current SDK build",
+      "automatic locale environment-transfer equivalence",
+      "physical viewport/cell pixel equality",
+      "entire 24-case matrix"
+    ]
+  }
+}
