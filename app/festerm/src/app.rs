@@ -2209,6 +2209,31 @@ impl FesTermApp {
         )
     }
 
+    #[cfg(feature = "javascript-program-dev")]
+    fn javascript_program_storage_views(
+        &self,
+    ) -> Vec<crate::screens::JavaScriptProgramStorageView> {
+        let root = crate::javascript_program_storage::application_data_root();
+        self.state
+            .javascript_program_storage()
+            .iter()
+            .map(|setting| crate::screens::JavaScriptProgramStorageView {
+                setting: setting.clone(),
+                bytes: root.as_deref().map_or(0, |root| {
+                    crate::javascript_program_storage::program_storage_bytes(root, setting.digest())
+                        .unwrap_or(0)
+                }),
+            })
+            .collect()
+    }
+
+    #[cfg(not(feature = "javascript-program-dev"))]
+    fn javascript_program_storage_views(
+        &self,
+    ) -> Vec<crate::screens::JavaScriptProgramStorageView> {
+        Vec::new()
+    }
+
     fn current_interface_settings(&self) -> InterfaceSettings {
         self.state
             .interface_settings()
@@ -3611,6 +3636,26 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
             ]);
+            if std::env::var_os("FESTERM_TW2K2_SNAPSHOT").is_some() {
+                items.extend([
+                    PaletteItem {
+                        id: 49,
+                        category: C::Sessions,
+                        label: "Start tw2k2-js (developer)".to_owned(),
+                        hint: None,
+                        is_tab: false,
+                        shortcut_label: None,
+                    },
+                    PaletteItem {
+                        id: 50,
+                        category: C::Sessions,
+                        label: "Resume tw2k2-js (developer)".to_owned(),
+                        hint: None,
+                        is_tab: false,
+                        shortcut_label: None,
+                    },
+                ]);
+            }
         }
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.extend([
@@ -4047,6 +4092,20 @@ impl FesTermApp {
             #[cfg(feature = "javascript-program-dev")]
             48 if !self.safe_mode => self.state.dispatch(
                 AppCommand::StartJavaScriptSave {
+                    mode: festerm_javascript_session::ProgramLaunchMode::Resume,
+                },
+                context,
+            ),
+            #[cfg(feature = "javascript-program-dev")]
+            49 if !self.safe_mode => self.state.dispatch(
+                AppCommand::StartTw2k2 {
+                    mode: festerm_javascript_session::ProgramLaunchMode::New,
+                },
+                context,
+            ),
+            #[cfg(feature = "javascript-program-dev")]
+            50 if !self.safe_mode => self.state.dispatch(
+                AppCommand::StartTw2k2 {
                     mode: festerm_javascript_session::ProgramLaunchMode::Resume,
                 },
                 context,
@@ -7869,6 +7928,7 @@ impl FesTermApp {
                                     .automation_preference_retry_available(),
                                 automation_window: self.automation_window,
                                 automation: self.automation_settings.clone(),
+                                javascript_program_storage: self.javascript_program_storage_views(),
                                 default_sftp_local_directory: self
                                     .state
                                     .default_sftp_local_directory()
@@ -8452,12 +8512,20 @@ impl FesTermApp {
                     self.register_active_workflow(ui.ctx());
                 }
                 #[cfg(feature = "javascript-program-dev")]
-                AppCommand::StartJavaScriptProgram | AppCommand::StartJavaScriptSave { .. }
+                AppCommand::StartJavaScriptProgram
+                | AppCommand::StartJavaScriptSave { .. }
+                | AppCommand::StartTw2k2 { .. }
                     if self.safe_mode =>
                 {
                     self.report_configuration_notice(
                         "Safe Mode blocks JavaScript developer programs. Restart normally to launch one.",
                     );
+                }
+                #[cfg(feature = "javascript-program-dev")]
+                AppCommand::StartTw2k2 { mode } => {
+                    self.state
+                        .dispatch(AppCommand::StartTw2k2 { mode }, &ui.ctx().clone());
+                    self.persist_interface_settings();
                 }
                 AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                     let context = ui.ctx().clone();
@@ -8622,6 +8690,58 @@ impl FesTermApp {
                 AppCommand::RetryAutomationSettings => {
                     self.retry_automation_preferences(ui.ctx());
                 }
+                #[cfg(feature = "javascript-program-dev")]
+                AppCommand::DeleteJavaScriptProgramStorage { digest } => {
+                    let Some(root) = crate::javascript_program_storage::application_data_root()
+                    else {
+                        self.overlays.transient_notice = Some((
+                            "JavaScript program storage is unavailable.".to_owned(),
+                            Instant::now() + Duration::from_secs(5),
+                        ));
+                        return;
+                    };
+                    let message = match crate::javascript_program_storage::delete_program_storage(
+                        &root, &digest,
+                    ) {
+                        Ok(true) => "JavaScript program save data deleted.",
+                        Ok(false) => "This JavaScript program has no saved data.",
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            "Close this JavaScript program before deleting its saved data."
+                        }
+                        Err(_) => "JavaScript program save data could not be deleted.",
+                    };
+                    self.overlays.transient_notice =
+                        Some((message.to_owned(), Instant::now() + Duration::from_secs(5)));
+                }
+                #[cfg(feature = "javascript-program-dev")]
+                AppCommand::RevealJavaScriptProgramStorage { digest } => {
+                    let Some(root) = crate::javascript_program_storage::application_data_root()
+                    else {
+                        self.overlays.transient_notice = Some((
+                            "JavaScript program storage is unavailable.".to_owned(),
+                            Instant::now() + Duration::from_secs(5),
+                        ));
+                        return;
+                    };
+                    let path =
+                        crate::javascript_program_storage::program_storage_path(&root, &digest);
+                    if !path.exists() {
+                        self.overlays.transient_notice = Some((
+                            "This JavaScript program has not created save storage yet.".to_owned(),
+                            Instant::now() + Duration::from_secs(5),
+                        ));
+                    } else if let Err(error) =
+                        crate::sftp_file_manager::reveal_in_file_manager(&path)
+                    {
+                        self.overlays.transient_notice = Some((
+                            format!("Could not reveal JavaScript program storage: {error}"),
+                            Instant::now() + Duration::from_secs(5),
+                        ));
+                    }
+                }
+                #[cfg(not(feature = "javascript-program-dev"))]
+                AppCommand::DeleteJavaScriptProgramStorage { .. }
+                | AppCommand::RevealJavaScriptProgramStorage { .. } => {}
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
@@ -8642,7 +8762,8 @@ impl FesTermApp {
                 | AppCommand::SetEditorSettings(_)
                 | AppCommand::SetScrollbackLimit(_)
                 | AppCommand::SetDefaultSftpLocalDirectory(_)
-                | AppCommand::SetSftpPaneOrder(_)) => {
+                | AppCommand::SetSftpPaneOrder(_)
+                | AppCommand::SetJavaScriptProgramStorage(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     if !self.state.mcp_enabled() {
@@ -8890,6 +9011,14 @@ impl FesTermApp {
 
 #[cfg(test)]
 impl FesTermApp {
+    pub(crate) fn state_for_test(&self) -> &AppState {
+        &self.state
+    }
+
+    pub(crate) fn state_mut_for_test(&mut self) -> &mut AppState {
+        &mut self.state
+    }
+
     /// Builds a `FesTermApp` around a launcher tab instead of a live local
     /// shell, so headless end-to-end UI tests do not need a real PTY and do
     /// not depend on `eframe::Frame`, which has no public/test constructor.

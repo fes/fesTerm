@@ -83,10 +83,17 @@ pub(crate) struct SettingsViewModel {
     pub automation_preference_retry_available: bool,
     pub automation_window: crate::application::WindowId,
     pub automation: crate::automation::SettingsSnapshot,
+    pub javascript_program_storage: Vec<JavaScriptProgramStorageView>,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
     pub session_recording_enabled: bool,
     pub recording_preference_unsaved: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct JavaScriptProgramStorageView {
+    pub setting: festerm_config::JavaScriptProgramStorageSettings,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Default)]
@@ -239,6 +246,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         automation_preference_retry_available,
         automation_window,
         automation,
+        javascript_program_storage,
         default_sftp_local_directory,
         sftp_pane_order,
         session_recording_enabled,
@@ -1043,6 +1051,13 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             settings_row_separator(ui);
                             ssh_paragraph(ui, automation.status);
                             ui.add_space(4.0);
+                            if !javascript_program_storage.is_empty() {
+                                settings_group_label(ui, "JavaScript program storage");
+                                for storage in &javascript_program_storage {
+                                    javascript_program_storage_row(ui, storage, &mut command);
+                                }
+                                ui.add_space(SETTINGS_ROW_GAP);
+                            }
                             let summary = automation_activity_summary(&automation);
                             let response = settings_drill_in_row(
                                 ui,
@@ -1166,7 +1181,7 @@ pub(crate) const RESET_ALL_SETTINGS_CATEGORIES: &[&str] = &[
     "Keyboard shortcuts: every customized binding",
     "Files & documents: SFTP pane order and folder, editor, and image memory",
     "Dev Tunnels options",
-    "Automation: Local MCP and JavaScript workflows turn off",
+    "Automation: Local MCP and JavaScript workflows turn off; per-program save policies reset",
     "Updates & privacy",
 ];
 /// What `AppCommand::ResetAllSettings` deliberately leaves alone.
@@ -1285,6 +1300,101 @@ fn escape_workflow_source(source: &str) -> String {
         }
     }
     escaped
+}
+
+fn javascript_program_storage_row(
+    ui: &mut Ui,
+    view: &JavaScriptProgramStorageView,
+    command: &mut Option<AppCommand>,
+) {
+    let setting = &view.setting;
+    ui.push_id(("javascript-program-storage", setting.digest()), |ui| {
+        ui.label(
+            egui::RichText::new(setting.name())
+                .strong()
+                .color(theme::TEXT_PRIMARY),
+        );
+        ui.label(
+            egui::RichText::new(format!(
+                "{} · {}",
+                &setting.digest()[..12],
+                crate::sftp_file_manager::format_size(Some(view.bytes))
+            ))
+            .color(theme::TEXT_MUTED),
+        );
+        if settings_toggle_row(
+            ui,
+            "Allow save data",
+            "Permit this exact reviewed program digest to persist one bounded JSON value. Other programs remain isolated. Changes apply to the next launch; close an active program before revoking its storage authority.",
+            setting.allowed(),
+        ) {
+            *command = Some(AppCommand::SetJavaScriptProgramStorage(
+                setting.clone().with_allowed(!setting.allowed()),
+            ));
+        }
+        ui.add_space(4.0);
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                ui.label(
+                    egui::RichText::new("Maximum JSON payload")
+                        .color(theme::TEXT_SECONDARY),
+                );
+            },
+            |ui| {
+                let selected = setting.max_bytes();
+                egui::ComboBox::from_id_salt(("javascript-storage-limit", setting.digest()))
+                    .selected_text(match selected {
+                        4096 => "4 KiB",
+                        8192 => "8 KiB",
+                        _ => "12 KiB",
+                    })
+                    .show_ui(ui, |ui| {
+                        for bytes in [4096, 8192, 12_288] {
+                            let selected_label = match bytes {
+                                4096 => "4 KiB",
+                                8192 => "8 KiB",
+                                _ => "12 KiB",
+                            };
+                            if ui
+                                .selectable_label(selected == bytes, selected_label)
+                                .clicked()
+                                && selected != bytes
+                            {
+                                *command = Some(AppCommand::SetJavaScriptProgramStorage(
+                                    setting.clone().with_max_bytes(bytes),
+                                ));
+                            }
+                        }
+                    });
+            },
+        );
+        ui.add_space(SETTINGS_ROW_GAP);
+        ui.horizontal_wrapped(|ui| {
+            if action_button(
+                ui,
+                ActionButtonRole::Secondary,
+                crate::sftp_file_manager::reveal_in_file_manager_label(),
+            )
+            .clicked()
+            {
+                *command = Some(AppCommand::RevealJavaScriptProgramStorage {
+                    digest: setting.digest().to_owned(),
+                });
+            }
+            let delete = action_button(
+                ui,
+                ActionButtonRole::DangerOutline,
+                "Delete saved data…",
+            );
+            if delete.clicked() {
+                *command = Some(AppCommand::DeleteJavaScriptProgramStorage {
+                    digest: setting.digest().to_owned(),
+                });
+            }
+        });
+        settings_row_separator(ui);
+    });
 }
 
 fn workflow_source_review(ui: &mut Ui, bundle: &festerm_automation_js::snapshot::ApprovedBundle) {
@@ -3376,6 +3486,7 @@ mod tests {
                                 .automation_preference_retry_available,
                             automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
+                            javascript_program_storage: Vec::new(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                             session_recording_enabled: false,
@@ -3501,6 +3612,47 @@ mod tests {
             Some(AppCommand::Automation(
                 NativeCommand::DeleteRegisteredWorkflow { .. }
             ))
+        ));
+    }
+
+    #[test]
+    fn javascript_program_storage_controls_are_digest_bound_and_separate() {
+        let digest = "ab".repeat(32);
+        let setting = festerm_config::JavaScriptProgramStorageSettings::new(
+            digest.clone(),
+            "tw2k2-js".into(),
+        );
+        let view = JavaScriptProgramStorageView {
+            setting,
+            bytes: 3781,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(760.0, 420.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    javascript_program_storage_row(ui, &view, command);
+                },
+                None,
+            );
+        harness.run();
+        assert!(harness.query_by_label_contains(&digest[..12]).is_some());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Allow save data")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::SetJavaScriptProgramStorage(setting))
+                if setting.digest() == digest && setting.allowed()
+        ));
+
+        harness.state_mut().take();
+        harness.get_by_label("Delete saved data…").click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::DeleteJavaScriptProgramStorage { digest: actual })
+                if actual == &digest
         ));
     }
 
@@ -5802,6 +5954,7 @@ mod tests {
                             automation_preference_retry_available: false,
                             automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
+                            javascript_program_storage: Vec::new(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                             session_recording_enabled: false,
