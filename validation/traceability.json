@@ -542,7 +542,10 @@
         "javascript_program_quota_refuses_before_a_second_session_and_releases_after_reap",
         "javascript_program_move_adopts_one_runtime_and_source_window_close_preserves_it",
         "javascript_program_app_quit_settles_every_runtime_and_refuses_new_admission",
-        "javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume"
+        "javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume",
+        "javascript_program_storage_is_digest_bound_and_round_trips",
+        "javascript_program_storage_controls_are_digest_bound_and_separate",
+        "digest_bound_program_storage_honors_quota_and_delete"
       ],
       "manual_scenarios": [
         "JSP-01"
