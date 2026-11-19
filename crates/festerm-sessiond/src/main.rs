@@ -169,7 +169,16 @@ fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'stat
         os_code: error
             .downcast_ref::<io::Error>()
             .and_then(io::Error::raw_os_error),
+        recovery: None,
     });
+}
+
+fn recovery_failure_event(error: &festerm_sessiond::PersistentSessionError) -> LifecycleEvent {
+    LifecycleEvent::Failure {
+        stage: FailureStage::Daemon,
+        os_code: None,
+        recovery: Some(error.recovery_failure_category()),
+    }
 }
 // Kept separate from DAEMON_LOG: a starter has no NativeSessionIdentity.
 struct StartupDiagnostic {
@@ -225,6 +234,7 @@ impl StartupDiagnostic {
             self.event(LifecycleEvent::Failure {
                 stage: self.stage.get(),
                 os_code: os_code.or(self.os_code.get()),
+                recovery: None,
             });
         }
         result
@@ -2656,7 +2666,10 @@ fn begin_replacement<S: Read + Write + Send + 'static>(
         ));
     }
     let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
-        .map_err(|error| io::Error::other(error.to_string()))?;
+        .map_err(|error| {
+            lifecycle_event(recovery_failure_event(&error));
+            io::Error::other(error.to_string())
+        })?;
     let generation = *next_generation;
     *next_generation = next_generation
         .checked_add(1)
@@ -5422,6 +5435,47 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged() {
+        let terminal = super::Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        let cause =
+            festerm_sessiond::encode_recovery_snapshot_with_limit(&terminal, 1).unwrap_err();
+        let event = super::recovery_failure_event(&cause);
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["failure"]["stage"], "daemon");
+        assert_eq!(json["failure"]["recovery"], "budget");
+        assert!(json["failure"]["os_code"].is_null());
+        assert_eq!(json["failure"].as_object().unwrap().len(), 3);
+        assert!(!json.to_string().contains(&cause.to_string()));
+
+        let (input, _receiver) = super::mpsc::sync_channel(1);
+        let mut generation = 7;
+        let mut pending = super::PendingOutput::default();
+        pending
+            .held
+            .push_back((3, super::ClientOutput::Data(vec![42])));
+        let error = super::begin_replacement(
+            super::io::Cursor::new(Vec::<u8>::new()),
+            &terminal,
+            input,
+            &mut generation,
+            1,
+            super::AttachKind::Local,
+            None,
+            &mut pending,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), super::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), cause.to_string());
+        assert_eq!(generation, 7);
+        assert!(pending.candidate.is_none());
+        assert!(pending.staged.is_empty());
+        assert_eq!(pending.held.len(), 1);
+        assert!(
+            matches!(pending.held.front(), Some((3, super::ClientOutput::Data(bytes))) if bytes == &[42])
+        );
+    }
+
+    #[test]
     fn startup_failure_diagnostics_keep_stage_code_and_original_result() {
         let fixture = festerm_sessiond::private_storage::private_test_directory();
         let root = fixture.path().to_path_buf();
@@ -5442,6 +5496,7 @@ mod tests {
             super::LifecycleEvent::Failure {
                 stage: super::FailureStage::IndependentSpawn,
                 os_code: Some(5),
+                recovery: None,
             }
         );
         // Error Display payloads are never serialized, even for non-OS errors.
@@ -5528,7 +5583,8 @@ mod tests {
                 entry.event,
                 super::LifecycleEvent::Failure {
                     stage,
-                    os_code: Some(5)
+                    os_code: Some(5),
+                    recovery: None,
                 }
             );
         }

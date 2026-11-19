@@ -215,6 +215,14 @@ of creating a second, weaker "recovery state" format inside the daemon.
 
 Changes implementing this ADR must provide evidence for:
 
+- finite daemon recovery-encoding failure categories in the existing bounded
+  lifecycle journal, without terminal/error-string disclosure, changed error
+  Display, candidate/lease changes or diagnostic-driven retries; old Failure
+  payload compatibility, unknown future categories and preserved stop intent.
+  Journal capture uses the exact original daemon root/PID/birth identity;
+  GUI presentation and qualification of already running older helpers remain
+  separate. See the [capture instructions](../development-handoff.md#diagnostics-and-safety).
+
 - legitimate pending wrap at a wide cluster's leading cell, a recorded right
   margin, and an inactive alternate buffer; recovery must preserve subsequent
   wrapping while rejecting forged interior pending-wrap states. This core
