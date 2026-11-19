@@ -410,7 +410,9 @@ recording terminal content.
 
 Before **Start**, **Enable**, **Disable**, update, or reprovisioning, capture
 the failure evidence: subsequent runs can rotate logs or replace the protected
-run correlation used to display history. Open **Settings → DEV TUNNELS →
+run correlation used to display history. **Screenshot the visible operation
+error before Refresh local status**, which clears that operation error.
+Open **Settings → DEV TUNNELS →
 Remote access**, select **Refresh local status**, then expand **Remote access
 runtime history**. **About** shows the same cached snapshot; it does not
 refresh the report. Runtime history requires **0.17.12 HOST helpers** or newer;

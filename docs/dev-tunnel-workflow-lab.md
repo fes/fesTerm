@@ -44,6 +44,11 @@ results do not qualify physical-device lock, biometric or lifecycle gates.
 The desktop service-client runner below cannot qualify mobile cases. Packaging,
 headless fixtures and an available device do not count as a completed case.
 
+The [current 0.17.12 Windows-client/Linux-server record](../validation/dev-tunnels/windows-client-linux-0.17.12.json)
+qualifies the two existing controlled OFF/ON cases using composed functional,
+visual and persistence evidence. It retains the original cleanup uncertainty
+and the separate successful followup; it does not complete the 24-case matrix.
+
 ## Fresh Copilot visual parity in every case
 
 Fresh actual GitHub Copilot CLI visual parity is an active acceptance requirement
