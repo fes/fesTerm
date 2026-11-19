@@ -1,0 +1,82 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/787",
+  "status": "qualified: fresh signed Windows daemon starts cmd.exe in the selected directory",
+  "scope": "Windows cwd fix only; final cleanup/lifetime and the full remote pair are separate validation.",
+  "sources": {
+    "product_commit": "73968e6235fc702ac77effc4a6f34aca7a7ec42c",
+    "version": "0.17.13",
+    "Windows_GUI": {
+      "kind": "unsigned development frontend; not a signed Desktop release",
+      "artifact": 14524420128,
+      "archive_sha256": "a21c99021780da489ec58d0f2149b88ab038c3ede09e642f452ed5f5a9b6a4ad",
+      "binary_sha256": "09bd2787c00bcf37807d18433d99080c48bd578fefddf28a392ac67a8763e3e9"
+    },
+    "signed_HOST": {
+      "run": 44511181712,
+      "attempt": 2,
+      "artifact": 14527940398,
+      "global_archive_sha256": "6389c69fac225296acb9f1d9d3a349e8f3e60642d9675ddb49a5f75dcb740a0f",
+      "HOST_archive_sha256": "acb8d069cce481f6920193766e2694af16fe5d99560b7f01c844c761ab591ba6",
+      "sessiond_sha256": "108609f188f4e53d4fa7a8558c24d9b4416ef2d19aa3da702b546948426b6466"
+    },
+    "Linux_client": {
+      "source": "4b37e60f88013ffd9000be08f9b4b8cfd61e2809",
+      "version": "0.17.12"
+    }
+  },
+  "platform_evidence": {
+    "native": "Windows ARM64 dedicated VM, controlled ordinary GUI workflow",
+    "automated": "Windows x64 CI required WMI/ConPTY regression at the product commit; distinct from the native ARM64 deployment",
+    "CI_run": 44508545274,
+    "test": "native_windows_wmi_starter_survives_calling_job_with_same_generation_io"
+  },
+  "deployment": [
+    "Normal signed-local stopped Update 0.17.12 to 0.17.13 committed while Disabled at epoch 25.",
+    "Separate Enable reached Listening at epoch 26.",
+    "One opted-in profile Start created one new signed 0.17.13 daemon and cmd process."
+  ],
+  "cwd_and_IO": {
+    "requested_directory": "ordinary local drive directory containing spaces and Greek capital omega",
+    "untouched_initial_prompt_in_selected_directory": true,
+    "actual_expanded_CD_matches_selected_directory": true,
+    "manual_cd_or_profile_edit_to_hide_failure": false,
+    "UNC_warning_on_untouched_initial_prompt": false,
+    "fresh_split_input_output_passed": true,
+    "expected_expanded_output_never_typed_contiguously": true,
+    "canonical_recipe_fingerprint_and_binding_contract": "preserved; only equivalent spawn spelling changes"
+  },
+  "preservation_at_proof": {
+    "old_Windows_processes": 9,
+    "Windows_full_session_records_and_births_unchanged": true,
+    "Linux_processes": 17,
+    "Linux_six_journals_and_births_unchanged": true,
+    "existing_shells_retroactively_fixed_claimed": false
+  },
+  "first_preparation_interruption": {
+    "attribution": "W20 test supervisor retained a misbound 47 MiB volume-growth guard and stopped preparation before any durable update intent. Corrected fresh phase passed.",
+    "product_update_failure_claimed": false,
+    "partial_cache_writes_preserved": true,
+    "private_review_sha256": "7493fb8e8f4b746839e9d7d64c9e1a2f27b4a0724418029f73355cdd81fc36e5"
+  },
+  "private_evidence": {
+    "proof_manifest_sha256": "4222293a2cbd4f2ead4b7f80afa1808c4ed5cf79d2c451dc4c41a605827dbc3f",
+    "referenced_byte_hash_pairs_rechecked": 16,
+    "screenshots": {
+      "W21-ONE-Update-settled.png": "38830d1b73e70fb0a7952949dbcf711888b76b2869b6eb0df5baaaab8be838a5",
+      "W21-ONE-Enable-settled.png": "08f6739de369cd3695053a7c9125d9838be6bf0429df536730e933c2a2aa7ed4",
+      "ONE-START-settled-no-input.png": "32ae8953cb18c01dc330570ac7c5588b357b64671a66b76c86e957a3946d637a",
+      "ACTUAL-CD-and-split-CID-no-manual-cd.png": "b68b987c735ebacc33d03031744485caa225d3e1a2d0df1fa2513b193303038a",
+      "W21-EXACT-UNICODE-CWD-SHARE-before-ONE-SAVE.png": "ebac612ce4b699ceda300017de528530869f6a8f44b8ecd7f491e0e0c27353cf"
+    },
+    "publication": "Hashes and leaf names only; raw captures, configuration, journals and host identifiers stay private."
+  },
+  "remaining_at_proof": [
+    "Both GUIs remain supervised; final normal cleanup/lifetime observations pending.",
+    "Full Linux-client/Windows-server OFF/ON and Copilot comparison remain a separate increment."
+  ],
+  "accepted_matrix_cases_unchanged": 2,
+  "full_pair_qualified": false,
+  "matrix_complete": false,
+  "Copilot_or_public_release_qualification_claimed": false
+}

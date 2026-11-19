@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6e674698b73e221b0eaad3ad056588da6b1b8af5bb57676ea61fcc06bc1b5bb5"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b480fb962c70aa1c88204ba8bbc4b761584f2f76ba69d6de06fd58428501d34c"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Routes native packaging, updater trust, wake/privacy and real-window checks.
+Routes packaging, updater trust, wake/privacy and native Windows startup.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,8 +12,8 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Package installation kind and updater trust.
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Build-time installation kind and verification state gate self-update.
-- [`from_build`](../../app/festerm/src/updates.rs) — Loads installation marker and public key from build metadata.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Build-time install kind and verification state gate self-update.
+- [`from_build`](../../app/festerm/src/updates.rs) — Loads the install marker and public key from build metadata.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Release builds refuse self-update without a verification key.
@@ -33,7 +33,7 @@ Use for: Real-window focus, PTY output and resize checks.
 
 Evidence:
 - [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Smoke modes are mutually exclusive and require a result path.
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke validates the terminal rendering contract, not a mock.
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Emoji smoke validates terminal rendering, not a mock.
 
 Caveats:
 - Only one smoke mode and one result path may be active at a time.
@@ -45,7 +45,7 @@ Caveats:
 Use for: Queued Finder document events.
 
 - [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder open-document events until the UI attaches.
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu selectors into app-level semantic commands.
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Converts AppKit menu selectors into semantic app commands.
 
 Evidence:
 - [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — End-to-end AppleEvent test covers queued Finder open-document behavior.
@@ -60,9 +60,9 @@ Caveats:
 
 Use for: Native wake and privacy-loss signals.
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Creates a hidden message-only window that listens for resume broadcasts.
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Creates a hidden message-only window listening for resume broadcasts.
 - [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Treats logind PrepareForSleep(false) as a resume edge and ignores suspend.
-- [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Fail-closes lock, inactivity, and suspend-loss conditions for recording privacy.
+- [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Fail-closes lock, inactivity, and suspend-loss conditions for privacy.
 
 Evidence:
 - [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Resume broadcasts wake while unrelated power events are ignored.
@@ -76,15 +76,17 @@ Caveats:
 
 ## Hosted Windows startup
 
-Use for: Hosted Windows shells must outlive the GUI, bridge and HOST worker.
+Use for: Caller-independent Windows hosted shells.
 
 - [`run_start_prepared`](../../crates/festerm-sessiond/src/main.rs) — Selects one WMI hop for an initial hosted starter in any Job, before taking start locks.
-- [`relaunch_current_starter`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Uses local WMI with bounded successor observation and preserved Unicode arguments and environment.
+- [`relaunch_current_starter`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Uses bounded local WMI with preserved Unicode arguments/environment.
 - [`current_process_child_job_policy`](../../crates/festerm-windows-job/src/lib.rs) — Distinguishes no Job, explicit breakaway, silent breakaway and a blocked immediate Job.
 - [`spawn_shell`](../../crates/festerm-sessiond/src/main.rs) — Reuses the local-PTY cwd spelling only at spawn while retaining canonical recipe and binding evidence.
 
 Evidence:
-- [`native_windows_wmi_starter_survives_calling_job_with_same_generation_io`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Exercises blocked and nested caller Jobs, then same-generation terminal I/O after terminating the caller Job.
+- [`native_windows_wmi_starter_survives_calling_job_with_same_generation_io`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves same-generation I/O and cwd after blocked/nested caller-Job exit.
+
+- [`docs/manual-validation.md`](../../docs/manual-validation.md) — ARM64 cwd proof is separate from x64 CI and full-pair qualification.
 
 Caveats:
 - A permissive immediate Job does not establish independence from caller-owned ancestors.

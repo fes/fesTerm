@@ -9,8 +9,9 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current limitation:** ordinary runtime/bootstrap integration and all 24 normal
-native cases remain unqualified. The service-client runner below uses the
+**Current coverage:** two controlled Windows-client/Linux-server OFF/ON cases
+are qualified below; the full 24-case native matrix remains incomplete. The
+service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
 fixture rejects the old manual-pairing fixture and uses a distinct completion
 marker; old results cannot qualify this flow. The runner does not create GitHub
@@ -52,6 +53,11 @@ and the separate successful followup; it does not complete the 24-case matrix.
 The [Windows 0.17.12 pending-Disable recovery record](../validation/dev-tunnels/windows-disable-0.17.12.json)
 records same-epoch completion and a fresh Disable/Enable cycle. This lifecycle
 qualification does not execute the full Linux-client/Windows-server pair.
+
+The [Windows 0.17.13 cwd record](../validation/dev-tunnels/windows-cwd-0.17.13.json)
+qualifies fresh signed-daemon `cmd.exe` startup in the selected directory on
+Windows ARM64 (`HOST-02`/`HOST-03`). It does not qualify the full remote pair or
+its `DT-02` Copilot comparisons; the accepted matrix count remains two.
 
 ## Fresh Copilot visual parity in every case
 
