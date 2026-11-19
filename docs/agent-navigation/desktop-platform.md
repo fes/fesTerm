@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "b52a5a071c5005a0fe16c252276bbf0ba5900df10059772326b055c8e33de18b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "a43fff13b21cebdf497cfef5aade6c13eacc8d26ae33e0847a00caa02a0413d4"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -15,6 +15,7 @@ Use for: A packaged build is deciding whether self-update is allowed
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Build-time install marker and verification key gate self-update eligibility
 - [`from_build`](../../app/festerm/src/updates.rs) — Reads the install marker and updater public key from the build
 - [`packaging/windows.toml`](../../packaging/windows.toml) — Declares current package identity and the versioned sessiond filename.
+- [`scripts/collect_linux_sdk_artifact.py`](../../scripts/collect_linux_sdk_artifact.py) — Retains one compiled Linux ARM64 SDK test and provenance without execution.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Refuses self-update without a verification key

@@ -1103,6 +1103,13 @@ screens do not establish a fresh Copilot result. Mobile must flush its pending
 viewport before input or explicitly report input not sent and disconnect on
 persistent resize refusal, preserving the existing no-replay policy.
 
+For DT-05 controlled SDK checks, package-smoke can retain a Linux ARM64
+release test executable without running it. Compilation, artifact collection
+and source/hash provenance do not qualify account readiness or host policy.
+Before native use, verify the exact artifact and use the existing private
+fixture, explicit consent and bounded campaign runner. A static blocked marker
+reports only its source callsite, never error details or credentials.
+
 Within DT-02 / DT-05, Windows HOST runtime provenance requires a fresh approved
 daemon from a signed bundle carrying the complete architecture-matched pinned
 ConPTY pair, with actual loaded-module evidence rather than staged files alone.
