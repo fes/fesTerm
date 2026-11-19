@@ -13,6 +13,39 @@ ROOT = Path(__file__).resolve().parents[1]
 TEST = "dev_tunnel_workflow_lab"
 
 
+class BuildPathError(ValueError):
+    def __init__(self, reason, paths):
+        super().__init__(reason)
+        self.paths = {"reason": reason, **paths}
+
+
+def validate_build_path(root, binary):
+    expected = root / "target/release/deps"
+    def canonical(path):
+        try:
+            return str(path.resolve())[:2048]
+        except (OSError, RuntimeError):
+            return None
+    aliases = [str(path)[:2048] for path in (binary, *binary.parents) if path.is_symlink()]
+    paths = {
+        "checkout_root": str(root)[:2048],
+        "expected_parent": str(expected)[:2048],
+        "canonical_expected_parent": canonical(expected),
+        "executable": str(binary)[:2048],
+        "canonical_executable": canonical(binary),
+        "alias_paths": aliases[:16],
+    }
+    if not binary.is_absolute():
+        raise BuildPathError("sdk.executable_relative", paths)
+    if binary.parent != expected:
+        raise BuildPathError("sdk.release_parent_mismatch", paths)
+    if not re.fullmatch(TEST + r"-[0-9a-f]+", binary.name):
+        raise BuildPathError("sdk.test_basename_mismatch", paths)
+    if aliases:
+        raise BuildPathError("sdk.path_alias", paths)
+    return paths
+
+
 def collect(root, messages, output, environment):
     root = root.resolve()
     selected = []
@@ -29,10 +62,7 @@ def collect(root, messages, output, environment):
         raise ValueError("SDK build requires exactly one test executable")
     artifact = selected[0]
     binary = Path(artifact["executable"])
-    if (not binary.is_absolute() or binary.parent != root / "target/release/deps"
-            or not re.fullmatch(TEST + r"-[0-9a-f]+", binary.name)
-            or any(path.is_symlink() for path in (binary, *binary.parents))):
-        raise ValueError("SDK executable must be an unaliased release test artifact")
+    build_paths = validate_build_path(root, binary)
     info = binary.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not info.st_mode & 0o111:
         raise ValueError("SDK executable must be a regular executable without hard links")
@@ -59,6 +89,7 @@ def collect(root, messages, output, environment):
         "build": "cargo test --locked --release -p festerm --test dev_tunnel_workflow_lab --no-run --message-format=json-render-diagnostics",
         "binary": TEST, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
         "mode": 0o755,
+        "build_paths": build_paths,
     }
     output.mkdir()  # Exclusive: retained output is never repaired or overwritten.
     destination = output / TEST
@@ -74,8 +105,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--messages", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--path-diagnostic", type=Path, required=True)
     args = parser.parse_args()
-    collect(ROOT, args.messages, args.output, os.environ)
+    try:
+        collect(ROOT, args.messages, args.output, os.environ)
+    except BuildPathError as error:
+        # Cargo build paths only: no environment dump, credentials or SDK output.
+        with args.path_diagnostic.open("x", encoding="utf-8") as file:
+            file.write(json.dumps(error.paths, indent=2) + "\n")
+        raise
 
 
 if __name__ == "__main__":

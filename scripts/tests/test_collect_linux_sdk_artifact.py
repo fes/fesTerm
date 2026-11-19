@@ -49,6 +49,8 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(receipt["checkout_tree"], "c" * 40)
         self.assertEqual(receipt["run_attempt"], "2")
         self.assertEqual(receipt["features"], self.message["features"])
+        self.assertEqual(receipt["build_paths"]["canonical_executable"], str(self.binary))
+        self.assertEqual(receipt["build_paths"]["alias_paths"], [])
 
     def test_rejects_missing_duplicate_wrong_target_and_non_test(self):
         for mutation in ["missing", "duplicate", "name", "source", "kind", "profile"]:
@@ -98,6 +100,41 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(FileExistsError): self.collect()
         self.assertEqual(sentinel.read_text(), "original")
 
+    def test_path_failures_identify_each_closed_boundary(self):
+        for binary, reason in [
+            (Path("target/release/deps") / self.binary.name, "sdk.executable_relative"),
+            (self.root / self.binary.name, "sdk.release_parent_mismatch"),
+            (self.binary.with_name("dev_tunnel_workflow_lab"), "sdk.test_basename_mismatch"),
+        ]:
+            with self.subTest(reason=reason):
+                with self.assertRaises(collector.BuildPathError) as failure:
+                    collector.validate_build_path(self.root, binary)
+                self.assertEqual(str(failure.exception), reason)
+                self.assertEqual(failure.exception.paths["executable"], str(binary))
+        original = self.root / "original"
+        self.binary.rename(original)
+        self.binary.symlink_to(original)
+        with self.assertRaises(collector.BuildPathError) as failure:
+            collector.validate_build_path(self.root, self.binary)
+        self.assertEqual(str(failure.exception), "sdk.path_alias")
+        self.assertEqual(failure.exception.paths["canonical_executable"], str(original))
+        self.assertEqual(failure.exception.paths["alias_paths"], [str(self.binary)])
+
+    def test_cli_retains_only_build_path_projection_before_raising(self):
+        diagnostic = self.root / "path-diagnostic.json"
+        self.message["executable"] = str(self.root / self.binary.name)
+        self.messages.write_text(json.dumps(self.message))
+        with patch.object(collector, "ROOT", self.root), patch.object(collector.os, "environ", self.environment), patch("sys.argv", [
+            "collector", "--messages", str(self.messages), "--output", str(self.output),
+            "--path-diagnostic", str(diagnostic),
+        ]):
+            with self.assertRaises(collector.BuildPathError): collector.main()
+        projection = json.loads(diagnostic.read_text())
+        self.assertEqual(projection["reason"], "sdk.release_parent_mismatch")
+        self.assertEqual(set(projection), {"reason", "checkout_root", "expected_parent",
+                         "canonical_expected_parent", "executable", "canonical_executable", "alias_paths"})
+        self.assertFalse(self.output.exists())
+
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
@@ -126,6 +163,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4", upload)
         self.assertIn("retention-days: 7", upload)
         self.assertIn("development-linux-aarch64-sdk-", upload)
+
+    def test_failed_compile_or_collection_always_retains_build_diagnostics(self):
+        step = self.workflow.split("      - name: Retain failed Linux ARM64 SDK build diagnostics\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: always() && matrix.name == 'linux-aarch64' && steps.linux_sdk.outcome == 'failure'", step)
+        self.assertIn("target/release/linux-arm-sdk-build.jsonl", step)
+        self.assertIn("target/release/linux-arm-sdk-path-diagnostic.json", step)
+        self.assertIn("retention-days: 7", step)
+        self.assertIn("if-no-files-found: error", step)
 
 
 if __name__ == "__main__":

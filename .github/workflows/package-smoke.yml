@@ -640,6 +640,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Compile and retain the Linux ARM64 controlled SDK test
+        id: linux_sdk
         if: matrix.name == 'linux-aarch64'
         env:
           DEVELOPMENT_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -648,7 +649,18 @@ jobs:
             --message-format=json-render-diagnostics > target/release/linux-arm-sdk-build.jsonl
           python3 scripts/collect_linux_sdk_artifact.py \
             --messages target/release/linux-arm-sdk-build.jsonl \
+            --path-diagnostic target/release/linux-arm-sdk-path-diagnostic.json \
             --output target/release/development-linux-aarch64-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Retain failed Linux ARM64 SDK build diagnostics
+        if: always() && matrix.name == 'linux-aarch64' && steps.linux_sdk.outcome == 'failure'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: linux-arm-sdk-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/release/linux-arm-sdk-build.jsonl
+            target/release/linux-arm-sdk-path-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Retain the Linux ARM64 controlled SDK executable
         if: matrix.name == 'linux-aarch64'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
