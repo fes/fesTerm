@@ -50,8 +50,9 @@ pub use session_names::{
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, ImageMemoryBudgetPreference,
-    InterfaceSettings, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
-    TerminalFontPreference,
+    InterfaceSettings, JavaScriptProgramStorageSettings, ScrollSpeedPreference,
+    ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
+    MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES,
 };
 pub use snapshot::{ConfigurationRevision, EffectiveProfileSnapshot, ProfileSnapshotError};
 pub use workspace::{
@@ -1528,6 +1529,39 @@ port = 47461
             let restored = Configuration::parse(&document.to_toml().unwrap()).unwrap();
             assert_eq!(restored.interface_settings(), &settings);
         }
+    }
+
+    #[test]
+    fn javascript_program_storage_is_digest_bound_and_round_trips() {
+        let digest = "ab".repeat(32);
+        let storage = JavaScriptProgramStorageSettings::new(digest.clone(), "tw2k2-js".into())
+            .with_allowed(true)
+            .with_max_bytes(8 * 1024);
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_javascript_program_storage(storage.clone()),
+            )
+            .unwrap();
+        let restored = Configuration::parse(&configuration.to_toml().unwrap()).unwrap();
+        assert_eq!(
+            restored.interface_settings().javascript_program_storage(),
+            &[storage]
+        );
+
+        let invalid = JavaScriptProgramStorageSettings::new("mutable-name".into(), "tw2k2".into());
+        assert!(Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_javascript_program_storage(invalid)
+            )
+            .is_err());
+        assert!(Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_javascript_program_storage(
+                    JavaScriptProgramStorageSettings::new(digest, "tw2k2-js".into())
+                        .with_max_bytes(MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES + 1),
+                ),
+            )
+            .is_err());
     }
 
     #[test]

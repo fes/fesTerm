@@ -15878,3 +15878,17 @@ input, and a separate storage fixture proves release/reopen retains confirmed
 data. These are not yet a single process-crash→fresh-runtime Resume proof;
 real process crash and power-loss behavior remain unqualified. Remaining packaged, real-OS timing,
 actual-memory/CPU and GUI/native usability evidence stays unaccepted.
+
+The local TradeWars port then exposed the remaining integration assumptions:
+Node-relative module imports had to be frozen to canonical snapshot paths, and
+QuickJS has no ambient `TextDecoder`. A deterministic packer and portable
+incremental decoder now run the same game through both the in-process test
+runtime and the confined program worker. Save state is not a broad extension
+filesystem: Settings registers the approved bundle digest, defaults persistence
+off, exposes a 4/8/12 KiB JSON-byte cap and provides digest-bound reveal/delete
+actions. The app translates each TW2K2 checkpoint through the existing typed
+load/commit/revision/operation protocol. Headless production-renderer captures
+drive login, movement, resize and save, and explicit Resume restores the
+confirmed checkpoint. This establishes local interactive compatibility only;
+the independently reviewed game provenance, native packaged path and full
+platform qualification remain outside this slice.

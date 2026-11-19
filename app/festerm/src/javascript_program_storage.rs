@@ -106,11 +106,86 @@ const DEVELOPER_PROGRAM_ID: Uuid = Uuid::from_u128(0x6d3ac8f4_67f4_49d0_b10a_bf7
 const DEVELOPER_UNIVERSE_ID: Uuid = Uuid::from_u128(0x8d3ad0e2_62f1_47f7_9db5_0fdf8bbd18c4);
 const DEVELOPER_SLOT_ID: Uuid = Uuid::from_u128(0x1e8fbd1d_98d3_4d58_a0a0_d4d0a5c2e6b7);
 const DEVELOPER_SLOT: &str = "primary";
+const GENERIC_UNIVERSE_SLOT: &str = "universe";
+
+pub(crate) fn application_data_root() -> Option<PathBuf> {
+    std::env::var_os("FESTERM_JAVASCRIPT_PROGRAM_DATA_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            directories::ProjectDirs::from("com", "fes", "fesTerm")
+                .map(|project| project.data_dir().to_path_buf())
+        })
+}
+
+fn identity_from_digest(label: &str, digest: &str) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(label.as_bytes());
+    hasher.update([0]);
+    hasher.update(digest.as_bytes());
+    let bytes: [u8; 32] = hasher.finalize().into();
+    Uuid::from_bytes(
+        bytes[..16]
+            .try_into()
+            .expect("SHA-256 has at least 16 bytes"),
+    )
+}
+
+fn program_ids(digest: &str) -> (ProgramId, UniverseId, SlotId) {
+    (
+        ProgramId::from_host(identity_from_digest("program", digest)),
+        UniverseId::from_host(identity_from_digest("universe", digest)),
+        SlotId::from_host(identity_from_digest("slot", digest)),
+    )
+}
+
+pub(crate) fn program_storage_path(root: &Path, digest: &str) -> PathBuf {
+    let (program, universe, _) = program_ids(digest);
+    root.join("javascript-programs")
+        .join(format!("program-{}", program.0.simple()))
+        .join(format!("universe-{}", universe.0.simple()))
+}
+
+pub(crate) fn program_storage_bytes(root: &Path, digest: &str) -> io::Result<u64> {
+    let directory = program_storage_path(root, digest);
+    let (_, _, slot) = program_ids(digest);
+    let prefix = format!("save-{}", slot.0.simple());
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut bytes = 0u64;
+    for entry in entries.take(64) {
+        let entry = entry?;
+        if entry.file_type()?.is_file() && entry.file_name().to_string_lossy().starts_with(&prefix)
+        {
+            bytes = bytes.saturating_add(entry.metadata()?.len());
+        }
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn delete_program_storage(root: &Path, digest: &str) -> io::Result<bool> {
+    let (program, universe, slot) = program_ids(digest);
+    let mut store = match TransactionalSaveStore::open(root, program, universe, slot) {
+        Ok(store) => store,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let removed = store.delete_payload_files()?;
+    drop(store);
+    Ok(removed)
+}
 
 pub(crate) struct ReviewedDeveloperStorageHost {
     root: PathBuf,
     mode: ProgramLaunchMode,
     store: Mutex<Option<TransactionalSaveStore>>,
+    program_ids: (ProgramId, UniverseId, SlotId),
+    slot: String,
+    max_bytes: usize,
+    require_json: bool,
 }
 
 impl ReviewedDeveloperStorageHost {
@@ -119,6 +194,31 @@ impl ReviewedDeveloperStorageHost {
             root,
             mode,
             store: Mutex::new(None),
+            program_ids: (
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            ),
+            slot: DEVELOPER_SLOT.into(),
+            max_bytes: MAX_PAYLOAD_BYTES,
+            require_json: false,
+        }
+    }
+
+    pub(crate) fn for_program(
+        root: PathBuf,
+        digest: &str,
+        mode: ProgramLaunchMode,
+        max_bytes: usize,
+    ) -> Self {
+        Self {
+            root,
+            mode,
+            store: Mutex::new(None),
+            program_ids: program_ids(digest),
+            slot: GENERIC_UNIVERSE_SLOT.into(),
+            max_bytes: max_bytes.min(MAX_PAYLOAD_BYTES),
+            require_json: true,
         }
     }
 
@@ -128,6 +228,33 @@ impl ReviewedDeveloperStorageHost {
             root: PathBuf::new(),
             mode,
             store: Mutex::new(Some(store)),
+            program_ids: (
+                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
+                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
+                SlotId::from_host(DEVELOPER_SLOT_ID),
+            ),
+            slot: DEVELOPER_SLOT.into(),
+            max_bytes: MAX_PAYLOAD_BYTES,
+            require_json: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn from_test_program(
+        store: TransactionalSaveStore,
+        mode: ProgramLaunchMode,
+        ids: (ProgramId, UniverseId, SlotId),
+        slot: &str,
+        max_bytes: usize,
+    ) -> Self {
+        Self {
+            root: PathBuf::new(),
+            mode,
+            store: Mutex::new(Some(store)),
+            program_ids: ids,
+            slot: slot.into(),
+            max_bytes,
+            require_json: true,
         }
     }
 
@@ -142,9 +269,9 @@ impl ReviewedDeveloperStorageHost {
         if guard.is_none() {
             let store = TransactionalSaveStore::open(
                 &self.root,
-                ProgramId::from_host(DEVELOPER_PROGRAM_ID),
-                UniverseId::from_host(DEVELOPER_UNIVERSE_ID),
-                SlotId::from_host(DEVELOPER_SLOT_ID),
+                self.program_ids.0,
+                self.program_ids.1,
+                self.program_ids.2,
             )
             .map_err(|error| {
                 if error.kind() == io::ErrorKind::WouldBlock {
@@ -235,7 +362,7 @@ impl ProgramStorageHost for ReviewedDeveloperStorageHost {
     }
 
     fn load(&self, slot: &str) -> ProgramStorageLoad {
-        if slot != DEVELOPER_SLOT {
+        if slot != self.slot {
             return ProgramStorageLoad::Unavailable;
         }
         match self.with_store(|store| store.load()) {
@@ -270,7 +397,12 @@ impl ProgramStorageHost for ReviewedDeveloperStorageHost {
     }
 
     fn commit(&self, slot: &str, request: ProgramStorageCommitRequest) -> ProgramStorageCommit {
-        if slot != DEVELOPER_SLOT || request.schema_version != CURRENT_SAVE_SCHEMA {
+        if slot != self.slot
+            || request.schema_version != CURRENT_SAVE_SCHEMA
+            || request.value.len() > self.max_bytes
+            || (self.require_json
+                && serde_json::from_slice::<serde_json::Value>(&request.value).is_err())
+        {
             return ProgramStorageCommit::ResourceLimit;
         }
         let Some(operation_id) = self.parse_operation_id(&request.operation_id) else {
@@ -485,6 +617,35 @@ impl TransactionalSaveStore {
 
     pub(crate) fn has_uncertain_publication(&self) -> bool {
         self.uncertain.is_some()
+    }
+
+    fn delete_payload_files(&mut self) -> io::Result<bool> {
+        self.verify_writer()?;
+        let raw =
+            private_storage::read_private(&self.directory, &self.save_name(), MAX_ENVELOPE_BYTES);
+        let existed = match raw {
+            Ok(ref bytes) => {
+                if let Ok(envelope) = serde_json::from_slice::<SaveEnvelope>(bytes) {
+                    Some(envelope.revision)
+                } else {
+                    Some(0)
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(_) => Some(0),
+        };
+        private_storage::remove_private_file(&self.directory, &self.save_name())?;
+        if let Some(revision) = existed.and_then(|revision| revision.checked_sub(1)) {
+            private_storage::remove_private_file(
+                &self.directory,
+                &self.migration_backup_name(revision),
+            )?;
+        }
+        self.uncertain = None;
+        if existed.is_some() {
+            sync_publication_directory(&self.directory)?;
+        }
+        Ok(existed.is_some())
     }
 
     pub(crate) fn commit(
@@ -969,6 +1130,62 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn digest_bound_program_storage_honors_quota_and_delete() {
+        let root = PrivateFixture::new();
+        let digest = "ab".repeat(32);
+        let ids = program_ids(&digest);
+        let host = ReviewedDeveloperStorageHost::from_test_program(
+            TransactionalSaveStore::open_test(root.directory(), ids.0, ids.1, ids.2).unwrap(),
+            ProgramLaunchMode::New,
+            ids,
+            GENERIC_UNIVERSE_SLOT,
+            4096,
+        );
+        assert_eq!(host.prepare(), Ok(()));
+        assert!(matches!(
+            host.commit(
+                GENERIC_UNIVERSE_SLOT,
+                ProgramStorageCommitRequest {
+                    expected_revision: None,
+                    schema_version: CURRENT_SAVE_SCHEMA,
+                    value: vec![1; 4097],
+                    operation_id: OperationId::new().0.hyphenated().to_string(),
+                },
+            ),
+            ProgramStorageCommit::ResourceLimit
+        ));
+        assert!(matches!(
+            host.commit(
+                GENERIC_UNIVERSE_SLOT,
+                ProgramStorageCommitRequest {
+                    expected_revision: None,
+                    schema_version: CURRENT_SAVE_SCHEMA,
+                    value: b"not-json".to_vec(),
+                    operation_id: OperationId::new().0.hyphenated().to_string(),
+                },
+            ),
+            ProgramStorageCommit::ResourceLimit
+        ));
+        assert!(matches!(
+            host.commit(
+                GENERIC_UNIVERSE_SLOT,
+                ProgramStorageCommitRequest {
+                    expected_revision: None,
+                    schema_version: CURRENT_SAVE_SCHEMA,
+                    value: br#"{"sector":2}"#.to_vec(),
+                    operation_id: OperationId::new().0.hyphenated().to_string(),
+                },
+            ),
+            ProgramStorageCommit::Committed { revision: 1 }
+        ));
+        drop(host);
+        let mut store =
+            TransactionalSaveStore::open_test(root.directory(), ids.0, ids.1, ids.2).unwrap();
+        assert!(store.delete_payload_files().unwrap());
+        assert!(matches!(store.load(), SaveLoad::Missing));
     }
 
     fn fixture() -> (PrivateFixture, ProgramId, UniverseId, SlotId) {

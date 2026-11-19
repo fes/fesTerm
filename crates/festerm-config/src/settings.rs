@@ -5,6 +5,56 @@ use crate::{
 };
 use std::path::Path;
 
+pub const MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES: u32 = 12 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JavaScriptProgramStorageSettings {
+    digest: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    allowed: bool,
+    #[serde(default = "default_javascript_program_storage_bytes")]
+    max_bytes: u32,
+}
+
+impl JavaScriptProgramStorageSettings {
+    pub fn new(digest: String, name: String) -> Self {
+        Self {
+            digest,
+            name,
+            allowed: false,
+            max_bytes: default_javascript_program_storage_bytes(),
+        }
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn allowed(&self) -> bool {
+        self.allowed
+    }
+
+    pub const fn with_allowed(mut self, allowed: bool) -> Self {
+        self.allowed = allowed;
+        self
+    }
+
+    pub const fn max_bytes(&self) -> u32 {
+        self.max_bytes
+    }
+
+    pub const fn with_max_bytes(mut self, max_bytes: u32) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+}
+
 /// User-adjustable interface preferences that apply immediately in the UI and
 /// are intended to be saved automatically as they change
 /// (`docs/gui-design.md` "Wrapping must remain user-configurable"). Unlike
@@ -174,6 +224,8 @@ pub struct InterfaceSettings {
     mcp_enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     javascript_enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    javascript_program_storage: Vec<JavaScriptProgramStorageSettings>,
     /// How a text editor view starts out. These are per-view settings while
     /// the view is open (ADR 0034 §9), but the way a reader likes to work does
     /// not change between one file and the next, so the last answer is the
@@ -218,6 +270,7 @@ impl InterfaceSettings {
         automatic_update_checks: true,
         mcp_enabled: false,
         javascript_enabled: false,
+        javascript_program_storage: Vec::new(),
         editor: EditorSettings::DEFAULT,
     };
 
@@ -496,6 +549,32 @@ impl InterfaceSettings {
         self
     }
 
+    pub fn javascript_program_storage(&self) -> &[JavaScriptProgramStorageSettings] {
+        &self.javascript_program_storage
+    }
+
+    pub fn with_javascript_program_storage(
+        mut self,
+        setting: JavaScriptProgramStorageSettings,
+    ) -> Self {
+        self.javascript_program_storage
+            .retain(|entry| entry.digest != setting.digest);
+        self.javascript_program_storage.push(setting);
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest.cmp(&right.digest));
+        self
+    }
+
+    pub fn with_javascript_program_storage_entries(
+        mut self,
+        settings: Vec<JavaScriptProgramStorageSettings>,
+    ) -> Self {
+        self.javascript_program_storage = settings;
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest.cmp(&right.digest));
+        self
+    }
+
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
         self.sftp_pane_order
     }
@@ -524,6 +603,25 @@ impl InterfaceSettings {
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings))?;
         if let Some(directory) = &self.default_sftp_local_directory {
             validate_stored_path_setting(directory)?;
+        }
+        let mut digests = std::collections::BTreeSet::new();
+        for storage in &self.javascript_program_storage {
+            if storage.digest.len() != 64
+                || !storage
+                    .digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || storage.name.is_empty()
+                || storage.name.len() > 256
+                || !storage.name.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+                })
+                || !matches!(storage.max_bytes, 4096 | 8192 | 12_288)
+                || storage.max_bytes > MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES
+                || !digests.insert(storage.digest.as_str())
+            {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings));
+            }
         }
         Ok(())
     }
@@ -1049,6 +1147,10 @@ pub struct EditorSettings {
 
 const fn default_syntax() -> bool {
     true
+}
+
+const fn default_javascript_program_storage_bytes() -> u32 {
+    8 * 1024
 }
 
 const fn default_line_numbers() -> bool {

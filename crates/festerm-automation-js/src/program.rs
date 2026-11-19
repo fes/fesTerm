@@ -67,6 +67,31 @@ pub struct JavaScriptProgramLaunch {
 }
 
 impl JavaScriptProgramLaunch {
+    pub fn reviewed_developer_program(
+        program: ApprovedProgram,
+        worker_generation: u64,
+        params: ProgramLaunchParams,
+    ) -> Result<Self, Error> {
+        if worker_generation == 0
+            || worker_generation > MAX_SAFE_INTEGER
+            || params.validate().is_err()
+            || ![
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ]
+            .iter()
+            .all(|capability| program.manifest().capabilities.contains(capability))
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+            params,
+        })
+    }
+
     pub fn reviewed_developer_echo(worker_generation: u64) -> Result<Self, Error> {
         if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
             return Err(Error::Protocol);
