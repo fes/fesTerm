@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Routes HOST discovery, public session recipes, native stop/replacement and enterprise PowerShell lifecycle. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Routes desktop packaging and updater gates, native window checks, wake/privacy integration, and hosted Windows process-lifetime separation. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Routes desktop packaging, updater trust, native windows, wake/privacy and Windows hosted process lifetime. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared iOS/Android application lifecycle, terminal and form input, protected local state, and feature-selected SSH and HOST client workflows. |
 | [Desktop application shell and screens](app-shell.md) | Owns desktop window and pane routing, application command surfaces, host/session workflow screens, file-operation review and lifecycle diagnostics. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
