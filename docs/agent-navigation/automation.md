@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "401d25f35cc9e438e39fbcbc3c7b1af220c64006fe64129fad410da4b201dcaa"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a12253392fe6bafed1ec437cab3926186370f126711a5b1725ecd2b0e3cc25c7"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
