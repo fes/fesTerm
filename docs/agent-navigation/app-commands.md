@@ -1,21 +1,21 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "465e1e21a4a907bc8b444c8466123e0ff2bf536cbc8814f56ead756575e58787"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0471d98052ee3bd2fb0f19ea52ae5a40b9f897aae4a1faf8efd6115a8a6f8680"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions.
+This domain owns the app-wide command intent route, tab lifecycle fallbacks, and the keyboard gate that decides which shortcuts are valid for terminal or document actions.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
 ## Command route
 
-Use for: A widget, launcher, or tab action needs to mutate app state.
+Use for: A widget, launcher, or tab action needs to mutate app state or open a tab.
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, profiles, tabs, and sessions
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, tabs, sessions, and document actions
 - [`AppState`](../../app/festerm/src/tabs.rs) — window-level coordinator owning tabs, documents, and UI state
 - [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for app commands
-- [`with_primary_session`](../../app/festerm/src/tabs.rs) — creates the normal startup shell tab
+- [`with_primary_session`](../../app/festerm/src/tabs.rs) — builds the normal startup shell tab
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the originating tab instead of its neighbor
@@ -30,7 +30,7 @@ Caveats:
 
 Use for: A tab is closing or a fallback focus choice is being selected.
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records the departure and resets unread state for the new active tab
+- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread state for the newly active tab
 - [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — keeps the most recent still-open tab in last-left order
 - [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab that is still open
 - [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and picks a fallback
@@ -61,17 +61,3 @@ Caveats:
 - Exact modifier and key matching is enforced.
 - Repeats and releases are stripped before shortcut dispatch.
 - Unbound actions fall through and never invent terminal bytes.
-
-## Dev Tunnels Files
-
-Use for: Explicit Files connection, host selection and disconnected restore.
-
-- [`start_host_files`](../../app/festerm/src/host_files.rs) — Foreground account preparation pins two ordinary Files streams to one scope.
-- [`select_discovered_files_host`](../../app/festerm/src/screens/profiles/host_files.rs) — Typed Files intent refuses a stale editor instead of opening Control.
-- [`capture_workspace_configuration`](../../app/festerm/src/tabs.rs) — Persists Files metadata; restore starts disconnected.
-
-Evidence:
-- [`files_profile_host_picker_emits_files_intent_and_refuses_stale_editor_selection`](../../app/festerm/src/screens/profiles/host_files.rs) — Checks rendered selection and stale intent refusal.
-
-Caveats:
-- Explicit reconnect obtains fresh authority; profile edits never retarget a live endpoint.

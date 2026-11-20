@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "863302448d71841337dba5e6dfdc2191ae676bd900a8a166a9bd75d741365fc5"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5fec2c316af66d583d7ecce50a50ab3367d4f3afdc05338efa401e279143d56c"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,10 +13,10 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 Use for: A packaged build is deciding whether self-update is allowed
 
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks package install kind and update readiness
-- [`from_build_marker`](../../app/festerm/src/updates.rs) — Converts install markers into installability and trust
+- [`from_build_marker`](../../app/festerm/src/updates.rs) — Maps install markers to update eligibility and trust
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Fails closed when packaged builds omit the update key
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Fails closed when packaged builds omit the public key
 - [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only allows supported self-update markers
 
 Caveats:
