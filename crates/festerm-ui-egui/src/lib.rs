@@ -15,6 +15,7 @@ mod fonts;
 mod geometry;
 pub mod icon;
 mod input;
+mod kitty_graphics;
 mod native_painter;
 pub mod overlay;
 pub mod palette;
@@ -51,6 +52,10 @@ pub use input::{
     route_input, route_mouse_input, EncodedInputSink, InputRoute, InputSinkDiagnostics,
     TERMINAL_RESIZE_DEBOUNCE,
 };
+pub use kitty_graphics::{
+    decode_kitty_image_for_export, encode_color_image_png, validate_kitty_png,
+    KittyGraphicsReservation,
+};
 pub use native_painter::{
     install_root_terminal_painter, install_root_terminal_painter_with_admission,
     install_root_terminal_painter_with_options, remove_root_terminal_painter, FontAtlasCapture,
@@ -68,8 +73,8 @@ pub use selection::{
 pub use smart_selection::SmartSelectionScope;
 pub use view::{
     FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalContextText,
-    TerminalHistoryAction, TerminalView, TerminalViewOptions, TERMINAL_CONTEXT_MAX_BYTES,
-    TERMINAL_CONTEXT_MAX_ROWS,
+    TerminalHistoryAction, TerminalImageExportAction, TerminalImageExportRequest, TerminalView,
+    TerminalViewOptions, TERMINAL_CONTEXT_MAX_BYTES, TERMINAL_CONTEXT_MAX_ROWS,
 };
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.
@@ -138,6 +143,14 @@ impl<'a> TerminalSnapshot<'a> {
 
     pub const fn screen_generation(self) -> u64 {
         self.screen_generation
+    }
+
+    pub(crate) fn kitty_images(self) -> &'a [festerm_core::kitty::KittyImage] {
+        self.terminal.kitty_images()
+    }
+
+    pub(crate) fn kitty_placements(self) -> &'a [festerm_core::kitty::KittyPlacement] {
+        self.terminal.kitty_placements()
     }
 
     /// Returns a borrowed core cell, preserving width-two/continuation roles.

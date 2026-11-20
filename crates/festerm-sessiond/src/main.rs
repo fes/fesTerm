@@ -813,9 +813,10 @@ fn parse_bridge(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Erro
         )
         .into());
     }
-    if snapshot_schema != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION {
+    if !bridge_snapshot_schema_is_supported(snapshot_schema) {
         return Err(format!(
-            "bridge requires --snapshot-schema {}; got {snapshot_schema}",
+            "bridge requires --snapshot-schema {} through {}; got {snapshot_schema}",
+            BRIDGE_MINIMUM_SNAPSHOT_SCHEMA_VERSION,
             festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )
         .into());
@@ -4079,12 +4080,13 @@ fn run_bridge(
     allow_takeover: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if protocol != festerm_sessiond::PROTOCOL_VERSION
-        || snapshot_schema != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        || !bridge_snapshot_schema_is_supported(snapshot_schema)
         || !allow_takeover
     {
         return Err(format!(
-            "bridge requires exact protocol {}, snapshot schema {}, and --allow-takeover",
+            "bridge requires exact protocol {}, snapshot schema {} through {}, and --allow-takeover",
             festerm_sessiond::PROTOCOL_VERSION,
+            BRIDGE_MINIMUM_SNAPSHOT_SCHEMA_VERSION,
             festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )
         .into());
@@ -4094,6 +4096,15 @@ fn run_bridge(
     let record = with_registry_lock(|registry| {
         validate_bridge_record(registry, &root, &name, pid, generation)
     })?;
+    // The bridge relays the daemon's bytes unchanged, so the client must
+    // decode exactly the schema that generation writes.
+    if record.snapshot_schema_version != snapshot_schema {
+        return Err(format!(
+            "session '{name}' uses recovery snapshot schema {}; the client requested {snapshot_schema}",
+            record.snapshot_schema_version
+        )
+        .into());
+    }
 
     #[cfg(unix)]
     let stream = {
@@ -4115,6 +4126,15 @@ fn run_bridge(
     };
 
     run_stdio_bridge(stream).map_err(Into::into)
+}
+
+/// Schema 4 is the previous tagged schema; a client still at schema 4 can
+/// attach generations written at schema 4, never newer ones.
+const BRIDGE_MINIMUM_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
+
+const fn bridge_snapshot_schema_is_supported(version: u16) -> bool {
+    version >= BRIDGE_MINIMUM_SNAPSHOT_SCHEMA_VERSION
+        && version <= festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
 }
 
 fn validate_bridge_record(
@@ -4148,10 +4168,11 @@ fn validate_bridge_record(
         )
         .into());
     }
-    if record.snapshot_schema_version != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION {
+    if !bridge_snapshot_schema_is_supported(record.snapshot_schema_version) {
         return Err(format!(
-            "session '{name}' uses recovery snapshot schema {}; bridge requires {}",
+            "session '{name}' uses recovery snapshot schema {}; bridge supports {} through {}",
             record.snapshot_schema_version,
+            BRIDGE_MINIMUM_SNAPSHOT_SCHEMA_VERSION,
             festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )
         .into());
@@ -5628,6 +5649,37 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn bridge_accepts_the_previous_snapshot_schema_but_not_older_or_newer() {
+        let parse = |schema: u16| {
+            let args = [
+                "--name",
+                "work",
+                "--pid",
+                "42",
+                "--generation",
+                "7",
+                "--protocol",
+                &festerm_sessiond::PROTOCOL_VERSION.to_string(),
+                "--snapshot-schema",
+                &schema.to_string(),
+                "--allow-takeover",
+            ]
+            .map(str::to_owned);
+            parse_bridge(&args).map(|spec| match spec {
+                CommandSpec::Bridge {
+                    snapshot_schema, ..
+                } => snapshot_schema,
+                _ => unreachable!(),
+            })
+        };
+        for schema in 4..=festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION {
+            assert_eq!(parse(schema).unwrap(), schema);
+        }
+        assert!(parse(3).is_err());
+        assert!(parse(festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1).is_err());
+    }
 
     #[test]
     fn imported_binding_release_targets_only_ticketed_host_frontend_not_legacy_remote_or_local() {

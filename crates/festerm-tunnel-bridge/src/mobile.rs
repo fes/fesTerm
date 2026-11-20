@@ -128,46 +128,118 @@ pub async fn describe(
 /// `client` is sent only to hosts that advertised reclaim (see
 /// [`ClientId`]).
 pub async fn establish(
-    mut stream: BoxStream,
+    stream: BoxStream,
     target: Target,
     takeover: bool,
     client: Option<ClientId>,
     cancel: &CancellationToken,
 ) -> Result<Handshake, AttachError> {
+    let mut streams = [stream].into_iter();
+    establish_negotiated(
+        // One stream cannot retry: a schema refusal stays a refusal.
+        move || {
+            std::future::ready(
+                streams
+                    .next()
+                    .map(|stream| ((), stream))
+                    .ok_or(AttachError::RefusedOrIncompatible),
+            )
+        },
+        target,
+        takeover,
+        client,
+        cancel,
+    )
+    .await
+    .map(|((), handshake)| handshake)
+}
+
+/// Like [`establish`], but opens a fresh stream for each
+/// [`HELLO_SNAPSHOT_SCHEMAS`] entry: a host older than SafeFraming answers the
+/// newer schema with `INCOMPATIBLE` before admission, so the previous schema is
+/// tried once. `connect` returns caller state retained with the admitted
+/// stream, such as its transport probe.
+pub async fn establish_negotiated<T, C, F>(
+    mut connect: C,
+    target: Target,
+    takeover: bool,
+    client: Option<ClientId>,
+    cancel: &CancellationToken,
+) -> Result<(T, Handshake), AttachError>
+where
+    C: FnMut() -> F,
+    F: std::future::Future<Output = Result<(T, BoxStream), AttachError>>,
+{
     let work = async {
-        let hello = serde_json::to_vec(&Hello {
-            files: FileAccess::default(),
-            takeover,
-            version: VERSION,
-            snapshot_schema: SNAPSHOT_SCHEMA_VERSION,
-            target,
-            client,
-        })
-        .map_err(|_| AttachError::Protocol)?;
-        write_frame(&mut stream, HELLO, &hello)
-            .await
-            .map_err(|_| AttachError::Connection)?;
-        let (kind, capabilities) = read(&mut stream).await?;
-        if kind == REFUSED || kind == INCOMPATIBLE {
-            return Err(AttachError::RefusedOrIncompatible);
+        let mut schemas = HELLO_SNAPSHOT_SCHEMAS.into_iter().peekable();
+        while let Some(schema) = schemas.next() {
+            let (state, stream) = connect().await?;
+            match attempt(stream, &target, takeover, client.clone(), schema).await {
+                Err(Attempt::Incompatible) if schemas.peek().is_some() => continue,
+                Err(Attempt::Incompatible) => return Err(AttachError::RefusedOrIncompatible),
+                Err(Attempt::Failed(error)) => return Err(error),
+                Ok(handshake) => return Ok((state, handshake)),
+            }
         }
-        if kind != CAPABILITIES || capabilities.len() != 2 || capabilities[0] != 0 {
-            return Err(AttachError::Protocol);
-        }
-        let (kind, bytes) = read(&mut stream).await?;
-        if kind == REFUSED {
-            return Err(AttachError::Refused);
-        }
-        if kind != SNAPSHOT {
-            return Err(AttachError::Protocol);
-        }
-        let terminal = decode_snapshot(&bytes).map_err(|_| AttachError::Protocol)?;
-        Ok(Handshake { stream, terminal })
+        Err(AttachError::RefusedOrIncompatible)
     };
     tokio::select! {
         _ = cancel.cancelled() => Err(AttachError::Cancelled),
         result = work => result,
     }
+}
+
+enum Attempt {
+    /// The host refused this `Hello` schema before admission.
+    Incompatible,
+    Failed(AttachError),
+}
+
+impl From<AttachError> for Attempt {
+    fn from(error: AttachError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+async fn attempt(
+    mut stream: BoxStream,
+    target: &Target,
+    takeover: bool,
+    client: Option<ClientId>,
+    snapshot_schema: u16,
+) -> Result<Handshake, Attempt> {
+    let hello = serde_json::to_vec(&Hello {
+        files: FileAccess::default(),
+        takeover,
+        version: VERSION,
+        snapshot_schema,
+        target: target.clone(),
+        client,
+    })
+    .map_err(|_| AttachError::Protocol)?;
+    write_frame(&mut stream, HELLO, &hello)
+        .await
+        .map_err(|_| AttachError::Connection)?;
+    let (kind, capabilities) = read(&mut stream).await?;
+    if kind == INCOMPATIBLE {
+        return Err(Attempt::Incompatible);
+    }
+    if kind == REFUSED {
+        return Err(AttachError::RefusedOrIncompatible.into());
+    }
+    if kind != CAPABILITIES || capabilities.len() != 2 || capabilities[0] != 0 {
+        return Err(AttachError::Protocol.into());
+    }
+    let (kind, bytes) = read(&mut stream).await?;
+    if kind == REFUSED {
+        return Err(AttachError::Refused.into());
+    }
+    if kind != SNAPSHOT {
+        return Err(AttachError::Protocol.into());
+    }
+    let terminal =
+        decode_snapshot_for_schema(&bytes, snapshot_schema).map_err(|_| AttachError::Protocol)?;
+    Ok(Handshake { stream, terminal })
 }
 
 async fn read(stream: &mut BoxStream) -> Result<(u8, Vec<u8>), AttachError> {
@@ -704,6 +776,82 @@ mod tests {
         recovered.ingest(b"\x1bcXYZ");
         assert!(recovered.row_text(0).unwrap().starts_with("ABCXYZ"));
         assert_eq!(read_frame(&mut host).await.unwrap(), (ADOPTED, vec![]));
+    }
+
+    #[tokio::test]
+    async fn establish_negotiated_retries_the_previous_schema_on_a_fresh_stream() {
+        use festerm_core::TerminalSemantics::{Current, SafeFraming};
+        // (first reply, second-attempt snapshot) -> outcome
+        for (first, second, expected) in [
+            (INCOMPATIBLE, Some(Current), Ok(Current)),
+            (INCOMPATIBLE, Some(SafeFraming), Err(AttachError::Protocol)),
+            (INCOMPATIBLE, None, Err(AttachError::RefusedOrIncompatible)),
+            (REFUSED, None, Err(AttachError::RefusedOrIncompatible)),
+        ] {
+            let (clients, hosts): (Vec<_>, Vec<_>) =
+                (0..2).map(|_| tokio::io::duplex(1 << 16)).unzip();
+            let host = tokio::spawn(async move {
+                let mut schemas = Vec::new();
+                let mut retained = Vec::new();
+                for (attempt, mut host) in hosts.into_iter().enumerate() {
+                    let (kind, bytes) = read_frame(&mut host).await.unwrap();
+                    assert_eq!(kind, HELLO);
+                    schemas.push(
+                        serde_json::from_slice::<Hello>(&bytes)
+                            .unwrap()
+                            .snapshot_schema,
+                    );
+                    match (attempt, second) {
+                        (0, _) => write_frame(&mut host, first, &[]).await.unwrap(),
+                        (_, Some(semantics)) => {
+                            let mut terminal =
+                                Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+                            terminal.set_semantics(semantics);
+                            write_frame(&mut host, CAPABILITIES, &[0, 0]).await.unwrap();
+                            write_frame(&mut host, SNAPSHOT, &encode_snapshot(&terminal).unwrap())
+                                .await
+                                .unwrap();
+                        }
+                        (_, None) => write_frame(&mut host, INCOMPATIBLE, &[]).await.unwrap(),
+                    }
+                    retained.push(host);
+                    if first != INCOMPATIBLE {
+                        break;
+                    }
+                }
+                schemas
+            });
+            let mut clients = clients.into_iter().enumerate();
+            let result = establish_negotiated(
+                move || {
+                    std::future::ready(
+                        clients
+                            .next()
+                            .map(|(attempt, client)| (attempt, Box::new(client) as BoxStream))
+                            .ok_or(AttachError::Connection),
+                    )
+                },
+                target(),
+                false,
+                None,
+                &CancellationToken::new(),
+            )
+            .await;
+            let schemas = host.await.unwrap();
+            if first == INCOMPATIBLE {
+                assert_eq!(schemas, HELLO_SNAPSHOT_SCHEMAS);
+            } else {
+                assert_eq!(schemas, [SNAPSHOT_SCHEMA_VERSION]);
+            }
+            match (result, expected) {
+                (Ok((attempt, handshake)), Ok(semantics)) => {
+                    assert_eq!(attempt, 1);
+                    assert_eq!(handshake.terminal.semantics(), semantics);
+                }
+                (Err(error), Err(expected)) => assert_eq!(error, expected),
+                (result, _) => panic!("unexpected outcome: {:?}", result.map(|(a, _)| a)),
+            }
+        }
     }
 
     #[tokio::test]
