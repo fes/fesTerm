@@ -4,7 +4,7 @@
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns shared document identity, editor/viewer routing, and Markdown parsing and preview state for open text files.
+This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files.
 
 Canonical docs: [docs/text-editor-design.md](../../docs/text-editor-design.md), [docs/markdown-viewer-design.md](../../docs/markdown-viewer-design.md)
 
@@ -14,6 +14,7 @@ Use for: When a new process is launched with --open paths or needs to forward fi
 
 - [`DocumentActivationServer`](../../app/festerm/src/document_activation.rs) — owns the activation socket and cross-process queue for file-open requests
 - [`ActivationQueue`](../../app/festerm/src/document_activation.rs) — buffers startup paths and wakes the app when a batch is ready
+- [`prepare_startup`](../../app/festerm/src/document_activation.rs) — initializes primary or forwarded activation mode for a process launch
 
 Evidence:
 - [`parses_open_and_dash_prefixed_paths_without_utf8_loss`](../../app/festerm/src/document_activation.rs) — CLI parsing accepts document paths and preserves byte-level content
@@ -58,6 +59,7 @@ Use for: When a file is opened as Markdown or a remote snapshot is loaded
 
 - [`MarkdownLoader`](../../crates/festerm-markdown/src/lib.rs) — reads bounded bytes, validates UTF-8/binary limits, and parses a read-only snapshot
 - [`MarkdownViewerTab`](../../app/festerm/src/markdown_viewer.rs) — keeps source identity, preview/source mode, and stale snapshot checks for the tab
+- [`open_remote`](../../app/festerm/src/markdown_viewer.rs) — verifies remote bytes and loads them without writing a temp file
 
 Evidence:
 - [`open_remote_parses_in_memory_bytes_without_touching_disk`](../../app/festerm/src/markdown_viewer.rs) — remote Markdown loads from verified bytes without a temp file
