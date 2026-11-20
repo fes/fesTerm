@@ -1108,15 +1108,7 @@ fn authorize_run(
     let stage = services.reopen_stage(expected.epoch)?;
     services.require_runtime_execution(&stage)?;
     stage.sessiond_path()?;
-    record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
-    {
-        let current = store.owner_enrollment()?.snapshot()?;
-        if expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly
-            && (!current.remote_access || !current.keys.iter().any(|key| !key.revoked))
-        {
-            return Err(refused("host.runtime_current_owner_consent_required"));
-        }
-    }
+    authorize_owner_admission(expected, record, state, || store.owner_enrollment())?;
     if expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly {
         let policy = Arc::new(CurrentOwnerPolicySource::new(
             store.clone(),
@@ -1131,6 +1123,120 @@ fn authorize_run(
         })?);
     }
     Ok(stage)
+}
+
+// Keep the original selected-store read, owner-only check and errors. The
+// observer is finite evidence only, never an alternate authorization path.
+fn authorize_owner_admission<'a>(
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    state: &Path,
+    open: impl FnOnce() -> io::Result<OwnerEnrollment<'a>>,
+) -> io::Result<()> {
+    use crate::enrollment::{
+        OwnerAdmissionEvent as Event, OwnerAdmissionFailure as Failure,
+        OwnerAdmissionStage as Stage,
+    };
+    record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
+    let log = RuntimeLog::new(state, record);
+    log.owner_admission(Event::Begin(Stage::StoreOpen));
+    let owner = open().inspect_err(|error| {
+        log.owner_admission(Event::Fail(Stage::StoreOpen, Failure::from_io(error)));
+    })?;
+    log.owner_admission(Event::Pass(Stage::StoreOpen));
+    let current = owner.snapshot_observed(&mut |event| log.owner_admission(event))?;
+    require_owner_consent(expected, &current, &mut |event| log.owner_admission(event))
+}
+
+fn require_owner_consent(
+    expected: &Snapshot,
+    current: &EnrollmentSnapshot,
+    observe: &mut dyn FnMut(crate::enrollment::OwnerAdmissionEvent),
+) -> io::Result<()> {
+    use crate::enrollment::{
+        OwnerAdmissionEvent as Event, OwnerAdmissionFailure as Failure,
+        OwnerAdmissionStage as Stage,
+    };
+    observe(Event::Begin(Stage::Consent));
+    if expected.settings.ordinary_access == OrdinaryAccess::OwnerOnly
+        && (!current.remote_access || !current.keys.iter().any(|key| !key.revoked))
+    {
+        observe(Event::Fail(Stage::Consent, Failure::MissingConsent));
+        return Err(refused("host.runtime_current_owner_consent_required"));
+    }
+    observe(Event::Pass(Stage::Consent));
+    Ok(())
+}
+
+/// Status-only evidence: never a grant, serving/liveness proof or retry request.
+#[derive(Serialize)]
+pub struct OwnerReadinessDiagnostic {
+    schema: u8,
+    scope: &'static str,
+    status_only: bool,
+    events: Vec<OwnerReadinessObservation>,
+}
+
+#[derive(Serialize)]
+struct OwnerReadinessObservation {
+    stage: &'static str,
+    outcome: &'static str,
+    category: &'static str,
+}
+
+/// Read exact selected native owner policy without initialization, high-water
+/// writes, foreground vault interaction, cloud calls or manager operations.
+pub fn owner_readiness_diagnostic(
+    state: &Path,
+    origin: crate::lifecycle::Origin,
+) -> OwnerReadinessDiagnostic {
+    owner_readiness_with(|| Store::open(state, origin), Store::owner_enrollment)
+}
+
+fn owner_readiness_with(
+    open_store: impl FnOnce() -> io::Result<Store>,
+    open_owner: impl for<'a> FnOnce(&'a Store) -> io::Result<OwnerEnrollment<'a>>,
+) -> OwnerReadinessDiagnostic {
+    use crate::enrollment::{
+        OwnerAdmissionEvent as Event, OwnerAdmissionFailure as Failure,
+        OwnerAdmissionStage as Stage,
+    };
+    let mut report = OwnerReadinessDiagnostic {
+        schema: 1,
+        scope: "local_owner_admission",
+        status_only: true,
+        events: Vec::new(),
+    };
+    let mut observe = |event| {
+        // One synchronous snapshot has a fixed number of boundaries. Keep a
+        // hard cap too; evidence exhaustion never authorizes anything.
+        if report.events.len() == 24 {
+            return;
+        }
+        let (stage, outcome, category) = match event {
+            Event::Begin(stage) => (stage, "begin", "none"),
+            Event::Pass(stage) => (stage, "ok", "none"),
+            Event::Fail(stage, reason) => (stage, "error", reason.code()),
+        };
+        report.events.push(OwnerReadinessObservation {
+            stage: stage.code(),
+            outcome,
+            category,
+        });
+    };
+    observe(Event::Begin(Stage::StoreOpen));
+    let _ = (|| -> io::Result<()> {
+        let store = open_store().inspect_err(|error| {
+            observe(Event::Fail(Stage::StoreOpen, Failure::from_io(error)));
+        })?;
+        let owner = open_owner(&store).inspect_err(|error| {
+            observe(Event::Fail(Stage::StoreOpen, Failure::from_io(error)));
+        })?;
+        observe(Event::Pass(Stage::StoreOpen));
+        let current = owner.current_snapshot_noninteractive_observed(&mut observe)?;
+        require_owner_consent(current.installation(), current.enrollment(), &mut observe)
+    })();
+    report
 }
 
 async fn run_admitted(
@@ -1962,6 +2068,182 @@ mod tests {
                 assert_eq!(calls.get(), 1);
                 assert_eq!(record.run_id, original.run_id);
                 assert_eq!(record.epoch, original.epoch);
+            }
+        }
+    }
+
+    #[test]
+    fn host_owner_readiness_is_noninteractive_read_only_and_never_advances_high_water() {
+        use crate::enrollment::tests::{fixture_owners, setup_origin};
+        fn files(path: &Path) -> std::collections::BTreeMap<std::ffi::OsString, Vec<u8>> {
+            std::fs::read_dir(path)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    (entry.file_name(), std::fs::read(entry.path()).unwrap())
+                })
+                .collect()
+        }
+        for case in ["current", "missing", "locked", "stale"] {
+            let (root, store, vault) = setup_origin(Origin::Desktop);
+            if case != "missing" {
+                fixture_owners(&store, vault.clone())
+                    .initialize(Path::new(HOST_IDENTITY_FILE), "github:1234".into())
+                    .unwrap();
+            }
+            if case == "stale" {
+                store.revoke().unwrap();
+            }
+            if case == "locked" {
+                vault
+                    .locked
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            let before = files(&root.path().join("installation"));
+            let interactive = vault
+                .interactive_reads
+                .load(std::sync::atomic::Ordering::Acquire);
+            let noninteractive = vault
+                .noninteractive_reads
+                .load(std::sync::atomic::Ordering::Acquire);
+            let report = owner_readiness_with(
+                || Ok(store),
+                |store| Ok(fixture_owners(store, vault.clone())),
+            );
+            assert_eq!(files(&root.path().join("installation")), before);
+            assert_eq!(
+                vault
+                    .interactive_reads
+                    .load(std::sync::atomic::Ordering::Acquire),
+                interactive
+            );
+            assert_eq!(
+                vault
+                    .noninteractive_reads
+                    .load(std::sync::atomic::Ordering::Acquire),
+                noninteractive + usize::from(case != "missing")
+            );
+            let wire = serde_json::to_string(&report).unwrap();
+            assert!(report.status_only);
+            assert_eq!(report.scope, "local_owner_admission");
+            assert!(report.events.len() <= 24 && wire.len() < 4096);
+            assert!(!wire.contains("github:1234"));
+            assert!(!wire.contains("reference"));
+            assert!(!wire.contains("private-canary"));
+            let (stage, category) = match case {
+                "current" => ("consent", "missing_consent"),
+                "missing" => ("policy_read", "missing"),
+                "locked" => ("anchor_read", "locked_or_unavailable"),
+                _ => ("high_water_update", "scope_changed"),
+            };
+            assert!(report.events.iter().any(|event| event.stage == stage
+                && event.outcome == "error"
+                && event.category == category));
+            assert!(!root.path().join("installation/worker.log").exists());
+        }
+    }
+
+    #[test]
+    fn host_owner_admission_preserves_provider_owner_consent_and_primary_failures() {
+        use crate::enrollment::tests::{fixture_owners, setup_origin};
+        for case in [
+            "provider",
+            "owner",
+            "locked",
+            "store",
+            "log-failure",
+            "owner-log-failure",
+        ] {
+            let (root, store, vault) = setup_origin(Origin::Desktop);
+            if matches!(case, "provider" | "log-failure") {
+                store.revoke().unwrap();
+                let stopped = store.snapshot().unwrap();
+                store
+                    .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                    .unwrap();
+                let mut settings = stopped.settings;
+                settings.ordinary_access = OrdinaryAccess::ProviderOwner;
+                store.configure(settings.clone()).unwrap();
+                let ticket = store.request_enable(&settings).unwrap();
+                store
+                    .record_provisioned(&ticket, stopped.binding.unwrap())
+                    .unwrap();
+            }
+            let store = Arc::new(store);
+            fixture_owners(&store, vault.clone())
+                .initialize(Path::new(HOST_IDENTITY_FILE), "github:1234".into())
+                .unwrap();
+            let (_lease, expected, mut record) = reserve(&store).unwrap();
+            let original_record = record.clone();
+            let state = root.path().join("diagnostic-state");
+            if case.ends_with("log-failure") {
+                std::fs::write(&state, b"owned-file-not-a-log-directory").unwrap();
+            } else {
+                storage::private_directory(&state, true).unwrap();
+            }
+            if case == "locked" {
+                vault
+                    .locked
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            let reads = vault
+                .interactive_reads
+                .load(std::sync::atomic::Ordering::Acquire);
+            let result = authorize_owner_admission(&expected, &mut record, &state, || {
+                if case == "store" {
+                    Err(io::Error::other(
+                        "private-canary-account-reference-path-token",
+                    ))
+                } else {
+                    Ok(fixture_owners(&store, vault.clone()))
+                }
+            });
+            match case {
+                "provider" | "log-failure" => assert!(result.is_ok()),
+                "owner" | "owner-log-failure" => assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "host.runtime_current_owner_consent_required"
+                ),
+                "locked" => assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
+                ),
+                _ => assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "private-canary-account-reference-path-token"
+                ),
+            }
+            assert_eq!(store.snapshot().unwrap(), expected);
+            assert_eq!(
+                record.failure,
+                Some(RunFailure::CurrentOwnerConsentRequired)
+            );
+            assert_eq!(record.run_id, original_record.run_id);
+            assert_eq!(
+                vault
+                    .interactive_reads
+                    .load(std::sync::atomic::Ordering::Acquire),
+                reads + usize::from(case != "store")
+            );
+            if !case.ends_with("log-failure") {
+                let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+                assert!(log.contains("host.owner_admission"));
+                assert!(log.contains(&format!("pid={} ", std::process::id())));
+                assert!(!log.contains("private-canary"));
+                assert!(!log.contains("github:1234"));
+                assert!(!log.contains("host.runtime "));
+                if case == "owner" {
+                    assert!(log.contains("stage=consent outcome=error category=missing_consent"));
+                } else if case == "locked" {
+                    assert!(log.contains(
+                        "stage=anchor_read outcome=error category=locked_or_unavailable"
+                    ));
+                    assert!(!log.contains("stage=consent"));
+                } else if case == "store" {
+                    assert!(log.contains("stage=store_open outcome=begin"));
+                    assert!(log.contains("stage=store_open outcome=error category=unclassified"));
+                    assert!(!log.contains("stage=snapshot"));
+                }
             }
         }
     }

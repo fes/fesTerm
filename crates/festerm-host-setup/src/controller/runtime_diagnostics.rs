@@ -148,6 +148,28 @@ pub(super) struct Log {
     run_id: Option<uuid::Uuid>,
 }
 impl Log {
+    /// Separate line kind: old readers reject it without changing strict run
+    /// history or mistaking a pre-serve admission observation for serving.
+    pub(super) fn owner_admission(&self, event: crate::enrollment::OwnerAdmissionEvent) {
+        use crate::enrollment::OwnerAdmissionEvent;
+        let Some(run_id) = self.run_id else { return };
+        let (stage, outcome, category) = match event {
+            OwnerAdmissionEvent::Begin(stage) => (stage, "begin", "none"),
+            OwnerAdmissionEvent::Pass(stage) => (stage, "ok", "none"),
+            OwnerAdmissionEvent::Fail(stage, reason) => (stage, "error", reason.code()),
+        };
+        self.writer.event(
+            "host.owner_admission",
+            &[
+                ("epoch", &self.epoch.to_string()),
+                ("run", &run_id.to_string()),
+                ("stage", stage.code()),
+                ("outcome", outcome),
+                ("category", category),
+            ],
+        );
+    }
+
     pub(super) fn new(state: &Path, run: &RunRecord) -> Self {
         Self {
             writer: WorkerLog::new(state),
@@ -372,4 +394,61 @@ fn read_history(
         }
     }
     Ok(records)
+}
+
+#[cfg(test)]
+mod owner_admission_tests {
+    use super::*;
+    use crate::{
+        controller::RunState,
+        enrollment::{
+            OwnerAdmissionEvent as Event, OwnerAdmissionFailure as Failure,
+            OwnerAdmissionStage as Stage,
+        },
+    };
+
+    #[test]
+    fn host_owner_admission_log_is_bounded_and_old_runtime_reader_skips_it() {
+        let root = private_storage::private_test_directory();
+        let run = RunRecord {
+            version: 1,
+            installation: "public-fixture".into(),
+            epoch: 2,
+            run_id: uuid::Uuid::new_v4().to_string(),
+            state: RunState::Starting,
+            failure: None,
+        };
+        let log = Log::new(root.path(), &run);
+        log.event(Phase::HistoryPersist, Outcome::Ok, None, None, None);
+        log.owner_admission(Event::Begin(Stage::StoreOpen));
+        log.owner_admission(Event::Fail(Stage::AnchorRead, Failure::LockedOrUnavailable));
+        log.event(Phase::RuntimeServe, Outcome::Closed, None, None, None);
+        let bytes = std::fs::read(root.path().join("worker.log")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.lines().all(|line| line.len() < LINE_BYTES));
+        let parsed: Vec<_> = text.lines().filter_map(parse).collect();
+        assert_eq!(
+            parsed.len(),
+            2,
+            "new line kind must not pollute old runtime records"
+        );
+        assert_eq!(parsed[0].phase, Phase::HistoryPersist);
+        assert_eq!(parsed[1].phase, Phase::RuntimeServe);
+        assert!(text
+            .lines()
+            .all(|line| line.contains(&format!("pid={} ", std::process::id()))));
+        // Exercise existing rotation with one bounded new-kind append.
+        std::fs::write(root.path().join("worker.log"), vec![b'x'; 256 * 1024]).unwrap();
+        log.owner_admission(Event::Pass(Stage::Snapshot));
+        assert_eq!(
+            std::fs::metadata(root.path().join("worker.log.1"))
+                .unwrap()
+                .len(),
+            256 * 1024
+        );
+        let newest = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+        assert!(newest.len() < LINE_BYTES);
+        assert!(newest.contains("host.owner_admission"));
+        assert!(parse(newest.trim()).is_none());
+    }
 }

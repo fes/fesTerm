@@ -5834,6 +5834,38 @@ body, credentials or arbitrary native error strings may appear. Portable
 regressions cover delivery fences and rendering; native pane and new signed
 owner-default provisioning acceptance remain pending.
 
+HOSTSETUP-01 / HOST-04 / DIAG-01 / issue #816: for an explicitly approved fresh
+signed macOS HOST run, retain the first result and only the correlated
+`host.owner_admission` lines from `worker.log` / `worker.log.1` in the actual
+selected private HOST state directory. Preserve the worker PID, UTC timestamp,
+run/epoch and finite stage/outcome/category; do not copy registry, credential
+references, account IDs, arbitrary stderr or secret values. Capture begin lines
+as well as results: a worker that ends during a snapshot may have no final event.
+Existing Settings/About runtime-history readers intentionally skip this new line
+kind; GUI presentation remains missing. Distinguish owner-store open, native
+anchor missing/locked, malformed/rollback/identity verification, high-water
+update and true missing owner-only consent. Provider-owner with no enrolled
+keys alone is not missing owner-only consent. No permission grant, automatic
+retry, plaintext fallback or rollback-check bypass is authorized by a diagnostic.
+
+A separately authenticated helper that supports it can first run the read-only
+`owner-readiness --state-dir PATH --origin desktop` command for this exact selected
+installation (explicit `headless` is also accepted for that origin). Capture only
+its bounded status-only JSON: `scope=local_owner_admission`, never a HOST/listener
+readiness claim. Missing state must remain missing; old helpers may refuse the
+unsupported command. It uses current noninteractive native-vault reads only:
+locked/missing anchors and stale high-water refuse without initialization,
+prompt, write, fallback, manager/cloud action or service retry. Its successful
+exit only confirms diagnostic output. This is a separate attributed helper
+observation, not retrospective proof of the older helper's #816 cause.
+
+Before this native gate, root review must compose the diagnostic with the #795
+signed `1046b6ab` headless Keychain UI fence and noninteractive credential refresh
+path; the present main-based source alone lacks those changes. Keep the original
+#816 failed admission and separate-process metadata probe attributed separately:
+neither proves helper ACL access. Do not build or claim a new signed cohort or
+provider-owner Listening until that composition and actual native run pass.
+
 HOSTSETUP-01 / HOST-04 / issue #803 additionally requires an attributed native
 Enable capture and comparison with the protected backend state. Capture the
 first visible result before Refresh. If a status warning occurs, distinguish

@@ -2495,6 +2495,33 @@ and logging failures, scope clearing and presentation. Native HOST exit cause an
 longgevity remain separate qualification under issue #780; this increment adds
 observability rather than asserting that cause or fixing uptime.
 
+The pre-serve owner-admission follow-up uses a separate `host.owner_admission`
+worker-log line kind. Fixed stages distinguish opening the owner store, reading
+local policy and the native anchor, verifying policy/digest/identity, advancing
+lifecycle high-water and checking explicit owner-only consent. Each begin/result
+contains only the existing worker PID/UTC timestamp, run/epoch correlation and
+closed stage/outcome/category codes. Original reads, writes, failures and
+admission decisions are unchanged. Missing consent is distinct from a missing
+or locked anchor; a native-store refusal does not establish which Keychain ACL
+or unlock condition caused it.
+
+The strict runtime journal is unchanged. Existing runtime-log readers skip the
+new line kind; it is captured from the private log for diagnosis, with no new
+GUI presentation, readiness, retry or credential authority. The separate
+`owner-readiness --state-dir PATH --origin desktop|headless` helper command opens
+only existing selected native-vault state and uses the current noninteractive
+snapshot plus the same consent predicate. Its bounded schema-1 reply explicitly
+says `scope=local_owner_admission` and `status_only=true`; it contains only finite
+stage/outcome/category observations, not record fields or references. It never
+initializes, advances high-water, writes logs, touches a manager/network or
+falls back to another store. Exit success means evidence was produced, not that
+HOST is listening. Older helpers do not support this new command. Logging failure is
+best effort. Signed macOS qualification must separately compose and review the
+#795 deployed `1046b6ab` process-wide headless Keychain UI fence and its
+noninteractive credential refresh path, which this source base does not contain.
+This diagnostic change grants no per-item Keychain access and does not resolve
+#816 or qualify a new signed helper cohort.
+
 ### Validation impact: foreground native owner prompts
 
 Desktop `HOST-01`/`HOST-02` allow human-paced native vault prompts within a
