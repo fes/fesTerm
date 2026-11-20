@@ -45,7 +45,9 @@ failure refuses before observation. The shared native store and foreground GUI
 getters never install this fence. It changes only the diagnostic process, grants
 no item access, and retains per-query noninteractive matching.
 
-Validation impact: initializer ordering/refusal and setter/readback fixture logic,
+## Validation impact
+
+Initializer ordering/refusal and setter/readback fixture logic,
 plus isolated CLI invocation, cover the boundary without proving native credential
 access. Native prompt-free qualification remains separate; see
 [ADR 0084](0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
