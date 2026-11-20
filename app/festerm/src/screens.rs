@@ -7080,33 +7080,57 @@ mod tests {
         }
     }
 
-    #[test]
-    fn launcher_creation_cards_keep_type_order_at_feature_appropriate_widths() {
-        let width = if cfg!(feature = "experimental-dev-tunnels") {
-            1200.0
-        } else {
-            1000.0
-        };
-        let labels = [
+    fn expected_launcher_creation_labels() -> &'static [&'static str] {
+        &[
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
             #[cfg(feature = "experimental-dev-tunnels")]
             "Dev Tunnel · Experimental — Connect to a remote host",
+            #[cfg(feature = "experimental-dev-tunnels")]
+            "Dev Tunnels Files — Browse and transfer host files",
             "SFTP — Browse and transfer files",
             "Serial — Connect to a serial device",
             "Markdown — Open a Markdown workspace",
-        ];
-        for compact in [false, true] {
-            let mut harness = populated_launcher_harness(width, compact);
-            harness.run();
-            let first = harness.get_by_label(labels[0]).rect();
-            assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
-            let mut previous_right = first.left();
-            for label in labels {
-                let rect = harness.get_by_label(label).rect();
-                assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
-                assert!(rect.left() >= previous_right && rect.right() <= width);
-                previous_right = rect.right();
+        ]
+    }
+
+    #[test]
+    fn launcher_creation_cards_keep_type_order_at_feature_appropriate_widths() {
+        // Seven readable cards need a wider single row than the previous six.
+        // The narrower case must retain normal wrapping rather than shrink them.
+        let widths = if cfg!(feature = "experimental-dev-tunnels") {
+            [(1400.0, 7), (1200.0, 6)]
+        } else {
+            [(1000.0, 5), (860.0, 4)]
+        };
+        for (width, columns) in widths {
+            for compact in [false, true] {
+                let mut harness = populated_launcher_harness(width, compact);
+                harness.run();
+                let mut previous_bottom = None;
+                for row in expected_launcher_creation_labels().chunks(columns) {
+                    let first = harness.get_by_label(row[0]).rect();
+                    assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
+                    if let Some(bottom) = previous_bottom {
+                        assert!(
+                            first.top() > bottom,
+                            "wrapped cards must follow the prior row"
+                        );
+                    }
+                    let mut previous_right = first.left();
+                    for label in row {
+                        let rect = harness.get_by_label(label).rect();
+                        assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
+                        assert_eq!(rect.height(), first.height());
+                        assert!(
+                            rect.width() >= LAUNCH_CARD_MIN_WIDTH,
+                            "{label} became too narrow"
+                        );
+                        assert!(rect.left() >= previous_right && rect.right() <= width);
+                        previous_right = rect.right();
+                    }
+                    previous_bottom = Some(first.bottom());
+                }
             }
         }
     }
@@ -7354,11 +7378,27 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
-        for _ in 0..launch_cards {
+        let profile_label = "development — Local · cargo";
+        let mut keyboard_labels = expected_launcher_creation_labels().to_vec();
+        keyboard_labels.push(profile_label);
+        for label in expected_launcher_creation_labels() {
+            assert!(harness.query_by_label(label).is_some());
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
+            assert!(
+                harness.state().command.is_none(),
+                "navigation must not launch an item"
+            );
         }
+        let selected = harness.ctx.data(|data| {
+            data.get_temp::<LauncherState>(launcher_state_id(harness.state().tab_id))
+                .expect("rendered launcher retains its keyboard selection")
+                .selected
+        });
+        assert_eq!(
+            keyboard_labels[selected], profile_label,
+            "Enter must target the saved Local profile"
+        );
         harness.key_press(egui::Key::Enter);
         harness.run();
 
