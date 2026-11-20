@@ -116,10 +116,34 @@ service/admission pool belongs to each exact host grant: two streams total, eigh
 sequential request/job per stream, existing frame/chunk limits and 30-second
 deadlines. Pending native jobs retain their permits after timeout/disconnect.
 Do not create a pool per connection, queue unbounded work, or add per-chunk
-background workers. Current Desktop and headless configuration surfaces cannot
-review an existing nonempty file policy and must refuse to erase or re-enable it implicitly. The
-typed exact configure/Enable primitive is not a substitute for their future
-foreground file-consent UI. Top-level desktop/iOS file tabs and reuse of SFTP
+background workers. Desktop Remote access has a default-off file toggle, an
+explicit absolute folder, and read-only by default with an explicit write choice.
+Its foreground Enable review shows the exact folder and permissions. File edits
+require Disabled (or a new installation), and never turn on account-based access
+implicitly. Existing consent loads independently of unrelated draft edits and
+is preserved on ordinary Disable and update. Desktop-origin complete-snapshot
+consent applies reviewed settings and reserves one Enable ticket atomically in
+the same protected lease, with one epoch advance. Provisioned reuse requires
+unchanged settings; cancellation uses existing revocation/late-completion rules.
+Generic/headless surfaces still cannot erase or re-enable hidden file consent.
+
+Before Setup or stopped Update with nonempty file consent, the authenticated,
+hash-revalidated exact candidate helper must answer `capabilities` with strict
+schema 1 JSON containing only `schema` and boolean `host_files_v2: true`.
+The command is static and reads no state, credentials, settings or manager. True
+is compiled only with the actual Files backend. Existing native execution bounds
+(15 seconds, 64 KiB captured output) apply, with a further 1 KiB reply limit.
+The explicit read-only runner kills and waits for its child on timeout/output
+overflow, retaining worker ownership through reaping. The current synchronous
+receiver closes at the same absolute deadline observed by the worker; this is
+not independent early-cancellation support. Submitted native manager jobs keep
+their existing drain/completion behavior and are never killed by this mode.
+Absent/unknown/false/malformed support fails closed with finite guidance before
+ticket reservation, sign-in or replacement; cancellation and the complete scope
+are checked after the probe. Off consent makes no probe calls. Signature/version
+alone does not prove feature support; this probe grants neither access nor Ready.
+
+Top-level desktop/iOS file tabs and reuse of SFTP
 pane/transfer presentation follow separately; unsupported delete/rename/chmod
 actions remain unavailable. Restore such tabs disconnected, never with live authority.
 
@@ -193,4 +217,9 @@ preserve source ACLs, executable bits or extended metadata.
 - **HOST amendment native gates:** existing DT-05 signed consent/revocation and
   DT-07 desktop/iOS file integration remain pending. Source/duplex tests do not
   qualify native filesystem races, service shutdown, packaged UI or accessibility.
+- **Desktop consent tests:** default-off/exact preservation, explicit folder and
+  write review, disabled-only edits, cancellation/no dispatch, stale scope,
+  atomic Desktop-only ticket/re-enable/late completion, static actual helper
+  command, bounded old/malformed helper refusal and post-probe fences. DT-05
+  retains packaged signed-helper/UI and accessibility qualification.
 - **Coverage superseded:** None.

@@ -378,6 +378,45 @@ pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
 }
 
 impl TrustedStage {
+    /// This additive read-only probe is needed only for explicit file consent.
+    /// Same-version signatures authenticate bytes, not the features in them.
+    pub fn require_host_files(&self, settings: &crate::lifecycle::Settings) -> io::Result<()> {
+        self.require_host_files_with(settings, &super::native::NativeRunner)
+    }
+
+    fn require_host_files_with(
+        &self,
+        settings: &crate::lifecycle::Settings,
+        runner: &impl super::native::CommandRunner,
+    ) -> io::Result<()> {
+        if settings.filesystem.is_none() {
+            return Ok(());
+        }
+        self.revalidate()?;
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Reply {
+            schema: u16,
+            host_files_v2: bool,
+        }
+        let unsupported = || refused("host.file_helper_unsupported");
+        let reply = runner
+            .execute_read_only(&super::native::NativeRequest::Process {
+                tool: self.path.clone(),
+                args: vec!["capabilities".into()],
+            })
+            .map_err(|_| unsupported())?;
+        if !reply.success || reply.code != 0 || reply.stdout.len() > 1024 {
+            return Err(unsupported());
+        }
+        let reply: Reply = serde_json::from_slice(&reply.stdout).map_err(|_| unsupported())?;
+        if reply.schema != 1 || !reply.host_files_v2 {
+            return Err(unsupported());
+        }
+        self.revalidate()?;
+        Ok(())
+    }
+
     pub fn version(&self) -> &str {
         &self.release_version
     }
@@ -680,6 +719,91 @@ pub(super) fn same(left: &File, right: &File) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_file_helper_probe_is_exact_bounded_and_optional() {
+        use super::super::native::{CommandRunner, NativeOutput, NativeRequest};
+        struct Probe {
+            path: PathBuf,
+            output: Option<Vec<u8>>,
+            success: bool,
+            calls: std::cell::Cell<usize>,
+        }
+        impl CommandRunner for Probe {
+            fn execute_read_only(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+                self.execute(request)
+            }
+            fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+                assert_eq!(
+                    request,
+                    &NativeRequest::Process {
+                        tool: self.path.clone(),
+                        args: vec!["capabilities".into()]
+                    }
+                );
+                self.calls.set(self.calls.get() + 1);
+                let stdout = self
+                    .output
+                    .clone()
+                    .ok_or_else(|| io::Error::other("private-path-token-canary"))?;
+                Ok(NativeOutput {
+                    success: self.success,
+                    code: if self.success { 0 } else { 1 },
+                    stdout,
+                })
+            }
+        }
+        let root = storage::private_test_directory();
+        let stage = fixture(root.path());
+        let mut settings = crate::lifecycle::Settings {
+            filesystem: None,
+            ordinary_access: crate::lifecycle::OrdinaryAccess::ProviderOwner,
+            friendly_name: "Probe fixture".into(),
+            allow_creation: false,
+            startup: crate::lifecycle::Startup::Manual,
+        };
+        let mut probe = Probe {
+            path: stage.path().into(),
+            output: None,
+            success: false,
+            calls: std::cell::Cell::new(0),
+        };
+        stage.require_host_files_with(&settings, &probe).unwrap();
+        assert_eq!(probe.calls.get(), 0);
+        settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: root.path().into(),
+            write: false,
+        });
+        for output in [
+            None,
+            Some(Vec::new()),
+            Some(vec![b'x'; 1025]),
+            Some(br#"{"schema":1,"host_files_v2":false}"#.to_vec()),
+            Some(br#"{"schema":2,"host_files_v2":true}"#.to_vec()),
+            Some(br#"{"schema":1,"host_files_v2":true,"future":true}"#.to_vec()),
+            Some(br#"{"schema":1}"#.to_vec()),
+            Some(b"private-path-token-canary".to_vec()),
+        ] {
+            probe.output = output;
+            probe.success = true;
+            assert_eq!(
+                stage
+                    .require_host_files_with(&settings, &probe)
+                    .unwrap_err()
+                    .to_string(),
+                "host.file_helper_unsupported"
+            );
+        }
+        probe.output = Some(br#"{"schema":1,"host_files_v2":true}"#.to_vec());
+        probe.success = false;
+        assert!(stage.require_host_files_with(&settings, &probe).is_err());
+        probe.success = true;
+        stage.require_host_files_with(&settings, &probe).unwrap();
+        assert_eq!(probe.calls.get(), 10);
+        std::fs::write(stage.path(), b"replaced signed helper").unwrap();
+        assert!(stage.require_host_files_with(&settings, &probe).is_err());
+        assert_eq!(probe.calls.get(), 10, "changed helper must never execute");
+    }
 
     #[test]
     fn microsoft_resources_are_pinned_but_not_first_party_task_executables() {

@@ -68,7 +68,7 @@ fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Fai
         if !matches!(snapshot.phase, Phase::Disabled | Phase::Provisioned) {
             return Err(Failure::Reconciliation);
         }
-        if snapshot.settings.filesystem.is_some() {
+        if snapshot.phase == Phase::Provisioned && snapshot.settings != request.draft.settings() {
             return Err(Failure::FileAccessReview);
         }
         if snapshot
@@ -158,7 +158,9 @@ fn failure(error: io::Error) -> Failure {
     // Error details can contain credential diagnostics or resource URLs. Only
     // classify them; never forward native/cloud error strings to a widget.
     let detail = error.to_string();
-    if detail.contains("vault")
+    if detail == "host.file_helper_unsupported" {
+        Failure::FileHelperUnsupported
+    } else if detail.contains("vault")
         || detail.contains("native_store")
         || detail.contains("secure_store")
     {

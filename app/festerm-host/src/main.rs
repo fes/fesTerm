@@ -10,6 +10,8 @@ use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::Exit
 const HELP: &str = "\
 festerm-host — ADR 0084 headless lifecycle boundary
 
+capabilities
+    Read static compiled helper capabilities only; no state, account or service is accessed.
 configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in] [--ordinary-access owner-only|provider-owner]
     Save disabled host-local settings only; no sign-in, service or shell is started.
 status --state-dir PATH
@@ -99,6 +101,15 @@ impl std::error::Error for ManualCleanupRequired {}
 fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let mut args = args.into_iter();
     let command = args.next().ok_or_else(invalid)?;
+    if command == "capabilities" {
+        if args.next().is_some() {
+            return Err(invalid());
+        }
+        return Ok(format!(
+            "{{\"schema\":1,\"host_files_v2\":{}}}\n",
+            cfg!(feature = "owner-routing")
+        ));
+    }
     if command == "--help" || command == "-h" {
         if args.next().is_some() {
             return Err(invalid());
@@ -875,6 +886,7 @@ fn diagnostic(error: &io::Error) -> &'static str {
     }
     match error.to_string().as_str() {
         "host.file_access_review_required" => "host.file_access_review_required; this command cannot review existing file access. Current settings were retained; disable remote access and obtain a file-access consent review before reconfiguration.",
+        "host.file_helper_unsupported" => "host.file_helper_unsupported; obtain a matching signed helper with remote file access support before setup or replacement; current file consent was retained",
         "host.filesystem_root_unavailable" | "host.filesystem_preparation_failed" | "host.filesystem_preparation_timed_out" => "host.filesystem_root_unavailable; the file folder could not be prepared. Review its location and permissions; no permissions were changed. Keep remote access off until the folder is available or the file policy is explicitly reviewed.",
         "host.migration_binding_uncertain_resume_same_operation" =>
             "host.migration_binding_uncertain_resume_same_operation; preserve the exact journal and legacy session; resume the same operation or request exact rollback, never recreate",

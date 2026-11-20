@@ -362,7 +362,7 @@ impl Store {
     /// fresh configuration read. Changed settings require renewed confirmation.
     /// This is not Ready or permission to stop/restart a legacy generation.
     pub fn request_enable(&self, approved_settings: &Settings) -> io::Result<Ticket> {
-        self.request_enable_current(None, approved_settings)
+        self.request_enable_current(None, approved_settings, false)
     }
 
     /// Atomically bind foreground consent and edited settings to the exact
@@ -372,16 +372,31 @@ impl Store {
         expected: &Snapshot,
         approved_settings: &Settings,
     ) -> io::Result<Ticket> {
-        self.request_enable_current(Some(expected), approved_settings)
+        self.request_enable_current(Some(expected), approved_settings, false)
+    }
+
+    /// Complete Desktop foreground review, including the private file folder
+    /// and permissions. Apply only to this exact disabled Desktop installation
+    /// and reserve its Enable ticket in the same protected transaction.
+    pub fn request_desktop_enable_if_current(
+        &self,
+        expected: &Snapshot,
+        approved_settings: &Settings,
+    ) -> io::Result<Ticket> {
+        self.request_enable_current(Some(expected), approved_settings, true)
     }
 
     fn request_enable_current(
         &self,
         expected: Option<&Snapshot>,
         approved_settings: &Settings,
+        desktop_file_review: bool,
     ) -> io::Result<Ticket> {
         approved_settings.validate()?;
         self.change(|record| {
+            if desktop_file_review && (record.origin != Origin::Desktop || expected.is_none()) {
+                return Err(refused("host.desktop_consent_required"));
+            }
             if expected.is_some_and(|expected| expected != record) {
                 return Err(refused("host.foreground_scope_changed"));
             }
@@ -389,7 +404,7 @@ impl Store {
             if record.phase != Phase::Disabled {
                 return Err(refused("host.reconcile_before_enable"));
             }
-            if record.settings.filesystem != approved_settings.filesystem {
+            if !desktop_file_review && record.settings.filesystem != approved_settings.filesystem {
                 return Err(refused("File access changed. Review the file folder and permissions while remote access is disabled, then enable again."));
             }
             if expected.is_some() {
@@ -726,6 +741,83 @@ mod tests {
             .is_err());
         assert!(store.revoke_if_current(&observed).is_err());
         assert_eq!(store.snapshot().unwrap(), current);
+    }
+
+    #[test]
+    fn host_desktop_file_review_reserves_once_and_retains_revoked_late_completion() {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("desktop"), Origin::Desktop, settings()).unwrap();
+        let original = store.snapshot().unwrap();
+        let mut approved = original.settings.clone();
+        approved.ordinary_access = OrdinaryAccess::ProviderOwner;
+        approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: root.path().into(),
+            write: true,
+        });
+        let ticket = store
+            .request_desktop_enable_if_current(&original, &approved)
+            .unwrap();
+        let reserved = store.snapshot().unwrap();
+        assert_eq!(reserved.epoch, original.epoch + 1);
+        assert_eq!(reserved.settings, approved);
+        assert_eq!(reserved.pending_ticket(), Some(&ticket));
+        assert_eq!(ticket.approved_settings(), &approved);
+        assert!(store
+            .request_desktop_enable_if_current(&original, &approved)
+            .is_err());
+        assert!(store
+            .request_desktop_enable_if_current(&reserved, &approved)
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), reserved);
+        store.revoke().unwrap();
+        assert_eq!(
+            store.record_provisioned(&ticket, binding()).unwrap(),
+            Phase::StopRequested
+        );
+        let stopped = store.snapshot().unwrap();
+        assert_eq!(stopped.settings.filesystem, approved.filesystem);
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let disabled = store.snapshot().unwrap();
+        approved.filesystem.as_mut().unwrap().write = false;
+        let next = store
+            .request_desktop_enable_if_current(&disabled, &approved)
+            .unwrap();
+        assert_eq!(next.epoch(), disabled.epoch + 1);
+        assert_eq!(next.approved_settings(), &approved);
+    }
+
+    #[test]
+    fn host_desktop_file_review_rejects_headless_stale_and_invalid_without_mutation() {
+        for origin in [Origin::Headless, Origin::Desktop] {
+            let root = storage::private_test_directory();
+            let store = Store::create(&root.path().join("host"), origin, settings()).unwrap();
+            let original = store.snapshot().unwrap();
+            let mut approved = original.settings.clone();
+            approved.ordinary_access = OrdinaryAccess::ProviderOwner;
+            approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+                root: root.path().into(),
+                write: false,
+            });
+            if origin == Origin::Headless {
+                assert!(store
+                    .request_desktop_enable_if_current(&original, &approved)
+                    .is_err());
+            } else {
+                let mut stale = original.clone();
+                stale.settings.friendly_name = "Unobserved editor".into();
+                assert!(store
+                    .request_desktop_enable_if_current(&stale, &approved)
+                    .is_err());
+                approved.ordinary_access = OrdinaryAccess::OwnerOnly;
+                assert!(store
+                    .request_desktop_enable_if_current(&original, &approved)
+                    .is_err());
+            }
+            assert_eq!(store.snapshot().unwrap(), original);
+        }
     }
 
     #[test]

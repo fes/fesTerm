@@ -2065,6 +2065,7 @@ mod tests {
         secrets: MemorySecretStore,
         events: std::cell::RefCell<Vec<&'static str>>,
         fail_install: std::cell::Cell<bool>,
+        desktop_vault: Option<std::sync::Arc<crate::enrollment::tests::Vault>>,
     }
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
@@ -2115,6 +2116,12 @@ mod tests {
             store: &'a Store,
         ) -> io::Result<crate::enrollment::OwnerEnrollment<'a>> {
             self.events.borrow_mut().push("owners");
+            if let Some(vault) = &self.desktop_vault {
+                return Ok(crate::enrollment::tests::fixture_owners(
+                    store,
+                    vault.clone(),
+                ));
+            }
             store.owner_enrollment_with_storage(
                 crate::enrollment::OwnerStorage::HeadlessProtectedFile,
             )
@@ -2131,11 +2138,13 @@ mod tests {
             let snapshot = store.snapshot()?;
             assert_eq!(snapshot.phase, Phase::Provisioned);
             assert_eq!(snapshot.epoch, epoch);
-            let policy = store
-                .owner_enrollment_with_storage(
+            let owners = match &self.desktop_vault {
+                Some(vault) => crate::enrollment::tests::fixture_owners(store, vault.clone()),
+                None => store.owner_enrollment_with_storage(
                     crate::enrollment::OwnerStorage::HeadlessProtectedFile,
-                )?
-                .snapshot()?;
+                )?,
+            };
+            let policy = owners.snapshot()?;
             assert_eq!(
                 policy.binding.host.host.as_str(),
                 snapshot.binding.as_ref().unwrap().host_id
@@ -2160,6 +2169,7 @@ mod tests {
             secrets,
             events: Default::default(),
             fail_install: Default::default(),
+            desktop_vault: None,
         }
     }
 
@@ -2262,8 +2272,23 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_desktop_scoped_setup_reserves_original_ticket_and_refuses_stale_consent() {
         for stale in [false, true] {
-            let (root, store, secrets) = fixture();
-            let boundary = controller_boundary(&store, secrets);
+            let root = storage::private_test_directory();
+            let store = Store::create(
+                &root.path().join("host"),
+                Origin::Desktop,
+                crate::lifecycle::Settings {
+                    filesystem: None,
+                    ordinary_access: Default::default(),
+                    friendly_name: "Desktop fixture".into(),
+                    allow_creation: false,
+                    startup: crate::lifecycle::Startup::Manual,
+                },
+            )
+            .unwrap();
+            let (_vault_root, _vault_store, vault) =
+                crate::enrollment::tests::setup_origin(Origin::Desktop);
+            let mut boundary = controller_boundary(&store, MemorySecretStore::new());
+            boundary.desktop_vault = Some(vault);
             let stage = crate::services::fixture_stage(&root.path().join("stage"));
             let consent = crate::controller::SetupConsent {
                 expected: store.snapshot().unwrap(),
@@ -2309,6 +2334,41 @@ mod tests {
                 assert!(!root.path().join("host/daemon").exists());
             }
         }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test]
+    async fn host_controller_headless_setup_cannot_reenable_hidden_file_consent() {
+        let (root, store, secrets) = fixture();
+        let mut settings = store.snapshot().unwrap().settings;
+        settings.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
+        settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: root.path().to_path_buf(),
+            write: false,
+        });
+        store.configure(settings).unwrap();
+        let before = store.snapshot().unwrap();
+        let boundary = controller_boundary(&store, secrets);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        let error = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| panic!("no hidden-policy sign-in"),
+            &boundary,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), "host.file_access_review_required");
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(boundary.events.borrow().is_empty());
+        assert_eq!(boundary.network.state.borrow().creates, 0);
+        assert!(!root.path().join("host").join(HOST_IDENTITY_FILE).exists());
     }
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]

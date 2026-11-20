@@ -941,7 +941,7 @@ fn desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_sc
 }
 
 #[test]
-fn desktop_remote_access_file_consent_blocks_enable_before_acquisition_or_effects() {
+fn desktop_remote_access_active_file_consent_changes_block_before_acquisition_or_effects() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop-files");
     let mut settings = Draft::default().settings();
@@ -950,6 +950,21 @@ fn desktop_remote_access_file_consent_blocks_enable_before_acquisition_or_effect
         write: false,
     });
     let store = Store::create(&path, Origin::Desktop, settings).unwrap();
+    let ticket = store
+        .request_enable(&store.snapshot().unwrap().settings)
+        .unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            festerm_host_setup::lifecycle::Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "fixture-cluster/fixture-tunnel".into(),
+                cloud_incarnation: "fixture-incarnation".into(),
+                host_key_fingerprint: "fixture-pin".into(),
+            },
+        )
+        .unwrap();
     let before = store.snapshot().unwrap();
     let mut work = request(
         &path,
@@ -961,8 +976,10 @@ fn desktop_remote_access_file_consent_blocks_enable_before_acquisition_or_effect
         work,
         &CancellationToken::new(),
         mpsc::sync_channel(1).0,
-        |_, _| -> Result<(), Failure> { panic!("unreviewed file consent cannot acquire a bundle") },
-        |_, _| panic!("unreviewed file consent cannot publish a bundle"),
+        |_, _| -> Result<(), Failure> {
+            panic!("active file consent changes cannot acquire a bundle")
+        },
+        |_, _| panic!("active file consent changes cannot publish a bundle"),
     );
     assert!(matches!(result, Err(Failure::FileAccessReview)));
     assert_eq!(store.snapshot().unwrap(), before);
@@ -970,4 +987,59 @@ fn desktop_remote_access_file_consent_blocks_enable_before_acquisition_or_effect
     assert!(!Failure::FileAccessReview
         .message()
         .contains(root.path().to_str().unwrap()));
+}
+
+#[test]
+fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_exact_active_reuse() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop-files");
+    let draft = Draft {
+        files: FileAccessDraft {
+            enabled: true,
+            root: root.path().to_path_buf(),
+            write: false,
+        },
+        account: "42".into(),
+        ..Draft::default()
+    };
+    let store = Store::create(&path, Origin::Desktop, draft.settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    let mut work = request(
+        &path,
+        Operation::Enable,
+        Scope::Present(before.clone().into()),
+    );
+    work.draft = draft.clone();
+    work.draft.files.write = true;
+    assert!(enable_scope(&work, &CancellationToken::new()).is_ok());
+    assert_eq!(
+        store.snapshot().unwrap(),
+        before,
+        "preflight is not consent"
+    );
+    let ticket = store.request_enable(&before.settings).unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            festerm_host_setup::lifecycle::Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "fixture-cluster/fixture-tunnel".into(),
+                cloud_incarnation: "fixture-incarnation".into(),
+                host_key_fingerprint: "fixture-pin".into(),
+            },
+        )
+        .unwrap();
+    let active = store.snapshot().unwrap();
+    work.expected = Scope::Present(active.clone().into());
+    assert_eq!(
+        enable_scope(&work, &CancellationToken::new()),
+        Err(Failure::FileAccessReview)
+    );
+    work.draft = draft;
+    assert!(enable_scope(&work, &CancellationToken::new()).is_ok());
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert_eq!(enable_scope(&work, &cancel), Err(Failure::Cancelled));
+    assert_eq!(store.snapshot().unwrap(), active);
 }
