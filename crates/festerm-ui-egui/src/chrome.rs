@@ -723,6 +723,101 @@ pub fn pane_tab_strip_target(context: &egui::Context) -> Option<Rect> {
     context.data(|data| data.get_temp(id))
 }
 
+const RESIZE_MARGIN: f32 = 6.0;
+const RESIZE_CORNER_SIZE: f32 = 16.0;
+
+fn resize_border_regions(
+    rect: Rect,
+) -> Option<[(Rect, ResizeDirection, CursorIcon, &'static str); 8]> {
+    if !rect.is_finite()
+        || rect.width() <= 2.0 * RESIZE_CORNER_SIZE
+        || rect.height() <= 2.0 * RESIZE_CORNER_SIZE
+    {
+        return None;
+    }
+    // Corner squares stay disjoint, with thin strips between them.
+    Some([
+        (
+            Rect::from_min_max(
+                rect.left_top(),
+                rect.left_top() + vec2(RESIZE_CORNER_SIZE, RESIZE_CORNER_SIZE),
+            ),
+            ResizeDirection::NorthWest,
+            CursorIcon::ResizeNorthWest,
+            "chrome_resize_nw",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_top() - vec2(RESIZE_CORNER_SIZE, 0.0),
+                rect.right_top() + vec2(0.0, RESIZE_CORNER_SIZE),
+            ),
+            ResizeDirection::NorthEast,
+            CursorIcon::ResizeNorthEast,
+            "chrome_resize_ne",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_bottom() - vec2(0.0, RESIZE_CORNER_SIZE),
+                rect.left_bottom() + vec2(RESIZE_CORNER_SIZE, 0.0),
+            ),
+            ResizeDirection::SouthWest,
+            CursorIcon::ResizeSouthWest,
+            "chrome_resize_sw",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_bottom() - vec2(RESIZE_CORNER_SIZE, RESIZE_CORNER_SIZE),
+                rect.right_bottom(),
+            ),
+            ResizeDirection::SouthEast,
+            CursorIcon::ResizeSouthEast,
+            "chrome_resize_se",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_top() + vec2(RESIZE_CORNER_SIZE, 0.0),
+                rect.right_top() + vec2(-RESIZE_CORNER_SIZE, RESIZE_MARGIN),
+            ),
+            ResizeDirection::North,
+            CursorIcon::ResizeNorth,
+            "chrome_resize_n",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_bottom() + vec2(RESIZE_CORNER_SIZE, -RESIZE_MARGIN),
+                rect.right_bottom() + vec2(-RESIZE_CORNER_SIZE, 0.0),
+            ),
+            ResizeDirection::South,
+            CursorIcon::ResizeSouth,
+            "chrome_resize_s",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_top() + vec2(0.0, RESIZE_CORNER_SIZE),
+                rect.left_bottom() + vec2(RESIZE_MARGIN, -RESIZE_CORNER_SIZE),
+            ),
+            ResizeDirection::West,
+            CursorIcon::ResizeWest,
+            "chrome_resize_w",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_top() + vec2(-RESIZE_MARGIN, RESIZE_CORNER_SIZE),
+                rect.right_bottom() + vec2(0.0, -RESIZE_CORNER_SIZE),
+            ),
+            ResizeDirection::East,
+            CursorIcon::ResizeEast,
+            "chrome_resize_e",
+        ),
+    ])
+}
+
+fn window_resize_disabled(context: &egui::Context) -> bool {
+    context.input(|input| {
+        input.viewport().fullscreen.unwrap_or(false) || input.viewport().maximized.unwrap_or(false)
+    })
+}
+
 /// Thin, invisible hit zones along the window's edges/corners that forward
 /// drag starts to the platform window via [`egui::ViewportCommand::BeginResize`].
 ///
@@ -737,104 +832,68 @@ pub fn pane_tab_strip_target(context: &egui::Context) -> Option<Rect> {
 /// with no application-state implications).
 ///
 /// No-op while the window is fullscreen or maximized (there is no edge to
-/// grab), and only meaningful where native decorations are off, so callers
-/// should skip it on macOS.
+/// grab). Callers retain native macOS resize gesture ownership.
+/// Gesture ownership for undecorated desktop windows only. Cursor feedback is
+/// applied separately after the complete application UI has selected its cursor.
 pub fn handle_resize_border(ui: &Ui) {
-    let fullscreen = ui.ctx().input(|i| i.viewport().fullscreen).unwrap_or(false);
-    let maximized = ui.ctx().input(|i| i.viewport().maximized).unwrap_or(false);
-    if fullscreen || maximized {
+    if window_resize_disabled(ui.ctx()) {
         return;
     }
-
-    let rect = ui.max_rect();
-    const RESIZE_MARGIN: f32 = 6.0;
-    const CORNER_SIZE: f32 = 16.0;
-
-    // Corners get larger square hit zones so diagonal resizing is easy to
-    // grab; edges get thin strips spanning between the corners.
-    let regions = [
-        (
-            Rect::from_min_max(
-                rect.left_top(),
-                rect.left_top() + vec2(CORNER_SIZE, CORNER_SIZE),
-            ),
-            ResizeDirection::NorthWest,
-            CursorIcon::ResizeNorthWest,
-            "chrome_resize_nw",
-        ),
-        (
-            Rect::from_min_max(
-                rect.right_top() - vec2(CORNER_SIZE, 0.0),
-                rect.right_top() + vec2(0.0, CORNER_SIZE),
-            ),
-            ResizeDirection::NorthEast,
-            CursorIcon::ResizeNorthEast,
-            "chrome_resize_ne",
-        ),
-        (
-            Rect::from_min_max(
-                rect.left_bottom() - vec2(0.0, CORNER_SIZE),
-                rect.left_bottom() + vec2(CORNER_SIZE, 0.0),
-            ),
-            ResizeDirection::SouthWest,
-            CursorIcon::ResizeSouthWest,
-            "chrome_resize_sw",
-        ),
-        (
-            Rect::from_min_max(
-                rect.right_bottom() - vec2(CORNER_SIZE, CORNER_SIZE),
-                rect.right_bottom(),
-            ),
-            ResizeDirection::SouthEast,
-            CursorIcon::ResizeSouthEast,
-            "chrome_resize_se",
-        ),
-        (
-            Rect::from_min_max(
-                rect.left_top() + vec2(CORNER_SIZE, 0.0),
-                rect.right_top() + vec2(-CORNER_SIZE, RESIZE_MARGIN),
-            ),
-            ResizeDirection::North,
-            CursorIcon::ResizeNorth,
-            "chrome_resize_n",
-        ),
-        (
-            Rect::from_min_max(
-                rect.left_bottom() + vec2(CORNER_SIZE, -RESIZE_MARGIN),
-                rect.right_bottom() + vec2(-CORNER_SIZE, 0.0),
-            ),
-            ResizeDirection::South,
-            CursorIcon::ResizeSouth,
-            "chrome_resize_s",
-        ),
-        (
-            Rect::from_min_max(
-                rect.left_top() + vec2(0.0, CORNER_SIZE),
-                rect.left_bottom() + vec2(RESIZE_MARGIN, -CORNER_SIZE),
-            ),
-            ResizeDirection::West,
-            CursorIcon::ResizeWest,
-            "chrome_resize_w",
-        ),
-        (
-            Rect::from_min_max(
-                rect.right_top() + vec2(-RESIZE_MARGIN, CORNER_SIZE),
-                rect.right_bottom() + vec2(0.0, -CORNER_SIZE),
-            ),
-            ResizeDirection::East,
-            CursorIcon::ResizeEast,
-            "chrome_resize_e",
-        ),
-    ];
-
-    for (region_rect, direction, cursor_icon, id) in regions {
+    let Some(regions) = resize_border_regions(ui.max_rect()) else {
+        return;
+    };
+    for (region_rect, direction, _, id) in regions {
         let response = ui.interact(region_rect, ui.id().with(id), Sense::click_and_drag());
-        if response.hovered() || response.dragged() {
-            ui.ctx().set_cursor_icon(cursor_icon);
-        }
         if response.drag_started_by(PointerButton::Primary) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+        }
+    }
+}
+
+/// Final hover feedback only: no interaction registration or resize command.
+/// Native decorations retain their gesture ownership and control hit testing;
+/// their corner feedback is limited to the actual thin window edge, rather
+/// than the larger interior corner squares used for undecorated gestures.
+pub fn set_resize_border_cursor(ui: &Ui, window: Rect, native_decorations: bool) {
+    let context = ui.ctx();
+    if window_resize_disabled(context) {
+        return;
+    }
+    let Some(pointer) = context.pointer_hover_pos() else {
+        return;
+    };
+    let Some(regions) = resize_border_regions(window) else {
+        return;
+    };
+    if native_decorations && window.shrink(RESIZE_MARGIN).contains(pointer) {
+        return;
+    }
+    if let Some((_, _, cursor, id)) = regions
+        .into_iter()
+        .find(|(region, _, _, _)| region.contains(pointer))
+    {
+        if native_decorations {
+            context.set_cursor_icon(cursor);
+            return;
+        }
+        let resize_id = ui.id().with(id);
+        let hovered = context
+            .interaction_snapshot(|snapshot| snapshot.hovered.iter().copied().collect::<Vec<_>>());
+        // egui can hover a click-only button AND the resize drag region below
+        // it. Do not replace the cursor of the control that owns that click.
+        let control_owns_click = hovered.into_iter().any(|other| {
+            other != resize_id
+                && context
+                    .read_response(other)
+                    .is_some_and(|response| response.sense.senses_click())
+        });
+        if !control_owns_click
+            && context
+                .read_response(resize_id)
+                .is_some_and(|response| response.hovered() || response.dragged())
+        {
+            context.set_cursor_icon(cursor);
         }
     }
 }
@@ -1076,6 +1135,278 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     use super::*;
+
+    #[test]
+    fn window_resize_border_keeps_undecorated_drag_and_native_gesture_ownership_separate() {
+        for native in [false, true] {
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 600.0))
+                .build_ui_state(
+                    move |ui, _: &mut ()| {
+                        let window = ui.ctx().content_rect();
+                        let mut root = ui.new_child(
+                            UiBuilder::new().id_salt("owned-drag-root").max_rect(window),
+                        );
+                        root.set_clip_rect(window);
+                        if !native {
+                            handle_resize_border(&root);
+                        }
+                        set_resize_border_cursor(&root, window, native);
+                    },
+                    (),
+                );
+            harness.run();
+            let began = |harness: &Harness<'_, ()>| {
+                harness.output().viewport_output.values().any(|viewport| {
+                    viewport.commands.iter().any(|command| {
+                        matches!(
+                            command,
+                            egui::ViewportCommand::BeginResize(ResizeDirection::West)
+                        )
+                    })
+                })
+            };
+            let from = egui::pos2(1.0, 300.0);
+            harness.event(egui::Event::PointerMoved(from));
+            harness.step();
+            harness.event(egui::Event::PointerButton {
+                pos: from,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            let mut seen = began(&harness);
+            let to = from + vec2(12.0, 0.0);
+            harness.event(egui::Event::PointerMoved(to));
+            harness.step();
+            seen |= began(&harness);
+            harness.event(egui::Event::PointerButton {
+                pos: to,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            seen |= began(&harness);
+            assert_eq!(
+                seen, !native,
+                "native decorations keep OS gesture ownership"
+            );
+        }
+    }
+
+    #[test]
+    fn window_resize_cursor_native_decorations_preserve_interiors_and_small_geometry() {
+        let window = Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0));
+        let cases = [
+            (
+                window,
+                Some(egui::pos2(1.0, 1.0)),
+                CursorIcon::ResizeNorthWest,
+            ),
+            (
+                window,
+                Some(egui::pos2(12.0, 12.0)),
+                CursorIcon::PointingHand,
+            ),
+            (
+                window,
+                Some(egui::pos2(12.0, 22.0)),
+                CursorIcon::PointingHand,
+            ),
+            (
+                window,
+                Some(egui::pos2(40.0, 22.0)),
+                CursorIcon::PointingHand,
+            ),
+            (
+                window,
+                Some(egui::pos2(65.0, 22.0)),
+                CursorIcon::PointingHand,
+            ),
+            (
+                window,
+                Some(egui::pos2(400.0, 300.0)),
+                CursorIcon::PointingHand,
+            ),
+            (window, None, CursorIcon::PointingHand),
+            (
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(16.0, 16.0)),
+                Some(egui::pos2(1.0, 1.0)),
+                CursorIcon::PointingHand,
+            ),
+            (
+                Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO),
+                Some(egui::Pos2::ZERO),
+                CursorIcon::PointingHand,
+            ),
+            (
+                Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(300.0, 200.0)),
+                Some(egui::pos2(319.0, 130.0)),
+                CursorIcon::ResizeEast,
+            ),
+        ];
+        for (window, pointer, expected) in cases {
+            let context = egui::Context::default();
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0))),
+                events: pointer.map(egui::Event::PointerMoved).into_iter().collect(),
+                ..Default::default()
+            };
+            let mut output = context.run_ui(input, |ui| {
+                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                set_resize_border_cursor(ui, window, true);
+            });
+            assert_eq!(
+                output.platform_output.cursor_icon, expected,
+                "window={window:?} pointer={pointer:?}"
+            );
+            assert!(!output.viewport_output.values().any(|viewport| viewport
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::BeginResize(_)))));
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn window_resize_cursor_keeps_owned_edges_over_background_and_disabled_controls() {
+        #[derive(Default)]
+        struct State {
+            resize_owned_before_cursor: bool,
+        }
+        for disabled_close in [false, true] {
+            let mut harness = Harness::builder()
+                .with_size(vec2(800.0, 600.0))
+                .build_ui_state(
+                    move |ui, state: &mut State| {
+                        let window = ui.ctx().content_rect();
+                        let mut root = ui.new_child(
+                            UiBuilder::new()
+                                .id_salt("owned-edge-with-background")
+                                .max_rect(window),
+                        );
+                        root.set_clip_rect(window);
+                        // The resize interaction is above a genuine click+drag background.
+                        root.interact(
+                            window,
+                            root.id().with("window-background"),
+                            Sense::click_and_drag(),
+                        );
+                        handle_resize_border(&root);
+                        if disabled_close {
+                            let controls_rect = Rect::from_min_size(
+                                window.min + vec2(0.0, CHROME_TOP_INSET),
+                                vec2(window.width(), CHIP_HEIGHT_FULL),
+                            );
+                            root.scope_builder(
+                                UiBuilder::new()
+                                    .max_rect(controls_rect)
+                                    .layout(Layout::right_to_left(Align::Center)),
+                                |ui| {
+                                    ui.disable();
+                                    ui.add_space(CHROME_SIDE_INSET);
+                                    controls::paint_close_icon(ui);
+                                },
+                            );
+                        }
+                        state.resize_owned_before_cursor = root
+                            .ctx()
+                            .read_response(root.id().with("chrome_resize_ne"))
+                            .is_some_and(|response| response.hovered() || response.dragged());
+                        set_resize_border_cursor(&root, window, false);
+                    },
+                    State::default(),
+                );
+            harness.run();
+            let point = egui::pos2(788.0, 15.0);
+            if disabled_close {
+                assert!(harness.get_by_label("Close window").rect().contains(point));
+            }
+            harness.event(egui::Event::PointerMoved(point));
+            harness.run();
+            assert!(harness.state().resize_owned_before_cursor, "fixture must prove actual resize ownership before cursor feedback; disabled={disabled_close}");
+            assert_eq!(harness.output().platform_output.cursor_icon, CursorIcon::ResizeNorthEast, "background/disabled control cannot suppress an otherwise-owned resize; disabled={disabled_close}");
+        }
+    }
+
+    #[test]
+    fn window_resize_cursor_preserves_overlapping_real_close_control_ownership() {
+        #[derive(Default)]
+        struct State {
+            control_cursor: CursorIcon,
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    let window = ui.ctx().content_rect();
+                    let mut root =
+                        ui.new_child(UiBuilder::new().id_salt("owned-edge-root").max_rect(window));
+                    root.set_clip_rect(window);
+                    handle_resize_border(&root);
+                    let controls_rect = Rect::from_min_size(
+                        window.min + vec2(0.0, CHROME_TOP_INSET),
+                        vec2(window.width(), CHIP_HEIGHT_FULL),
+                    );
+                    root.scope_builder(
+                        UiBuilder::new()
+                            .max_rect(controls_rect)
+                            .layout(Layout::right_to_left(Align::Center)),
+                        |ui| {
+                            ui.add_space(CHROME_SIDE_INSET);
+                            controls::paint_close_icon(ui);
+                        },
+                    );
+                    state.control_cursor = root.ctx().output(|output| output.cursor_icon);
+                    set_resize_border_cursor(&root, window, false);
+                },
+                State::default(),
+            );
+        harness.run();
+        let close = harness.get_by_label("Close window").rect();
+        let corner = Rect::from_min_max(egui::pos2(784.0, 0.0), egui::pos2(800.0, 16.0));
+        let overlap = close.intersect(corner);
+        assert!(
+            overlap.is_positive(),
+            "production close layout must overlap the old corner square: {close:?}"
+        );
+        let point = overlap.center();
+        harness.event(egui::Event::PointerMoved(point));
+        harness.run();
+        assert_eq!(
+            harness.output().platform_output.cursor_icon,
+            harness.state().control_cursor,
+            "a topmost Close control keeps its own cursor, not a resize promise"
+        );
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            // Viewport commands are one-shot output; inspect the event frame.
+            harness.step();
+        }
+        assert!(harness
+            .output()
+            .viewport_output
+            .values()
+            .any(|output| output
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::Close))));
+        assert!(!harness
+            .output()
+            .viewport_output
+            .values()
+            .any(|output| output
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::BeginResize(_)))));
+    }
 
     #[test]
     fn a_document_state_is_three_different_shapes_not_three_colors() {

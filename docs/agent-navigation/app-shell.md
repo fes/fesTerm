@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "fca906db90a32d8c0575c2e14f07ef1288e9115ec95da69e3ea84d376778dece"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "78a7af4d3165b5ed665fce2be60d76549f6daf501fcd6186f7960db8801f3c12"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,7 +29,7 @@ Caveats:
 Use for: Frame logic, close requests, and focused pane rendering
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome, overlays, and active pane surfaces
+- [`ui_content`](../../app/festerm/src/app.rs) — Builds UI; applies border cursor feedback last
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render

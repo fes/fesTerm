@@ -7272,6 +7272,7 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     pub(crate) fn ui_content(&mut self, ui: &mut egui::Ui) {
+        let window_rect = ui.max_rect();
         self.sync_automation_preferences();
         self.image_budget = crate::markdown_images::ImageMemoryBudget::for_context(
             ui.ctx(),
@@ -7307,10 +7308,9 @@ impl FesTermApp {
         if self.updates.status().is_busy() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
-        // Native decorations (and the OS resize border they carry) are only
-        // enabled on macOS (`main.rs`); every other platform needs this
-        // painter-drawn substitute. Runs first, over the full window rect,
-        // before any nested layout below narrows `ui`'s `max_rect`.
+        // Undecorated windows register resize gestures before nested layouts
+        // narrow the root UI. macOS keeps native gesture ownership. Cursor-only
+        // feedback runs after the complete frame on all desktop platforms.
         if !cfg!(target_os = "macos") {
             chrome::handle_resize_border(ui);
         }
@@ -8637,6 +8637,9 @@ impl FesTermApp {
         if self.native_smoke.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(10));
         }
+        // Widgets above may select text/link/split cursors. The actual window
+        // border wins last; interiors and native macOS controls stay untouched.
+        chrome::set_resize_border_cursor(ui, window_rect, cfg!(target_os = "macos"));
     }
 }
 
@@ -13095,6 +13098,64 @@ mod tests {
             .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
         harness.run_steps(4);
         harness
+    }
+
+    #[test]
+    fn window_edge_cursor_survives_the_complete_app_frame_and_respects_viewport_guards() {
+        let app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let mut harness = dialog_style_harness(app, egui::vec2(800.0, 600.0));
+        let cases = [
+            (egui::pos2(1.0, 1.0), egui::CursorIcon::ResizeNorthWest),
+            (egui::pos2(799.0, 1.0), egui::CursorIcon::ResizeNorthEast),
+            (egui::pos2(1.0, 599.0), egui::CursorIcon::ResizeSouthWest),
+            (egui::pos2(799.0, 599.0), egui::CursorIcon::ResizeSouthEast),
+            (egui::pos2(400.0, 1.0), egui::CursorIcon::ResizeNorth),
+            (egui::pos2(400.0, 599.0), egui::CursorIcon::ResizeSouth),
+            (egui::pos2(1.0, 300.0), egui::CursorIcon::ResizeWest),
+            (egui::pos2(799.0, 300.0), egui::CursorIcon::ResizeEast),
+        ];
+        for (point, expected) in cases {
+            harness.event(egui::Event::PointerMoved(point));
+            harness.run();
+            assert_eq!(
+                harness.output().platform_output.cursor_icon,
+                expected,
+                "final full-frame output at {point:?}"
+            );
+            assert!(
+                !harness
+                    .output()
+                    .viewport_output
+                    .values()
+                    .any(|output| output
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::ViewportCommand::BeginResize(_)))),
+                "hover cannot begin resizing"
+            );
+        }
+        let resize = |icon| cases.iter().any(|(_, expected)| *expected == icon);
+        harness.event(egui::Event::PointerMoved(egui::pos2(400.0, 300.0)));
+        harness.run();
+        assert!(
+            !resize(harness.output().platform_output.cursor_icon),
+            "interior widgets retain their own cursor"
+        );
+        for fullscreen in [false, true] {
+            let viewport = harness
+                .input_mut()
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default();
+            viewport.fullscreen = Some(fullscreen);
+            viewport.maximized = Some(!fullscreen);
+            harness.event(egui::Event::PointerMoved(egui::pos2(400.0, 1.0)));
+            harness.run();
+            assert!(
+                !resize(harness.output().platform_output.cursor_icon),
+                "maximized/fullscreen has no resize border"
+            );
+        }
     }
 
     fn assert_style_modal_inside_root(harness: &Harness<'_, FesTermApp>, id: &str) {
