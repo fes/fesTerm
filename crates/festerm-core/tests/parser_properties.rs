@@ -173,15 +173,15 @@ fn invalid_utf8() -> impl Strategy<Value = Vec<u8>> {
     )
 }
 
-/// A string sequence whose payload runs past `MAX_STRING_BYTES`. The parser
-/// has to abandon the payload without abandoning the *sequence*: if it drops
-/// back to ground at the limit, everything after it prints as text.
+/// A string sequence whose payload runs past `MAX_STRING_BYTES`.
 fn oversized_string() -> impl Strategy<Value = Vec<u8>> {
     (
         prop_oneof![
             Just(&b"\x1b]0;"[..]),
             Just(&b"\x1b]8;;"[..]),
             Just(&b"\x1bP"[..]),
+            Just(&b"\x1bP0;1q"[..]),
+            Just(&b"\x1b_G"[..]),
             Just(&b"\x1b^"[..]),
         ],
         (festerm_core::MAX_STRING_BYTES)..(festerm_core::MAX_STRING_BYTES + 64),
@@ -322,14 +322,8 @@ proptest! {
         );
     }
 
-    /// An over-long string sequence has to leave the terminal usable. fesTerm
-    /// deliberately returns to ground at `MAX_STRING_BYTES` rather than
-    /// waiting for a terminator that may never come: a string that is never
-    /// terminated would otherwise swallow the rest of the session, and
-    /// because `ESC c` would be swallowed with it, not even a reset could
-    /// recover. The documented cost is that the remainder of an over-long
-    /// payload prints as text. What must never happen is a truncated payload
-    /// being *acted on*, or the terminal failing to come back at all.
+    /// An over-long string sequence has to leave the terminal usable after ST
+    /// without applying any truncated request.
     #[test]
     fn an_oversized_string_recovers_without_applying_a_truncated_payload(
         introducer in prop_oneof![
