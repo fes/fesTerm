@@ -157,9 +157,18 @@ fn drain(controller: &mut Controller, context: &egui::Context) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while controller.view.busy {
         controller.poll(context);
+        if !controller.view.busy {
+            return;
+        }
         assert!(
             Instant::now() < deadline,
-            "bounded fixture worker did not drain"
+            "bounded fixture worker did not drain: busy={} pending={} fence={} slots={} pending_cancelled={} fence_cancelled={}",
+            controller.view.busy,
+            controller.pending.is_some(),
+            controller.fence.is_some(),
+            controller.slots.load(Ordering::Acquire),
+            controller.pending.as_ref().is_some_and(|pending| pending.cancel.is_cancelled()),
+            controller.fence.as_ref().is_some_and(|pending| pending.cancel.is_cancelled()),
         );
         std::thread::sleep(Duration::from_millis(1));
     }
