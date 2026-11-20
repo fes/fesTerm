@@ -382,6 +382,107 @@ pub(super) fn linux_missing_unit(bytes: &[u8]) -> io::Result<bool> {
     Ok(properties(bytes)?.get("LoadState") == Some(&"not-found"))
 }
 
+/// Keep only the service's own fields. launchctl also prints nested coalition
+/// dictionaries containing identically named state/PID/exit fields.
+fn mac_service_lines(text: &str) -> io::Result<Vec<&str>> {
+    fn indent(line: &str) -> &str {
+        &line[..line.len() - line.trim_start().len()]
+    }
+    let invalid = || refused("host.service_invalid_observation");
+    let raw: Vec<_> = text.lines().collect();
+    let first = raw
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .ok_or_else(invalid)?;
+    let first_text = raw[first].trim();
+    let scalar = |line: &str| {
+        [
+            "path = ",
+            "program = ",
+            "state = ",
+            "pid = ",
+            "last exit code = ",
+        ]
+        .iter()
+        .any(|key| line.starts_with(key))
+    };
+    // Real output has one enclosing service dictionary. Existing injected
+    // manager fixtures use a flat, unindented list with the same exact argv.
+    let framed = first_text.ends_with(" {") && first_text != "arguments = {" && !scalar(first_text);
+    if framed && !indent(raw[first]).is_empty() {
+        return Err(invalid());
+    }
+    let mut frames: Vec<(Option<&str>, Option<&str>)> = vec![if framed {
+        (Some(""), None)
+    } else {
+        (None, Some(""))
+    }];
+    let mut result = Vec::new();
+    let mut at = first + usize::from(framed);
+    while at < raw.len() {
+        let line = raw[at].trim();
+        let indentation = indent(raw[at]);
+        at += 1;
+        if line.is_empty() {
+            continue;
+        }
+        let frame = frames.last_mut().ok_or_else(invalid)?;
+        if line == "}" {
+            if frame.0 != Some(indentation) {
+                return Err(invalid());
+            }
+            frames.pop();
+            continue;
+        }
+        if frame.0.is_some_and(|opening| {
+            indentation.len() <= opening.len() || !indentation.starts_with(opening)
+        }) {
+            return Err(invalid());
+        }
+        if let Some(expected) = frame.1 {
+            if indentation != expected {
+                return Err(invalid());
+            }
+        } else {
+            frame.1 = Some(indentation);
+        }
+        let direct = frames.len() == 1;
+        if direct {
+            result.push(line);
+        }
+        if direct && line == "arguments = {" {
+            // Consume literal arguments without interpreting braces in a path
+            // as dictionaries. Neither extra argv nor nested identity is valid.
+            let mut argument_indent = None;
+            for _ in 0..4 {
+                let argument = raw.get(at).ok_or_else(invalid)?;
+                let child = indent(argument);
+                if (framed && child.len() <= indentation.len())
+                    || !child.starts_with(indentation)
+                    || argument_indent.is_some_and(|expected| expected != child)
+                {
+                    return Err(invalid());
+                }
+                argument_indent = Some(child);
+                result.push(argument.trim());
+                at += 1;
+            }
+            let closing = raw.get(at).ok_or_else(invalid)?;
+            if closing.trim() != "}" || indent(closing) != indentation {
+                return Err(invalid());
+            }
+            result.push("}");
+            at += 1;
+        } else if !scalar(line) && (line.ends_with(" {") || line == "{") {
+            frames.push((Some(indentation), None));
+        }
+    }
+    if (framed && !frames.is_empty()) || (!framed && frames.len() != 1) {
+        return Err(invalid());
+    }
+    Ok(result)
+}
+
 pub(super) fn mac_state(
     bytes: &[u8],
     path: &Path,
@@ -389,7 +490,8 @@ pub(super) fn mac_state(
 ) -> io::Result<ProcessState> {
     let text =
         std::str::from_utf8(bytes).map_err(|_| refused("host.service_invalid_observation"))?;
-    let lines: Vec<_> = text.lines().map(str::trim).collect();
+    let lines = mac_service_lines(text)?;
+    let count = |key: &str| lines.iter().filter(|line| line.starts_with(key)).count();
     let unique = |value: &str| lines.iter().filter(|line| **line == value).count() == 1;
     let argv = [
         path_text(&record.executable)?,
@@ -397,7 +499,10 @@ pub(super) fn mac_state(
         "--state-dir",
         path_text(&record.state)?,
     ];
-    if !unique(&format!("path = {}", path_text(path)?))
+    if count("path = ") != 1
+        || count("program = ") != 1
+        || count("arguments = {") != 1
+        || !unique(&format!("path = {}", path_text(path)?))
         || !unique(&format!("program = {}", argv[0]))
         || lines
             .windows(6)
@@ -406,6 +511,9 @@ pub(super) fn mac_state(
             != 1
     {
         return Err(refused("host.service_foreign_native_definition"));
+    }
+    if count("state = ") != 1 || count("pid = ") > 1 || count("last exit code = ") > 1 {
+        return Err(refused("host.service_observation_unqualified"));
     }
     let state: Vec<_> = lines
         .iter()

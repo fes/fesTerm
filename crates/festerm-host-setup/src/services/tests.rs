@@ -939,6 +939,176 @@ fn host_process_recovery_older_bundle_cannot_create_new_restart_authority() {
     assert!(manager.runner.state.borrow().calls.is_empty());
 }
 
+fn mac_observation_record() -> Registration {
+    Registration {
+        version: 4,
+        installation: uuid::Uuid::new_v4().to_string(),
+        origin: Origin::Desktop,
+        binding: binding(),
+        epoch: 2,
+        settings: settings(),
+        platform: Platform::Macos,
+        user: "501".into(),
+        resource: "fixture-service".into(),
+        executable: "/fixture/host executable".into(),
+        digest: "00".repeat(32),
+        windows_managed: None,
+        provenance: None,
+        state: "/fixture/state directory".into(),
+        definition: String::new(),
+        reservation: uuid::Uuid::new_v4().to_string(),
+        native_expected: None,
+        native_submitted: false,
+        native_snapshot: None,
+        native_security: None,
+        retiring_definition: false,
+        removed: false,
+    }
+}
+
+fn mac_observation_text(record: &Registration, fields: &str) -> String {
+    format!(
+        "gui/501/fixture-service = {{\n\tpath = /fixture/service.plist\n\tprogram = {}\n\targuments = {{\n\t\t{}\n\t\t{}\n\t\t--state-dir\n\t\t{}\n\t}}\n{fields}}}\n",
+        record.executable.display(), record.executable.display(),
+        definitions::record_runner_verb(record), record.state.display(),
+    )
+}
+
+#[test]
+fn native_service_macos_observation_ignores_nested_coalition_fields() {
+    let record = mac_observation_record();
+    // Captured native shape: direct state is tab-indented; resource/jetsam
+    // coalition states are double-tab-indented within their own dictionaries.
+    let nested = "\tresource coalition = {\n\t\tstate = active\n\t\tpid = 999\n\t\tlast exit code = 19\n\t}\n\tjetsam coalition = {\n\t\tstate = active\n\t\tpid = 998\n\t}\n";
+    for (direct, expected) in [
+        (
+            "\tstate = not running\n\tlast exit code = 0\n",
+            ProcessState::Stopped,
+        ),
+        ("\tstate = running\n\tpid = 123\n", ProcessState::Running),
+        (
+            "\tstate = exited\n\tlast exit code = 17\n",
+            ProcessState::Failed,
+        ),
+        ("\tstate = spawn scheduled\n", ProcessState::Transitioning),
+    ] {
+        let text = mac_observation_text(&record, &format!("{direct}{nested}"));
+        assert_eq!(
+            definitions::mac_state(
+                text.as_bytes(),
+                Path::new("/fixture/service.plist"),
+                &record
+            )
+            .unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn native_service_macos_observation_rejects_duplicate_direct_fields() {
+    let record = mac_observation_record();
+    let direct = "\tstate = running\n\tpid = 123\n\tlast exit code = 0\n";
+    let duplicate_program = format!("\tprogram = {}\n", record.executable.display());
+    let duplicate_arguments = format!(
+        "\targuments = {{\n\t\t{}\n\t\t{}\n\t\t--state-dir\n\t\t{}\n\t}}\n",
+        record.executable.display(),
+        definitions::record_runner_verb(&record),
+        record.state.display()
+    );
+    for duplicate in [
+        "\tstate = running\n",
+        "\tstate = not running\n",
+        "\tpid = 123\n",
+        "\tpid = 456\n",
+        "\tlast exit code = 0\n",
+        "\tlast exit code = 17\n",
+        "\tpath = /fixture/service.plist\n",
+        "\tpath = /foreign/service.plist\n",
+        "\tprogram = /foreign/program\n",
+        duplicate_program.as_str(),
+        duplicate_arguments.as_str(),
+    ] {
+        let text = mac_observation_text(&record, &format!("{direct}{duplicate}"));
+        assert!(
+            definitions::mac_state(
+                text.as_bytes(),
+                Path::new("/fixture/service.plist"),
+                &record
+            )
+            .is_err(),
+            "duplicate accepted: {duplicate}"
+        );
+    }
+}
+
+#[test]
+fn native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting() {
+    let record = mac_observation_record();
+    let text = mac_observation_text(&record, "\tstate = not running\n\tlast exit code = 0\n");
+    let nested_identity = format!("gui/501/fixture-service = {{\n\tstate = not running\n\tforeign = {{\n\t\tpath = /fixture/service.plist\n\t\tprogram = {}\n\t\targuments = {{\n\t\t\t{}\n\t\t\t{}\n\t\t\t--state-dir\n\t\t\t{}\n\t\t}}\n\t}}\n}}\n", record.executable.display(), record.executable.display(), definitions::record_runner_verb(&record), record.state.display());
+    for invalid in [
+        text.replace(
+            "path = /fixture/service.plist",
+            "path = /foreign/service.plist",
+        ),
+        text.replace(
+            "program = /fixture/host executable",
+            "program = /foreign/program",
+        ),
+        text.replace("\t\trun-desktop-managed\n", "\t\trun-managed\n"),
+        text.trim_end().trim_end_matches('}').to_owned(),
+        format!("{text}}}\n"),
+        format!("{text}state = running\n"),
+        text.replace("\tlast exit code = 0", "\t\tlast exit code = 0"),
+        text.replace("\t}\n", "}\n"),
+        nested_identity,
+        mac_observation_text(
+            &record,
+            "\tstate = running\n\tcoalition = {\n\t\tpid = 123\n\t}\n",
+        ),
+        text.replace("\n}\n", "\n\tcoalition = {\n\t\tstate = active\n}\n"),
+    ] {
+        assert!(
+            definitions::mac_state(
+                invalid.as_bytes(),
+                Path::new("/fixture/service.plist"),
+                &record
+            )
+            .is_err(),
+            "malformed observation accepted"
+        );
+    }
+}
+
+#[test]
+fn native_service_macos_observation_preserves_flat_fixture_format() {
+    let record = mac_observation_record();
+    let flat = format!("path = /fixture/service.plist\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = waiting\n", record.executable.display(), record.executable.display(), definitions::record_runner_verb(&record), record.state.display());
+    assert_eq!(
+        definitions::mac_state(
+            flat.as_bytes(),
+            Path::new("/fixture/service.plist"),
+            &record
+        )
+        .unwrap(),
+        ProcessState::Stopped
+    );
+    let mut literal = record;
+    literal.executable = "/fixture/host = {".into();
+    literal.state = "/fixture/state {".into();
+    let framed = mac_observation_text(&literal, "\tstate = not running\n\tlast exit code = 0\n");
+    assert_eq!(
+        definitions::mac_state(
+            framed.as_bytes(),
+            Path::new("/fixture/service.plist"),
+            &literal
+        )
+        .unwrap(),
+        ProcessState::Stopped
+    );
+}
+
 #[test]
 fn native_service_desktop_runner_definition_is_origin_exact_without_headless_adoption() {
     for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {

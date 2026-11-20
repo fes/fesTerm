@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "a3f43a5c79aa8b8372aa4d3a8b7f70972a7eff28060894d4b62f64f20136da27"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -90,3 +90,16 @@ Caveats:
 - Containment retries preserve receipts without mutating live service state.
 - Helper gate checks reject unsupported or foreign capabilities before consent.
 - Owner diagnostics grant no credential, retry or serving authority.
+
+## Native HOST observation
+
+Use for: A stopped macOS HOST is confused with its active launchd coalitions.
+
+- [`mac_state`](../../crates/festerm-host-setup/src/services/definitions.rs) — Reads service-level identity/argv/state/PID/exit; nested fields grant no process authority.
+
+Evidence:
+- [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Covers stopped/running observations with nested coalition states and PIDs.
+
+Caveats:
+- Duplicate direct fields and malformed scopes refuse observation; Running is not readiness.
+- Corrected packaged GUI Disable still needs native qualification.
