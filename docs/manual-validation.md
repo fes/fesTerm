@@ -5890,9 +5890,12 @@ prompt, write, fallback, manager/cloud action or service retry. Its successful
 exit only confirms diagnostic output. This is a separate attributed helper
 observation, not retrospective proof of the older helper's #816 cause.
 
-Before this native gate, root review must compose the diagnostic with the #795
-signed `1046b6ab` headless Keychain UI fence and noninteractive credential refresh
-path; the present main-based source alone lacks those changes. Keep the original
+The dedicated macOS diagnostic installs a process-wide no-interaction fence
+before selected-store construction and refuses if setter or false-readback
+verification fails. It does not install this fence in shared GUI getters or
+foreground setup. Before a new serving cohort is qualified, root review must
+still compose the separate #795 signed `1046b6ab` serving fence and noninteractive
+credential refresh path; this main-based correction does not include them. Keep the original
 #816 failed admission and separate-process metadata probe attributed separately:
 neither proves helper ACL access. Do not build or claim a new signed cohort or
 provider-owner Listening until that composition and actual native run pass.
@@ -6015,3 +6018,13 @@ repair Unknown or change the original outcome. The existing exact-daemon reader
 does not attribute starter entries to a daemon; no automatic pane display is
 claimed. Portable tests cover privacy, bounded storage and non-interference;
 actual signed native failure classification remains pending.
+
+HOSTSETUP-01 / HOST-04 / DIAG-01: qualify the dedicated macOS diagnostic fence
+with a fresh pre-command frame proving no existing prompt, one authenticated
+bounded prompt-free DTO/refusal, and unchanged protected state. Setter/readback
+and observation-order tests do not replace this native gate. The signed16 probe
+ended at 15 seconds and a later frame showed a Keychain prompt; prompt provenance
+remains unproved. Preserve that first result. This source adds no ACL grant or
+automatic retry and provides no signed/native qualification. Existing release
+controls and owner authorization govern later exact-candidate runs; see
+[ADR 0084](adr/0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
