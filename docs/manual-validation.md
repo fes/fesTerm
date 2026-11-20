@@ -5677,6 +5677,17 @@ body, credentials or arbitrary native error strings may appear. Portable
 regressions cover delivery fences and rendering; native pane and new signed
 owner-default provisioning acceptance remain pending.
 
+HOSTSETUP-01 / HOST-04 / issue #803 additionally requires an attributed native
+Enable capture and comparison with the protected backend state. Capture the
+first visible result before Refresh. If a status warning occurs, distinguish
+the last confirmed protected phase from unknown readiness, retain its finite
+boundary/I/O kind, then use explicit Refresh local status. An unreadable
+mandatory scope must not leave the old Disabled phase presented as current.
+Do not repeat Enable or Start to manufacture an observation failure.
+Portable held-lock and controller regressions automate the unavailable-read,
+cancellation and changed-scope branches; the ordinary native workflow remains
+separate. The original Linux mismatch's precise boundary remains unproved.
+
 HOSTSETUP-01 / HOST-04 / HOST-05: with a shared persistent shell and private
 profile present, disable access normally, review Enable with only generic
 creation changed OFF→ON, then explicitly Start. Repeat ON→OFF. Keep the exact

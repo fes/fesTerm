@@ -1933,6 +1933,14 @@ HOST-04 normal Desktop ProviderOwner Enable explicitly reviews both setup and
 starting the listener now; OS sign-in startup remains a separate preference.
 Creation-policy changes use Disable → reviewed Enable; this normal Desktop
 action starts after setup, while OwnerOnly/headless retain explicit Start.
+An ancillary run/status observation failure retains an actually observed
+protected phase, with unknown readiness and a finite observation warning.
+Failure to observe protected scope leaves status Unobserved, never the old
+pre-Enable Disabled phase. Authenticated setup completion is separate from
+later status reads; Refresh local status does not repeat Enable or Start.
+Cancellation and changed-scope/owner/service refusals remain final. These
+source regressions do not establish the boundary of the issue #803 native
+failure or qualify its signed-runtime behavior.
 Completion projects the reviewed creation/access policy into an exact stopped
 registration, retaining full lifecycle/owner/old-receipt CAS, runtime exclusion,
 the native definition and registered executable path. A separately verified

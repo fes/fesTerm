@@ -576,6 +576,185 @@ fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_re
 }
 
 #[test]
+fn desktop_remote_access_confirmed_scope_survives_contended_run_history() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            festerm_host_setup::lifecycle::Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                cloud_incarnation: "synthetic-incarnation".into(),
+                host_key_fingerprint: "synthetic-public-pin".into(),
+            },
+        )
+        .unwrap();
+    let confirmed = store.snapshot().unwrap();
+    let bytes = std::fs::read(path.join("host-lifecycle.json")).unwrap();
+    // Hold the actual protected installation lease only for the ancillary
+    // read. The mandatory snapshot has already completed before this seam.
+    let directory = storage::private_directory(&path, false).unwrap();
+    let report = report_with_run_history(Some(&store), &path, |store| {
+        let lease =
+            storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)?;
+        fs2::FileExt::try_lock_exclusive(&lease)?;
+        let result = controller::last_run(store);
+        drop(lease);
+        result
+    })
+    .unwrap();
+    assert_eq!(report.scope, Scope::Present(confirmed.into()));
+    assert_eq!(
+        report.failure,
+        Some(Failure::Observation {
+            boundary: ObservationBoundary::RunHistory,
+            kind: io::ErrorKind::WouldBlock,
+        })
+    );
+    assert!(report.process.is_none() && report.last_run.is_none());
+    assert!(!report.owner_approved);
+    assert_eq!(
+        std::fs::read(path.join("host-lifecycle.json")).unwrap(),
+        bytes
+    );
+
+    let lease =
+        storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false).unwrap();
+    fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+    assert!(matches!(
+        super::report(Some(&store), &path),
+        Err(Failure::Observation {
+            boundary: ObservationBoundary::Scope,
+            kind: io::ErrorKind::WouldBlock,
+        })
+    ));
+    assert!(matches!(
+        execute(request(&path, Operation::Refresh, Scope::Unobserved)),
+        Err(Failure::Observation {
+            boundary: ObservationBoundary::Scope,
+            kind: io::ErrorKind::WouldBlock,
+        })
+    ));
+    drop(lease);
+    assert_eq!(
+        std::fs::read(path.join("host-lifecycle.json")).unwrap(),
+        bytes
+    );
+}
+
+#[test]
+fn desktop_remote_access_final_failure_survives_unreadable_reobservation() {
+    for (original, cancel_during_publish) in [
+        (Failure::Cancelled, false),
+        (Failure::ScopeChanged, false),
+        (Failure::OwnerApproval, false),
+        (Failure::NativeVault, false),
+        (Failure::SignedBundle, false),
+        (Failure::Cancelled, true),
+    ] {
+        let root = storage::private_test_directory();
+        let path = root.path().join("desktop");
+        let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+        let before = store.snapshot().unwrap();
+        let bytes = std::fs::read(path.join("host-lifecycle.json")).unwrap();
+        let mut work = request(
+            &path,
+            Operation::Enable,
+            Scope::Present(before.clone().into()),
+        );
+        work.draft.account = "42".into();
+        let cancel = CancellationToken::new();
+        let held = Mutex::new(None);
+        let result = Native
+            .execute_with(
+                work,
+                &cancel,
+                mpsc::sync_channel(1).0,
+                |_, _| Ok(()),
+                |_, _| {
+                    let directory = storage::private_directory(&path, false).unwrap();
+                    let lease = storage::open_private_file(
+                        &directory,
+                        Path::new("host-lifecycle.lock"),
+                        false,
+                    )
+                    .unwrap();
+                    fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+                    *held.lock().unwrap() = Some(lease);
+                    if cancel_during_publish {
+                        cancel.cancel();
+                    }
+                    Err(original)
+                },
+            )
+            .unwrap();
+        // The real cancellation branch cannot confirm its fence while this
+        // lease is held. Preserve that Busy result, never invent Cancelled.
+        let expected = if cancel_during_publish {
+            Failure::Busy
+        } else {
+            original
+        };
+        assert_eq!(result.failure, Some(expected));
+        assert_eq!(result.scope, Scope::Unobserved);
+        assert!(!result.setup_complete && !result.owner_approved);
+        assert!(result.process.is_none() && result.last_run.is_none());
+        assert!(result.runtime_history.is_empty() && result.diagnostic.is_none());
+        drop(held.lock().unwrap().take());
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(
+            std::fs::read(path.join("host-lifecycle.json")).unwrap(),
+            bytes
+        );
+        assert!(!path.join("native-service.json").exists());
+    }
+}
+
+#[test]
+fn desktop_remote_access_observation_warning_does_not_downgrade_final_fences() {
+    for error in [
+        Failure::Cancelled,
+        Failure::ScopeChanged,
+        Failure::NativeVault,
+        Failure::OwnerApproval,
+    ] {
+        assert!(
+            matches!(retain_observation_failure(Report::default(), error), Err(actual) if actual == error)
+        );
+    }
+    let warning = observation_failure(
+        io::Error::new(io::ErrorKind::WouldBlock, "PRIVATE-TOKEN-PATH"),
+        ObservationBoundary::FinalScope,
+    );
+    let report = retain_observation_failure(
+        Report {
+            setup_complete: true,
+            process: Some("Running".into()),
+            last_run: Some(controller::RunState::Listening),
+            owner_approved: true,
+            ..Report::default()
+        },
+        warning,
+    )
+    .unwrap();
+    assert!(report.setup_complete);
+    assert!(report.process.is_none() && report.last_run.is_none());
+    assert!(!report.owner_approved);
+    assert!(!warning.observation_detail().unwrap().contains("PRIVATE"));
+    assert_eq!(
+        observation_failure(
+            io::Error::other("host.scope_changed"),
+            ObservationBoundary::FinalScope
+        ),
+        Failure::ScopeChanged
+    );
+}
+
+#[test]
 fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
     let root = storage::private_test_directory();
     let store = Store::create(

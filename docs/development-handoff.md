@@ -417,6 +417,15 @@ recording terminal content.
 
 ## Diagnostics and Safety
 
+**Status observation after Enable.** Authenticated bundle setup can complete
+before a later status read fails. An observation warning retains only an
+actually confirmed protected phase, clears readiness claims and shows a finite
+boundary/I/O kind. If protected scope itself is unavailable, status becomes
+Unobserved. Use **Refresh local status** before another change; do not repeat
+Enable or Start to refresh the display. This source correction does not
+identify the original issue #803 failure boundary or qualify an older running
+GUI/helper composition.
+
 **Capture remote access runtime failures before restarting.**
 
 Before **Start**, **Enable**, **Disable**, update, or reprovisioning, capture

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "b71bd4cca2f0c66424f5bad422d12779261174918db3b7c24959f6c989bedbf5"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-agent", "sources": "750ad7969520116883652ef4a8d64c4ad5dbafcebcc47581243979a7feb20580"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -64,10 +64,10 @@ Use for: Ordinary discovery, inventory, attachment and reviewed creation.
 
 Evidence:
 - [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry
-- [`desktop_remote_access_master_checkbox_keeps_account_controls_conditional_and_reviewed`](../../app/festerm/src/desktop_remote_access/tests.rs) — Consent controls stay conditional and require review
+- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness
 
 Caveats:
-- Ordinary host discovery must not require manual fingerprint or JSON entry.
+- Discovery needs no manual fingerprint/JSON; uncertain status requires Refresh, not repeated Enable.
 
 ## Lifecycle diagnostics
 

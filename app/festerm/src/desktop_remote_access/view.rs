@@ -25,7 +25,9 @@ pub(crate) fn show(
         requested = !requested;
         action = Some(Action::RequestAccess(requested));
     }
-    if requested
+    if matches!(view.scope, Scope::Unobserved) {
+        ui.label("Remote access status is unavailable. Refresh local status.");
+    } else if requested
         && !matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
     {
         ui.label("Setup pending. Remote access is not enabled yet.");
@@ -106,6 +108,12 @@ pub(crate) fn show(
 
     if let Some(failure) = view.failure {
         ui.colored_label(theme::STATUS_ERROR, failure.notice());
+        if let Some(detail) = failure.observation_detail() {
+            ui.small(detail);
+            if matches!(view.scope, Scope::Present(_)) {
+                settings_note(ui, "Protected phase is the last confirmed observation. Current endpoint readiness is unknown.");
+            }
+        }
     }
     diagnostics::show(ui, view.diagnostic, &view.runtime_history);
     if let Some(code) = &view.device_code {

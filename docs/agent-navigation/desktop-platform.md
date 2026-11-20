@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "d1a4309cbb8e80643d8363a440fb7cab20213b600f7be8a69c9163a8d8e65d26"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "0db53476444c1962f0034be0496abd4006ffc34332043f8c09c8937e2521525e"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -76,3 +76,4 @@ Caveats:
 ## Native recovery qualification
 
 - [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
+- [`docs/manual-validation.md`](../manual-validation.md) — HOST-04 requires attributed Enable/backend-state comparison; held-lock and projection regressions automate observation-failure branches.

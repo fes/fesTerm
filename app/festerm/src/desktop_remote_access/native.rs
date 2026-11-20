@@ -189,10 +189,10 @@ fn failure(error: io::Error) -> Failure {
 fn observed(root: &Path) -> Result<Option<Store>, Failure> {
     match std::fs::symlink_metadata(root) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(failure(error)),
+        Err(error) => Err(observation_failure(error, ObservationBoundary::Scope)),
         Ok(_) => Store::open(root, Origin::Desktop)
             .map(Some)
-            .map_err(failure),
+            .map_err(|error| observation_failure(error, ObservationBoundary::Scope)),
     }
 }
 
@@ -209,13 +209,23 @@ fn verify(store: Option<&Store>, expected: &Scope) -> Result<(), Failure> {
 }
 
 fn report(store: Option<&Store>, root: &Path) -> Result<Report, Failure> {
+    report_with_run_history(store, root, controller::last_run)
+}
+
+fn report_with_run_history(
+    store: Option<&Store>,
+    root: &Path,
+    read_run: impl FnOnce(&Store) -> io::Result<Option<controller::RunRecord>>,
+) -> Result<Report, Failure> {
     let Some(store) = store else {
         return Ok(Report {
             scope: Scope::Absent,
             ..Report::default()
         });
     };
-    let snapshot = store.snapshot().map_err(failure)?;
+    let snapshot = store
+        .snapshot()
+        .map_err(|error| observation_failure(error, ObservationBoundary::Scope))?;
     let cleanup = if snapshot.phase == Phase::CleanupPending {
         CloudHostAdapter::new(store)
             .pending_cleanup_context(&snapshot)
@@ -223,10 +233,16 @@ fn report(store: Option<&Store>, root: &Path) -> Result<Report, Failure> {
     } else {
         None
     };
-    let last_run = if snapshot.phase == Phase::Provisioned {
-        current_run_state(&snapshot, controller::last_run(store).map_err(failure)?)
+    let (last_run, warning) = if snapshot.phase == Phase::Provisioned {
+        match read_run(store) {
+            Ok(record) => (current_run_state(&snapshot, record), None),
+            Err(error) => (
+                None,
+                Some(observation_warning(error, ObservationBoundary::RunHistory)),
+            ),
+        }
     } else {
-        None
+        (None, None)
     };
     // Recorded version is display metadata, never old-bundle execution trust.
     // Missing/corrupt provenance must not block ordinary Disable or recovery.
@@ -240,8 +256,40 @@ fn report(store: Option<&Store>, root: &Path) -> Result<Report, Failure> {
         runtime_history: controller::runtime_diagnostics::read(store, root),
         scope: Scope::Present(snapshot.into()),
         cleanup,
+        failure: warning,
         ..Report::default()
     })
+}
+
+fn observation_warning(error: io::Error, boundary: ObservationBoundary) -> Failure {
+    Failure::Observation {
+        boundary,
+        kind: error.kind(),
+    }
+}
+
+// Only contention is an observation warning on service/consent paths. Other
+// errors retain the existing owner, scope, artifact and platform refusals.
+fn observation_failure(error: io::Error, boundary: ObservationBoundary) -> Failure {
+    if error.kind() == io::ErrorKind::WouldBlock {
+        observation_warning(error, boundary)
+    } else {
+        failure(error)
+    }
+}
+
+fn retain_observation_failure(mut report: Report, error: Failure) -> Result<Report, Failure> {
+    if !matches!(error, Failure::Observation { .. }) {
+        return Err(error);
+    }
+    report.failure = Some(error);
+    report.process = None;
+    report.last_run = None;
+    report.runtime_history.clear();
+    report.owner_binding = None;
+    report.owner_approved = false;
+    report.owner_revision = None;
+    Ok(report)
 }
 
 fn current_run_state(
@@ -447,7 +495,9 @@ impl Native {
                 }
                 Err(error) => error,
             };
-            let mut observed = report(Some(&store), &request.root)?;
+            // A failed observation cannot replace the completed fence result.
+            // Default scope is Unobserved and carries no readiness authority.
+            let mut observed = report(Some(&store), &request.root).unwrap_or_default();
             observed.failure = Some(failure);
             return Ok(observed);
         }
@@ -456,7 +506,9 @@ impl Native {
             Err(error) => {
                 // Reobserve local protected partial progress without another
                 // credential/network/native operation or a success assertion.
-                let mut observed = report(Some(&store), &request.root)?;
+                // Keep the primary refusal even if protected reobservation is
+                // unavailable; never publish the old pre-operation scope.
+                let mut observed = report(Some(&store), &request.root).unwrap_or_default();
                 observed.diagnostic = scoped_diagnostic(diagnostic, &request, &observed.scope);
                 observed.failure = Some(error);
                 Ok(observed)
@@ -575,8 +627,21 @@ impl Native {
                         },
                     ),
                 )?;
-                let mut result = report(Some(store), &request.root)?;
-                let Scope::Present(snapshot) = &result.scope else {
+                if cancel.is_cancelled() {
+                    return Err(Failure::Cancelled);
+                }
+                let mut result = match report(Some(store), &request.root) {
+                    Ok(report) => report,
+                    Err(error @ Failure::Observation { .. }) => {
+                        return Ok(Report {
+                            setup_complete: true,
+                            failure: Some(error),
+                            ..Report::default()
+                        });
+                    }
+                    Err(error) => return Err(error),
+                };
+                let Scope::Present(snapshot) = result.scope.clone() else {
                     return Err(Failure::ScopeChanged);
                 };
                 if setup.native_registration.installation != snapshot.installation
@@ -584,26 +649,49 @@ impl Native {
                 {
                     return Err(Failure::ScopeChanged);
                 }
-                let process = if snapshot.settings.ordinary_access == OrdinaryAccess::ProviderOwner
-                {
-                    if cancel.is_cancelled() {
-                        return Err(Failure::Cancelled);
-                    }
-                    // Normal Enable is consent to listen now. The independent
-                    // sign-in startup preference controls future OS logins.
-                    let services = Services::current_user(store, &request.root).map_err(failure)?;
-                    let stage = services.reopen_stage(snapshot.epoch).map_err(failure)?;
-                    let observation = services.start(&stage, snapshot.epoch).map_err(failure)?;
-                    if store.snapshot().map_err(failure)? != **snapshot {
-                        return Err(Failure::ScopeChanged);
-                    }
-                    observation.process
-                } else {
-                    setup.native_registration.process
-                };
-                result.process = Some(format!("{process:?}"));
                 public_owner(&mut result, setup.owner_approval_prerequisite)?;
-                Ok(result)
+                result.setup_complete = true;
+                let completion = (|| {
+                    let process =
+                        if snapshot.settings.ordinary_access == OrdinaryAccess::ProviderOwner {
+                            if cancel.is_cancelled() {
+                                return Err(Failure::Cancelled);
+                            }
+                            // Normal Enable is consent to listen now. The independent
+                            // sign-in startup preference controls future OS logins.
+                            let services =
+                                Services::current_user(store, &request.root).map_err(|error| {
+                                    observation_failure(error, ObservationBoundary::ServiceContext)
+                                })?;
+                            let stage = services.reopen_stage(snapshot.epoch).map_err(|error| {
+                                observation_failure(error, ObservationBoundary::ServiceStage)
+                            })?;
+                            let observation =
+                                services.start(&stage, snapshot.epoch).map_err(|error| {
+                                    observation_failure(error, ObservationBoundary::ServiceStart)
+                                })?;
+                            if store.snapshot().map_err(|error| {
+                                observation_failure(error, ObservationBoundary::FinalScope)
+                            })? != *snapshot
+                            {
+                                return Err(Failure::ScopeChanged);
+                            }
+                            observation.process
+                        } else {
+                            setup.native_registration.process
+                        };
+                    result.process = Some(format!("{process:?}"));
+                    Ok(())
+                })();
+                match completion {
+                    Err(error) => retain_observation_failure(result, error),
+                    Ok(()) => match result.failure {
+                        Some(error @ Failure::Observation { .. }) => {
+                            retain_observation_failure(result, error)
+                        }
+                        _ => Ok(result),
+                    },
+                }
             }
             Operation::ApproveOwner => {
                 let Scope::Present(expected) = &request.expected else {
