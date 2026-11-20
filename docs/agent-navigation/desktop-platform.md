@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "d1a4309cbb8e80643d8363a440fb7cab20213b600f7be8a69c9163a8d8e65d26"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "90f01d8b09c42abbba90b48a5337e50597995229099a131d0116450b7624bf40"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -75,4 +75,5 @@ Caveats:
 
 ## Native recovery qualification
 
+- [`validation/dev-tunnels/linux-client-windows-native.json`](../../validation/dev-tunnels/linux-client-windows-native.json) — Pins both Linux-client/Windows-server policy cases, Copilot grids and post-TUI recovery; combined-release qualification remains separate.
 - [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
