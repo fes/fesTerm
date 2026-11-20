@@ -191,7 +191,17 @@ internally inconsistent geometry refuses a
 graphics placement; it is never inferred from outer-window dimensions or an
 optional renderer texture. `CSI 14 t` and `CSI 16 t` are added with the same
 geometry and use the protocol-defined height-then-width replies. A DPI-only
-change is a geometry event even when rows and columns do not change.
+change is a geometry event even when rows and columns do not change. Each
+resize request carries a generation that the local PTY echoes in its
+acknowledgement. Geometry is published only for the acknowledgement of the
+newest generation, when that request is also the newest requested size and
+matches the terminal's current grid. An untagged, stale, or superseded
+acknowledgement withholds geometry until the matching generation applies, so a
+delayed acknowledgement of an earlier request for the same size (A-B-A) never
+matches. The local PTY never drops the newest acknowledgement because its
+event queue is full. While a final graphics reply waits for write capacity,
+the application retries on a short timer, because no later output may arrive
+to wake it.
 
 Kitty detection continues to use the protocol's graphics query plus DA1
 sequence. fesTerm does not advertise Kitty by changing `TERM` alone, and Kitty
@@ -280,8 +290,20 @@ Only a non-transparent pixel in the above-text layer occludes interaction.
 In that covered area ordinary and rectangle Copy omit hidden cell text, smart
 selection cannot select through it and the hyperlink cannot activate. Text
 drawn over below-text or background layers remains selectable and clickable
-exactly as before. v1 exposes only a bounded “image” accessibility label and
-never exports image bytes through Copy or OSC 52.
+exactly as before. v1 exposes only a bounded “image” accessibility label.
+Ordinary terminal Copy and OSC 52 still never export image bytes. A separate
+explicit, user-initiated image action is allowed: right-clicking a
+non-transparent pixel of a drawable Kitty placement captures the topmost hit
+in z/image-ID paint order and offers **Copy image** and **Save image…**. Copy
+image uses the platform image clipboard; Save image uses fesTerm's
+application-owned destination picker and writes a PNG. Both operate on a
+frozen copy of the exact decoded source image, not a terminal screenshot and
+not a placement crop; transparent hits do not offer image actions. The
+protocol, PTY and OSC 52 never receive a read, copy, filename or save request.
+The action remains bounded by the renderer's admitted decoded-image
+reservation; the context-menu hit does not retain or decode pixels on the UI
+thread. An explicit Copy or confirmed Save freezes the validated source
+reference and decodes it once on an application-owned worker.
 
 ### 7. Restrict v1 lifetime to local, non-recorded, non-recovering sessions
 
@@ -436,8 +458,10 @@ graphics, it requires a separate privacy/consent ADR and schema.
   replies; direct Kitty transport is the only approved medium; pixel geometry
   is a first-class terminal fact; visible placements are clipped to the terminal
   surface; sessiond/tunnel/recorded sessions remain graphics-disabled in v1.
-- **GUI/action edges affected:** `GFX-01`, `GFX-02` and `GFX-03`. No clipboard
-  image action is approved by this ADR.
+- **GUI/action edges affected:** `GFX-01`, `GFX-02` and `GFX-03`. Explicit
+  **Copy image** and **Save image…** actions are approved only for a
+  user-selected visible decoded placement; automatic export, OSC 52 image
+  export and terminal screenshots are not approved.
 - **Automated tests required:** the final implementation must add
   `oversize_graphics_dcs_never_becomes_text_or_executes_c0`,
   `graphics_discard_state_replays_and_reattaches_mid_sequence`,
@@ -454,6 +478,11 @@ graphics, it requires a separate privacy/consent ADR and schema.
   `new_graphics_framing_semantics_replays_and_reattaches_only_the_new_schema`,
   `new_graphics_semantics_negotiates_tunnel_and_mobile_snapshot_versions`,
   `fixed_protocol_budget_is_independent_of_other_sessions_and_markdown_images`,
+  `exported_png_round_trips_the_exact_decoded_pixels`,
+  `image_hit_prefers_topmost_non_transparent_drawable_placement`,
+  `terminal_context_menu_copies_and_saves_the_hit_kitty_image_only`,
+  `terminal_image_save_writes_exact_png_through_confirmed_destination`,
+  `transparent_kitty_pixel_does_not_offer_image_export`,
   renderer clipping/z-order/texture-LRU tests and native painter fallback tests.
 - **Native/manual evidence required:** physical macOS and Linux local PTY tests
   with real Kitty-protocol clients; a Windows refusal test plus a matched

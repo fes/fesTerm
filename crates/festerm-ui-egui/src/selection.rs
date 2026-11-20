@@ -50,7 +50,7 @@ impl TextWork {
 pub(crate) fn collect_bounded_text(
     max_bytes: usize,
     work: TextWork,
-    visit: impl Fn(&mut TextSink<'_>, &mut TextWork) -> Result<Option<()>, SelectedTextError>,
+    mut visit: impl FnMut(&mut TextSink<'_>, &mut TextWork) -> Result<Option<()>, SelectedTextError>,
 ) -> Result<Option<String>, SelectedTextError> {
     let mut bytes = 0usize;
     let mut preflight_work = work;
@@ -160,13 +160,26 @@ impl Selection {
         Some(CellRange::new(self.anchor?, self.head?))
     }
 
+    #[cfg(test)]
     pub(crate) fn infer_smart(
         &mut self,
         snapshot: TerminalSnapshot<'_>,
         hit: CellPosition,
         scope: crate::SmartSelectionScope,
     ) -> bool {
-        let Some(smart) = crate::smart_selection::infer(snapshot, hit, scope) else {
+        self.infer_smart_with_occlusion(snapshot, hit, scope, &mut |_| false)
+    }
+
+    pub(crate) fn infer_smart_with_occlusion(
+        &mut self,
+        snapshot: TerminalSnapshot<'_>,
+        hit: CellPosition,
+        scope: crate::SmartSelectionScope,
+        occluded: &mut dyn FnMut(CellPosition) -> bool,
+    ) -> bool {
+        let Some(smart) =
+            crate::smart_selection::infer_with_occlusion(snapshot, hit, scope, occluded)
+        else {
             return false;
         };
         let first = &smart.rows[0];
@@ -332,11 +345,19 @@ pub fn normalize_selection_position(
 /// Returns selected terminal text without interpreting terminal OSC clipboard
 /// sequences. Width-two continuation cells do not add a second character.
 pub fn selection_text(snapshot: TerminalSnapshot<'_>, selection: &Selection) -> Option<String> {
+    selection_text_with_occlusion(snapshot, selection, &mut |_| false)
+}
+
+pub(crate) fn selection_text_with_occlusion(
+    snapshot: TerminalSnapshot<'_>,
+    selection: &Selection,
+    occluded: &mut dyn FnMut(ContentPosition) -> bool,
+) -> Option<String> {
     if let Some(smart) = &selection.smart {
-        return smart.text(snapshot);
+        return smart.text_with_occlusion(snapshot, occluded);
     }
     collect_bounded_text(usize::MAX, TextWork::new(false), |append, work| {
-        visit_selection_text(snapshot, selection, append, work)
+        visit_selection_text(snapshot, selection, append, work, occluded)
     })
     .expect("selected text fits in a String")
 }
@@ -354,11 +375,20 @@ pub fn selection_text_with_limit(
     selection: &Selection,
     max_bytes: usize,
 ) -> Result<Option<String>, SelectedTextError> {
+    selection_text_with_limit_and_occlusion(snapshot, selection, max_bytes, &mut |_| false)
+}
+
+pub(crate) fn selection_text_with_limit_and_occlusion(
+    snapshot: TerminalSnapshot<'_>,
+    selection: &Selection,
+    max_bytes: usize,
+    occluded: &mut dyn FnMut(ContentPosition) -> bool,
+) -> Result<Option<String>, SelectedTextError> {
     if let Some(smart) = &selection.smart {
-        return smart.text_with_limit(snapshot, max_bytes);
+        return smart.text_with_limit_and_occlusion(snapshot, max_bytes, occluded);
     }
     collect_bounded_text(max_bytes, TextWork::new(true), |append, work| {
-        visit_selection_text(snapshot, selection, append, work)
+        visit_selection_text(snapshot, selection, append, work, occluded)
     })
 }
 
@@ -367,6 +397,7 @@ fn visit_selection_text(
     selection: &Selection,
     append: &mut TextSink<'_>,
     work: &mut TextWork,
+    occluded: &mut dyn FnMut(ContentPosition) -> bool,
 ) -> Result<Option<()>, SelectedTextError> {
     let Some((start, end)) = content_range(selection) else {
         return Ok(None);
@@ -401,6 +432,12 @@ fn visit_selection_text(
         };
         for column in first..=last {
             work.charge(1)?;
+            if occluded(ContentPosition {
+                column,
+                absolute_row: row,
+            }) {
+                continue;
+            }
             match snapshot.absolute_cell(column, row) {
                 Some(cell) if !cell.is_continuation() => append(cell.text())?,
                 Some(_) => {}

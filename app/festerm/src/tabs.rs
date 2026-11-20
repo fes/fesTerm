@@ -76,10 +76,16 @@ use festerm_ui_egui::{
 use std::rc::Rc;
 
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
+use crate::inline_graphics::{
+    InlineGraphicsEligibility, InlineGraphicsPolicy, InlineGraphicsRefusal, KittyReservation,
+    KittyReservationPool,
+};
 use crate::local_bind::ResolvedLocalBind;
 use crate::markdown_viewer::MarkdownViewerTab;
 use crate::powershell::PowerShellTab;
-use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
+use crate::session_controller::{
+    seed_session_startup_failure, terminal_size, CellPixelGeometry, SessionController,
+};
 use crate::sftp_file_manager::{
     local_home_directory, AuthenticationFormState, SftpFileManagerAuthentication,
     SftpFileManagerLaunchTarget, SftpFileManagerTab,
@@ -669,6 +675,21 @@ impl Session for ApplicationSession {
         }
     }
 
+    fn try_resize_generation(
+        &self,
+        size: TerminalSize,
+        generation: std::num::NonZeroU64,
+    ) -> Result<(), SessionSendError> {
+        match self {
+            Self::Local(session) => session.try_resize_generation(size, generation),
+            #[cfg(test)]
+            Self::TestSsh(session) | Self::TestLocal(session) => {
+                session.try_resize_generation(size, generation)
+            }
+            _ => self.try_resize(size),
+        }
+    }
+
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         match self {
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -770,6 +791,12 @@ pub struct SessionTab {
     /// Non-secret immutable launch facts exposed to application-owned
     /// presentation such as the Session Inspector.
     pub inspector_transport: InspectorTransport,
+    /// ADR 0089 inline-graphics eligibility, frozen once when the session is
+    /// placed. `None` only before placement; see [`Self::inline_graphics`].
+    inline_graphics: Option<InlineGraphicsEligibility>,
+    /// The fixed protocol-pool claim backing an eligible session's Kitty
+    /// state, held for the session's lifetime (ADR 0089 §5).
+    kitty_reservation: Option<KittyReservation>,
     /// Whether the one-shot "scrollback limit reached" transient notice has
     /// already been shown for this tab (M9: eviction notices). Latches once
     /// `true` so continued eviction from a sustained-output workload does
@@ -1173,6 +1200,11 @@ impl SessionTab {
             return;
         };
         if matches!(self.inspector_transport, InspectorTransport::Sftp { .. }) {
+            return;
+        }
+        // ADR 0089 §7: an eligible graphics session is refused before any
+        // enrollment, even if a recording started after it was placed.
+        if self.inline_graphics().is_eligible() {
             return;
         }
         match recording.is_recording() {
@@ -1938,6 +1970,8 @@ impl SessionTab {
             launch_secondary,
             profile_identifier,
             inspector_transport,
+            inline_graphics: None,
+            kitty_reservation: None,
             eviction_notice_shown: false,
             ssh_password_retry,
             has_new_output_since_active: false,
@@ -2163,7 +2197,142 @@ impl SessionTab {
     }
 
     pub(crate) fn recording_eligible(&self) -> bool {
-        self.accepts_input() && !matches!(self.inspector_transport, InspectorTransport::Sftp { .. })
+        self.accepts_input()
+            && !matches!(self.inspector_transport, InspectorTransport::Sftp { .. })
+            && !self.inline_graphics().is_eligible()
+    }
+
+    /// The ADR 0089 decision frozen at placement. A session that was never
+    /// placed reports the default-off decision, so it can never become
+    /// eligible by omission.
+    pub(crate) fn inline_graphics(&self) -> InlineGraphicsEligibility {
+        self.inline_graphics.unwrap_or_else(|| {
+            crate::inline_graphics::decide(
+                InlineGraphicsPolicy::default(),
+                self.inline_graphics_backend_refusal(),
+                crate::inline_graphics::BUILD,
+            )
+        })
+    }
+
+    /// Freezes eligibility once; later settings or recording changes never
+    /// alter an already-created session.
+    fn freeze_inline_graphics(&mut self, policy: InlineGraphicsPolicy) {
+        self.freeze_inline_graphics_with(
+            policy,
+            &KittyReservationPool::process(),
+            crate::inline_graphics::BUILD,
+        );
+    }
+
+    #[cfg(test)]
+    fn freeze_inline_graphics_from(
+        &mut self,
+        policy: InlineGraphicsPolicy,
+        pool: &std::sync::Arc<KittyReservationPool>,
+    ) {
+        self.freeze_inline_graphics_with(policy, pool, crate::inline_graphics::BUILD);
+    }
+
+    /// Eligibility is only final once the fixed protocol reservation is held
+    /// and the terminal accepted it; either failure freezes a refusal, and
+    /// the session then behaves exactly as an ineligible one.
+    fn freeze_inline_graphics_with(
+        &mut self,
+        policy: InlineGraphicsPolicy,
+        pool: &std::sync::Arc<KittyReservationPool>,
+        build: crate::inline_graphics::InlineGraphicsBuild,
+    ) {
+        if self.inline_graphics.is_some() {
+            return;
+        }
+        let decision =
+            crate::inline_graphics::decide(policy, self.inline_graphics_backend_refusal(), build);
+        self.inline_graphics = Some(decision);
+        if !decision.is_eligible() {
+            return;
+        }
+        let Some(reservation) = pool.reserve() else {
+            self.inline_graphics = Some(InlineGraphicsEligibility::Disabled(
+                InlineGraphicsRefusal::ReservationUnavailable,
+            ));
+            return;
+        };
+        if self
+            .terminal
+            .enable_kitty_graphics(reservation.config())
+            .is_err()
+        {
+            self.inline_graphics = Some(InlineGraphicsEligibility::Disabled(
+                InlineGraphicsRefusal::EnableFailed,
+            ));
+            return;
+        }
+        // Completed uploads are validated off the UI thread by the
+        // controller's worker; see `SessionController::pump_events_with_resize`.
+        self.terminal.enable_kitty_worker_handoff();
+        self.view
+            .set_graphics_reservation(festerm_ui_egui::KittyGraphicsReservation::new(
+                reservation.rgba_budget(),
+            ));
+        self.controller.enable_graphics_authority();
+        self.kitty_reservation = Some(reservation);
+    }
+
+    /// `None` only for an in-process local PTY without a persistence
+    /// provider. The match is exhaustive so a new backend must choose.
+    fn inline_graphics_backend_refusal(&self) -> Option<InlineGraphicsRefusal> {
+        let Some(session) = self.controller.session() else {
+            return Some(InlineGraphicsRefusal::StartFailed);
+        };
+        match session {
+            ApplicationSession::Local(_) => self.local_inline_graphics_refusal(),
+            #[cfg(test)]
+            ApplicationSession::TestLocal(_) => self.local_inline_graphics_refusal(),
+            ApplicationSession::Persistent(_) => Some(InlineGraphicsRefusal::SessionDaemon),
+            ApplicationSession::DevTunnel(_) => Some(InlineGraphicsRefusal::Tunnel),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            ApplicationSession::Host(_) => Some(InlineGraphicsRefusal::Tunnel),
+            ApplicationSession::Ssh(_) => Some(InlineGraphicsRefusal::Ssh),
+            #[cfg(test)]
+            ApplicationSession::TestSsh(_) => Some(InlineGraphicsRefusal::Ssh),
+            ApplicationSession::Sftp(_) => Some(InlineGraphicsRefusal::Sftp),
+            ApplicationSession::Serial(_) => Some(InlineGraphicsRefusal::Serial),
+        }
+    }
+
+    fn local_inline_graphics_refusal(&self) -> Option<InlineGraphicsRefusal> {
+        match &self.inspector_transport {
+            InspectorTransport::Local { persistence: None } => None,
+            InspectorTransport::Local {
+                persistence: Some(persistence),
+            } if persistence.provider_label == PersistenceProviderKind::FestermSessiond.label() => {
+                Some(InlineGraphicsRefusal::SessionDaemon)
+            }
+            InspectorTransport::Local {
+                persistence: Some(_),
+            } => Some(InlineGraphicsRefusal::Multiplexer),
+            InspectorTransport::DevTunnel { .. } => Some(InlineGraphicsRefusal::Tunnel),
+            InspectorTransport::Ssh { .. } => Some(InlineGraphicsRefusal::Ssh),
+            InspectorTransport::Sftp { .. } => Some(InlineGraphicsRefusal::Sftp),
+            InspectorTransport::Serial { .. } => Some(InlineGraphicsRefusal::Serial),
+        }
+    }
+
+    /// Publishes the rendered cell size in device pixels to an eligible
+    /// session's PTY (ADR 0089 §4). Ineligible sessions keep pixel-less
+    /// resizes, exactly as before the setting existed.
+    pub(crate) fn observe_inline_graphics_geometry(&mut self, pixels_per_point: f32) {
+        if !self.inline_graphics().is_eligible() {
+            return;
+        }
+        let geometry = self.view.diagnostics().cell_metrics.and_then(|cell| {
+            CellPixelGeometry::from_points(cell.width, cell.height, pixels_per_point)
+        });
+        // The Kitty geometry follows only when the PTY reports this
+        // generation applied; see `publish_applied_kitty_geometry`.
+        self.controller
+            .set_cell_pixel_geometry(self.terminal.dimensions(), geometry);
     }
 
     /// Whether the terminal viewport should still deliver typed keystrokes
@@ -3159,6 +3328,9 @@ pub enum AppCommand {
     TogglePaneHandles,
     /// Toggles the stronger pane-only focus contrast treatment.
     TogglePaneHighContrast,
+    /// Toggles the default-off ADR 0089 inline-graphics opt-in. It affects
+    /// only sessions created afterwards; existing eligibility never changes.
+    ToggleInlineGraphics,
     /// Toggles whether closing a live session requires confirmation.
     ToggleConfirmSessionClose,
     /// Toggles whether Windows default local sessions prefer the per-user
@@ -3635,6 +3807,8 @@ pub struct AppState {
     rectangle_copy_trim_trailing_spaces: bool,
     scrollback_limit: ScrollbackLimitPreference,
     image_memory_budget: ImageMemoryBudgetPreference,
+    /// ADR 0089 opt-in consulted only when a session is created.
+    inline_graphics: bool,
     /// How the next text editor view starts out. Options stay per-view once a
     /// view is open; this is only where a new one begins.
     editor: festerm_config::EditorSettings,
@@ -3795,6 +3969,7 @@ impl AppState {
             rectangle_copy_trim_trailing_spaces: settings.rectangle_copy_trim_trailing_spaces(),
             scrollback_limit: settings.scrollback_limit(),
             image_memory_budget: settings.image_memory_budget(),
+            inline_graphics: settings.inline_graphics(),
             editor: settings.editor(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -3874,6 +4049,7 @@ impl AppState {
             }],
             id,
         );
+        state.freeze_inline_graphics_for_new_window();
         state.apply_scrollback_limit_to_sessions();
         (state, id)
     }
@@ -4078,6 +4254,7 @@ impl AppState {
 
         let active = focused.unwrap_or_else(|| restored[0].id);
         let mut state = Self::new_with_tabs(configuration, restored, active);
+        state.freeze_inline_graphics_for_new_window();
         state.apply_scrollback_limit_to_sessions();
         state
     }
@@ -4247,6 +4424,7 @@ impl AppState {
         self.rectangle_copy_trim_trailing_spaces = settings.rectangle_copy_trim_trailing_spaces();
         self.scrollback_limit = settings.scrollback_limit();
         self.image_memory_budget = settings.image_memory_budget();
+        self.inline_graphics = settings.inline_graphics();
         self.editor = settings.editor();
         self.quick_switch_overlay = settings.quick_switch_overlay();
         self.compact_launcher_grid = settings.compact_launcher_grid();
@@ -4489,6 +4667,22 @@ impl AppState {
         self.image_memory_budget
     }
 
+    pub const fn inline_graphics(&self) -> bool {
+        self.inline_graphics
+    }
+
+    /// Open sessions whose frozen decision enabled inline graphics, and
+    /// which therefore refuse recording.
+    pub fn inline_graphics_sessions(&self) -> usize {
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                matches!(&tab.content, TabContent::Session(session)
+                    if session.inline_graphics().is_eligible())
+            })
+            .count()
+    }
+
     pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
@@ -4583,6 +4777,7 @@ impl AppState {
         .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
         .with_image_memory_budget(self.image_memory_budget)
+        .with_inline_graphics(self.inline_graphics)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_show_resumable_sessions(self.show_resumable_sessions)
@@ -5253,6 +5448,9 @@ impl AppState {
             AppCommand::TogglePaneHighContrast => {
                 self.pane_high_contrast = !self.pane_high_contrast;
             }
+            AppCommand::ToggleInlineGraphics => {
+                self.inline_graphics = !self.inline_graphics;
+            }
             AppCommand::ToggleConfirmSessionClose => {
                 self.confirm_session_close = !self.confirm_session_close;
             }
@@ -5484,6 +5682,7 @@ impl AppState {
                     InterfaceSettings::DEFAULT.rectangle_copy_trim_trailing_spaces();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
                 self.image_memory_budget = InterfaceSettings::DEFAULT.image_memory_budget();
+                self.inline_graphics = InterfaceSettings::DEFAULT.inline_graphics();
                 self.editor = InterfaceSettings::DEFAULT.editor();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
@@ -7782,6 +7981,7 @@ impl AppState {
         recording: Option<&festerm_recording::SharedRecording>,
         replace_surface: bool,
     ) {
+        session.freeze_inline_graphics(self.inline_graphics_policy(recording));
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
         if let Some(recording) = recording {
             session.start_recording_auto_enrollment(recording, self.scrollback_limit);
@@ -7922,6 +8122,31 @@ impl AppState {
         }
     }
 
+    /// The window state a session's ADR 0089 eligibility is frozen from.
+    /// An unreadable recording state counts as recording, failing closed.
+    fn inline_graphics_policy(
+        &self,
+        recording: Option<&festerm_recording::SharedRecording>,
+    ) -> InlineGraphicsPolicy {
+        InlineGraphicsPolicy {
+            opted_in: self.inline_graphics,
+            recording: recording
+                .is_some_and(|recording| !matches!(recording.is_recording(), Ok(false))),
+        }
+    }
+
+    /// Freezes eligibility for sessions created with a new window (startup
+    /// primary shell and restored workspace tabs), which are never enrolled
+    /// in a recording.
+    fn freeze_inline_graphics_for_new_window(&mut self) {
+        let policy = self.inline_graphics_policy(None);
+        for tab in &mut self.tabs {
+            if let TabContent::Session(session) = &mut tab.content {
+                session.freeze_inline_graphics(policy);
+            }
+        }
+    }
+
     fn resolve_ssh_password(&mut self, tab: TabId, password: String) {
         let Some(session) = self.session_tab_mut(tab) else {
             return;
@@ -7993,6 +8218,7 @@ impl AppState {
                 0,
                 context,
             );
+            restarted.freeze_inline_graphics(self.inline_graphics_policy(None));
             restarted.apply_frontend_terminal_configuration(self.scrollback_limit);
             if let Some(tab) = self.tabs.get_mut(index) {
                 if let TabContent::Session(previous) = &tab.content {
@@ -8389,6 +8615,8 @@ impl SessionTab {
                 local_bind: ResolvedLocalBind::Automatic,
                 persistence: None,
             },
+            inline_graphics: None,
+            kitty_reservation: None,
             eviction_notice_shown: false,
             ssh_password_retry: None,
             has_new_output_since_active: false,
@@ -8430,6 +8658,59 @@ impl AppState {
         let replacement = SessionTab::for_test_ssh(session, username, host, port);
         self.active_tab_mut().content = TabContent::Session(Box::new(replacement));
         tab
+    }
+
+    /// Places an in-process local PTY stand-in, freezing ADR 0089
+    /// eligibility from the current window state as real placement does.
+    pub(crate) fn place_test_local_session(&mut self) -> TabId {
+        self.place_test_local_session_with(crate::session_controller::fake::FakeSshSession::new([]))
+    }
+
+    /// As [`Self::place_test_local_session`], with `transport` carrying the
+    /// PTY output and receiving terminal replies.
+    pub(crate) fn place_test_local_session_with(
+        &mut self,
+        transport: crate::session_controller::fake::FakeSshSession,
+    ) -> TabId {
+        self.place_session(SessionTab::for_test_local_with(transport));
+        self.active
+    }
+
+    /// Places an SSH stand-in through the same freezing path as a real
+    /// session, so the window's graphics preference is applied and refused.
+    pub(crate) fn place_test_ssh_session(
+        &mut self,
+        transport: crate::session_controller::fake::FakeSshSession,
+    ) -> TabId {
+        self.place_session(SessionTab::for_test_ssh(
+            transport,
+            "user",
+            "example.test",
+            22,
+        ));
+        self.active
+    }
+}
+
+#[cfg(test)]
+impl SessionTab {
+    fn for_test_local() -> Self {
+        Self::for_test_local_with(crate::session_controller::fake::FakeSshSession::new([]))
+    }
+
+    fn for_test_local_with(transport: crate::session_controller::fake::FakeSshSession) -> Self {
+        let mut session = Self::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "user",
+            "example.test",
+            22,
+        );
+        session.controller = SessionController::for_test(ApplicationSession::TestLocal(transport));
+        session
+            .controller
+            .set_lifecycle_for_test(SessionLifecycle::Running);
+        session.inspector_transport = InspectorTransport::Local { persistence: None };
+        session
     }
 }
 
@@ -13095,6 +13376,300 @@ mod tests {
         state.dispatch(AppCommand::ResetAllSettings, &context);
         assert!(!state.pane_high_contrast());
         assert!(!state.interface_settings().pane_high_contrast());
+    }
+
+    #[test]
+    fn inline_graphics_preference_snapshot_adopt_and_reset() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.inline_graphics());
+        state.dispatch(AppCommand::ToggleInlineGraphics, &context);
+        assert!(state.inline_graphics());
+        let snapshot = state.interface_settings();
+        assert!(snapshot.inline_graphics());
+        let configuration = Configuration::empty()
+            .with_interface_settings(snapshot)
+            .unwrap();
+        assert!(AppState::for_test_with_configuration(configuration.clone()).inline_graphics());
+        state.dispatch(AppCommand::ToggleInlineGraphics, &context);
+        assert!(!state.inline_graphics());
+        state.adopt_configuration(configuration);
+        assert!(state.inline_graphics());
+        state.dispatch(AppCommand::ResetAllSettings, &context);
+        assert!(!state.inline_graphics());
+        assert!(!state.interface_settings().inline_graphics());
+    }
+
+    /// A local-PTY outcome; backend refusals are decided before the build.
+    fn on_supported_platform(eligibility: InlineGraphicsEligibility) -> InlineGraphicsEligibility {
+        let build = crate::inline_graphics::BUILD;
+        if !build.platform_supported {
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::UnsupportedPlatform)
+        } else if !build.developer_preview {
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::DeveloperPreviewOnly)
+        } else {
+            eligibility
+        }
+    }
+
+    fn opted_in_state() -> AppState {
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::ToggleInlineGraphics, &egui::Context::default());
+        state
+    }
+
+    #[test]
+    fn inline_graphics_is_frozen_eligible_only_for_an_opted_in_local_pty() {
+        let mut state = AppState::for_test();
+        state.place_session(SessionTab::for_test_local());
+        let session = state.session_tab(state.active()).unwrap();
+        assert_eq!(
+            session.inline_graphics(),
+            on_supported_platform(InlineGraphicsEligibility::Disabled(
+                InlineGraphicsRefusal::NotOptedIn
+            ))
+        );
+        assert!(session.recording_eligible());
+
+        state.dispatch(AppCommand::ToggleInlineGraphics, &egui::Context::default());
+        let unaffected = state.active();
+        assert!(!state
+            .session_tab(unaffected)
+            .unwrap()
+            .inline_graphics()
+            .is_eligible());
+
+        state.place_session(SessionTab::for_test_local());
+        let eligible = state.active();
+        let expected = on_supported_platform(InlineGraphicsEligibility::Eligible);
+        let session = state.session_tab(eligible).unwrap();
+        assert_eq!(session.inline_graphics(), expected);
+        // ADR 0089 refuses recording rather than recording image bytes.
+        assert_eq!(session.recording_eligible(), !expected.is_eligible());
+
+        // Changing the preference never alters an already-created session.
+        state.dispatch(AppCommand::ToggleInlineGraphics, &egui::Context::default());
+        assert_eq!(
+            state.session_tab(eligible).unwrap().inline_graphics(),
+            expected
+        );
+    }
+
+    #[test]
+    fn inline_graphics_refuses_remote_and_persistent_backends_even_when_opted_in() {
+        let mut state = opted_in_state();
+        state.place_session(SessionTab::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "user",
+            "example.test",
+            22,
+        ));
+        assert_eq!(
+            state.session_tab(state.active()).unwrap().inline_graphics(),
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::Ssh)
+        );
+
+        for (provider, refusal) in [
+            (
+                PersistenceProviderKind::FestermSessiond,
+                InlineGraphicsRefusal::SessionDaemon,
+            ),
+            (
+                PersistenceProviderKind::Tmux,
+                InlineGraphicsRefusal::Multiplexer,
+            ),
+            (
+                PersistenceProviderKind::Screen,
+                InlineGraphicsRefusal::Multiplexer,
+            ),
+        ] {
+            let mut session = SessionTab::for_test_local();
+            session.inspector_transport = InspectorTransport::Local {
+                persistence: Some(InspectorPersistence {
+                    provider_label: provider.label(),
+                    session_name: "work".to_owned(),
+                }),
+            };
+            state.place_session(session);
+            assert_eq!(
+                state.session_tab(state.active()).unwrap().inline_graphics(),
+                InlineGraphicsEligibility::Disabled(refusal),
+                "{provider:?}"
+            );
+        }
+
+        let mut failed = SessionTab::for_test_local();
+        failed.controller = SessionController::with_startup_error("no shell".to_owned());
+        state.place_session(failed);
+        assert_eq!(
+            state.session_tab(state.active()).unwrap().inline_graphics(),
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::StartFailed)
+        );
+    }
+
+    #[test]
+    fn inline_graphics_eligibility_holds_a_fixed_protocol_reservation_before_enabling() {
+        if !crate::inline_graphics::BUILD.is_available() {
+            return;
+        }
+        let policy = InlineGraphicsPolicy {
+            opted_in: true,
+            recording: false,
+        };
+        let pool = KittyReservationPool::with_sessions(1);
+        let mut first = SessionTab::for_test_local();
+        first.freeze_inline_graphics_from(policy, &pool);
+        assert_eq!(first.inline_graphics(), InlineGraphicsEligibility::Eligible);
+        assert!(first.kitty_reservation.is_some());
+        let held = pool.claimed_bytes();
+        assert!(held > festerm_core::kitty::MAX_RGBA_BYTES);
+
+        let mut second = SessionTab::for_test_local();
+        second.freeze_inline_graphics_from(policy, &pool);
+        assert_eq!(
+            second.inline_graphics(),
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::ReservationUnavailable)
+        );
+        assert_eq!(pool.claimed_bytes(), held);
+
+        // A terminal that already ingested a partial sequence cannot enable
+        // Kitty; the claim is returned rather than leaked.
+        drop(first);
+        assert_eq!(pool.claimed_bytes(), 0);
+        let mut started = SessionTab::for_test_local();
+        started.terminal.ingest(b"\x1b[");
+        started.freeze_inline_graphics_from(policy, &pool);
+        assert_eq!(
+            started.inline_graphics(),
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::EnableFailed)
+        );
+        assert!(started.kitty_reservation.is_none());
+        assert_eq!(pool.claimed_bytes(), 0);
+    }
+
+    const OPTED_IN_GRAPHICS: InlineGraphicsPolicy = InlineGraphicsPolicy {
+        opted_in: true,
+        recording: false,
+    };
+
+    #[test]
+    fn release_builds_never_answer_the_kitty_graphics_query() {
+        let pool = KittyReservationPool::with_sessions(1);
+        let mut session = SessionTab::for_test_local();
+        session.freeze_inline_graphics_with(
+            OPTED_IN_GRAPHICS,
+            &pool,
+            crate::inline_graphics::InlineGraphicsBuild {
+                platform_supported: true,
+                developer_preview: false,
+            },
+        );
+        assert_eq!(
+            session.inline_graphics(),
+            InlineGraphicsEligibility::Disabled(InlineGraphicsRefusal::DeveloperPreviewOnly)
+        );
+        assert!(session.kitty_reservation.is_none());
+        assert_eq!(pool.claimed_bytes(), 0);
+        session
+            .terminal
+            .ingest(b"\x1b_Ga=q,i=1,s=1,v=1,f=24;AAAA\x1b\\\x1b[c");
+        assert_eq!(session.terminal.drain_replies(), b"\x1b[?6c");
+    }
+
+    #[test]
+    fn preview_sessions_validate_png_uploads_on_their_worker_while_holding_later_output() {
+        use crate::session_controller::{fake::FakeSshSession, CellPixelGeometry};
+        use festerm_session::{SessionEvent, TerminalSize};
+        const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = std::sync::Mutex::new(gate);
+        let validated_on = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen = std::sync::Arc::clone(&validated_on);
+        let _validator = crate::inline_graphics::override_png_validator_for_test(
+            festerm_core::kitty::KittyPngValidator::new(move |png, width, height| {
+                *seen.lock().unwrap() = std::thread::current().name().map(str::to_owned);
+                gate.lock().unwrap().recv().is_ok()
+                    && festerm_ui_egui::validate_kitty_png(png, width, height)
+            }),
+        );
+        let transport = FakeSshSession::new([]);
+        let mut session = SessionTab::for_test_local_with(transport.clone());
+        session.freeze_inline_graphics_with(
+            OPTED_IN_GRAPHICS,
+            &KittyReservationPool::with_sessions(1),
+            crate::inline_graphics::InlineGraphicsBuild {
+                platform_supported: true,
+                developer_preview: true,
+            },
+        );
+        assert_eq!(
+            session.inline_graphics(),
+            InlineGraphicsEligibility::Eligible
+        );
+        let grid = session.terminal.dimensions();
+        session
+            .controller
+            .set_cell_pixel_geometry(grid, CellPixelGeometry::from_points(9.0, 18.0, 1.0));
+        let (columns, rows) = (grid.columns() as u16, grid.rows() as u16);
+        let size = TerminalSize::with_pixels(columns, rows, columns * 9, rows * 18).unwrap();
+        let (requested, generation) = *transport.resize_requests().last().unwrap();
+        assert_eq!(requested, size);
+        transport.push_event(SessionEvent::ResizeAppliedGeneration {
+            size,
+            generation: generation.unwrap(),
+        });
+        transport.push_event(SessionEvent::Output(
+            format!("\x1b_Ga=t,i=7,f=100;{PNG_1X1}\x1b\\Z\x1b[c").into_bytes(),
+        ));
+
+        // The blocked validator never stalls the owner's pump.
+        for _ in 0..3 {
+            session.controller.pump_events(&mut session.terminal);
+        }
+        assert!(session.terminal.kitty_validation_pending());
+        assert!(session.terminal.row_text(0).unwrap().trim().is_empty());
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.terminal.kitty_validation_pending() {
+            assert!(Instant::now() < deadline, "validation never completed");
+            std::thread::sleep(Duration::from_millis(1));
+            session.controller.pump_events(&mut session.terminal);
+        }
+        session.controller.pump_events(&mut session.terminal);
+        session
+            .controller
+            .forward_terminal_replies(&mut session.terminal);
+        session.controller.flush_pending_writes();
+        assert_eq!(transport.sent().concat(), b"\x1b_Gi=7;OK\x1b\\\x1b[?6c");
+        assert!(session.terminal.row_text(0).unwrap().starts_with('Z'));
+        assert_eq!(
+            validated_on.lock().unwrap().as_deref(),
+            Some("festerm-kitty-validation")
+        );
+    }
+
+    #[test]
+    fn inline_graphics_is_refused_for_a_session_enrolled_in_an_active_recording() {
+        let fixture = RecordingFixture::new(1);
+        let recording = &fixture.recording;
+        let mut state = opted_in_state();
+        state.set_recording_auto_enrollment(Some(recording.clone()));
+        state.place_user_session(SessionTab::for_test_local());
+        let session = state.session_tab(state.active()).unwrap();
+        assert_eq!(
+            session.inline_graphics(),
+            on_supported_platform(InlineGraphicsEligibility::Disabled(
+                InlineGraphicsRefusal::Recording
+            ))
+        );
+        assert_eq!(session.controller.recording_id(), Some(recording.id()));
+        recording
+            .stop(festerm_recording::FinishReason::User)
+            .unwrap();
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Complete { .. }
+        ));
     }
 
     #[test]

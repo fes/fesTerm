@@ -149,6 +149,11 @@ impl Drop for DurationWatch {
     }
 }
 
+/// ADR 0089 §7: recording never captures a session with inline graphics on;
+/// the refusal names the reason instead of a generic unavailability.
+const INLINE_GRAPHICS_RECORDING_REFUSAL: &str =
+    "Sessions with inline graphics on cannot be recorded";
+
 impl SessionIdentity {
     fn capture(app: &FesTermApplication, tab: TabId) -> Option<Self> {
         let session = app.recording_session(tab)?;
@@ -813,6 +818,13 @@ impl DesktopRecording {
                 Some("Wait for the current recording library operation to finish".to_owned());
             return;
         }
+        if selected
+            .iter()
+            .any(|id| app.recording_refuses_inline_graphics(*id))
+        {
+            self.status = Some(INLINE_GRAPHICS_RECORDING_REFUSAL.to_owned());
+            return;
+        }
         if selected.len() > festerm_recording::MAX_STREAMS {
             self.status = Some(format!(
                 "Choose at most {} sessions for one recording",
@@ -1102,6 +1114,10 @@ impl DesktopRecording {
         let Some(recording) = self.recording.as_ref() else {
             return;
         };
+        if app.recording_refuses_inline_graphics(id) {
+            self.status = Some(INLINE_GRAPHICS_RECORDING_REFUSAL.to_owned());
+            return;
+        }
         let Some(session) = app.recording_session(id) else {
             self.status = Some("The session is no longer running".to_owned());
             return;
@@ -1651,6 +1667,12 @@ impl FesTermApplication {
         self.windows
             .iter()
             .find_map(|window| window.app.recording_session(id))
+    }
+
+    fn recording_refuses_inline_graphics(&self, id: TabId) -> bool {
+        self.windows
+            .iter()
+            .any(|window| window.app.recording_refuses_inline_graphics(id))
     }
 
     fn attach_recording(&mut self, id: TabId, stream: festerm_recording::RecordingStream) -> bool {

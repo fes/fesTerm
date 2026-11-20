@@ -401,7 +401,7 @@ async fn forward_child(
                         };
                         invalid.extend_from_slice(&announced.to_be_bytes());
                         if corruption == 3 {
-                            invalid.push(2);
+                            invalid.push(3);
                         } else {
                             invalid.extend_from_slice(&[1, 0xff]);
                         }

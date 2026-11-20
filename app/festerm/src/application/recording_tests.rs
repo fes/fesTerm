@@ -548,6 +548,52 @@ fn recording_start_and_enrollment_refuse_scrolled_viewports() {
         .any(|window| window == b"hidden live secret"));
 }
 
+#[cfg(unix)]
+#[test]
+fn recording_start_and_enrollment_name_the_inline_graphics_refusal() {
+    if !crate::inline_graphics::BUILD.is_available() {
+        return;
+    }
+    let (mut app, first, _, _, _) = two_windows();
+    let (graphics_window, graphics) = FesTermApp::for_test_with_inline_graphics_session();
+    app.windows.push(Window {
+        id: WindowId(2),
+        app: graphics_window,
+        placement: None,
+    });
+    assert!(app.recording_refuses_inline_graphics(graphics));
+    assert!(!app.recording_refuses_inline_graphics(first));
+
+    let mut coordinator = DesktopRecording::new(false, true);
+    coordinator.begin(
+        &app,
+        vec![first, graphics],
+        RecordingSettings::default(),
+        false,
+        &egui::Context::default(),
+    );
+    assert_eq!(
+        coordinator.status.as_deref(),
+        Some(INLINE_GRAPHICS_RECORDING_REFUSAL)
+    );
+    assert!(coordinator.starting.is_none());
+    assert!(coordinator.prepare.is_none());
+
+    let directory = tempfile::tempdir().unwrap();
+    festerm_unix_security::make_private_directory(&File::open(directory.path()).unwrap()).unwrap();
+    let terminal = &app.recording_session(first).unwrap().terminal;
+    let (recording, _) = SharedRecording::start(directory.path(), &[terminal], || {}).unwrap();
+    coordinator.recording = Some(recording.clone());
+    coordinator.include(&mut app, graphics);
+    assert_eq!(
+        coordinator.status.as_deref(),
+        Some(INLINE_GRAPHICS_RECORDING_REFUSAL)
+    );
+    let session = app.windows[2].app.automation_session_mut(graphics);
+    assert!(session.controller.recording_id().is_none());
+    recording.stop(FinishReason::User).unwrap();
+}
+
 #[test]
 fn synchronized_capture_spans_windows_and_excludes_local_input() {
     let (mut app, first, first_transport, second, second_transport) = two_windows();
