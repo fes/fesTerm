@@ -1,97 +1,92 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "4d4858c5d528bb04bfb0e92c2a4550faff944d5a1b99ef980d4d0f2fb5d2f1f4"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns HOST discovery, enterprise inventory, recipe metadata and Files/PowerShell trust.
+Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host discovery
+## Host Discovery
 
-Use for: HOST selection and pre-trust metadata
+Use for: Which HOST marker is selected without legacy bridge fallback?
 
-- [`HostBinding`](../../crates/festerm-tunnel-client/src/service.rs) — Exact account-scoped HOST binding and port
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Resolve HOST only, never a legacy bridge port
-- [`list_hosts`](../../crates/festerm-tunnel-client/src/service.rs) — Account-scoped HOST inventory without readiness authority
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects only HOST markers and rejects legacy bridge fallback.
 
 Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels
-- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Confirms bounded enterprise presentation and row caps
+- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels.
 
 Caveats:
-- Omitted inventory or foreign generations never replace a live daemon.
+- Inventory rows are metadata only; they are not live daemon proof.
+- Foreign generations are ignored.
 
-## Enterprise inventory
+## Enterprise Inventory
 
-Use for: Bounded Dev Box/project inventory
+Use for: How are Dev Box and project inventories bounded before presentation?
 
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns Dev Center sign-in, worker loop, and tab lifecycle
-- [`EnterpriseInventory`](../../app/festerm/src/enterprise.rs) — Binds row and byte totals before presenting inventory
+- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns sign-in, worker loop, and tab lifecycle.
 
 Evidence:
-- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Checks cap enforcement and truncation
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker results cannot repopulate a new tab
+- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab.
+- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Caps rows and bytes before showing inventory.
 
 Caveats:
-- Inventory workers bind results to the active tab generation.
+- Worker results are generation-scoped; stale results cannot mutate a new tab.
+- Inventory rows and bytes are bounded before presentation.
 
-## Recipe metadata
+## Recipe Metadata
 
-Use for: Portable recipe fields
+Use for: What portable recipe fields survive import and export?
 
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Only public metadata crosses the portable boundary
-- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports/exports recipe metadata
+- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust decisions, and grants.
+- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports or exports recipe metadata.
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes
-- [`ConnectionBehavior`](../../crates/festerm-client-recipes/src/model.rs) — Behavior semantics distinguish resume, create, and attach
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes.
 
 Caveats:
-- Credentials, trust decisions, and grants are intentionally absent from the portable model.
+- Portable metadata is intentionally public-only.
+- Legacy defaults and attach generation semantics stay distinct.
 
-## Rooted files
+## Rooted Files
 
-Use for: Rooted Files without terminal admission
+Use for: How is HOST file access granted without terminal or daemon authority?
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded client for separate HOST file streams
-- [`open_files`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/files.rs) — Opens Open2 Files after ordinary account/scope checks
-- [`open_files_reviewed`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/files.rs) — Open3 optional operations; no downgrade
-- [`remove`](../../crates/festerm-tunnel-bridge/src/filesystem/reviewed_delete.rs) — Exact capture, fresh admission and no-replace restore
-- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Retains filesystem root and policy for explicit consent reuse
-- [`require_host_files`](../../crates/festerm-host-setup/src/services/trusted.rs) — Verifies helper support before file consent
+- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Keeps filesystem root and policy for explicit consent reuse.
 
 Evidence:
-- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files grant works without session admission or daemon dependency
+- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files access works without session admission or daemon dependency.
 
 Caveats:
-- The file scope and policy are verified each use; prepared roots do not grant hidden authority.
-- Unix reserved captures/trusted parents are not identity-atomic unlink against same-user writers. Native Windows/UI gates remain.
+- Prepared roots do not grant hidden authority; every use revalidates scope.
+- A recreated stream cannot inherit terminal or daemon permissions by accident.
 
-## PowerShell lifecycle
+## PowerShell Lifecycle
 
-Use for: Distinct PowerShell lifecycle states
+Use for: Which lifecycle state or action distinguishes close, cancel, and failure?
 
-- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close states
-- [`PowerShellAction`](../../app/festerm/src/powershell.rs) — Lifecycle and worker commands remain separate from output actions
+- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close transitions.
 
 Evidence:
-- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Failed close remains distinct from a successful exit
+- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure remains distinct from a successful exit.
 
 Caveats:
 - Stale worker generations cannot mutate the current state.
+- Close and cancel remain separate lifecycle commands.
 
-## Host replacement
+## Host Replacement
 
-Use for: Update, stop and authenticated helper gates
+Use for: What record and consent prevent untrusted host replacement?
 
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority
-- [`require_host_files`](../../crates/festerm-host-setup/src/services/trusted.rs) — Rejects unsupported or foreign helper capabilities before file consent
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions
+- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; it grants no replacement authority.
+- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
+- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Noninteractive local owner-admission evidence; no state writes or HOST-ready claim.
 
 Evidence:
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update
+- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update.
 
 Caveats:
-- Containment retries bound observation and receipt persistence; they never revoke or mutate live service state.
+- Containment retries preserve receipts without mutating live service state.
+- Helper gate checks reject unsupported or foreign capabilities before consent.
+- Owner diagnostics grant no credential, retry or serving authority.

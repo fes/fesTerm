@@ -526,3 +526,147 @@ fn headless_configure_cannot_erase_an_unreviewable_file_grant() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot review existing file access"));
     assert_eq!(store.snapshot().unwrap(), before);
 }
+
+#[test]
+fn host_owner_readiness_cli_is_local_status_only_and_never_creates_a_root() {
+    let help = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(help.stderr.is_empty());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("owner-readiness --state-dir PATH --origin desktop|headless"));
+    assert!(help.contains("LOCAL owner-admission status only, using noninteractive reads"));
+    assert!(help.contains("No mutation"));
+    assert!(help.contains("no HOST/listener readiness claim"));
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let missing = root.path().join("private-canary-missing-state");
+    for origin in ["desktop", "headless"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args(["owner-readiness", "--state-dir"])
+            .arg(&missing)
+            .args(["--origin", origin])
+            .output()
+            .unwrap();
+        if cfg!(feature = "owner-routing") {
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["schema"], 1);
+            assert_eq!(report["scope"], "local_owner_admission");
+            assert_eq!(report["status_only"], true);
+            assert_eq!(report["events"][1]["stage"], "store_open");
+            assert_eq!(report["events"][1]["outcome"], "error");
+            assert_eq!(report["events"][1]["category"], "missing");
+            assert!(output.stdout.len() < 4096);
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("private-canary"));
+        } else {
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+        }
+        assert!(!missing.exists());
+    }
+    for args in [
+        vec!["--origin", "desktop"],
+        vec!["--state-dir", "relative", "--origin", "desktop"],
+        vec!["--state-dir", "/unused", "--origin", "unknown"],
+        vec!["--state-dir", "/unused"],
+        vec![
+            "--state-dir",
+            "/unused",
+            "--origin",
+            "desktop",
+            "--origin",
+            "headless",
+        ],
+        vec![
+            "--state-dir",
+            "/unused",
+            "--origin",
+            "desktop",
+            "--allow-ui",
+            "true",
+        ],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .arg("owner-readiness")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
+fn host_owner_readiness_cli_refuses_wrong_origin_or_malformed_policy_without_writes() {
+    use festerm_host_setup::lifecycle::{Origin, Settings, Startup, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let state = root.path().join("state");
+    Store::create(
+        &state,
+        Origin::Desktop,
+        Settings {
+            friendly_name: "public-fixture".into(),
+            allow_creation: false,
+            ordinary_access: Default::default(),
+            filesystem: None,
+            startup: Startup::Manual,
+        },
+    )
+    .unwrap();
+    let before = std::fs::read(state.join("host-lifecycle.json")).unwrap();
+    let count = std::fs::read_dir(&state).unwrap().count();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["owner-readiness", "--state-dir"])
+        .arg(&state)
+        .args(["--origin", "headless"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["events"][1]["stage"], "store_open");
+    assert_eq!(report["events"][1]["outcome"], "error");
+    assert_eq!(
+        std::fs::read(state.join("host-lifecycle.json")).unwrap(),
+        before
+    );
+    assert_eq!(std::fs::read_dir(&state).unwrap().count(), count);
+    assert!(!state.join("worker.log").exists());
+    assert!(!state.join("owner-enrollment-vault-ref").exists());
+    // A malformed protected policy is rejected before constructing the native
+    // vault adapter, so this actual-binary fixture never opens a real credential.
+    let directory = festerm_sessiond::private_storage::private_directory(&state, false).unwrap();
+    use std::io::Write;
+    let mut policy = festerm_sessiond::private_storage::open_private_file(
+        &directory,
+        std::path::Path::new("owner-enrollment.json"),
+        true,
+    )
+    .unwrap();
+    policy
+        .write_all(b"private-canary-malformed-policy")
+        .unwrap();
+    drop(policy);
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["owner-readiness", "--state-dir"])
+        .arg(&state)
+        .args(["--origin", "desktop"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["events"][1]["category"], "malformed");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("private-canary"));
+    assert_eq!(
+        std::fs::read(state.join("owner-enrollment.json")).unwrap(),
+        b"private-canary-malformed-policy"
+    );
+    assert_eq!(std::fs::read_dir(&state).unwrap().count(), count + 1);
+    assert!(!state.join("worker.log").exists());
+}

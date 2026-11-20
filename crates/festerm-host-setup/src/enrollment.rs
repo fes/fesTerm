@@ -25,6 +25,128 @@ const ANCHOR_MAGIC: &[u8] = b"fesTerm owner policy anchor v2\0";
 const LIMIT: usize = 16 * 1024;
 const MAX_HISTORICAL_KEYS: usize = 64;
 
+// Observations only: no references, policy data, native error text or authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAdmissionStage {
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    StoreOpen,
+    Snapshot,
+    PolicyRead,
+    AnchorRead,
+    PolicyVerification,
+    HighWaterUpdate,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    Consent,
+}
+impl OwnerAdmissionStage {
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::StoreOpen => "store_open",
+            Self::Snapshot => "snapshot",
+            Self::PolicyRead => "policy_read",
+            Self::AnchorRead => "anchor_read",
+            Self::PolicyVerification => "policy_verification",
+            Self::HighWaterUpdate => "high_water_update",
+            Self::Consent => "consent",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAdmissionFailure {
+    Missing,
+    LockedOrUnavailable,
+    Unsupported,
+    NativeFailure,
+    InvalidReference,
+    TooLarge,
+    Busy,
+    Unclassified,
+    Malformed,
+    PolicyDigestMismatch,
+    InvalidPolicy,
+    StorageMismatch,
+    RevisionMismatch,
+    ScopeChanged,
+    EpochExhausted,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    MissingConsent,
+}
+impl OwnerAdmissionFailure {
+    pub(crate) fn from_io(error: &io::Error) -> Self {
+        if let Some(reason) = error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<OwnerAdmissionError>())
+        {
+            return reason.category;
+        }
+        match error.kind() {
+            io::ErrorKind::NotFound => Self::Missing,
+            io::ErrorKind::WouldBlock => Self::Busy,
+            _ => Self::Unclassified,
+        }
+    }
+    fn from_vault(error: festerm_secret_store::SecretStoreError) -> Self {
+        use festerm_secret_store::SecretStoreError;
+        match error {
+            SecretStoreError::Missing => Self::Missing,
+            SecretStoreError::LockedOrUnavailable => Self::LockedOrUnavailable,
+            SecretStoreError::Unsupported => Self::Unsupported,
+            SecretStoreError::BackendFailure => Self::NativeFailure,
+            SecretStoreError::InvalidReference => Self::InvalidReference,
+            SecretStoreError::TooLarge => Self::TooLarge,
+        }
+    }
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::LockedOrUnavailable => "locked_or_unavailable",
+            Self::Unsupported => "unsupported",
+            Self::NativeFailure => "native_failure",
+            Self::InvalidReference => "invalid_reference",
+            Self::TooLarge => "too_large",
+            Self::Busy => "busy",
+            Self::Unclassified => "unclassified",
+            Self::Malformed => "malformed",
+            Self::PolicyDigestMismatch => "policy_digest_mismatch",
+            Self::InvalidPolicy => "invalid_policy",
+            Self::StorageMismatch => "storage_mismatch",
+            Self::RevisionMismatch => "revision_mismatch",
+            Self::ScopeChanged => "scope_changed",
+            Self::EpochExhausted => "epoch_exhausted",
+            Self::MissingConsent => "missing_consent",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerAdmissionEvent {
+    Begin(OwnerAdmissionStage),
+    Pass(OwnerAdmissionStage),
+    Fail(OwnerAdmissionStage, OwnerAdmissionFailure),
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AnchorRead {
     Foreground,
@@ -76,19 +198,40 @@ fn refused(message: &'static str) -> io::Error {
     io::Error::other(message)
 }
 
+// Retain a finite cause where an existing static error previously erased it.
+// Display and io::ErrorKind remain the same; never derive categories from text.
+#[derive(Debug)]
+struct OwnerAdmissionError {
+    message: &'static str,
+    category: OwnerAdmissionFailure,
+}
+impl std::fmt::Display for OwnerAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message)
+    }
+}
+impl std::error::Error for OwnerAdmissionError {}
+fn admission_error(message: &'static str, category: OwnerAdmissionFailure) -> io::Error {
+    io::Error::other(OwnerAdmissionError { message, category })
+}
+
 fn vault_error(error: festerm_secret_store::SecretStoreError) -> io::Error {
-    refused(match error {
-        festerm_secret_store::SecretStoreError::LockedOrUnavailable => {
-            "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
-        }
-        festerm_secret_store::SecretStoreError::Missing => {
-            "owner.vault_anchor_missing_local_reconciliation_required"
-        }
-        festerm_secret_store::SecretStoreError::Unsupported => {
-            "owner.native_vault_unsupported_no_plaintext_fallback"
-        }
-        _ => "owner.native_vault_failure_no_fallback",
-    })
+    let category = OwnerAdmissionFailure::from_vault(error);
+    admission_error(
+        match error {
+            festerm_secret_store::SecretStoreError::LockedOrUnavailable => {
+                "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
+            }
+            festerm_secret_store::SecretStoreError::Missing => {
+                "owner.vault_anchor_missing_local_reconciliation_required"
+            }
+            festerm_secret_store::SecretStoreError::Unsupported => {
+                "owner.native_vault_unsupported_no_plaintext_fallback"
+            }
+            _ => "owner.native_vault_failure_no_fallback",
+        },
+        category,
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -378,10 +521,18 @@ impl Store {
             }
             match storage::read_private(directory, Path::new(RECORD), LIMIT) {
                 Ok(bytes) => {
-                    let record: EnrollmentSnapshot = serde_json::from_slice(&bytes)
-                        .map_err(|_| refused("owner.invalid_policy"))?;
+                    let record: EnrollmentSnapshot =
+                        serde_json::from_slice(&bytes).map_err(|_| {
+                            admission_error(
+                                "owner.invalid_policy",
+                                OwnerAdmissionFailure::Malformed,
+                            )
+                        })?;
                     if record.storage != selected {
-                        return Err(refused("owner.storage_selection_changed_requires_review"));
+                        return Err(admission_error(
+                            "owner.storage_selection_changed_requires_review",
+                            OwnerAdmissionFailure::StorageMismatch,
+                        ));
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -704,29 +855,69 @@ impl OwnerEnrollment<'_> {
         installation: &Snapshot,
         read: AnchorRead,
     ) -> io::Result<(SecretReference, EnrollmentSnapshot)> {
-        let reference = self.reference(directory, ANCHOR)?;
-        let bytes = storage::read_private(directory, Path::new(RECORD), LIMIT)?;
+        self.read_selected_observed(directory, installation, read, &mut |_| {})
+    }
+
+    fn read_selected_observed(
+        &self,
+        directory: &File,
+        installation: &Snapshot,
+        read: AnchorRead,
+        observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    ) -> io::Result<(SecretReference, EnrollmentSnapshot)> {
+        use OwnerAdmissionEvent::{Begin, Fail, Pass};
+        use OwnerAdmissionFailure as Failure;
+        use OwnerAdmissionStage as Stage;
+        observe(Begin(Stage::PolicyRead));
+        let (reference, bytes) = (|| {
+            let reference = self.reference(directory, ANCHOR)?;
+            let bytes = storage::read_private(directory, Path::new(RECORD), LIMIT)?;
+            Ok((reference, bytes))
+        })()
+        .inspect_err(|error| observe(Fail(Stage::PolicyRead, Failure::from_io(error))))?;
+        observe(Pass(Stage::PolicyRead));
+        observe(Begin(Stage::AnchorRead));
         let protected = if read != AnchorRead::Foreground {
             self.vault.get_noninteractive(&reference)
         } else {
             self.vault.get(&reference)
         }
-        .map_err(|error| self.storage_error(error))?;
-        let anchor = protected.with_bytes(PolicyAnchor::decode)?;
+        .map_err(|error| {
+            observe(Fail(Stage::AnchorRead, Failure::from_vault(error)));
+            self.storage_error(error)
+        })?;
+        observe(Pass(Stage::AnchorRead));
+        observe(Begin(Stage::PolicyVerification));
+        let anchor = protected
+            .with_bytes(PolicyAnchor::decode)
+            .inspect_err(|_| {
+                observe(Fail(Stage::PolicyVerification, Failure::Malformed));
+            })?;
         if anchor.digest != <[u8; 32]>::from(Sha256::digest(bytes.as_slice())) {
+            observe(Fail(
+                Stage::PolicyVerification,
+                Failure::PolicyDigestMismatch,
+            ));
             return Err(refused(
                 "owner.policy_rollback_or_interrupted_commit_local_reconciliation_required",
             ));
         }
-        let mut record: EnrollmentSnapshot =
-            serde_json::from_slice(&bytes).map_err(|_| refused("owner.invalid_policy"))?;
-        validate_identity(directory, &record, installation)?;
+        let mut record: EnrollmentSnapshot = serde_json::from_slice(&bytes).map_err(|_| {
+            observe(Fail(Stage::PolicyVerification, Failure::Malformed));
+            refused("owner.invalid_policy")
+        })?;
+        validate_identity(directory, &record, installation).inspect_err(|_| {
+            observe(Fail(Stage::PolicyVerification, Failure::InvalidPolicy));
+        })?;
         if record.storage != self.storage {
+            observe(Fail(Stage::PolicyVerification, Failure::StorageMismatch));
             return Err(refused("owner.storage_selection_changed_requires_review"));
         }
         if record.revision != anchor.revision {
+            observe(Fail(Stage::PolicyVerification, Failure::RevisionMismatch));
             return Err(refused("owner.anchor_revision_mismatch"));
         }
+        observe(Pass(Stage::PolicyVerification));
         let advances_high_water = match read {
             AnchorRead::Foreground | AnchorRead::CurrentNoninteractive => true,
             #[cfg(all(
@@ -737,27 +928,48 @@ impl OwnerEnrollment<'_> {
             AnchorRead::LocalNoninteractive => false,
         };
         if record.installation_epoch < installation.epoch && advances_high_water {
+            observe(Begin(Stage::HighWaterUpdate));
             if read == AnchorRead::CurrentNoninteractive {
+                observe(Fail(Stage::HighWaterUpdate, Failure::ScopeChanged));
                 return Err(refused("owner.lifecycle_readiness_refresh_required"));
             }
             // Persist each observed lifecycle high-water before issuing authority.
             record.installation_epoch = installation.epoch;
-            record.revision = Epoch::new(
-                record
-                    .revision
-                    .get()
-                    .checked_add(1)
-                    .ok_or_else(|| refused("owner.epoch_exhausted"))?,
-            )?;
-            self.commit(directory, &reference, &record, anchor.digest)?;
+            record.revision =
+                Epoch::new(record.revision.get().checked_add(1).ok_or_else(|| {
+                    observe(Fail(Stage::HighWaterUpdate, Failure::EpochExhausted));
+                    refused("owner.epoch_exhausted")
+                })?)?;
+            self.commit(directory, &reference, &record, anchor.digest)
+                .inspect_err(|error| {
+                    observe(Fail(Stage::HighWaterUpdate, Failure::from_io(error)));
+                })?;
+            observe(Pass(Stage::HighWaterUpdate));
         }
         Ok((reference, record))
     }
 
     pub fn snapshot(&self) -> io::Result<EnrollmentSnapshot> {
-        self.installation.with_locked(|directory, installation| {
-            self.read(directory, installation).map(|(_, record)| record)
-        })
+        self.snapshot_observed(&mut |_| {})
+    }
+
+    pub(crate) fn snapshot_observed(
+        &self,
+        observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    ) -> io::Result<EnrollmentSnapshot> {
+        observe(OwnerAdmissionEvent::Begin(OwnerAdmissionStage::Snapshot));
+        let result = self.installation.with_locked(|directory, installation| {
+            self.read_selected_observed(directory, installation, AnchorRead::Foreground, observe)
+                .map(|(_, record)| record)
+        });
+        observe(match &result {
+            Ok(_) => OwnerAdmissionEvent::Pass(OwnerAdmissionStage::Snapshot),
+            Err(error) => OwnerAdmissionEvent::Fail(
+                OwnerAdmissionStage::Snapshot,
+                OwnerAdmissionFailure::from_io(error),
+            ),
+        });
+        result
     }
 
     /// No prompts, fallback or high-water writes. The native anchor is read on
@@ -772,6 +984,36 @@ impl OwnerEnrollment<'_> {
         })
     }
 
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn current_snapshot_noninteractive_observed(
+        &self,
+        observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    ) -> io::Result<CurrentEnrollmentSnapshot> {
+        observe(OwnerAdmissionEvent::Begin(OwnerAdmissionStage::Snapshot));
+        let result = self.with_current_snapshot_noninteractive_observed(
+            |_, installation, enrollment, lease| {
+                Ok(CurrentEnrollmentSnapshot {
+                    _lease: lease,
+                    installation: installation.clone(),
+                    enrollment: enrollment.clone(),
+                })
+            },
+            observe,
+        );
+        observe(match &result {
+            Ok(_) => OwnerAdmissionEvent::Pass(OwnerAdmissionStage::Snapshot),
+            Err(error) => OwnerAdmissionEvent::Fail(
+                OwnerAdmissionStage::Snapshot,
+                OwnerAdmissionFailure::from_io(error),
+            ),
+        });
+        result
+    }
+
     pub(crate) fn with_current_snapshot_noninteractive<T>(
         &self,
         action: impl FnOnce(
@@ -781,10 +1023,27 @@ impl OwnerEnrollment<'_> {
             protected_state::Lease,
         ) -> io::Result<T>,
     ) -> io::Result<T> {
+        self.with_current_snapshot_noninteractive_observed(action, &mut |_| {})
+    }
+
+    fn with_current_snapshot_noninteractive_observed<T>(
+        &self,
+        action: impl FnOnce(
+            &File,
+            &Snapshot,
+            &EnrollmentSnapshot,
+            protected_state::Lease,
+        ) -> io::Result<T>,
+        observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    ) -> io::Result<T> {
         self.installation
             .with_owned_lease(|directory, installation, lease| {
-                let (_, record) =
-                    self.read_selected(directory, installation, AnchorRead::CurrentNoninteractive)?;
+                let (_, record) = self.read_selected_observed(
+                    directory,
+                    installation,
+                    AnchorRead::CurrentNoninteractive,
+                    observe,
+                )?;
                 action(directory, installation, &record, lease)
             })
     }
@@ -1560,6 +1819,151 @@ pub(crate) mod tests {
             .revoke(rotated.revision, new_key.public_key())
             .unwrap();
         assert!(enrollment.with_current_verifier(|_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn host_owner_admission_snapshot_distinguishes_missing_locked_and_malformed_anchor() {
+        use OwnerAdmissionEvent::{Begin, Fail};
+        use OwnerAdmissionFailure as Failure;
+        use OwnerAdmissionStage as Stage;
+        for fault in ["missing", "locked", "malformed"] {
+            let (_root, store, vault) = setup();
+            let enrollment = fixture_owners(&store, vault.clone());
+            initialize(&enrollment);
+            let reference = store
+                .with_locked(|directory, _| enrollment.reference(directory, ANCHOR))
+                .unwrap();
+            let expected = match fault {
+                "missing" => {
+                    vault.memory.delete(&reference).unwrap();
+                    Fail(Stage::AnchorRead, Failure::Missing)
+                }
+                "locked" => {
+                    vault.locked.store(true, Ordering::Release);
+                    Fail(Stage::AnchorRead, Failure::LockedOrUnavailable)
+                }
+                _ => {
+                    vault
+                        .memory
+                        .update(
+                            &reference,
+                            &SecretBytes::copy_from_slice(b"private-canary-not-an-anchor"),
+                        )
+                        .unwrap();
+                    Fail(Stage::PolicyVerification, Failure::Malformed)
+                }
+            };
+            let original = enrollment.snapshot().unwrap_err();
+            let reads = vault.interactive_reads.load(Ordering::Acquire);
+            let mut events = Vec::new();
+            let observed = enrollment
+                .snapshot_observed(&mut |event| events.push(event))
+                .unwrap_err();
+            assert_eq!(observed.to_string(), original.to_string());
+            assert_eq!(observed.kind(), original.kind());
+            assert!(events.contains(&expected), "{fault}: {events:?}");
+            assert_eq!(vault.interactive_reads.load(Ordering::Acquire), reads + 1);
+            assert_eq!(vault.noninteractive_reads.load(Ordering::Acquire), 0);
+            if fault != "malformed" {
+                assert!(!events.contains(&Begin(Stage::PolicyVerification)));
+            }
+            assert!(!format!("{events:?}").contains("private-canary"));
+        }
+    }
+
+    #[test]
+    fn host_owner_admission_snapshot_retains_rollback_and_identity_refusals() {
+        use OwnerAdmissionEvent::Fail;
+        use OwnerAdmissionFailure as Failure;
+        use OwnerAdmissionStage as Stage;
+        for fault in ["rollback", "identity"] {
+            let (root, store, vault) = setup();
+            let enrollment = fixture_owners(&store, vault);
+            let initial = initialize(&enrollment);
+            let old = std::fs::read(root.path().join("installation").join(RECORD)).unwrap();
+            if fault == "rollback" {
+                enrollment
+                    .approve_permissions(initial.revision, true, Capabilities::default())
+                    .unwrap();
+                store
+                    .with_locked(|directory, _| {
+                        storage::replace_private(directory, Path::new(RECORD), &old)
+                    })
+                    .unwrap();
+            } else {
+                let identity = root.path().join("installation/host-identity");
+                std::fs::remove_file(&identity).unwrap();
+                HostIdentity::load_or_create(&identity).unwrap();
+            }
+            let original = enrollment.snapshot().unwrap_err();
+            let mut events = Vec::new();
+            let observed = enrollment
+                .snapshot_observed(&mut |event| events.push(event))
+                .unwrap_err();
+            assert_eq!(observed.to_string(), original.to_string());
+            let reason = if fault == "rollback" {
+                Failure::PolicyDigestMismatch
+            } else {
+                Failure::InvalidPolicy
+            };
+            assert!(
+                events.contains(&Fail(Stage::PolicyVerification, reason)),
+                "{events:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_owner_admission_high_water_observes_actual_commit_without_reordering() {
+        use OwnerAdmissionEvent::{Begin, Fail, Pass};
+        use OwnerAdmissionStage as Stage;
+        for locked_update in [false, true] {
+            let (root, store, vault) = setup();
+            let enrollment = fixture_owners(&store, vault.clone());
+            let initial = initialize(&enrollment);
+            let before = std::fs::read(root.path().join("installation").join(RECORD)).unwrap();
+            store.revoke().unwrap();
+            let mut events = Vec::new();
+            let result = enrollment.snapshot_observed(&mut |event| {
+                events.push(event);
+                if locked_update && event == Begin(Stage::HighWaterUpdate) {
+                    vault.locked.store(true, Ordering::Release);
+                }
+            });
+            assert!(
+                events
+                    .iter()
+                    .position(|event| *event == Pass(Stage::PolicyVerification))
+                    .unwrap()
+                    < events
+                        .iter()
+                        .position(|event| *event == Begin(Stage::HighWaterUpdate))
+                        .unwrap()
+            );
+            if locked_update {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
+                );
+                assert!(events.contains(&Fail(
+                    Stage::HighWaterUpdate,
+                    OwnerAdmissionFailure::LockedOrUnavailable
+                )));
+                assert_eq!(
+                    std::fs::read(root.path().join("installation").join(RECORD)).unwrap(),
+                    before
+                );
+                vault.locked.store(false, Ordering::Release);
+                // A prepared proposal did not change authority; forward reconciliation
+                // retains the old native anchor before a fresh high-water snapshot.
+                enrollment.reconcile().unwrap();
+            } else {
+                let current = result.unwrap();
+                assert!(current.revision.get() > initial.revision.get());
+                assert_eq!(current.installation_epoch, store.snapshot().unwrap().epoch);
+                assert!(events.contains(&Pass(Stage::HighWaterUpdate)));
+            }
+        }
     }
 
     #[test]

@@ -75,6 +75,10 @@ migration-switch --state-dir PATH --owner-storage native-vault|headless-protecte
 migration-binding-status --state-dir PATH
     Protected per-generation binding/switch/release history, not endpoint readiness.
 
+owner-readiness --state-dir PATH --origin desktop|headless
+    LOCAL owner-admission status only, using noninteractive reads. No mutation;
+    no HOST/listener readiness claim. Exit success only means evidence was produced.
+
 Manual startup requires an explicit start/run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
 private, symlink-free and belong to the configured non-system OS user.
@@ -140,6 +144,8 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     }
     let command = command.to_str().ok_or_else(invalid)?;
     let allowed: &[&str] = match command {
+        #[cfg(feature = "owner-routing")]
+        "owner-readiness" => &["--state-dir", "--origin"],
         "configure" => &[
             "--state-dir",
             "--name",
@@ -241,7 +247,8 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         #[cfg(feature = "owner-routing")]
         "update-status" => &["--state-dir"],
         #[cfg(not(feature = "owner-routing"))]
-        "setup"
+        "owner-readiness"
+        | "setup"
         | "run"
         | "run-desktop"
         | "run-managed"
@@ -271,6 +278,23 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        #[cfg(feature = "owner-routing")]
+        "owner-readiness" => {
+            let state = path("--state-dir")?;
+            let origin = match options.get("--origin").and_then(|value| value.to_str()) {
+                Some("desktop") => Origin::Desktop,
+                Some("headless") => Origin::Headless,
+                _ => return Err(invalid()),
+            };
+            let report = serde_json::to_string(
+                &festerm_host_setup::controller::owner_readiness_diagnostic(&state, origin),
+            )
+            .map_err(|_| invalid())?;
+            if report.len() > 4096 {
+                return Err(invalid());
+            }
+            Ok(report)
+        }
         #[cfg(feature = "owner-routing")]
         "migration-owner-init"
         | "migration-owner-approve"
