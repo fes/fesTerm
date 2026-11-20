@@ -2751,8 +2751,25 @@ published output and report uncertainty. Retain original copy/cancel outcomes
 when cleanup fails and the existing two-second teardown bound. Portable
 regressions cover publication fencing and error preservation; Windows fixtures
 cover exact handles, replaced leaves, Windows refusal to rename an ancestor
-while the download handle is retained, and canceled creation handoff. Unix/remote uploads and
+while the download handle is retained, and canceled creation handoff. Remote uploads and
 crash/restart cleanup remain open; no suffix/age/size-based scavenging is allowed.
+
+Unix local downloads additionally use a retained parent and exact file identity
+for cleanup before publication. In an owned ordinary download directory, cancel,
+fail or close a GUI/text download: the owned partial must disappear while a
+similarly named sibling survives. Replace the leaf with a regular file or symlink:
+preserve the replacement and moved original, and report unconfirmed cleanup.
+Move the selected ancestor and create a replacement directory: cleanup must touch
+only the retained original directory, and the publication fence must refuse the
+changed public path. Change only the owned test parent's trust permissions:
+creation remains usable but cleanup must preserve/report the uncertain partial;
+never repair a real user's permissions or ACL. Compare an ordinary same-parent
+exclusive creation with completed downloads under real umask/default-ACL settings.
+A canceled creation handoff must wait for actual owned cleanup, bounded by the
+existing two-second owner deadline. Unix native/default-ACL and packaged UI
+qualification remain pending; automated owned-filesystem fixtures do not prove
+atomic deletion against hostile same-user/root writers. Remote uploads,
+unprovable parents and crash/restart recovery remain open under item 17.
 Do not count these source fixtures as packaged native or accessibility evidence.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

@@ -200,6 +200,7 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
                     "rooted v1 does not grant delete",
                 ));
             };
+            crate::sftp::check_transfer_partial_path(&self.partial, path).await?;
             fs::remove_file(local)
                 .await
                 .map_err(|error| local_error("remove file", local, error))?;
@@ -221,6 +222,7 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
                     "rooted v1 does not grant rename",
                 ));
             };
+            crate::sftp::check_transfer_partial_path(&self.partial, source).await?;
             fs::rename(from, to)
                 .await
                 .map_err(|error| local_error("rename file", from, error))?;
@@ -390,6 +392,85 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ProgressIo<'_, T> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+    #[cfg(unix)]
+    use tokio::io::AsyncWriteExt;
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_download_endpoint_refuses_changed_ancestor_before_remove_or_rename() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for remove_destination in [true, false] {
+                    let marker = source(if remove_destination {
+                        "unix-remove-fence"
+                    } else {
+                        "unix-rename-fence"
+                    });
+                    let root = marker.parent().unwrap();
+                    let selected = root.join("selected");
+                    let moved = root.join("moved");
+                    std::fs::create_dir(&selected).unwrap();
+                    let temporary = selected.join("owned.part");
+                    let destination = selected.join("final");
+                    std::fs::write(&destination, b"reviewed destination").unwrap();
+                    let mut backend = EndpointBackend {
+                        remote: ScriptedRemote(Arc::new(Mutex::new(RemoteState::default()))),
+                        partial: None,
+                    };
+                    crate::sftp::begin_transfer_partial(
+                        &mut backend.partial,
+                        SftpPath::local(&temporary),
+                    )
+                    .unwrap();
+                    let mut writer = crate::sftp::create_transfer_download_file(
+                        &mut backend.partial,
+                        &temporary,
+                    )
+                    .await
+                    .unwrap();
+                    writer.write_all(b"owned output").await.unwrap();
+                    writer.flush().await.unwrap();
+                    drop(writer);
+                    backend.protect_partial_commit(
+                        &SftpPath::local(&temporary),
+                        &SftpPath::local(&destination),
+                    );
+                    std::fs::rename(&selected, &moved).unwrap();
+                    std::fs::create_dir(&selected).unwrap();
+                    std::fs::write(&temporary, b"foreign temporary").unwrap();
+                    std::fs::write(&destination, b"foreign destination").unwrap();
+                    let result = if remove_destination {
+                        backend.remove_file(&SftpPath::local(&destination)).await
+                    } else {
+                        backend
+                            .rename(&SftpPath::local(&temporary), &SftpPath::local(&destination))
+                            .await
+                    };
+                    assert!(matches!(
+                        result,
+                        Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+                    ));
+                    assert_eq!(std::fs::read(&temporary).unwrap(), b"foreign temporary");
+                    assert_eq!(std::fs::read(&destination).unwrap(), b"foreign destination");
+                    assert_eq!(
+                        std::fs::read(moved.join("owned.part")).unwrap(),
+                        b"owned output"
+                    );
+                    assert_eq!(
+                        std::fs::read(moved.join("final")).unwrap(),
+                        b"reviewed destination"
+                    );
+                    assert!(matches!(
+                        backend.cleanup_interrupted_copy().await,
+                        Err(SftpSessionError::TransferCommitInterrupted { .. })
+                    ));
+                    std::fs::remove_dir_all(root).unwrap();
+                }
+            });
+    }
 
     #[derive(Default)]
     struct RemoteState {
