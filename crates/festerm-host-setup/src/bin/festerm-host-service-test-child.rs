@@ -15,6 +15,30 @@ fn main() -> io::Result<()> {
     let state = PathBuf::from(&args[2]);
     let directory = storage::private_directory(&state, false)?;
     let mode = args[0].to_str().unwrap_or_default();
+    if matches!(mode, "probe-stall" | "probe-overflow") {
+        use std::io::Write;
+        let lease = storage::open_private_file(&directory, Path::new("probe-lease"), true)?;
+        fs2::FileExt::try_lock_exclusive(&lease)?;
+        storage::write_new_private(&directory, Path::new("probe-ready"), b"ready")?;
+        if mode == "probe-overflow" {
+            io::stdout().write_all(&vec![
+                b'x';
+                festerm_host_setup::services::native::OUTPUT_LIMIT + 1
+            ])?;
+            io::stdout().flush()?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(45);
+        while Instant::now() < deadline {
+            match storage::open_private_file(&directory, Path::new("probe-release"), false) {
+                Ok(_) => break,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        storage::write_new_private(&directory, Path::new("probe-finished"), b"finished")?;
+        return Ok(());
+    }
     if mode == "run" {
         let mut child = Command::new(std::env::current_exe()?)
             .arg("daemon")

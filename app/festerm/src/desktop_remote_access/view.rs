@@ -197,6 +197,35 @@ pub(crate) fn show(
             ) {
                 draft.allow_creation = !draft.allow_creation;
             }
+            ui.add_space(6.0);
+            let files_editable = matches!(&view.scope, Scope::Absent)
+                || matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled);
+            if settings_toggle_row_enabled(ui,
+                "Allow remote file access to one folder",
+                "Off by default. Share files separately from shell sessions.",
+                draft.files.enabled,
+                files_editable && (draft.ordinary_access == OrdinaryAccess::ProviderOwner || draft.files.enabled),
+            ) { draft.files.enabled = !draft.files.enabled; }
+            if draft.files.enabled {
+                ui.add_enabled_ui(files_editable, |ui| {
+                    ui.label("Folder on this computer");
+                    let mut root = draft.files.root.to_string_lossy().into_owned();
+                    if ui.add(egui::TextEdit::singleline(&mut root).char_limit(4096)
+                        .hint_text("Absolute folder path")).changed() { draft.files.root = root.into(); }
+                    ui.radio_value(&mut draft.files.write, false, "Read only — browse and download");
+                    ui.radio_value(&mut draft.files.write, true, "Read and write — upload and create folders");
+                });
+                settings_note(ui, "File transfers stay inside this folder and its subfolders. Shared shells still have your user's file and command permissions.");
+                if draft.ordinary_access != OrdinaryAccess::ProviderOwner {
+                    settings_note(ui, "Folder access requires account-based connections. Turn folder access off or enable account-based connections explicitly.");
+                } else if !draft.valid_files() {
+                    settings_note(ui, "Enter an absolute local folder path before reviewing Enable.");
+                }
+            }
+            if !files_editable {
+                settings_note(ui, "Disable remote access before changing folder access.");
+            }
+            ui.add_space(6.0);
             let disable_to_configure = matches!(&view.scope, Scope::Present(snapshot)
                 if snapshot.phase == Phase::Provisioned && snapshot.settings != draft.settings());
             if disable_to_configure {
@@ -210,9 +239,11 @@ pub(crate) fn show(
                 } else {
                     "Review Enable…"
                 };
-                if action_button(ui, ActionButtonRole::Accent, label).clicked() {
-                    action = Some(Action::Review(Operation::Enable));
-                }
+                ui.add_enabled_ui(draft.valid_files(), |ui| {
+                    if action_button(ui, ActionButtonRole::Accent, label).clicked() {
+                        action = Some(Action::Review(Operation::Enable));
+                    }
+                });
             }
         }
         ui.collapsing("Advanced / Recovery", |ui| {
@@ -354,6 +385,13 @@ pub(crate) fn show(
                         } else {
                             "Create additional shells: Off"
                         });
+                        if draft.files.enabled {
+                            ui.label(format!("File access folder: {}", draft.files.root.display()));
+                            ui.label(if draft.files.write {
+                                "File permissions: Read and write — upload and create folders"
+                            } else { "File permissions: Read only — browse and download" });
+                            settings_note(ui, "Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
+                        } else { ui.label("Remote file access: Off"); }
                         ui.label(if draft.startup_at_sign_in {
                             "Start automatically at sign-in: On"
                         } else {

@@ -896,7 +896,11 @@ the test does not weaken permissions or qualify DT-08 real-service behavior.
 The host-only filesystem extension for `TUNNEL-01`, `TUNNEL-03` and `TUNNEL-05`
 is defined by ADR 0067 and `docs/dev-tunnel-files-protocol.md`: explicit rooted
 read/write grants, same-host enable/reconfigure/revoke, independent bounded file
-streams and no reconnect replay. Existing GUI actions remain unchanged; client
+streams and no reconnect replay. The existing Settings edit/review/confirm
+commands carry default-off rooted file consent; the foreground review names
+the exact folder/write mode and Disabled-only changes reserve one exact-snapshot
+Desktop Enable ticket. Cancellation/stale scope cannot silently apply a grant.
+Unsupported signed helpers fail closed before setup/replacement effects; client
 browsing/recursive-transfer UI and native DT-07 evidence are separate work.
 
 ADR 0071 adds explicit CLI-only dead-session repair to those host setup and

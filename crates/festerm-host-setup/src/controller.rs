@@ -218,6 +218,8 @@ pub struct SetupConsent {
     pub account: u64,
 }
 
+/// Complete Desktop foreground consent includes the private file folder and
+/// permissions (or explicitly Off); generic/headless drafts cannot use it.
 /// Desktop consent stays tied to the observed installation even while signed
 /// package verification, foreground sign-in or native startup is delayed.
 pub async fn setup_if_current(
@@ -271,7 +273,14 @@ pub(crate) async fn setup_scoped_with(
     if consent.is_some_and(|consent| consent.expected != before) {
         return Err(refused("host.foreground_scope_changed"));
     }
+    if consent.is_some() && before.origin != crate::lifecycle::Origin::Desktop {
+        return Err(refused("host.desktop_consent_required"));
+    }
+    if consent.is_none() && before.settings.filesystem.is_some() {
+        return Err(refused("host.file_access_review_required"));
+    }
     let settings = consent.map_or(&before.settings, |consent| &consent.settings);
+    settings.validate()?;
     startup_admission(settings.startup, cancel).await?;
     if store.snapshot()? != before {
         return Err(refused("host.foreground_scope_changed"));
@@ -280,6 +289,9 @@ pub(crate) async fn setup_scoped_with(
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
     }
+    file_helper_admission(store, &before, settings, cancel, || {
+        stage.require_host_files(settings)
+    })?;
     #[cfg(not(test))]
     let cloud = CloudHostAdapter::new(store);
     #[cfg(test)]
@@ -287,7 +299,9 @@ pub(crate) async fn setup_scoped_with(
     let expected_epoch = match before.phase {
         Phase::Disabled => {
             let ticket = match consent {
-                Some(consent) => store.request_enable_if_current(&consent.expected, settings)?,
+                Some(consent) => {
+                    store.request_desktop_enable_if_current(&consent.expected, settings)?
+                }
                 None => store.request_enable(settings)?,
             };
             reserved(&ticket);
@@ -786,6 +800,9 @@ async fn update_current_with_admission<A: std::future::Future<Output = io::Resul
     if snapshot.phase != Phase::Disabled || snapshot.binding.is_none() {
         return Err(refused("host.update_confirmed_stop_required"));
     }
+    file_helper_admission(store, &snapshot, &snapshot.settings, cancel, || {
+        stage.require_host_files(&snapshot.settings)
+    })?;
     store.with_locked(|directory, current| {
         if current != &snapshot {
             return Err(refused("host.runtime_consent_changed"));
@@ -808,6 +825,31 @@ async fn update_current_with_admission<A: std::future::Future<Output = io::Resul
 
 fn refused(reason: &'static str) -> io::Error {
     io::Error::other(reason)
+}
+
+// A read-only executable probe may wait. Its result grants no lifecycle
+// authority: check cancellation and the complete protected scope afterwards.
+fn file_helper_admission(
+    store: &Store,
+    expected: &Snapshot,
+    settings: &crate::lifecycle::Settings,
+    cancel: &CancellationToken,
+    probe: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    if settings.filesystem.is_none() {
+        return Ok(());
+    }
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    probe()?;
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    if store.snapshot()? != *expected {
+        return Err(refused("host.foreground_scope_changed"));
+    }
+    Ok(())
 }
 
 async fn startup_admission(startup: Startup, cancel: &CancellationToken) -> io::Result<()> {
@@ -1926,6 +1968,67 @@ mod tests {
 
     fn fixture() -> (storage::PrivateTestDirectory, Arc<Store>) {
         fixture_startup(Startup::Manual)
+    }
+
+    #[test]
+    fn host_file_helper_admission_never_reserves_or_changes_consent_and_fences_late_results() {
+        for boundary in [
+            "unsupported",
+            "cancel-before",
+            "cancel-during",
+            "scope",
+            "accepted",
+            "off",
+        ] {
+            let (root, store) = fixture();
+            let before = store.snapshot().unwrap();
+            let mut reviewed = before.settings.clone();
+            reviewed.ordinary_access = OrdinaryAccess::ProviderOwner;
+            reviewed.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+                root: root.path().into(),
+                write: false,
+            });
+            let cancel = CancellationToken::new();
+            if boundary == "cancel-before" {
+                cancel.cancel();
+            }
+            if boundary == "off" {
+                reviewed.filesystem = None;
+            }
+            let calls = std::cell::Cell::new(0);
+            let result = file_helper_admission(&store, &before, &reviewed, &cancel, || {
+                calls.set(calls.get() + 1);
+                match boundary {
+                    "unsupported" => Err(refused("host.file_helper_unsupported")),
+                    "cancel-during" => {
+                        cancel.cancel();
+                        Ok(())
+                    }
+                    "scope" => {
+                        store.configure(crate::lifecycle::Settings {
+                            friendly_name: "Different foreground editor".into(),
+                            ..before.settings.clone()
+                        })?;
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
+            });
+            assert_eq!(result.is_ok(), matches!(boundary, "accepted" | "off"));
+            assert_eq!(
+                calls.get(),
+                usize::from(!matches!(boundary, "off" | "cancel-before"))
+            );
+            let current = store.snapshot().unwrap();
+            assert_eq!(current.phase, Phase::Disabled);
+            assert!(current.pending_ticket().is_none());
+            assert_eq!(current.epoch, before.epoch);
+            assert_eq!(current.settings.filesystem, before.settings.filesystem);
+            if boundary != "scope" {
+                assert_eq!(current, before);
+            }
+            assert!(!root.path().join("host/native-service.json").exists());
+        }
     }
 
     fn fixture_startup(startup: Startup) -> (storage::PrivateTestDirectory, Arc<Store>) {

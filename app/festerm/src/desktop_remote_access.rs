@@ -28,11 +28,47 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct FileAccessDraft {
+    pub enabled: bool,
+    pub root: PathBuf,
+    pub write: bool,
+}
+impl std::fmt::Debug for FileAccessDraft {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileAccessDraft")
+            .field("enabled", &self.enabled)
+            .field("root", &"[private folder]")
+            .field("write", &self.write)
+            .finish()
+    }
+}
+impl FileAccessDraft {
+    fn from_policy(policy: Option<&festerm_tunnel_bridge::file_protocol::Policy>) -> Self {
+        match policy {
+            Some(policy) => Self {
+                enabled: true,
+                root: policy.root.clone(),
+                write: policy.write,
+            },
+            None => Self::default(),
+        }
+    }
+    fn policy(&self) -> Option<festerm_tunnel_bridge::file_protocol::Policy> {
+        self.enabled
+            .then(|| festerm_tunnel_bridge::file_protocol::Policy {
+                root: self.root.clone(),
+                write: self.write,
+            })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Draft {
     pub friendly_name: String,
     pub allow_creation: bool,
     pub ordinary_access: OrdinaryAccess,
+    pub files: FileAccessDraft,
     pub startup_at_sign_in: bool,
     pub account: String,
     pub manual_bundle: bool,
@@ -50,6 +86,7 @@ impl Default for Draft {
             friendly_name: host_name_label(&gethostname::gethostname()),
             allow_creation: false,
             ordinary_access: OrdinaryAccess::ProviderOwner,
+            files: FileAccessDraft::default(),
             startup_at_sign_in: false,
             account: String::new(),
             manual_bundle: false,
@@ -74,9 +111,18 @@ fn host_name_label(host_name: &std::ffi::OsStr) -> String {
 }
 
 impl Draft {
+    fn valid_files(&self) -> bool {
+        !self.files.enabled
+            || self.ordinary_access == OrdinaryAccess::ProviderOwner
+                && self
+                    .files
+                    .policy()
+                    .is_some_and(|policy| policy.validate().is_ok())
+    }
+
     fn settings(&self) -> Settings {
         Settings {
-            filesystem: None,
+            filesystem: self.files.policy(),
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
             ordinary_access: self.ordinary_access,
@@ -241,6 +287,7 @@ pub enum Failure {
     ScopeChanged,
     PrivateStorage,
     FileAccessReview,
+    FileHelperUnsupported,
     SignedBundle,
     BundleNotPublished,
     AcquisitionUnavailable,
@@ -281,7 +328,10 @@ impl Failure {
             Self::Reconciliation => "Cleanup is incomplete. Keep access off and review Recovery.",
             Self::PrivateStorage => "Protected host storage is unavailable. Review Recovery.",
             Self::FileAccessReview => {
-                "File access needs its own consent review. Current settings were retained."
+                "Disable remote access, then review the file folder and permissions."
+            }
+            Self::FileHelperUnsupported => {
+                "This host component does not support remote file access."
             }
             Self::PlatformPrerequisite => {
                 "Host setup is not qualified for this startup policy or platform."
@@ -305,7 +355,8 @@ impl Failure {
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
-            Self::FileAccessReview => "This screen cannot review the configured file folder and permissions. Remote access was not enabled and the existing file policy was retained.",
+            Self::FileAccessReview => "File access requires an absolute folder and connections through your GitHub account. Disable remote access before changing the folder or permissions, then review Enable again. Current protected settings were retained.",
+            Self::FileHelperUnsupported => "Obtain a matching signed host component with remote file access support, or explicitly turn file access off while remote access is disabled. Remote access was not enabled and no replacement was applied.",
             Self::SignedBundle => "This build's authenticated native host bundle was refused. Changed bytes, invalid signatures and unsupported publishers are not installed. No older or unsigned fallback is attempted.",
             Self::BundleNotPublished => "The exact current-version native host bundle is not published. Genuine schema-2 release assets remain unqualified. Nothing is installed; retry explicitly after publication. No older/latest/schema-1 fallback.",
             Self::AcquisitionUnavailable => "Authenticated bundle acquisition is unavailable or exceeded its bounded deadline. Nothing is installed; retry explicitly. No automatic manual-path, older-version or unsigned fallback.",
@@ -590,6 +641,7 @@ pub(crate) struct Controller {
     fence: Option<Pending>,
     owned: Arc<Mutex<Option<Snapshot>>>,
     draft_edited: bool,
+    files_edited: bool,
     share_targets: Arc<Mutex<Vec<ShareTarget>>>,
     share_request: Option<ShareTask>,
     share_epoch: Option<Arc<AtomicU64>>,
@@ -619,6 +671,7 @@ impl Controller {
             fence: None,
             owned: Arc::new(Mutex::new(None)),
             draft_edited: false,
+            files_edited: false,
             share_targets: Arc::new(Mutex::new(Vec::new())),
             share_request: None,
             share_epoch: None,
@@ -722,12 +775,28 @@ impl Controller {
                 }
             }
             Action::Edit(draft) => {
+                if draft.files != self.view.draft.files
+                    && !(matches!(&self.view.scope, Scope::Absent)
+                        || matches!(&self.view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled))
+                {
+                    self.view.failure = Some(Failure::FileAccessReview);
+                    return;
+                }
                 if self
                     .view
                     .bound_account()
                     .is_some_and(|account| account != draft.account)
                 {
                     self.view.failure = Some(Failure::ScopeChanged);
+                    return;
+                }
+                if draft
+                    .files
+                    .root
+                    .to_str()
+                    .is_none_or(|root| root.len() > 4096)
+                {
+                    self.view.failure = Some(Failure::InvalidDraft);
                     return;
                 }
                 if [
@@ -746,6 +815,7 @@ impl Controller {
                     return;
                 }
                 self.view.diagnostic = None;
+                self.files_edited |= draft.files != self.view.draft.files;
                 self.view.draft = draft;
                 self.draft_edited = true;
                 self.view.review = None;
@@ -763,7 +833,10 @@ impl Controller {
             }
             Action::Refresh => self.start(Operation::Refresh, false, context),
             Action::Review(operation) => {
-                if operation == Operation::Update && !self.view.update_eligible() {
+                if operation == Operation::Enable && !self.view.draft.valid_files() {
+                    self.view.review = None;
+                    self.view.failure = Some(Failure::FileAccessReview);
+                } else if operation == Operation::Update && !self.view.update_eligible() {
                     self.view.review = None;
                     self.view.failure = Some(Failure::UpdateBlocked);
                 } else if matches!(operation, Operation::Share(_)) {
@@ -1113,6 +1186,13 @@ impl Controller {
                     }
                     match result {
                         Ok(report) => {
+                            if pending.operation == Operation::Refresh && !self.files_edited {
+                                if let Scope::Present(snapshot) = &report.scope {
+                                    self.view.draft.files = FileAccessDraft::from_policy(
+                                        snapshot.settings.filesystem.as_ref(),
+                                    );
+                                }
+                            }
                             if pending.operation == Operation::Refresh && !self.draft_edited {
                                 if let Scope::Present(snapshot) = &report.scope {
                                     self.view.draft.friendly_name =

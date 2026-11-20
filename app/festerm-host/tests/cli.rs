@@ -1,5 +1,37 @@
 use std::process::Command;
 
+#[test]
+fn host_file_capabilities_binary_is_static_and_has_no_state_directory_effects() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .arg("capabilities")
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"schema\":1,\"host_files_v2\":{}}}\n",
+            cfg!(feature = "owner-routing")
+        )
+        .as_bytes()
+    );
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    let state = root.path().join("must-not-create");
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["capabilities", "--state-dir"])
+        .arg(&state)
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!state.exists());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
 #[cfg(feature = "owner-routing")]
 #[test]
 fn host_process_recovery_managed_entries_fail_closed_without_registration_and_status_is_history() {

@@ -2628,9 +2628,10 @@ The reviewed ADR 0067 HOST Files role is a bounded server/protected-consent
 increment. Source fixtures cover distinct signed role 2, host/installation/
 lifecycle scope, off/read-only grants, current-policy cutover and shared native
 job bounds without selecting a daemon session. The typed configure/Enable path
-retains exact consent and ordinary Disable preserves it. Existing Desktop and
-headless surfaces cannot review a nonempty file policy and must refuse to erase
-or re-enable it implicitly. Foreground root/read-write review, account/relay
+retains exact consent and ordinary Disable preserves it. Desktop Settings now
+offers default-off explicit folder/read-only/write consent and shows the exact
+folder/permissions in foreground Enable review; edits require Disabled. Generic
+and headless surfaces still refuse implicit hidden-policy changes. Account/relay
 client composition and top-level desktop/iOS file tabs remain next tranches.
 The owner's SFTP-style command set and create/delete UI remain queued, requiring
 explicit protocol/consent extensions beyond current v1 operations.
@@ -2643,6 +2644,14 @@ unknown publication/recovery evidence and never replay finish or infer rollback.
 Exercise Windows reparse/Unix link boundaries and filesystem stalls with owned
 fixtures when native resource admission permits. These source tests do not
 qualify deployed helpers, packaged UI, accessibility or crash recovery.
+DT-05 desktop consent usability/native: verify readable folder and permission
+labels, spacing/keyboard access, default off and empty folder, exact existing
+folder/write reload, no automatic account-mode widening, Dismiss/Cancel without
+a new grant, Disabled-only edits and explicit review after folder/write changes.
+Use actual compatible signed helpers for enable/re-enable; older helpers must
+refuse file-enabled setup/update with actionable guidance. Keep off-consent
+legacy setup unchanged. Static capability output is not endpoint readiness or
+native file-transfer qualification.
 Protected owner status/settings JSON can contain the private root; keep it out
 of published qualification artifacts and retain only finite outcomes/public scope.
 

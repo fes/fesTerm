@@ -133,6 +133,15 @@ pub(super) struct TaskSnapshot {
 /// Injection is for deterministic native-adapter tests, not host health evidence.
 pub trait CommandRunner {
     fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput>;
+
+    /// Explicit read-only execution can terminate its child after refusal.
+    /// Unknown adapters must not inherit manager-job completion semantics.
+    fn execute_read_only(&self, _: &NativeRequest) -> io::Result<NativeOutput> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "host.service_read_only_process_required",
+        ))
+    }
 }
 
 pub struct NativeRunner;
@@ -142,11 +151,34 @@ impl CommandRunner for NativeRunner {
         let until = UNTIL.with(|slot| slot.get().unwrap_or_else(|| Instant::now() + DEADLINE));
         remaining(until)?;
         match request {
-            NativeRequest::Process { tool, args } => {
-                process(tool.clone(), args.clone(), retain_operation(), until, false)
-            }
+            NativeRequest::Process { tool, args } => process(
+                tool.clone(),
+                args.clone(),
+                retain_operation(),
+                until,
+                false,
+                false,
+            ),
             NativeRequest::Task { name, action } => task(name, action, retain_operation(), until),
         }
+    }
+
+    fn execute_read_only(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+        let NativeRequest::Process { tool, args } = request else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "host.service_read_only_process_required",
+            ));
+        };
+        let until = UNTIL.with(|slot| slot.get().unwrap_or_else(|| Instant::now() + DEADLINE));
+        process(
+            tool.clone(),
+            args.clone(),
+            retain_operation(),
+            until,
+            false,
+            true,
+        )
     }
 }
 
@@ -180,6 +212,7 @@ pub(super) fn signature_metadata(path: &std::path::Path) -> io::Result<NativeOut
         retain_operation(),
         until,
         true,
+        false,
     )
 }
 
@@ -189,6 +222,7 @@ fn process(
     ownership: Option<Arc<Lease>>,
     until: Instant,
     capture_stderr: bool,
+    read_only: bool,
 ) -> io::Result<NativeOutput> {
     remaining(until)?;
     let (send, receive) = std::sync::mpsc::sync_channel(1);
@@ -265,9 +299,16 @@ fn process(
                     })
                     .await;
                 if !matches!(result, Ok(Ok(_))) {
-                    // A caller timeout cannot cancel an already submitted
-                    // manager job. Retain the lease until its helper exits.
-                    let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+                    if read_only {
+                        // Unlike submitted manager work, a read-only probe has
+                        // no committed effects to drain. Its receive deadline
+                        // can close the caller before this worker responds;
+                        // still kill/reap before releasing worker ownership.
+                        let _ = child.start_kill();
+                    } else {
+                        // Manager completion can outlive the caller deadline.
+                        let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+                    }
                     let _ = child.wait().await;
                 }
                 result.map_err(|_| super::refused("host.service_native_timeout"))?
@@ -354,6 +395,36 @@ fn task(_: &str, _: &TaskAction, _: Option<Arc<Lease>>, _: Instant) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_read_only_execution_refuses_tasks_and_unknown_adapters() {
+        struct Unknown;
+        impl CommandRunner for Unknown {
+            fn execute(&self, _: &NativeRequest) -> io::Result<NativeOutput> {
+                panic!("no manager fallback");
+            }
+        }
+        let request = NativeRequest::Task {
+            name: "must-not-contact-manager".into(),
+            action: TaskAction::Start,
+        };
+        assert_eq!(
+            NativeRunner
+                .execute_read_only(&request)
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        let request = NativeRequest::Process {
+            tool: "must-not-execute".into(),
+            args: vec!["capabilities".into()],
+        };
+        assert_eq!(
+            Unknown.execute_read_only(&request).err().unwrap().kind(),
+            io::ErrorKind::Unsupported
+        );
+    }
 
     #[test]
     fn native_service_exhausted_operation_budget_refuses_effect_before_spawn() {

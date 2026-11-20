@@ -2372,3 +2372,198 @@ fn desktop_remote_access_old_draft_cannot_erase_protected_file_consent() {
         .is_err());
     assert_eq!(store.snapshot().unwrap(), before);
 }
+
+#[test]
+fn desktop_remote_access_files_require_explicit_folder_and_account_consent() {
+    let mut draft = Draft::default();
+    assert_eq!(draft.files, FileAccessDraft::default());
+    assert!(draft.files.root.as_os_str().is_empty());
+    assert!(draft.settings().filesystem.is_none());
+    draft.files.enabled = true;
+    assert!(!draft.valid_files());
+    draft.files.root = PathBuf::from("relative-folder");
+    assert!(!draft.valid_files());
+    let directory = festerm_sessiond::private_storage::private_test_directory();
+    draft.files.root = directory.path().join("private-file-consent-canary");
+    assert!(draft.valid_files());
+    assert!(!draft.settings().filesystem.as_ref().unwrap().write);
+    draft.ordinary_access = OrdinaryAccess::OwnerOnly;
+    assert!(!draft.valid_files());
+    assert_eq!(draft.ordinary_access, OrdinaryAccess::OwnerOnly);
+    assert!(!format!("{draft:?}").contains("private-file-consent-canary"));
+    draft.files.enabled = false;
+    assert!(draft.valid_files());
+    assert!(draft.settings().filesystem.is_none());
+}
+
+#[test]
+fn desktop_remote_access_file_refresh_preserves_exact_consent_and_edited_draft() {
+    let directory = festerm_sessiond::private_storage::private_test_directory();
+    for write in [false, true] {
+        for edited in [false, true] {
+            let Scope::Present(mut snapshot) = provisioned_scope() else {
+                unreachable!()
+            };
+            let policy = festerm_tunnel_bridge::file_protocol::Policy {
+                root: directory.path().join("Exact Folder"),
+                write,
+            };
+            Arc::make_mut(&mut snapshot).settings.filesystem = Some(policy.clone());
+            let expected = Scope::Present(snapshot);
+            let observed = expected.clone();
+            let mut controller = fixture(Arc::new(Fake(
+                move |request: Request, _: &CancellationToken| {
+                    assert_eq!(request.operation, Operation::Refresh);
+                    Ok(Report {
+                        scope: observed.clone(),
+                        ..Report::default()
+                    })
+                },
+            )));
+            let context = egui::Context::default();
+            if edited {
+                let mut draft = controller.view.draft.clone();
+                draft.friendly_name = "Edited before refresh".into();
+                controller.action(Action::Edit(draft), &context);
+            }
+            controller.action(Action::Refresh, &context);
+            drain(&mut controller, &context);
+            assert_eq!(controller.view.scope, expected);
+            assert_eq!(controller.view.draft.settings().filesystem, Some(policy));
+            if edited {
+                assert_eq!(controller.view.draft.friendly_name, "Edited before refresh");
+            }
+            assert!(controller.view.review.is_none());
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
+    let directory = festerm_sessiond::private_storage::private_test_directory();
+    let Scope::Present(mut snapshot) = provisioned_scope() else {
+        unreachable!()
+    };
+    Arc::make_mut(&mut snapshot).phase = Phase::Disabled;
+    let expected = Scope::Present(snapshot);
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let recorded = captured.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            recorded.lock().unwrap().push((
+                request.operation,
+                request.expected.clone(),
+                request.draft.settings(),
+            ));
+            Ok(Report {
+                scope: request.expected,
+                ..Report::default()
+            })
+        },
+    )));
+    controller.view.scope = expected.clone();
+    let context = egui::Context::default();
+    let mut draft = controller.view.draft.clone();
+    draft.files = FileAccessDraft {
+        enabled: true,
+        root: directory.path().join("Exact Folder"),
+        write: true,
+    };
+    // The bound account is preserved while the reviewed file policy changes.
+    draft.account = "42".into();
+    controller.action(Action::Edit(draft.clone()), &context);
+    controller.action(Action::Review(Operation::Enable), &context);
+    assert!(captured.lock().unwrap().is_empty());
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(
+        *captured.lock().unwrap(),
+        [(Operation::Enable, expected, draft.settings())]
+    );
+}
+
+#[test]
+fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
+    let directory = festerm_sessiond::private_storage::private_test_directory();
+    let context = egui::Context::default();
+    for scope in [Scope::Unobserved, provisioned_scope()] {
+        let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+            panic!("no dispatch")
+        })));
+        controller.view.scope = scope;
+        let before = controller.view.draft.clone();
+        let mut draft = before.clone();
+        draft.files = FileAccessDraft {
+            enabled: true,
+            root: directory.path().to_path_buf(),
+            write: false,
+        };
+        controller.action(Action::Edit(draft), &context);
+        assert_eq!(controller.view.draft, before);
+        assert_eq!(controller.view.failure, Some(Failure::FileAccessReview));
+        assert!(!controller.view.busy);
+    }
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("no confirmation")
+    })));
+    controller.view.scope = Scope::Absent;
+    controller.view.draft.files = FileAccessDraft {
+        enabled: true,
+        root: directory.path().to_path_buf(),
+        write: false,
+    };
+    for change in 0..3 {
+        controller.action(Action::Review(Operation::Enable), &context);
+        assert_eq!(controller.view.review, Some(Operation::Enable));
+        let mut draft = controller.view.draft.clone();
+        match change {
+            0 => draft.files.root = directory.path().join("Different Folder"),
+            1 => draft.files.write = true,
+            _ => draft.files.enabled = false,
+        }
+        controller.action(Action::Edit(draft), &context);
+        assert!(controller.view.review.is_none());
+        controller.action(Action::Confirm, &context);
+        assert!(!controller.view.busy);
+    }
+    controller.action(Action::Review(Operation::Enable), &context);
+    controller.action(Action::Dismiss, &context);
+    controller.action(Action::Confirm, &context);
+    assert!(!controller.view.busy);
+}
+
+#[test]
+fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let directory = festerm_sessiond::private_storage::private_test_directory();
+    for write in [false, true] {
+        let root = directory.path().join("Reviewed Folder");
+        let mut view = View {
+            scope: Scope::Absent,
+            access_requested: Some(true),
+            review: Some(Operation::Enable),
+            ..View::default()
+        };
+        view.draft.files = FileAccessDraft {
+            enabled: true,
+            root: root.clone(),
+            write,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 2400.0))
+            .build_ui_state(
+                |ui, view: &mut View| {
+                    assert!(show(ui, view, &[]).is_none());
+                },
+                view,
+            );
+        harness.run();
+        harness.get_by_label(&format!("File access folder: {}", root.display()));
+        harness.get_by_label(if write {
+            "File permissions: Read and write — upload and create folders"
+        } else {
+            "File permissions: Read only — browse and download"
+        });
+        harness.get_by_label("Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
+    }
+}

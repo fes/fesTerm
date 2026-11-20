@@ -1900,6 +1900,16 @@ Desktop Settings owns **Dev Tunnels**. **Allow remote access to this computer**
 reveals one signed-in host account and default-off **Allow remote clients to
 create shell sessions**. Requested enablement is not observed readiness.
 Disabling fences remote access without terminating durable local shells.
+The default-off **Allow remote file access to one folder** reveals an editable
+absolute local folder and **Read only — browse and download** by default, with
+an explicit **Read and write — upload and create folders** choice. Never fill in
+home or another folder automatically or enable account-based access implicitly.
+Existing folder/write consent loads exactly even after unrelated draft edits;
+changes require remote access disabled. Enable review shows the exact folder
+and permissions in the foreground. Paths stay out of profiles and diagnostics.
+The folder restriction applies to file transfers; shared shells retain their
+OS user's permissions. Unsupported signed helpers refuse file-enabled setup
+or update with actionable guidance, without enabling access or replacing them.
 Operator diagnostics, protected owner approval and recovery remain available
 through contextual disclosures rather than a permanent console.
 
