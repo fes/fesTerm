@@ -1098,8 +1098,8 @@ The owner requires only the initial Copilot screen, including the unauthenticate
 welcome/sign-in screen; neither controlled account has Copilot enabled. Copilot
 sign-in, plan activation and model requests are outside this check. Dev Tunnels
 authentication and actual terminal capability observations remain required.
-These native comparisons remain unqualified; existing shell I/O or recovered
-screens do not establish a fresh Copilot result. Mobile must flush its pending
+Comparisons without an attributed native record remain unqualified; existing
+shell I/O or recovered screens do not establish a fresh Copilot result. Mobile must flush its pending
 viewport before input or explicitly report input not sent and disconnect on
 persistent resize refusal, preserving the existing no-replay policy.
 
@@ -1131,10 +1131,21 @@ SDK creation/idempotency, normal saved AttachOnly reconnect before and after
 real Copilot/resize, and fresh 74×19 / 79×20 query, environment and semantic
 visual pairs. These are separately pinned composed cohorts; combined-release
 qualification remains pending. The original DSR cursor fixture mismatch and
-changed CLS control are retained, as are the open #800 recovery, #795
-natural-renewal and #803 Linux lifecycle-UI limits. No final-release status
-is inferred. The matrix now has four accepted pinned
-functional cases, four partial cases and sixteen unstarted cases.
+changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
+The #803 reporting correction is merged as #805; its original precise read
+boundary remains unproved. No final-release status is inferred. The matrix now
+has four accepted pinned functional cases, five preliminary cases and fifteen
+unstarted cases.
+
+The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
+qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
+with original screenshots and raw reports. All ten query families each received
+one reply; every field except role label and elapsed time matched. Both normal
+prompts have matching layout/wrapping at the measured grid. Native font/DPI
+differences, mixed source versions, forced remote CLI cleanup and the remaining
+Large-text test preference are explicit. All 21 server actors and protected
+records survived. This does not close the full iOS workflow case, in-place
+Copilot resize, touchscreen input, accessibility or combined-release gates.
 
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a
 screen or configured right margin, including wrap retained in an inactive

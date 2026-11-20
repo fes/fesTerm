@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "f4b88735094ab94504fb22dc2fd4f4af6858884712b82b455ede1a1b06912187"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "a5b3b473bedcd80d48433ad87314bc44723c3412979ad6db7eaf7b1f84ebefb1"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -20,7 +20,7 @@ Evidence:
 - [`native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Requires exact Unknown during lease contention, then both original sessions healthy within one deadline.
 
 Caveats:
-- Inventory omission or a foreign generation fails rather than silently reading a different daemon.
+- Omitted inventory/foreign generations never select replacement daemons.
 - Discovery exposes metadata, not credentials or consent; Unknown is never treated as absence.
 
 ## Enterprise inventory
@@ -35,7 +35,6 @@ Evidence:
 
 Caveats:
 - Inventory workers bind results; stale or cancelled completions cannot mutate a new tab.
-- Project and Dev Box rows stay off the UI thread until selection and presentation budgeting.
 
 ## Portable recipes
 
@@ -81,11 +80,12 @@ Evidence:
 - [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Keeps failed close distinct from successful exit.
 
 Caveats:
-- Close failures stay failures; stale worker generations cannot mutate current state.
+- Stale worker generations cannot mutate current state.
 - Transient credentials and shutdown races are cleared before terminal reuse.
 
-## Rooted file client
+## Rooted file access
 
-Use for: Separate legacy file streams; HOST authentication and UI remain separate.
+Use for: Separate legacy or authenticated HOST file streams; UI remains separate.
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounds pages/chunks and closes uncertain operations without replay.
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded operations and distinct legacy/HOST openings; no replay.
+- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Retained root/pool, exact scope and fresh file consent.
