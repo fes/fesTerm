@@ -2708,33 +2708,61 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_download_cleanup_preserves_replaced_leaf_and_ancestor() {
-        for replace_ancestor in [false, true] {
-            let root = unique_test_directory("windows-replaced-download");
-            create_directory(&root);
-            let selected = root.join("selected");
-            stdfs::create_dir(&selected).unwrap();
-            let path = selected.join("part.bin");
-            let original = root.join("original");
-            test_runtime().block_on(async {
-                let (mut session, server) = windows_download_session(&path).await;
-                let writer = session.create_local_download_file(&path).await.unwrap();
-                drop(writer);
-                let original_file = if replace_ancestor {
-                    stdfs::rename(&selected, &original).unwrap();
-                    stdfs::create_dir(&selected).unwrap();
-                    original.join("part.bin")
-                } else {
-                    stdfs::rename(&path, &original).unwrap();
-                    original.clone()
-                };
-                stdfs::write(&path, b"replacement").unwrap();
-                session.cleanup_interrupted_transfer().await.unwrap();
-                assert!(!original_file.exists());
-                assert_eq!(stdfs::read(&path).unwrap(), b"replacement");
-                server.abort();
-            });
-        }
+    fn windows_download_cleanup_preserves_replaced_leaf() {
+        let root = unique_test_directory("windows-replaced-download");
+        create_directory(&root);
+        let path = root.join("part.bin");
+        let original = root.join("original");
+        test_runtime().block_on(async {
+            let (mut session, server) = windows_download_session(&path).await;
+            let writer = session.create_local_download_file(&path).await.unwrap();
+            drop(writer);
+            stdfs::rename(&path, &original).unwrap();
+            stdfs::write(&path, b"replacement").unwrap();
+            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(!original.exists());
+            assert_eq!(stdfs::read(&path).unwrap(), b"replacement");
+            server.abort();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_retained_handle_prevents_ancestor_rename_until_cleanup() {
+        let root = unique_test_directory("windows-retained-download-ancestor");
+        create_directory(&root);
+        let selected = root.join("selected");
+        stdfs::create_dir(&selected).unwrap();
+        let path = selected.join("part.bin");
+        let sibling = selected.join("unrelated.festerm-part");
+        let original = root.join("original");
+        stdfs::write(&sibling, b"unrelated").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = windows_download_session(&path).await;
+            let mut writer = session.create_local_download_file(&path).await.unwrap();
+            writer.write_all(b"owned incomplete output").await.unwrap();
+            writer.flush().await.unwrap();
+            drop(writer);
+            // Windows refuses moving the ancestor of the retained open file.
+            // Require that exact refusal, then prove the same rename succeeds
+            // after cleanup: an unrelated permission failure cannot pass this test.
+            let error = stdfs::rename(&selected, &original).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(5));
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert!(!original.exists());
+            assert_eq!(stdfs::read(&path).unwrap(), b"owned incomplete output");
+            assert_eq!(stdfs::read(&sibling).unwrap(), b"unrelated");
+            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(!path.exists());
+            assert_eq!(stdfs::read(&sibling).unwrap(), b"unrelated");
+            stdfs::rename(&selected, &original).unwrap();
+            assert!(!selected.exists());
+            assert_eq!(
+                stdfs::read(original.join("unrelated.festerm-part")).unwrap(),
+                b"unrelated"
+            );
+            server.abort();
+        });
     }
 
     #[cfg(windows)]

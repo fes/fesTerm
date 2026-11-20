@@ -2621,7 +2621,8 @@ Interrupt publication separately: preserve either the temporary or already
 published output and report uncertainty. Retain original copy/cancel outcomes
 when cleanup fails and the existing two-second teardown bound. Portable
 regressions cover publication fencing and error preservation; Windows fixtures
-cover exact handles and canceled creation handoff. Unix/remote uploads and
+cover exact handles, replaced leaves, Windows refusal to rename an ancestor
+while the download handle is retained, and canceled creation handoff. Unix/remote uploads and
 crash/restart cleanup remain open; no suffix/age/size-based scavenging is allowed.
 Do not count these source fixtures as packaged native or accessibility evidence.
 

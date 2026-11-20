@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f0a097ace5b1762836545417ee49ae8d4d1206abf05d05dd0e661dc7cb363070"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "7b8e70f1d1b64e25198b6774ca6d6da8d7c6ae956e659544407380f3e80b68a3"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -45,6 +45,8 @@ Use for: When remote browsing or copy operations need a bounded transfer queue, 
 
 Evidence:
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped decisions remain scoped to one batch, including later conflicts.
+- [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf.
+- [`windows_download_retained_handle_prevents_ancestor_rename_until_cleanup`](../../crates/festerm-ssh/src/sftp.rs) — Windows refuses moving the open file’s ancestor; the same rename succeeds after cleanup.
 
 Caveats:
 - Uncertain temporary ownership preserves the partial and reports recovery details.
