@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "03360a5e3257c3c131f727ef5140cd4d6602133dcaae046d6c2e0f4491e9c899"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ac0007f168b3e49ae06f835b85923bef19cde20b408f1896945ca814122cf16a"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged-update gating, native smoke validation, macOS app integration, and OS wake/privacy hooks for the desktop app.
+Desktop platform integration owns packaged update gating, native smoke validation, macOS AppKit bridge behavior, and OS wake/privacy hooks for the desktop app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -61,7 +61,7 @@ Caveats:
 Use for: A platform needs to wake or revoke consent when the machine resumes or locks
 
 - [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Handles Windows resume broadcasts in the native message loop
-- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Wakes on logind PrepareForSleep(false) resume edges
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Listens for logind resume edges from PrepareForSleep(false)
 
 Evidence:
 - [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Treats resume broadcasts as wake events

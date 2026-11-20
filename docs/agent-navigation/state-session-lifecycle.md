@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "6bc1ab68c9cbb993062da3b9d4dd58c9d631fe75bcb4e1bf85ec8eb5b64e4dd7", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-serial/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f61784bf351961eb8769302efd65e91172048257f4778b49f35e9c0c0c5026d5", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the
@@ -10,18 +10,15 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 | From | To | Trigger | Evidence |
 | --- | --- | --- | --- |
-| Starting | Running | connection attempt succeeds and PTY attaches | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Starting | Failed | connection setup or auth fails permanently | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind` |
-| Starting | Stopped | shutdown occurs before channel startup completes | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Running | Starting | manual reconnect is requested | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Running | Stopping | shutdown request is accepted while active | `crates/festerm-ssh/src/lib.rs::process_authenticated_commands`<br>`crates/festerm-ssh/src/lib.rs::wait_for_running_ssh_operation` |
-| Running | Disconnected | SSH connection lost or liveness probe times out | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Running | Exited | remote shell exits with exit status or signal | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Running | Failed | input, resize, or session setup error occurs | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind` |
-| Running | Stopped | shutdown is requested and completed | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Stopping | Stopped | shutdown teardown finishes | `crates/festerm-ssh/src/lib.rs::stop_handle`<br>`crates/festerm-ssh/src/lib.rs::sftp_worker` |
-| Disconnected | Starting | user reconnects after a transport loss | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Disconnected | Stopped | user shuts the disconnected session down | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Starting | Running | session connects and worker marks it running | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Running | Stopping | shutdown requested while session is active | `crates/festerm-serial/src/lib.rs::request_stop` |
+| Running | Disconnected | transport lost and no automatic recovery resumed it | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Running | Exited | channel exits cleanly or terminal reports exit | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Running | Failed | fatal SSH or serial worker error | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind` |
+| Running | Stopped | disconnect handle completes shutdown | `crates/festerm-ssh/src/lib.rs::stop_handle` |
+| Stopping | Stopped | shutdown completes and worker stops | `crates/festerm-serial/src/lib.rs::control_worker` |
+| Disconnected | Starting | manual reconnect or recovery retry begins | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Disconnected | Stopped | user chooses shutdown while disconnected | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
 
 ## Property checks
 
@@ -32,6 +29,6 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 ## Coverage
 
-Transitions cite 1 of 17 production files that name a variant. A FAIL
+Transitions cite 2 of 17 production files that name a variant. A FAIL
 or an uncited file means the model may be incomplete, not that the code is wrong.
-Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-pty/src/lib.rs`, `crates/festerm-serial/src/lib.rs`, `crates/festerm-session/src/lib.rs`, `crates/festerm-sessiond/src/lib.rs`, +4 more.
+Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-pty/src/lib.rs`, `crates/festerm-session/src/lib.rs`, `crates/festerm-sessiond/src/lib.rs`, `crates/festerm-tunnel-bridge/src/host_client/session.rs`, +3 more.
