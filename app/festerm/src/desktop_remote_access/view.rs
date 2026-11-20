@@ -214,11 +214,19 @@ pub(crate) fn show(
                         .hint_text("Absolute folder path")).changed() { draft.files.root = root.into(); }
                     ui.radio_value(&mut draft.files.write, false, "Read only — browse and download");
                     ui.radio_value(&mut draft.files.write, true, "Read and write — upload and create folders");
+                    if settings_toggle_row_enabled(ui,
+                        "Allow deleting files and empty folders",
+                        "Off by default. Permanent deletion requires a fresh client review.",
+                        draft.files.delete, draft.files.write || draft.files.delete,
+                    ) { draft.files.delete = !draft.files.delete; }
+                    if draft.files.delete && !draft.files.write {
+                        settings_note(ui, "Turn deleting off before choosing read-only access.");
+                    }
                 });
                 settings_note(ui, "File transfers stay inside this folder and its subfolders. Shared shells still have your user's file and command permissions.");
                 if draft.ordinary_access != OrdinaryAccess::ProviderOwner {
                     settings_note(ui, "Folder access requires account-based connections. Turn folder access off or enable account-based connections explicitly.");
-                } else if !draft.valid_files() {
+                } else if !draft.files.root.is_absolute() {
                     settings_note(ui, "Enter an absolute local folder path before reviewing Enable.");
                 }
             }
@@ -390,6 +398,9 @@ pub(crate) fn show(
                             ui.label(if draft.files.write {
                                 "File permissions: Read and write — upload and create folders"
                             } else { "File permissions: Read only — browse and download" });
+                            ui.label(if draft.files.delete {
+                                "Delete files and empty folders: On — permanent, reviewed individually"
+                            } else { "Delete files and empty folders: Off" });
                             settings_note(ui, "Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
                         } else { ui.label("Remote file access: Off"); }
                         ui.label(if draft.startup_at_sign_in {

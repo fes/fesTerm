@@ -2641,6 +2641,8 @@ impl SftpFileManagerTab {
         }
         self.show_transfer_drawer(ui);
         self.show_collision_dialog(ui.ctx());
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.show_rooted_delete_preparation(ui);
         self.show_file_operation_dialog(ui.ctx(), tab_id);
         self.take_pending_markdown_command().or(toolbar_command)
     }
@@ -2856,9 +2858,8 @@ impl SftpFileManagerTab {
         let mut request_refresh = false;
         let mut request_create_directory = false;
         let mut request_delete = false;
-        let operations_idle = !self.file_operations.pending;
-        let remote_delete_supported =
-            matches!(self.launch_target, FileManagerLaunchTarget::Sftp(_));
+        let operations_idle = self.file_operations_idle();
+        let remote_delete_supported = self.remote_delete_available();
         #[cfg(feature = "experimental-dev-tunnels")]
         let files_worker_available =
             !matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
@@ -4308,6 +4309,7 @@ impl SftpFileManagerTab {
                 &event,
                 WorkerEvent::FilesConnected { .. }
                     | WorkerEvent::FilesDirectoryLoaded { .. }
+                    | WorkerEvent::ReviewedDeletePrepared { .. }
                     | WorkerEvent::Connected { .. }
                     | WorkerEvent::RemoteDirectoryLoaded { .. }
                     | WorkerEvent::MarkdownSnapshotLoaded { .. }
@@ -4352,6 +4354,16 @@ impl SftpFileManagerTab {
                 if skipped > 0 {
                     self.operation_error = Some(("Some entries are unavailable".into(), format!("{skipped} unsupported or inaccessible entries were omitted by the host.")));
                 }
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::ReviewedDeletePrepared {
+                request,
+                id,
+                result,
+            } => self.rooted_delete_prepared(request, id, result),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::ReviewedDeleteFinished { request, outcome } => {
+                self.rooted_delete_finished(request, outcome)
             }
             WorkerEvent::FileOperationFinished { request, result } => {
                 self.file_operation_finished(request, result)
@@ -4659,6 +4671,17 @@ impl Drop for SftpFileManagerTab {
 #[derive(Debug)]
 enum WorkerCommand {
     FileOperation(file_operations::Request),
+    #[cfg(feature = "experimental-dev-tunnels")]
+    PrepareReviewedDelete {
+        request: file_operations::Request,
+        id: uuid::Uuid,
+        stop: tokio_util::sync::CancellationToken,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    CommitReviewedDelete {
+        request: file_operations::Request,
+        batch: u64,
+    },
     LoadRemote {
         path: String,
     },
@@ -4695,6 +4718,17 @@ enum WorkerEvent {
         snapshot: SftpDirectorySnapshot,
         metadata: SftpPathMetadata,
         skipped: usize,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ReviewedDeletePrepared {
+        request: file_operations::Request,
+        id: uuid::Uuid,
+        result: Result<(u64, Vec<SftpDirectoryItem>), String>,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ReviewedDeleteFinished {
+        request: file_operations::Request,
+        outcome: crate::app::host_files::DeleteOutcome,
     },
     FileOperationFinished {
         request: file_operations::Request,
@@ -5072,6 +5106,10 @@ async fn run_worker_operations(
             maybe_command = command_receiver.recv() => {
                 let Some(command) = maybe_command else { break; };
                 match command {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    WorkerCommand::PrepareReviewedDelete { .. } | WorkerCommand::CommitReviewedDelete { .. } => {
+                        let _ = event_sender.send(WorkerEvent::TransferCommandFailed { action: "delete through Files", details: "Reviewed Files deletion is unavailable on an SFTP connection.".into() }).await;
+                    }
                     WorkerCommand::FileOperation(request) => {
                         let result = if request.focus == PaneFocus::Local {
                             file_operations::local(&request).await

@@ -2343,6 +2343,7 @@ mod tests {
         let mut settings = store.snapshot().unwrap().settings;
         settings.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
         settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            delete: false,
             root: root.path().to_path_buf(),
             write: false,
         });

@@ -752,6 +752,7 @@ mod tests {
         let mut approved = original.settings.clone();
         approved.ordinary_access = OrdinaryAccess::ProviderOwner;
         approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            delete: false,
             root: root.path().into(),
             write: true,
         });
@@ -798,6 +799,7 @@ mod tests {
             let mut approved = original.settings.clone();
             approved.ordinary_access = OrdinaryAccess::ProviderOwner;
             approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+                delete: false,
                 root: root.path().into(),
                 write: false,
             });
@@ -888,6 +890,7 @@ mod tests {
         let mut requested = original.settings.clone();
         requested.ordinary_access = OrdinaryAccess::ProviderOwner;
         requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            delete: false,
             root: std::env::temp_dir().join("owned-files-review"),
             write: false,
         });

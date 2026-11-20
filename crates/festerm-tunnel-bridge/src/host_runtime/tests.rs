@@ -4089,6 +4089,7 @@ impl FilesFixture {
         let root = fixture.root.join("files");
         std::fs::create_dir(&root).unwrap();
         let file_policy = write.map(|write| crate::file_protocol::Policy {
+            delete: false,
             root: root.clone(),
             write,
         });

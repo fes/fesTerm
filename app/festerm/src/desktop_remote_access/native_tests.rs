@@ -946,6 +946,7 @@ fn desktop_remote_access_active_file_consent_changes_block_before_acquisition_or
     let path = root.path().join("desktop-files");
     let mut settings = Draft::default().settings();
     settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        delete: false,
         root: root.path().to_path_buf(),
         write: false,
     });
@@ -995,6 +996,7 @@ fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_ex
     let path = root.path().join("desktop-files");
     let draft = Draft {
         files: FileAccessDraft {
+            delete: false,
             enabled: true,
             root: root.path().to_path_buf(),
             write: false,

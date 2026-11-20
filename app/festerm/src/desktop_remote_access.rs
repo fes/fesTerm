@@ -33,6 +33,7 @@ pub struct FileAccessDraft {
     pub enabled: bool,
     pub root: PathBuf,
     pub write: bool,
+    pub delete: bool,
 }
 impl std::fmt::Debug for FileAccessDraft {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,6 +41,7 @@ impl std::fmt::Debug for FileAccessDraft {
             .field("enabled", &self.enabled)
             .field("root", &"[private folder]")
             .field("write", &self.write)
+            .field("delete", &self.delete)
             .finish()
     }
 }
@@ -50,6 +52,7 @@ impl FileAccessDraft {
                 enabled: true,
                 root: policy.root.clone(),
                 write: policy.write,
+                delete: policy.delete,
             },
             None => Self::default(),
         }
@@ -57,6 +60,7 @@ impl FileAccessDraft {
     fn policy(&self) -> Option<festerm_tunnel_bridge::file_protocol::Policy> {
         self.enabled
             .then(|| festerm_tunnel_bridge::file_protocol::Policy {
+                delete: self.delete,
                 root: self.root.clone(),
                 write: self.write,
             })

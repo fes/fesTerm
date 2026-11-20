@@ -61,6 +61,7 @@ impl Observation {
                 return Err(invalid());
             }
             let filesystem = Filesystem::open(&FilePolicy {
+                delete: false,
                 root: path.clone(),
                 write: false,
             })?;
@@ -1156,6 +1157,7 @@ mod tests {
                 && !only_observation.allows_read()
         );
         let filesystem = FilePolicy {
+            delete: false,
             root: path.clone(),
             write: true,
         };

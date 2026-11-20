@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::Exit
 const HELP: &str = "\
 festerm-host — ADR 0084 headless lifecycle boundary
 
-capabilities
+capabilities [files-delete]
     Read static compiled helper capabilities only; no state, account or service is accessed.
 configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in] [--ordinary-access owner-only|provider-owner]
     Save disabled host-local settings only; no sign-in, service or shell is started.
@@ -102,13 +102,21 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let mut args = args.into_iter();
     let command = args.next().ok_or_else(invalid)?;
     if command == "capabilities" {
+        let feature = args.next();
         if args.next().is_some() {
             return Err(invalid());
         }
-        return Ok(format!(
-            "{{\"schema\":1,\"host_files_v2\":{}}}\n",
-            cfg!(feature = "owner-routing")
-        ));
+        return match feature.as_deref() {
+            None => Ok(format!(
+                "{{\"schema\":1,\"host_files_v2\":{}}}\n",
+                cfg!(feature = "owner-routing")
+            )),
+            Some(feature) if feature == "files-delete" => Ok(format!(
+                "{{\"schema\":1,\"host_files_delete_v3\":{}}}\n",
+                cfg!(feature = "owner-routing")
+            )),
+            _ => Err(invalid()),
+        };
     }
     if command == "--help" || command == "-h" {
         if args.next().is_some() {

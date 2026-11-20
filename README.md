@@ -27,8 +27,10 @@ The host also offers an explicitly enabled
 [rooted filesystem protocol](docs/dev-tunnel-files-protocol.md) for enumeration
 and streaming transfers. Desktop Dev Tunnels Files sessions reuse the SFTP
 file-manager presentation and queue for browse, upload/download, mkdir and
-bounded read-only previews. Remote delete/rename/chmod and Mobile integration
-remain separate work. The grant is off by default and can be changed/revoked on
+bounded read-only previews. Separately reviewed deletion of files and empty
+folders requires an additional default-off host permission; old write grants
+never authorize it. Rename/chmod/link parity and Mobile integration remain
+separate work. The grant is off by default and can be changed/revoked on
 an existing host; current-source native/provider Desktop qualification is pending.
 
 An independent [read-only observation protocol](docs/remote-observation-protocol.md)
