@@ -102,6 +102,15 @@ impl std::fmt::Display for ManualCleanupRequired {
 #[cfg(feature = "owner-routing")]
 impl std::error::Error for ManualCleanupRequired {}
 
+#[cfg(any(feature = "owner-routing", test))]
+fn owner_readiness_after_fence<T>(
+    initialize: impl FnOnce() -> io::Result<()>,
+    observe: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    initialize()?;
+    observe()
+}
+
 fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let mut args = args.into_iter();
     let command = args.next().ok_or_else(invalid)?;
@@ -272,14 +281,23 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 Some("headless") => Origin::Headless,
                 _ => return Err(invalid()),
             };
-            let report = serde_json::to_string(
-                &festerm_host_setup::controller::owner_readiness_diagnostic(&state, origin),
+            owner_readiness_after_fence(
+                || {
+                    #[cfg(target_os = "macos")]
+                    festerm_host_setup::cloud::initialize_owner_readiness_store()?;
+                    Ok(())
+                },
+                || {
+                    let report = serde_json::to_string(
+                        &festerm_host_setup::controller::owner_readiness_diagnostic(&state, origin),
+                    )
+                    .map_err(|_| invalid())?;
+                    if report.len() > 4096 {
+                        return Err(invalid());
+                    }
+                    Ok(report)
+                },
             )
-            .map_err(|_| invalid())?;
-            if report.len() > 4096 {
-                return Err(invalid());
-            }
-            Ok(report)
         }
         #[cfg(feature = "owner-routing")]
         "migration-owner-init"
@@ -1098,6 +1116,35 @@ fn diagnostic(error: &io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_readiness_fence_precedes_observation_and_refuses_failed_initialization() {
+        use std::cell::RefCell;
+        let order = RefCell::new(Vec::new());
+        let result = owner_readiness_after_fence(
+            || {
+                order.borrow_mut().push("fence");
+                Ok(())
+            },
+            || {
+                order.borrow_mut().push("observe");
+                Ok(7)
+            },
+        )
+        .unwrap();
+        assert_eq!(result, 7);
+        assert_eq!(*order.borrow(), ["fence", "observe"]);
+        let observed = std::cell::Cell::new(false);
+        assert!(owner_readiness_after_fence(
+            || Err(io::Error::other("fixture fence refusal")),
+            || {
+                observed.set(true);
+                Ok(())
+            },
+        )
+        .is_err());
+        assert!(!observed.get());
+    }
 
     #[test]
     fn headless_run_exit_retries_only_typed_login_proof_and_preserves_diagnostics() {

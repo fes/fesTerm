@@ -6681,6 +6681,8 @@
         "host_owner_admission_preserves_provider_owner_consent_and_primary_failures",
         "host_owner_admission_log_is_bounded_and_old_runtime_reader_skips_it",
         "host_owner_readiness_is_noninteractive_read_only_and_never_advances_high_water",
+        "owner_readiness_fence_precedes_observation_and_refuses_failed_initialization",
+        "headless_fence_requires_successful_set_and_false_readback",
         "host_owner_readiness_cli_is_local_status_only_and_never_creates_a_root",
         "host_owner_readiness_cli_refuses_wrong_origin_or_malformed_policy_without_writes",
         "host_runtime_missing_lock_never_authorizes_restart_or_confirmed_stop",

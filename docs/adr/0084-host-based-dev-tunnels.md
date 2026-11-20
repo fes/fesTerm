@@ -2516,9 +2516,10 @@ stage/outcome/category observations, not record fields or references. It never
 initializes, advances high-water, writes logs, touches a manager/network or
 falls back to another store. Exit success means evidence was produced, not that
 HOST is listening. Older helpers do not support this new command. Logging failure is
-best effort. Signed macOS qualification must separately compose and review the
-#795 deployed `1046b6ab` process-wide headless Keychain UI fence and its
-noninteractive credential refresh path, which this source base does not contain.
+best effort. The diagnostic command installs its dedicated process no-UI fence.
+Signed serving qualification must separately compose and review the #795 deployed
+`1046b6ab` serving fence and noninteractive credential refresh path, which this
+source base does not contain.
 This diagnostic change grants no per-item Keychain access and does not resolve
 #816 or qualify a new signed helper cohort.
 
@@ -2846,3 +2847,20 @@ are not first-party helper executables or Task targets, and do not enter the
 first-party publisher predicate. Existing runtime hash verification remains the
 execution boundary. Older consumers may reject the new inventory; acceptance
 of historical archives is not a claim of backwards execution compatibility.
+
+### Dedicated read-only diagnostic process fence
+
+Before opening selected owner state, macOS `owner-readiness` invokes the
+[dedicated-process fence](0016-native-secret-store-boundary.md#dedicated-read-only-diagnostic-process-fence).
+Initializer failure returns a finite CLI error without observation or a status
+DTO. Other command arms and serving/refresh behavior are unchanged.
+
+Validation impact: ordering/refusal and setter/readback fixture logic, read-only
+selected-root tests and isolated CLI invocation cover the contract, without
+proving native credential access. The signed16 native probe timed out after
+15 seconds; a later frame showed a Keychain prompt, but no pre-command frame
+established its provenance. A future attributed native run must start without an
+existing prompt, finish prompt-free and preserve state. This change grants no ACL
+access or automatic retry, and does not resolve #816 or provide signed/native
+qualification. Existing release controls and owner authorization govern later
+exact-candidate runs.

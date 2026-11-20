@@ -534,6 +534,15 @@ fn map_platform_failure(_: &keyring_core::error::PlatformError) -> SecretStoreEr
 ))]
 mod noninteractive;
 
+/// Permanently disables Keychain UI in a dedicated noninteractive process.
+/// Call before native-store construction; never call from a foreground GUI,
+/// setup or interactive operator process. This does not grant item access.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn initialize_headless_keychain() -> Result<(), SecretStoreError> {
+    noninteractive::initialize_headless_keychain()
+}
+
 /// Creates the target's native secret store.
 ///
 /// This never falls back to a file, keyutils, plaintext, or

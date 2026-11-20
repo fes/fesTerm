@@ -25,6 +25,13 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// No-UI process boundary for the dedicated owner-readiness CLI only.
+#[cfg(target_os = "macos")]
+pub fn initialize_owner_readiness_store() -> io::Result<()> {
+    festerm_secret_store::initialize_headless_keychain()
+        .map_err(|_| io::Error::other("host.owner_readiness_storage_unavailable"))
+}
+
 const RECORD: &str = "host-cloud.json";
 const LOCK: &str = "host-cloud.lock";
 pub const HOST_IDENTITY_FILE: &str = "host-identity";

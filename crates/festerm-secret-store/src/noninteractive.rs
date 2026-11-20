@@ -1,6 +1,38 @@
 //! Fresh native reads with no unlock, prompt, initialization, or fallback path.
 use super::*;
 
+#[cfg(target_os = "macos")]
+pub(super) fn initialize_headless_keychain() -> Result<(), SecretStoreError> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    install_headless_fence(
+        || {
+            let guard = SecKeychain::disable_user_interaction()
+                .map_err(|_| SecretStoreError::LockedOrUnavailable)?;
+            // Drop would re-enable process UI. This dedicated worker keeps the
+            // fence for its whole lifetime, including failed startup/cleanup.
+            std::mem::forget(guard);
+            Ok(())
+        },
+        || {
+            SecKeychain::user_interaction_allowed()
+                .map_err(|_| SecretStoreError::LockedOrUnavailable)
+        },
+    )?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn install_headless_fence(
+    set: impl FnOnce() -> Result<(), SecretStoreError>,
+    read: impl FnOnce() -> Result<bool, SecretStoreError>,
+) -> Result<(), SecretStoreError> {
+    set()?;
+    match read()? {
+        false => Ok(()),
+        true => Err(SecretStoreError::LockedOrUnavailable),
+    }
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn mac_results(results: Vec<Option<Vec<u8>>>) -> Result<SecretBytes, SecretStoreError> {
     let mut selected = None;
@@ -126,6 +158,30 @@ pub(super) fn get(reference: &SecretReference) -> Result<SecretBytes, SecretStor
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn headless_fence_requires_successful_set_and_false_readback() {
+        let reads = std::cell::Cell::new(0);
+        assert_eq!(
+            install_headless_fence(
+                || Err(SecretStoreError::BackendFailure),
+                || {
+                    reads.set(1);
+                    Ok(false)
+                }
+            ),
+            Err(SecretStoreError::BackendFailure)
+        );
+        assert_eq!(reads.get(), 0);
+        assert_eq!(
+            install_headless_fence(|| Ok(()), || Ok(true)),
+            Err(SecretStoreError::LockedOrUnavailable)
+        );
+        assert_eq!(
+            install_headless_fence(|| Ok(()), || Err(SecretStoreError::BackendFailure)),
+            Err(SecretStoreError::BackendFailure)
+        );
+        assert_eq!(install_headless_fence(|| Ok(()), || Ok(false)), Ok(()));
+    }
     #[test]
     fn locked_missing_and_ambiguous_searches_never_read_or_unlock() {
         for (locked, unlocked, error) in [
