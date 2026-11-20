@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "b4f558e9db4d05c28a32c6b482a5af6aa0fb6162e8cf22dc1a7e832570a84411"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "e9e99f4931d201a13b229d808f6b49aebc0052df1fb3f8b8379a0868200194a5"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -79,6 +79,7 @@ Caveats:
 Use for: A host must create or attach a durable protected generation without recreating a live shell.
 
 - [`SessionControl`](../../crates/festerm-sessiond/src/host_control.rs) — host-side generation journal and protected creation or attachment logic
+- [`unwind_attachment_until`](../../crates/festerm-sessiond/src/host_control.rs) — Exact-ticket cleanup lock wait.
 - [`use_wmi_starter`](../../crates/festerm-sessiond/src/main.rs) — routes initial hosted starts in a Job through one successor while refusing recursive or blocked successor launch
 
 Evidence:
