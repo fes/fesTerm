@@ -5374,7 +5374,12 @@ development wrapper, not installed or production services:
    no retry or replacement on WMI/PID/timeout uncertainty. Existing Running and
    Unknown behavior must remain intact. The native CI test excludes the daemon
    from its exact caller-owned Job and performs real same-generation PTY I/O
-   after terminating that Job. OS-owned Job membership or permissive flags alone
+   after terminating that Job. Its fixture Ready receipt uses complete private
+   staging and atomic no-replace publication; path existence must never expose
+   empty/torn JSON. Keep strict parsing, the bounded startup deadline and exact
+   protected PID/generation checks. The original #819 empty-receipt failure is
+   retained; this correction supplies no new native WMI or signed GUI proof.
+   OS-owned Job membership or permissive flags alone
    supplies no durability proof. Separately qualify signed native GUI close,
    normal HOST Disable/Task stop and reconnect while preserving the same shell.
    Do not classify the earlier uncertain native operation as repaired or infer
