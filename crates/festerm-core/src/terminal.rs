@@ -14,12 +14,17 @@ use crate::{
         mouse_event_is_reported, paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome,
         Key, MouseEvent,
     },
+    kitty::{
+        KittyAuthority, KittyConfig, KittyGeometry, KittyImage, KittyMove, KittyPacket,
+        KittyPlacement, KittySurface, KittyValidation, KittyValidationResult,
+        MAX_KITTY_REPLY_BYTES,
+    },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
         ColorQuery, CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser,
         RecordingParser, StringTerminator, TerminalOp,
     },
-    replies::{queue_transport_bytes, QueuePushResult},
+    replies::{queue_transport_bytes, QueuePushResult, ReplyQueue},
     screen::{
         deserialize_recording_vec, recording_text_is_hidden, ColumnSpan, RecordingScreen,
         Rectangle, Screen,
@@ -760,15 +765,41 @@ const fn initial_screen_generation() -> u64 {
 pub enum TerminalSemantics {
     /// Behavior used by releases before RIS reset support.
     Legacy,
-    /// Current RIS and reset behavior.
-    #[default]
+    /// Full RIS reset with legacy string framing.
     Current,
+    /// Full RIS reset with bounded graphics and APC/PM/SOS discard.
+    #[default]
+    SafeFraming,
+}
+
+impl TerminalSemantics {
+    /// Stable identifier used by recovery and recording envelopes.
+    pub const fn wire_id(self) -> u8 {
+        match self {
+            Self::Legacy => 0,
+            Self::Current => 1,
+            Self::SafeFraming => 2,
+        }
+    }
+
+    /// Decodes a recovery or recording semantics identifier.
+    pub const fn from_wire_id(id: u8) -> Option<Self> {
+        match id {
+            0 => Some(Self::Legacy),
+            1 => Some(Self::Current),
+            2 => Some(Self::SafeFraming),
+            _ => None,
+        }
+    }
 }
 
 /// GUI-independent terminal state. The terminal owns one logical writer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Terminal {
+    #[serde(serialize_with = "serialize_recoverable_parser")]
     parser: Parser,
+    #[serde(skip)]
+    kitty: Option<Box<KittyAuthority>>,
     utf8: Utf8Decoder,
     primary: BufferState,
     alternate: Option<BufferState>,
@@ -799,11 +830,23 @@ pub struct Terminal {
     current_hyperlink: Option<Arc<str>>,
     current_hyperlink_cells_remaining: usize,
     color_scheme: ColorScheme,
-    reply_queue: Vec<u8>,
+    reply_queue: ReplyQueue,
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
     input_queue_overflowed: bool,
     scrollback: Scrollback,
+}
+
+fn serialize_recoverable_parser<S: serde::Serializer>(
+    parser: &Parser,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if parser.kitty_enabled() {
+        return Err(serde::ser::Error::custom(
+            "graphics-enabled terminals cannot produce recovery snapshots",
+        ));
+    }
+    parser.serialize(serializer)
 }
 
 /// A recording-owned projection of one visible terminal screen.
@@ -880,6 +923,7 @@ impl RecordingCheckpoint {
         };
         let mut terminal = Terminal {
             parser,
+            kitty: None,
             utf8: Utf8Decoder::new(),
             primary,
             alternate,
@@ -899,7 +943,7 @@ impl RecordingCheckpoint {
             current_hyperlink: None,
             current_hyperlink_cells_remaining: 0,
             color_scheme: self.color_scheme,
-            reply_queue: Vec::new(),
+            reply_queue: ReplyQueue::default(),
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
             input_queue_overflowed: false,
@@ -934,6 +978,8 @@ fn validate_recording_size(
 #[serde(remote = "Terminal")]
 struct TerminalSnapshotV2 {
     parser: Parser,
+    #[serde(skip)]
+    kitty: Option<Box<KittyAuthority>>,
     utf8: Utf8Decoder,
     primary: BufferState,
     alternate: Option<BufferState>,
@@ -954,7 +1000,7 @@ struct TerminalSnapshotV2 {
     current_hyperlink: Option<Arc<str>>,
     current_hyperlink_cells_remaining: usize,
     color_scheme: ColorScheme,
-    reply_queue: Vec<u8>,
+    reply_queue: ReplyQueue,
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
     input_queue_overflowed: bool,
@@ -970,6 +1016,216 @@ impl Terminal {
     /// Sets the behavior identified by a trusted recovery or recording format.
     pub fn set_semantics(&mut self, semantics: TerminalSemantics) {
         self.parser.set_semantics(semantics);
+        if semantics != TerminalSemantics::SafeFraming {
+            self.kitty = None;
+            self.parser.disable_kitty();
+        }
+    }
+
+    /// Opt in before ingesting output, only for an eligible local session.
+    /// Eligibility and the fixed protocol reservation are chosen by the owner.
+    pub fn enable_kitty_graphics(&mut self, config: KittyConfig) -> Result<(), TerminalError> {
+        if self.kitty.is_some()
+            || self.semantics() != TerminalSemantics::SafeFraming
+            || !self.parser.is_ground()
+            || self.utf8.pending()
+        {
+            return Err(TerminalError::invalid_snapshot(
+                "Kitty graphics require a fresh, safe-framing terminal stream",
+            ));
+        }
+        let kitty = KittyAuthority::new(config)
+            .ok_or_else(|| TerminalError::invalid_snapshot("invalid Kitty graphics reservation"))?;
+        self.parser.enable_kitty().ok_or_else(|| {
+            TerminalError::invalid_snapshot("could not reserve Kitty packet staging")
+        })?;
+        if self.reply_queue.reserve().is_none() {
+            self.parser.disable_kitty();
+            return Err(TerminalError::invalid_snapshot(
+                "could not reserve Kitty reply capacity",
+            ));
+        }
+        self.kitty = Some(Box::new(kitty));
+        Ok(())
+    }
+
+    /// Opt in to worker validation for completed Kitty uploads and data queries.
+    /// Use [`Self::ingest_with_reply_backpressure`] and return every job's result.
+    pub fn enable_kitty_worker_handoff(&mut self) {
+        if let Some(kitty) = &mut self.kitty {
+            kitty.enable_worker_handoff();
+        }
+    }
+
+    /// True until the terminal owner returns the pending job's exact result.
+    pub fn kitty_validation_pending(&self) -> bool {
+        self.kitty
+            .as_ref()
+            .is_some_and(|kitty| kitty.validation_pending())
+    }
+
+    /// Transfers the job to a worker, at most once per barrier.
+    pub fn take_kitty_validation(&mut self) -> Option<KittyValidation> {
+        self.kitty.as_mut()?.take_validation()
+    }
+
+    /// Returns worker-owned staging and publishes the result in stream order.
+    /// Returns false for a foreign or retired job; such results have no effect.
+    /// An out-of-band reset waits until after this packet publishes.
+    pub fn complete_kitty_validation(&mut self, result: KittyValidationResult) -> bool {
+        if !self
+            .kitty
+            .as_ref()
+            .is_some_and(|kitty| kitty.accepts_validation(&result))
+        {
+            return false;
+        }
+        let mut kitty = self.kitty.take().expect("checked job");
+        let span = self.horizontal_margins();
+        let surface = self.kitty_surface(span);
+        let index = self.kitty_buffer_index();
+        let (packet, movement, reset_requested) =
+            kitty.finish_validation(result, surface, |reply| {
+                let queued = self.queue_reply(reply);
+                debug_assert!(
+                    !queued.overflowed(),
+                    "worker reply capacity was reserved at admission"
+                );
+                !queued.overflowed()
+            });
+        self.kitty = Some(kitty);
+        self.parser.recycle_kitty_packet(packet);
+        self.apply_kitty_movement(index, span, surface, movement);
+        if reset_requested {
+            self.reset_to_initial_state();
+        }
+        true
+    }
+
+    /// Publish authoritative cell pixels for the current grid. A geometry
+    /// change evicts visible placements that cannot be remapped exactly.
+    pub fn set_kitty_geometry(
+        &mut self,
+        geometry: Option<KittyGeometry>,
+    ) -> Result<(), TerminalError> {
+        let dimensions = self.dimensions();
+        if geometry.is_some_and(|geometry| geometry.grid_pixels(dimensions).is_none()) {
+            return Err(TerminalError::invalid_snapshot(
+                "invalid Kitty pixel geometry",
+            ));
+        }
+        let kitty = self
+            .kitty
+            .as_mut()
+            .ok_or_else(|| TerminalError::invalid_snapshot("Kitty graphics are not enabled"))?;
+        if geometry != kitty.geometry {
+            if kitty.validation_pending() {
+                return Err(TerminalError::invalid_snapshot(
+                    "drain Kitty validation before changing terminal geometry",
+                ));
+            }
+            kitty.clear_placements();
+            kitty.abort_uploads();
+            kitty.geometry = geometry;
+            self.parser.set_kitty_geometry_ready(geometry.is_some());
+        }
+        Ok(())
+    }
+
+    /// Admitted direct images in the active terminal buffer.
+    pub fn kitty_images(&self) -> &[KittyImage] {
+        self.kitty.as_ref().map_or(&[], |kitty| {
+            &kitty.buffers[self.kitty_buffer_index()].images
+        })
+    }
+
+    /// Visible placements in paint order (ascending z, then image ID).
+    pub fn kitty_placements(&self) -> &[KittyPlacement] {
+        self.kitty.as_ref().map_or(&[], |kitty| {
+            &kitty.buffers[self.kitty_buffer_index()].placements
+        })
+    }
+
+    fn kitty_buffer_index(&self) -> usize {
+        usize::from(self.active_screen == ActiveScreen::Alternate)
+    }
+
+    fn kitty_surface(&self, span: ColumnSpan) -> KittySurface {
+        let buffer = self.active_buffer();
+        KittySurface {
+            dimensions: self.dimensions(),
+            cursor: buffer.cursor,
+            top: buffer.scroll_top,
+            bottom: buffer.scroll_bottom,
+            left: span.left,
+            right: span.right,
+        }
+    }
+
+    fn scroll_kitty(&mut self, span: ColumnSpan, count: usize, down: bool) {
+        if self.kitty.is_none() {
+            return;
+        }
+        let surface = self.kitty_surface(span);
+        let index = self.kitty_buffer_index();
+        if let Some(kitty) = &mut self.kitty {
+            kitty.buffers[index].scroll(surface, count, down);
+        }
+    }
+
+    fn apply_kitty_packet(&mut self, packet: KittyPacket, allow_worker: bool) {
+        let Some(mut kitty) = self.kitty.take() else {
+            return;
+        };
+        let span = self.horizontal_margins();
+        let surface = self.kitty_surface(span);
+        let index = self.kitty_buffer_index();
+        let packet = if allow_worker {
+            match kitty.defer_validation(index, packet) {
+                Ok(()) => {
+                    self.kitty = Some(kitty);
+                    return;
+                }
+                Err(packet) => packet,
+            }
+        } else {
+            packet
+        };
+        let movement = kitty.handle(index, surface, &packet, |reply| {
+            !self.queue_reply(reply).overflowed()
+        });
+        self.kitty = Some(kitty);
+        self.parser.recycle_kitty_packet(packet);
+        self.apply_kitty_movement(index, span, surface, movement);
+    }
+
+    fn apply_kitty_movement(
+        &mut self,
+        index: usize,
+        span: ColumnSpan,
+        surface: KittySurface,
+        movement: Option<KittyMove>,
+    ) {
+        if let Some(movement) = movement {
+            if movement.scroll != 0 {
+                // The authority has already scrolled its side table.
+                let retain_history = index == 0
+                    && surface.top == 0
+                    && surface.bottom + 1 == surface.dimensions.rows()
+                    && span.left == 0
+                    && span.right + 1 == surface.dimensions.columns();
+                self.scroll_active_text_up(
+                    movement.scroll,
+                    self.erase_cell(),
+                    span,
+                    retain_history,
+                );
+            }
+            let buffer = self.active_buffer_mut();
+            buffer.cursor = movement.cursor;
+            buffer.pending_wrap = false;
+            buffer.grapheme_anchor = None;
+        }
     }
 
     /// Decodes the schema-2 recovery layout, initializing its absent screen generation.
@@ -993,6 +1249,7 @@ impl Terminal {
     ) -> Result<Self, TerminalError> {
         Ok(Self {
             parser: Parser::new(),
+            kitty: None,
             utf8: Utf8Decoder::new(),
             primary: BufferState::new(dimensions)?,
             alternate: None,
@@ -1012,7 +1269,7 @@ impl Terminal {
             current_hyperlink: None,
             current_hyperlink_cells_remaining: 0,
             color_scheme: ColorScheme::default(),
-            reply_queue: Vec::new(),
+            reply_queue: ReplyQueue::default(),
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
             input_queue_overflowed: false,
@@ -1025,6 +1282,11 @@ impl Terminal {
     }
 
     pub fn validate_recovery_snapshot(&self) -> Result<(), TerminalError> {
+        if self.kitty.is_some() {
+            return Err(TerminalError::invalid_snapshot(
+                "graphics-enabled terminals cannot produce recovery snapshots",
+            ));
+        }
         self.parser
             .validate_recovery_state()
             .map_err(TerminalError::invalid_snapshot)?;
@@ -1069,7 +1331,7 @@ impl Terminal {
         }
         if self.reply_queue_overflowed
             || self.input_queue_overflowed
-            || !self.reply_queue.is_empty()
+            || !self.reply_queue.queued().is_empty()
             || !self.input_queue.is_empty()
         {
             return Err(TerminalError::invalid_snapshot(
@@ -1108,7 +1370,7 @@ impl Terminal {
         reply_queue: Vec<u8>,
         input_queue: Vec<u8>,
     ) {
-        self.reply_queue = reply_queue;
+        self.reply_queue = reply_queue.into();
         self.input_queue = input_queue;
     }
 
@@ -1335,10 +1597,14 @@ impl Terminal {
     /// "clear the scrollback" as separate user actions; see
     /// [`Self::clear_scrollback`] for the latter. The configured color scheme
     /// and already-queued transport bytes are also retained.
+    /// A pending Kitty validation completes before the reset takes effect.
     pub fn reset_to_initial_state(&mut self) {
+        if self.kitty.as_mut().is_some_and(|kitty| kitty.defer_reset()) {
+            return;
+        }
         let dimensions = self.dimensions();
         let semantics = self.semantics();
-        if semantics == TerminalSemantics::Current {
+        if semantics != TerminalSemantics::Legacy {
             self.scrollback.finish_open_line();
         }
         self.primary.reset();
@@ -1348,12 +1614,12 @@ impl Terminal {
         self.modes = TerminalModes::default();
         self.cursor_style = CursorStyle::default();
         self.cursor_style_set = false;
-        if semantics == TerminalSemantics::Current {
+        if semantics != TerminalSemantics::Legacy {
             self.last_graphic_character = None;
         }
         self.tab_stops = default_tab_stops(dimensions);
         self.current_attributes = Attributes::NONE;
-        if semantics == TerminalSemantics::Current {
+        if semantics != TerminalSemantics::Legacy {
             self.current_protected = false;
             self.protection = ProtectionSource::None;
         }
@@ -1362,8 +1628,12 @@ impl Terminal {
         self.title.clear();
         self.current_hyperlink = None;
         self.current_hyperlink_cells_remaining = 0;
-        self.parser = Parser::new();
-        self.parser.set_semantics(semantics);
+        self.parser.reset();
+        if let Some(kitty) = &mut self.kitty {
+            kitty.reset();
+            self.parser
+                .set_kitty_geometry_ready(kitty.geometry.is_some());
+        }
         self.utf8 = Utf8Decoder::new();
     }
 
@@ -1371,18 +1641,46 @@ impl Terminal {
         self.screen().is_row_dirty(row)
     }
 
+    /// Eager ingestion for streams without authoritative graphics. Local PTYs
+    /// with Kitty enabled should use [`Self::ingest_with_reply_backpressure`].
     pub fn ingest(&mut self, bytes: &[u8]) {
+        assert!(
+            bytes.is_empty() || !self.kitty_validation_pending(),
+            "finish pending Kitty validation before eager ingest"
+        );
+        self.ingest_bytes(bytes, false);
+    }
+
+    /// Applies an ordered prefix of PTY output. For Kitty-enabled terminals,
+    /// stops before a byte if the next graphics reply could exceed the queue
+    /// ceiling, or just after the packet that starts worker validation. Drain
+    /// replies and complete any job before resubmitting `&bytes[consumed..]`.
+    /// Check the validation barrier even if the entire input was consumed.
+    #[must_use]
+    pub fn ingest_with_reply_backpressure(&mut self, bytes: &[u8]) -> usize {
+        self.ingest_bytes(bytes, self.kitty.is_some())
+    }
+
+    fn ingest_bytes(&mut self, bytes: &[u8], reserve_graphics_reply: bool) -> usize {
         let mut index = 0;
         while let Some(&byte) = bytes.get(index) {
+            if reserve_graphics_reply
+                && (self.kitty_validation_pending()
+                    || self.queued_replies().len()
+                        > TRANSPORT_QUEUE_HIGH_WATERMARK - MAX_KITTY_REPLY_BYTES)
+            {
+                break;
+            }
             let length = self.ascii_run_length(&bytes[index..]);
             if length != 0 {
                 self.print_ascii_run(&bytes[index..index + length]);
                 index += length;
             } else {
-                self.ingest_byte(byte);
+                self.ingest_byte_observing_repeats(byte, reserve_graphics_reply, &mut |_| {});
                 index += 1;
             }
         }
+        index
     }
 
     fn ascii_run_length(&self, bytes: &[u8]) -> usize {
@@ -1471,8 +1769,9 @@ impl Terminal {
         }
     }
 
+    #[cfg(test)]
     fn ingest_byte(&mut self, byte: u8) {
-        self.ingest_byte_observing_repeats(byte, &mut |_| {});
+        self.ingest_byte_observing_repeats(byte, false, &mut |_| {});
     }
 
     /// Applies output while reporting the character actually used by each REP
@@ -1486,6 +1785,10 @@ impl Terminal {
         mut observe_repeat: impl FnMut(usize, Option<char>),
         mut observe_visible: impl FnMut(usize, &Terminal),
     ) {
+        assert!(
+            bytes.is_empty() || !self.kitty_validation_pending(),
+            "finish pending Kitty validation before recording ingest"
+        );
         let mut offset = 0;
         while let Some(&byte) = bytes.get(offset) {
             if self.recording_block_cursor().is_none() {
@@ -1510,7 +1813,7 @@ impl Terminal {
                 extends_grapheme(cell.text(), character) || extends_grapheme(" ", character)
             });
             let mut ambiguous_repeat = false;
-            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+            self.ingest_byte_observing_repeats(byte, false, &mut |terminal| {
                 ambiguous_repeat = terminal.recording_repeat_visibility_is_ambiguous();
                 observe_repeat(offset, terminal.recording_repeat_character());
             });
@@ -1538,6 +1841,11 @@ impl Terminal {
         bytes: &[u8],
         hints: impl IntoIterator<Item = (usize, Option<char>)>,
     ) -> Result<(), TerminalError> {
+        if self.kitty_validation_pending() {
+            return Err(TerminalError::invalid_snapshot(
+                "drain Kitty validation before applying recorded output",
+            ));
+        }
         let mut hints = hints.into_iter().peekable();
         let mut invalid = false;
         let mut offset = 0;
@@ -1555,7 +1863,7 @@ impl Terminal {
             if hints.peek().is_some_and(|(position, _)| *position < offset) {
                 invalid = true;
             }
-            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+            self.ingest_byte_observing_repeats(byte, false, &mut |terminal| {
                 if hints
                     .peek()
                     .is_some_and(|(position, _)| *position == offset)
@@ -1639,7 +1947,12 @@ impl Terminal {
             .filter(|cell| cell.recording_text_is_redacted(&self.color_scheme))
     }
 
-    fn ingest_byte_observing_repeats(&mut self, byte: u8, observe: &mut impl FnMut(&mut Self)) {
+    fn ingest_byte_observing_repeats(
+        &mut self,
+        byte: u8,
+        allow_worker: bool,
+        observe: &mut impl FnMut(&mut Self),
+    ) {
         if self.utf8.pending() {
             match self.utf8.advance(byte) {
                 Utf8Advance::Pending => return,
@@ -1649,7 +1962,7 @@ impl Terminal {
                 }
                 Utf8Advance::Invalid => {
                     self.print(char::REPLACEMENT_CHARACTER);
-                    self.ingest_byte_observing_repeats(byte, observe);
+                    self.ingest_byte_observing_repeats(byte, allow_worker, observe);
                     return;
                 }
             }
@@ -1663,6 +1976,9 @@ impl Terminal {
         }
 
         let operation = self.parser.advance(byte);
+        if let Some(packet) = self.parser.take_kitty_packet() {
+            self.apply_kitty_packet(packet, allow_worker);
+        }
         if matches!(operation, TerminalOp::RepeatPrecedingCharacter(_)) {
             observe(self);
         }
@@ -1694,6 +2010,12 @@ impl Terminal {
         dimensions: Dimensions,
         positions: &[ContentPosition],
     ) -> Result<Vec<Option<ContentPosition>>, TerminalError> {
+        if self.kitty_validation_pending() {
+            return Err(TerminalError::invalid_snapshot(
+                "drain Kitty validation before resizing the terminal",
+            ));
+        }
+        let geometry_changed = self.dimensions() != dimensions;
         let (primary, positions) =
             self.primary
                 .reflowed(dimensions, &mut self.scrollback, positions)?;
@@ -1704,6 +2026,14 @@ impl Terminal {
 
         self.primary = primary;
         self.alternate = alternate;
+        if geometry_changed {
+            if let Some(kitty) = &mut self.kitty {
+                kitty.clear_placements();
+                kitty.abort_uploads();
+                kitty.geometry = None;
+                self.parser.set_kitty_geometry_ready(false);
+            }
+        }
         self.tab_stops = resized_tab_stops(&self.tab_stops, dimensions);
         Ok(positions)
     }
@@ -1742,6 +2072,11 @@ impl Terminal {
         &self,
         maximum_bytes: usize,
     ) -> Result<RecordingCheckpoint, TerminalError> {
+        if self.kitty.is_some() {
+            return Err(TerminalError::invalid_snapshot(
+                "graphics-enabled terminals cannot be recorded",
+            ));
+        }
         let parser = self.parser.recording_copy().ok_or_else(|| {
             TerminalError::invalid_snapshot(
                 "terminal has an incomplete control sequence; retry recording",
@@ -1890,17 +2225,24 @@ impl Terminal {
     /// [`Self::take_reply_queue_overflowed`] to observe rejected automatic
     /// replies, including DSR responses.
     pub fn queue_reply(&mut self, bytes: &[u8]) -> QueuePushResult {
-        let result = queue_transport_bytes(&mut self.reply_queue, bytes);
+        if self.kitty_validation_pending() && !bytes.is_empty() {
+            self.reply_queue_overflowed = true;
+            return QueuePushResult {
+                accepted: 0,
+                overflowed: true,
+            };
+        }
+        let result = self.reply_queue.push(bytes);
         self.reply_queue_overflowed |= result.overflowed();
         result
     }
 
     pub fn queued_replies(&self) -> &[u8] {
-        &self.reply_queue
+        self.reply_queue.queued()
     }
 
     pub fn drain_replies(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.reply_queue)
+        self.reply_queue.drain()
     }
 
     /// Reports and clears whether a reply write overflowed since the last call.
@@ -1985,7 +2327,17 @@ impl Terminal {
         }
     }
 
+    /// Applies a terminal operation. Direct operations must not overtake
+    /// pending Kitty validation; resets are deferred until after completion.
     pub fn apply(&mut self, operation: TerminalOp) {
+        if matches!(operation, TerminalOp::ResetToInitialState) && self.kitty_validation_pending() {
+            self.reset_to_initial_state();
+            return;
+        }
+        assert!(
+            matches!(operation, TerminalOp::Ignored) || !self.kitty_validation_pending(),
+            "finish pending Kitty validation before applying an operation"
+        );
         if !matches!(
             operation,
             TerminalOp::Print(_) | TerminalOp::SetGraphicsRendition(_) | TerminalOp::Ignored
@@ -2128,7 +2480,12 @@ impl Terminal {
                 private,
                 parameters,
             } => self.request_mode(private, parameters),
-            TerminalOp::SoftReset => self.soft_reset(),
+            TerminalOp::SoftReset => {
+                if let Some(kitty) = &mut self.kitty {
+                    kitty.abort_uploads();
+                }
+                self.soft_reset();
+            }
             TerminalOp::ResetToInitialState => self.reset_to_initial_state(),
             TerminalOp::CopyRectangle(parameters) => self.copy_rectangle(parameters),
             TerminalOp::FillRectangle(parameters) => self.fill_rectangle(parameters),
@@ -2493,6 +2850,17 @@ impl Terminal {
         span: ColumnSpan,
         retain_history: bool,
     ) {
+        self.scroll_kitty(span, count, false);
+        self.scroll_active_text_up(count, fill, span, retain_history);
+    }
+
+    fn scroll_active_text_up(
+        &mut self,
+        count: usize,
+        fill: Cell,
+        span: ColumnSpan,
+        retain_history: bool,
+    ) {
         let reusable = if retain_history
             && count == 1
             && self
@@ -2534,16 +2902,14 @@ impl Terminal {
         let fill = self.erase_cell();
         let span = self.horizontal_margins();
         let within_margins = self.cursor_within_margins();
-        let buffer = self.active_buffer_mut();
+        let buffer = self.active_buffer();
         if buffer.cursor.row == buffer.scroll_top {
             if !within_margins {
                 return;
             }
-            buffer
-                .screen
-                .scroll_down(buffer.scroll_top, buffer.scroll_bottom, 1, fill, span);
+            self.scroll_active_region_down(1, fill, span);
         } else {
-            buffer.cursor.row = buffer.cursor.row.saturating_sub(1);
+            self.active_buffer_mut().cursor.row = buffer.cursor.row.saturating_sub(1);
         }
     }
 
@@ -2872,6 +3238,12 @@ impl Terminal {
 
     fn erase_display(&mut self, parameters: CsiParameters, selective: bool) {
         let mode = Self::raw_parameter(parameters, 0, 0);
+        if mode == 2 && !selective {
+            let index = self.kitty_buffer_index();
+            if let Some(kitty) = &mut self.kitty {
+                kitty.buffers[index].placements.clear();
+            }
+        }
         if mode == 3 {
             if self.active_screen == ActiveScreen::Primary {
                 self.scrollback.clear();
@@ -3237,6 +3609,11 @@ impl Terminal {
         let count = Self::parameter_or(parameters, 0, 1);
         let span = self.horizontal_margins();
         let cell = self.erase_cell();
+        self.scroll_active_region_down(count, cell, span);
+    }
+
+    fn scroll_active_region_down(&mut self, count: usize, cell: Cell, span: ColumnSpan) {
+        self.scroll_kitty(span, count, true);
         let buffer = self.active_buffer_mut();
         buffer
             .screen
@@ -3694,6 +4071,9 @@ impl Terminal {
             self.alternate = Some(alternate);
         }
         if clear {
+            if let Some(kitty) = &mut self.kitty {
+                kitty.buffers[1].reset();
+            }
             let cell = self.erase_cell();
             let rows = self.dimensions().rows();
             let alternate = self
@@ -3722,6 +4102,9 @@ impl Terminal {
             self.primary.screen.mark_all_dirty();
         }
         if reset {
+            if let Some(kitty) = &mut self.kitty {
+                kitty.buffers[1].reset();
+            }
             if let Some(alternate) = &mut self.alternate {
                 alternate.reset();
             }
@@ -3893,6 +4276,22 @@ impl Terminal {
     fn window_operation(&mut self, parameters: CsiParameters) {
         let dimensions = self.screen().dimensions();
         let kind = match parameters.value(0) {
+            Some(request @ (14 | 16)) => {
+                let Some(geometry) = self.kitty.as_ref().and_then(|kitty| kitty.geometry) else {
+                    return;
+                };
+                let (kind, width, height) = if request == 14 {
+                    let Some((width, height)) = geometry.grid_pixels(dimensions) else {
+                        return;
+                    };
+                    (4, width, height)
+                } else {
+                    let (width, height) = geometry.cell_pixels();
+                    (6, width.into(), height.into())
+                };
+                self.queue_reply(format!("\x1b[{kind};{height};{width}t").as_bytes());
+                return;
+            }
             Some(18) => 8,
             Some(19) => 9,
             _ => return,

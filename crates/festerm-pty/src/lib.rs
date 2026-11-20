@@ -9,6 +9,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     io::{Read, Write},
+    num::NonZeroU64,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -820,7 +821,8 @@ impl std::error::Error for LocalPtyError {}
 enum SessionCommand {
     Input(Vec<u8>),
     AutomationInput(PendingAutomationInput),
-    Resize(TerminalSize),
+    /// Tagged requests are acknowledged with `ResizeAppliedGeneration`.
+    Resize(TerminalSize, Option<NonZeroU64>),
     Shutdown,
 }
 
@@ -1495,7 +1497,19 @@ impl Session for LocalPtySession {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         send_command(
             &self.command_sender,
-            SessionCommand::Resize(size),
+            SessionCommand::Resize(size, None),
+            SessionOperation::Resize,
+        )
+    }
+
+    fn try_resize_generation(
+        &self,
+        size: TerminalSize,
+        generation: NonZeroU64,
+    ) -> Result<(), SessionSendError> {
+        send_command(
+            &self.command_sender,
+            SessionCommand::Resize(size, Some(generation)),
             SessionOperation::Resize,
         )
     }
@@ -1917,11 +1931,20 @@ fn control_worker(
     let mut pending_automation_input = None;
     #[cfg(unix)]
     let mut hangup_progress = None;
+    // A full event queue never drops the applied-size acknowledgement: the
+    // newest undelivered one is retried, superseding any older one, and
+    // keeps its request's generation.
+    let mut undelivered_resize: Option<SessionEvent> = None;
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             stopping = true;
             pending_automation_input = None;
             shared.terminate_process_tree();
+        }
+        if let Some(acknowledgement) = undelivered_resize.take() {
+            if !stopping && !shared.try_emit(acknowledgement.clone()) {
+                undelivered_resize = Some(acknowledgement);
+            }
         }
 
         match receive_command(&command_receiver, &mut pending_automation_input) {
@@ -1944,7 +1967,7 @@ fn control_worker(
                     metrics.input_bytes = metrics.input_bytes.saturating_add(bytes.len() as u64);
                 }
             }
-            Ok(SessionCommand::Resize(size)) if !stopping => {
+            Ok(SessionCommand::Resize(size, generation)) if !stopping => {
                 match master.resize(to_portable_size(size)) {
                     Ok(()) => {
                         let mut metrics = shared
@@ -1953,7 +1976,14 @@ fn control_worker(
                             .expect("session metrics lock is not poisoned");
                         metrics.resize_count = metrics.resize_count.saturating_add(1);
                         drop(metrics);
-                        let _ = shared.try_emit(SessionEvent::ResizeApplied(size));
+                        let acknowledgement = match generation {
+                            Some(generation) => {
+                                SessionEvent::ResizeAppliedGeneration { size, generation }
+                            }
+                            None => SessionEvent::ResizeApplied(size),
+                        };
+                        undelivered_resize =
+                            (!shared.try_emit(acknowledgement.clone())).then_some(acknowledgement);
                     }
                     Err(error) => shared.record_error(SessionError::new(
                         SessionErrorKind::Resize,
@@ -2769,6 +2799,112 @@ mod tests {
         assert_eq!(shared.automation_epoch.capture(), None);
         let _guard = festerm_session::automation_admission_lock().unwrap();
         assert!(!shared.automation_epoch.is_current(generation));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn applied_resize_acknowledgement_waits_for_queue_room_instead_of_being_dropped() {
+        let pair = native_pty_system()
+            .openpty(to_portable_size(TerminalSize::new(80, 24).unwrap()))
+            .unwrap();
+        let child = pair
+            .slave
+            .spawn_command(CommandBuilder::new("/bin/cat"))
+            .unwrap();
+        let mut killer = child.clone_killer();
+        let writer = local_pty_writer(&*pair.master).unwrap();
+        drop(pair.slave);
+        let (events, received) = mpsc::sync_channel(1);
+        let (commands, command_receiver) = mpsc::sync_channel(1);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let (reader_done, reader_completion) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
+            event_sender: events,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        let session = LocalPtySession {
+            process_id: None,
+            terminal_device: None,
+            shared: Arc::clone(&shared),
+            command_sender: commands.clone(),
+            event_receiver: Mutex::new(received),
+        };
+        let controller_shared = Arc::clone(&shared);
+        let controller = thread::spawn(move || {
+            control_worker(
+                controller_shared,
+                command_receiver,
+                pair.master,
+                writer,
+                child,
+                reader_completion,
+                completion_sender,
+            );
+        });
+        let occupant = SessionEvent::Lifecycle(SessionLifecycle::Running);
+        assert!(shared.try_emit(occupant.clone()));
+        let superseded = TerminalSize::with_pixels(80, 24, 720, 432).unwrap();
+        let applied = TerminalSize::with_pixels(100, 30, 900, 540).unwrap();
+        for (count, size, generation) in [(1, superseded, 1), (2, applied, 2)] {
+            session
+                .try_resize_generation(size, NonZeroU64::new(generation).unwrap())
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while shared.metrics().resize_count < count {
+                assert!(Instant::now() < deadline, "resize was not applied");
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        // Several retries find the queue still full.
+        thread::sleep(POLL_INTERVAL * 3);
+        assert_eq!(session.try_recv_event(), Ok(occupant));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let acknowledged = loop {
+            match session.try_recv_event() {
+                Ok(event) => break event,
+                Err(SessionTryReceiveError::Empty) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                other => panic!("no resize acknowledgement: {other:?}"),
+            }
+        };
+        // Only the newest applied request is acknowledged, under its own tag.
+        assert_eq!(
+            acknowledged,
+            SessionEvent::ResizeAppliedGeneration {
+                size: applied,
+                generation: NonZeroU64::new(2).unwrap(),
+            }
+        );
+        thread::sleep(POLL_INTERVAL * 2);
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+
+        killer.kill().unwrap();
+        reader_done.send(Ok(())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !controller.is_finished() {
+            assert!(Instant::now() < deadline, "controller did not stop");
+            let _ = session.try_recv_event();
+            thread::sleep(Duration::from_millis(1));
+        }
+        controller.join().unwrap();
     }
 
     #[cfg(unix)]

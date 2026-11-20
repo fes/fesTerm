@@ -424,7 +424,10 @@ fn pump_session_events(
                 apply_recovery_sync(terminal, &command);
                 changed = true;
             }
-            Ok(SessionEvent::ResizeApplied(size)) => {
+            Ok(
+                SessionEvent::ResizeApplied(size)
+                | SessionEvent::ResizeAppliedGeneration { size, .. },
+            ) => {
                 if session.terminal_replies_owned_by_backend() {
                     let dimensions =
                         Dimensions::new(usize::from(size.columns()), usize::from(size.rows()))?;
