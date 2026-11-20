@@ -122,24 +122,7 @@ fn names(path: &str) -> io::Result<Vec<&str>> {
 }
 
 pub(crate) fn valid_name(name: &str) -> bool {
-    if name.is_empty()
-        || name.len() > 255
-        || matches!(name, "." | "..")
-        || name.to_ascii_lowercase().starts_with(RESERVED)
-        || name
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-        || name.ends_with(['.', ' '])
-    {
-        return false;
-    }
-    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
-    !matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) && !(stem.len() == 4
-        && (stem.starts_with("COM") || stem.starts_with("LPT"))
-        && stem.as_bytes()[3].is_ascii_digit())
+    rpc::valid_name(name)
 }
 
 pub(crate) fn open_file(parent: &Dir, name: &str) -> io::Result<File> {

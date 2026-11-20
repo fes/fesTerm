@@ -183,6 +183,35 @@ pub struct Response {
     pub recovery_path: Option<String>,
 }
 
+/// Validates the existing virtual rooted namespace on either host or client.
+#[cfg(feature = "client")]
+pub(crate) fn valid_path(path: &str) -> bool {
+    path == "/"
+        || path.len() <= 4096 && path.starts_with('/') && path[1..].split('/').all(valid_name)
+}
+
+#[cfg(feature = "client")]
+pub(crate) fn valid_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.len() > 255
+        || matches!(name, "." | "..")
+        || name.to_ascii_lowercase().starts_with(".festerm-transfer-")
+        || name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        || name.ends_with(['.', ' '])
+    {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    !matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) && !(stem.len() == 4
+        && (stem.starts_with("COM") || stem.starts_with("LPT"))
+        && stem.as_bytes()[3].is_ascii_digit())
+}
+
 pub fn decimal(value: &str) -> Option<u64> {
     if value.is_empty()
         || value.len() > 20
