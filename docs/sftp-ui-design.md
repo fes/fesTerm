@@ -193,14 +193,23 @@ most **two seconds**, then teardown proceeds with an explicit incomplete-cleanup
 result. Exclusive creation acknowledges ownership at creation, not the current
 identity of a mutable local or remote pathname. A metadata check followed by
 unlink is not race-free. The current filesystem/SFTP APIs cannot establish safe
-conditional deletion, so canceled/failed partial output is preserved and its
-path reported for inspection and manual cleanup, even after acknowledged
-creation. No cleanup operation follows a replaced ancestor or deletes a
-replacement leaf. Already-started blocking filesystem calls cannot be forcibly
-aborted; GUI and text runtime retirement do not wait indefinitely for those
+conditional deletion on Unix or remote SFTP paths, so those canceled/failed
+partials are preserved and reported for manual inspection, even after
+acknowledged creation. Windows local downloads retain the exact exclusively
+created file handle with deletion access, retaining normal parent-inherited
+permissions. Pre-publication cleanup marks only that exact object for deletion;
+a replaced leaf or ancestor cannot redirect it. The blocking creation owns its
+cleanup guard before returning a result, so cancellation during that handoff
+requests exact-handle cleanup when the blocking call completes. Cleanup failure is
+reported alongside the original copy failure or cancellation; cancellation
+remains cancellation. No cleanup operation follows a replaced ancestor or
+deletes a replacement leaf. Already-started blocking filesystem calls cannot
+be forcibly aborted; GUI and text runtime retirement do not wait indefinitely for those
 calls. A pending creation with unconfirmed ownership is also reported, not
-deleted. If an approved Replace is interrupted after its destructive commit
-starts, the completed temporary is not removed: inspect both temporary and
+deleted. Before every publication rename, cleanup is fenced because the rename
+may complete even if its result is not observed. An approved Replace is fenced
+before removing the old destination. Once either commit starts, the completed
+temporary or published output is not removed: inspect both temporary and
 destination because an already-sent rename may still complete. Reported recovery
 files do not prevent unrelated transfers from proceeding.
 
@@ -217,7 +226,9 @@ bounded and never delays teardown. A full queue or closed window falls back to
 diagnostics; durable warnings are content-free, while console details include
 recovery paths. Final process exit can interrupt the asynchronous grace period:
 a cleanup-request record is not proof of completion, and neither cleanup nor
-server-side rollback is guaranteed after process termination. Native packaged
+server-side rollback is guaranteed after process termination. There is no
+crash/restart scavenging or durable SFTP ownership ledger; no suffix, age or
+size authorizes deleting a file. Native packaged
 close/quit and notice accessibility remain `SFTP-01` manual evidence.
 
 ### Collision and overwrite policy

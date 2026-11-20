@@ -18,6 +18,10 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
 };
 
+#[cfg(windows)]
+#[path = "sftp_download_windows.rs"]
+mod windows_download;
+
 const HELP_TEXT: &str = "\
 Supported commands:
   help
@@ -379,6 +383,8 @@ struct PartialFile {
     path: SftpPath,
     owned: bool,
     commit_destination: Option<SftpPath>,
+    #[cfg(windows)]
+    local_file: Option<std::fs::File>,
 }
 
 struct RemotePlanningDirectory {
@@ -564,8 +570,57 @@ impl SftpSession {
             path,
             owned: false,
             commit_destination: None,
+            #[cfg(windows)]
+            local_file: None,
         });
         Ok(())
+    }
+
+    async fn create_local_download_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<tokio::fs::File, SftpSessionError> {
+        #[cfg(windows)]
+        let result = async {
+            let owned_path = path.to_path_buf();
+            let creation = tokio::task::spawn_blocking(move || {
+                windows_download::Creation::create(&owned_path)
+            })
+            .await
+            .map_err(|error| {
+                local_error(
+                    "create destination file",
+                    path,
+                    std::io::Error::other(error),
+                )
+            })??;
+            // No suspension between receiving ownership and recording the exact
+            // handle. An abandoned blocking result cleans up its own creation.
+            let (writer, retained) = creation.into_files();
+            self.partial_file
+                .as_mut()
+                .expect("pending download")
+                .local_file = Some(retained);
+            Ok::<_, SftpSessionError>(tokio::fs::File::from_std(writer))
+        }
+        .await;
+        #[cfg(not(windows))]
+        let result = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)
+            .await
+            .map_err(|error| local_error("create destination file", path, error));
+        match result {
+            Ok(file) => {
+                self.confirm_partial_file();
+                Ok(file)
+            }
+            Err(error) => {
+                self.partial_file = None;
+                Err(error)
+            }
+        }
     }
 
     fn confirm_partial_file(&mut self) {
@@ -604,6 +659,20 @@ impl SftpSession {
                     destination: destination.display(),
                 });
             }
+        }
+        #[cfg(windows)]
+        if let Some(file) = partial.local_file {
+            let SftpPath::Local(path) = partial.path else {
+                unreachable!("local download handle")
+            };
+            return tokio::task::spawn_blocking(move || {
+                festerm_windows_security::remove_private_staging_file(&file)
+            })
+            .await
+            .map_err(|error| {
+                local_error("remove partial file", &path, std::io::Error::other(error))
+            })?
+            .map_err(|error| local_error("remove partial file", &path, error));
         }
         // Creation acknowledgement cannot prove what a mutable path names now.
         Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
@@ -986,16 +1055,7 @@ impl SftpSession {
             .await
             .map_err(|error| remote_error("download", &remote_path, error))?;
         self.begin_partial_file(SftpPath::local(local_path.clone()))?;
-        let mut local_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&local_path)
-            .await
-            .map_err(|error| {
-                self.partial_file = None;
-                local_error("create destination file", &local_path, error)
-            })?;
-        self.confirm_partial_file();
+        let mut local_file = self.create_local_download_file(&local_path).await?;
 
         let transfer_result = async {
             let mut total = 0_u64;
@@ -1445,16 +1505,7 @@ impl SftpSession {
             .await
             .map_err(|error| remote_error("download", remote_path, error))?;
         self.begin_partial_file(SftpPath::local(local_path.to_path_buf()))?;
-        let mut local_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(local_path)
-            .await
-            .map_err(|error| {
-                self.partial_file = None;
-                local_error("create destination file", local_path, error)
-            })?;
-        self.confirm_partial_file();
+        let mut local_file = self.create_local_download_file(local_path).await?;
 
         let transfer_result = async {
             let mut total = 0_u64;
@@ -2623,6 +2674,175 @@ mod tests {
         )
     }
 
+    #[cfg(windows)]
+    async fn windows_download_session(path: &Path) -> (SftpSession, tokio::task::JoinHandle<()>) {
+        partial_file_session(PartialFile {
+            path: SftpPath::local(path.to_path_buf()),
+            owned: false,
+            commit_destination: None,
+            local_file: None,
+        })
+        .await
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_cleanup_removes_only_the_exact_created_file() {
+        let root = unique_test_directory("windows-owned-download");
+        create_directory(&root);
+        let path = root.join("part.bin");
+        let unrelated = root.join("unrelated.festerm-part");
+        stdfs::write(&unrelated, b"unrelated").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = windows_download_session(&path).await;
+            let mut writer = session.create_local_download_file(&path).await.unwrap();
+            writer.write_all(b"incomplete").await.unwrap();
+            writer.flush().await.unwrap();
+            drop(writer);
+            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(!path.exists());
+            assert_eq!(stdfs::read(&unrelated).unwrap(), b"unrelated");
+            server.abort();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_cleanup_preserves_replaced_leaf() {
+        let root = unique_test_directory("windows-replaced-download");
+        create_directory(&root);
+        let path = root.join("part.bin");
+        let original = root.join("original");
+        test_runtime().block_on(async {
+            let (mut session, server) = windows_download_session(&path).await;
+            let writer = session.create_local_download_file(&path).await.unwrap();
+            drop(writer);
+            stdfs::rename(&path, &original).unwrap();
+            stdfs::write(&path, b"replacement").unwrap();
+            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(!original.exists());
+            assert_eq!(stdfs::read(&path).unwrap(), b"replacement");
+            server.abort();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_retained_handle_prevents_ancestor_rename_until_cleanup() {
+        let root = unique_test_directory("windows-retained-download-ancestor");
+        create_directory(&root);
+        let selected = root.join("selected");
+        stdfs::create_dir(&selected).unwrap();
+        let path = selected.join("part.bin");
+        let sibling = selected.join("unrelated.festerm-part");
+        let original = root.join("original");
+        stdfs::write(&sibling, b"unrelated").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = windows_download_session(&path).await;
+            let mut writer = session.create_local_download_file(&path).await.unwrap();
+            writer.write_all(b"owned incomplete output").await.unwrap();
+            writer.flush().await.unwrap();
+            drop(writer);
+            // Windows refuses moving the ancestor of the retained open file.
+            // Require that exact refusal, then prove the same rename succeeds
+            // after cleanup: an unrelated permission failure cannot pass this test.
+            let error = stdfs::rename(&selected, &original).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(5));
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert!(!original.exists());
+            assert_eq!(stdfs::read(&path).unwrap(), b"owned incomplete output");
+            assert_eq!(stdfs::read(&sibling).unwrap(), b"unrelated");
+            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(!path.exists());
+            assert_eq!(stdfs::read(&sibling).unwrap(), b"unrelated");
+            stdfs::rename(&selected, &original).unwrap();
+            assert!(!selected.exists());
+            assert_eq!(
+                stdfs::read(original.join("unrelated.festerm-part")).unwrap(),
+                b"unrelated"
+            );
+            server.abort();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_cleanup_failure_retains_original_transfer_error() {
+        let root = unique_test_directory("windows-download-cleanup-denied");
+        create_directory(&root);
+        let path = root.join("part.bin");
+        // Deliberately lacks DELETE access: proves the real helper's failure
+        // path without changing permissions or relying on a timing race.
+        let file = stdfs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = partial_file_session(PartialFile {
+                path: SftpPath::local(path.clone()),
+                owned: true,
+                commit_destination: None,
+                local_file: Some(file),
+            })
+            .await;
+            let error = session
+                .finish_failed_transfer(SftpSessionError::RemoteOperationFailed {
+                    operation: "download",
+                    path: "/fixture/source".to_owned(),
+                    reason: "controlled read failure".to_owned(),
+                })
+                .await;
+            assert!(matches!(
+                &error,
+                SftpSessionError::TransferFailedWithIncompleteCleanup { .. }
+            ));
+            assert!(error.to_string().contains("controlled read failure"));
+            assert!(error.to_string().contains("remove partial file"));
+            assert!(path.exists());
+            server.abort();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_download_cleanup_preserves_output_after_publication_starts() {
+        for rename_completed in [false, true] {
+            let root = unique_test_directory("windows-publishing-download");
+            create_directory(&root);
+            let temporary = root.join("part.bin");
+            let destination = root.join("final.bin");
+            test_runtime().block_on(async {
+                let (mut session, server) = windows_download_session(&temporary).await;
+                let mut writer = session
+                    .create_local_download_file(&temporary)
+                    .await
+                    .unwrap();
+                writer.write_all(b"complete output").await.unwrap();
+                writer.flush().await.unwrap();
+                drop(writer);
+                session.protect_partial_commit(
+                    &SftpPath::local(&temporary),
+                    &SftpPath::local(&destination),
+                );
+                if rename_completed {
+                    stdfs::rename(&temporary, &destination).unwrap();
+                }
+                assert!(matches!(
+                    session.cleanup_interrupted_transfer().await,
+                    Err(SftpSessionError::TransferCommitInterrupted { .. })
+                ));
+                let retained = if rename_completed {
+                    &destination
+                } else {
+                    &temporary
+                };
+                assert_eq!(stdfs::read(retained).unwrap(), b"complete output");
+                server.abort();
+            });
+        }
+    }
+
     #[test]
     fn cancellation_cleanup_refuses_an_unconfirmed_destination_without_removing_it() {
         let root = unique_test_directory("unconfirmed-partial");
@@ -2634,6 +2854,8 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: false,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             assert!(matches!(
@@ -2656,6 +2878,8 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             assert!(matches!(
@@ -2682,6 +2906,8 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             let error = session
@@ -2714,6 +2940,8 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             stdfs::rename(&path, &original).unwrap();
@@ -2748,6 +2976,8 @@ mod tests {
                 path: SftpPath::local(path),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             stdfs::rename(&selected, &original).unwrap();
@@ -2776,6 +3006,8 @@ mod tests {
                 path: SftpPath::remote("/fixture/partial.bin"),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             assert!(matches!(
@@ -2804,6 +3036,8 @@ mod tests {
                 path: path.clone(),
                 owned: true,
                 commit_destination: None,
+                #[cfg(windows)]
+                local_file: None,
             })
             .await;
             session.protect_partial_commit(&path, &SftpPath::local(destination.clone()));

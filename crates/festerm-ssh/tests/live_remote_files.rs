@@ -700,7 +700,7 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file
         session.shutdown(Duration::from_secs(5)).unwrap(),
         ShutdownResult::Stopped
     );
-    assert!(directory.join("cancelled.bin").exists());
+    assert_eq!(directory.join("cancelled.bin").exists(), !cfg!(windows));
     let mut cleanup_reported = false;
     while let Ok(event) = session.try_recv_event() {
         if let SessionEvent::Error(error) = event {
@@ -708,14 +708,16 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file
                 && error.message().contains("cancelled.bin");
         }
     }
-    assert!(
+    assert_eq!(
         cleanup_reported,
-        "preserved partial output must be reported"
+        !cfg!(windows),
+        "Unix preservation must be reported; Windows exact-handle cleanup must complete"
     );
     server
         .connection_closed
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
+    #[cfg(not(windows))]
     std::fs::remove_file(directory.join("cancelled.bin")).unwrap();
     std::fs::remove_dir(&directory).unwrap();
 }
@@ -787,7 +789,7 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
                         reported = true;
                     }
                     SftpTransferEvent::ItemCancelled { .. } => {
-                        assert!(reported);
+                        assert_eq!(reported, !cfg!(windows));
                         cancelled = true;
                     }
                     SftpTransferEvent::ItemFailed { reason, .. } => {
@@ -797,7 +799,8 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
                         panic!("controlled copy must not finish before cancellation");
                     }
                     SftpTransferEvent::BatchFinished { .. } => {
-                        assert!(reported && cancelled);
+                        assert_eq!(reported, !cfg!(windows));
+                        assert!(cancelled);
                         break;
                     }
                     _ => {}
@@ -813,10 +816,18 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
     assert!(!destination.exists());
-    let retained = std::fs::read(&partial).unwrap();
-    assert!(!retained.is_empty() && retained.len() < CONTROLLED_CONTENT_BYTES);
-    assert!(retained.iter().all(|byte| *byte == b't'));
-    std::fs::remove_file(&partial).unwrap();
+    #[cfg(windows)]
+    assert!(
+        !partial.exists(),
+        "exact owned Windows partial must be removed"
+    );
+    #[cfg(not(windows))]
+    {
+        let retained = std::fs::read(&partial).unwrap();
+        assert!(!retained.is_empty() && retained.len() < CONTROLLED_CONTENT_BYTES);
+        assert!(retained.iter().all(|byte| *byte == b't'));
+        std::fs::remove_file(&partial).unwrap();
+    }
     std::fs::remove_dir(&directory).unwrap();
 }
 
