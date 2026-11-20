@@ -29,6 +29,7 @@ mod documents;
 mod enterprise;
 mod environment;
 mod font_downloads;
+mod inline_graphics;
 mod inspector;
 mod keyboard;
 mod local_bind;

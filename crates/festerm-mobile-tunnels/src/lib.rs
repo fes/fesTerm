@@ -798,23 +798,26 @@ impl TunnelClient {
             if held.is_some() && !takeover && !(reclaim && client.is_some()) {
                 return Err(TunnelError::SessionInUse { by: held });
             }
-            let stream = self
-                .connector
-                .connect_retained(&prepared.resolved)
-                .await
-                .map_err(|error| {
-                    eprintln!(
-                        "festerm-tunnels: attach relay connect failed: {:?}: {error}",
-                        error.kind()
-                    );
-                    TunnelError::Network
-                })?;
             let target = prepared.description.target.clone();
             let name = target.name.clone();
             // Hosts that do not advertise reclaim reject unknown hello fields.
             let client = client.filter(|_| reclaim).cloned();
-            let handshake = mobile::establish(
-                stream.stream,
+            let resolved = &prepared.resolved;
+            let (probe, handshake) = mobile::establish_negotiated(
+                || async {
+                    let stream =
+                        self.connector
+                            .connect_retained(resolved)
+                            .await
+                            .map_err(|error| {
+                                eprintln!(
+                                    "festerm-tunnels: attach relay connect failed: {:?}: {error}",
+                                    error.kind()
+                                );
+                                mobile::AttachError::Connection
+                            })?;
+                    Ok((stream.probe, stream.stream))
+                },
                 prepared.description.target,
                 takeover,
                 client,
@@ -832,7 +835,7 @@ impl TunnelClient {
             })?;
             let session = TunnelSession::spawn(self.runtime.handle(), handshake, notifier);
             Ok(Attachment {
-                probe: stream.probe,
+                probe,
                 runtime: self.runtime.handle().clone(),
                 session: Arc::new(session),
                 took_over: if takeover { held.map(Some) } else { None },

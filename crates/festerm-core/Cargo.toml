@@ -20,6 +20,7 @@ unicode-width = "=0.2.2"
 # sustained high-volume output (e.g. `dir /s`) where every cell write and
 # every scrolled-up row clones its text.
 compact_str = { version = "0.9", features = ["serde"] }
+miniz_oxide = { version = "0.8", default-features = false }
 serde = { version = "1.0", features = ["derive", "rc"] }
 smallvec = "1.15"
 url = "2.5"
@@ -57,4 +58,8 @@ harness = false
 
 [[test]]
 name = "character_input_allocations"
+harness = false
+
+[[test]]
+name = "kitty_allocations"
 harness = false
