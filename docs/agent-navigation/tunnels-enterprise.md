@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "60ac59e3b3e44f48806c57600ff28379dcdc99701e1d078aa1db15ad4cd2012b"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "f4b88735094ab94504fb22dc2fd4f4af6858884712b82b455ede1a1b06912187"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -20,7 +20,6 @@ Evidence:
 - [`native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Requires exact Unknown during lease contention, then both original sessions healthy within one deadline.
 
 Caveats:
-- HOST resolution refuses bridge fallback and ambiguous ports; it does not infer a legacy target.
 - Inventory omission or a foreign generation fails rather than silently reading a different daemon.
 - Discovery exposes metadata, not credentials or consent; Unknown is never treated as absence.
 
@@ -49,7 +48,6 @@ Evidence:
 - [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Checks launch metadata and four behaviors across import/export.
 
 Caveats:
-- Portable metadata intentionally omits credentials, grants, and consent details.
 - Behavior semantics distinguish resume, create, and attach instead of inferring absence.
 - Legacy import keeps old defaults without silently changing exact generation semantics.
 
@@ -85,3 +83,9 @@ Evidence:
 Caveats:
 - Close failures stay failures; stale worker generations cannot mutate current state.
 - Transient credentials and shutdown races are cleared before terminal reuse.
+
+## Rooted file client
+
+Use for: Separate legacy file streams; HOST authentication and UI remain separate.
+
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounds pages/chunks and closes uncertain operations without replay.

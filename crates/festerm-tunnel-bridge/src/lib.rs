@@ -1,6 +1,8 @@
 //! Experimental attach-only bridge. Network dependencies are explicitly opt-in.
 #[cfg(feature = "relay")]
 pub mod cli_pins;
+#[cfg(feature = "client")]
+pub mod file_client;
 pub mod file_protocol;
 #[cfg(feature = "client")]
 pub mod files;

@@ -1,8 +1,9 @@
 # Dev Tunnel host filesystem protocol
 
 This is the host/client integration contract for ADR 0067. Host implementation
-lives in `festerm-tunnel-bridge`; desktop/iOS clients are a separate change.
-Portable Rust DTOs/constants are in `file_protocol.rs`. Do not send these
+lives in `festerm-tunnel-bridge`. Its portable `client` feature also exposes the
+sequential `file_client::Client` engine; desktop/iOS transport and file-manager
+integration remain separate. Portable Rust DTOs/constants are in `file_protocol.rs`. Do not send these
 operations as terminal input, invoke a remote shell, or fall back to SFTP/local
 files. No desktop/iOS file-manager integration is claimed by this host PR.
 
@@ -86,6 +87,43 @@ pipelining, reconnect replay, handle reuse across streams, or transfer resumptio
 All JSON field names/types and enum spellings are defined by the portable DTOs.
 Unknown fields/operations and malformed framing refuse. Each frame/read/job has
 a 30-second deadline. `ping` can keep an otherwise idle stream alive.
+
+## Portable client engine
+
+`file_client::Client` consumes an already host-key-verified **separate legacy
+bridge stream** and an exact target. Discovery consumes its own stream and
+checks that same target; disabled grants return no filesystem capabilities.
+The engine does not acquire credentials, connect to a relay, authenticate an
+ordinary HOST role, attach a terminal, launch a tab or authorize a local path.
+It adds no wire operations or grant. Ordinary HOST file-stream authentication
+and top-level desktop/iOS entry points are still missing.
+
+The client exposes bounded directory pages, stat/read handles, streamed
+uploads/downloads, mkdir, ping and explicit close. Handles are bound to their
+connection and issuance; a foreign or retired handle cannot name a new object.
+At most the advertised eight handles and one upload are tracked. Frames,
+canonical offsets, response IDs, chunks, metadata and names are checked before
+use; unexpected frame kinds/oversized headers refuse before payload allocation.
+No directory or file is buffered in full. Empty nonfinal directory pages with
+skips must be continued. EOF does not release a handle.
+
+Local source/sink ownership belongs to the caller, including safe staging and
+publication. Upload sources must contain exactly the declared size followed by
+EOF; failures abort the stream. Cancellation, deadline, malformed input and a
+dropped in-flight operation close the affected stream; dropped high-level
+transfers also abort while waiting on local source/sink I/O. `cancel()` closes
+an idle client immediately. A supplied cancellation token interrupts active
+work and is checked before another operation. There is no reconnect or replay.
+An unacknowledged/malformed finish returns `UncertainFinish`; a dropped finish
+future is also an unknown publication outcome, and that client cannot be reused.
+A reported virtual recovery path is for deliberate host-local operator recovery,
+never an automatic client delete/rename/retry instruction. Capability metadata
+alone does not establish a still-live grant.
+
+The duplex regressions exercise this engine against the existing legacy server;
+scripted peers cover malformed replies, empty pages and lost finish responses.
+They do not qualify ordinary HOST authentication, relay service, signed native
+filesystem behavior, packaged UI or crash recovery.
 
 ## Paths, handles and operations
 
