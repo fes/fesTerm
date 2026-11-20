@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "0acbdad8faa1b7affeeb114195eab81a9fd8fb96a24f61046d4a8a614c39c48d"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "388877012b0dc4e6f3f287193c0fd020e13bd39de5e5c892493e5926a7cf49c8"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -60,7 +60,7 @@ Caveats:
 Use for: Ordinary discovery, inventory, attachment and reviewed creation.
 
 - [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes ordinary host/session views and explicit creation or attachment review.
-- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Desktop remote access consent screen and review actions
+- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Remote access review includes exact folder/write consent
 
 Evidence:
 - [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry

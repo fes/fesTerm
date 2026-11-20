@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "a5b3b473bedcd80d48433ad87314bc44723c3412979ad6db7eaf7b1f84ebefb1"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "65442867ef5fd4a4d099ddbc8bc84b3887500d9a14ed08602d92bf53d798a5c9"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -17,7 +17,7 @@ Use for: HOST selection, inventory and exact binding.
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
-- [`native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Requires exact Unknown during lease contention, then both original sessions healthy within one deadline.
+- [`native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Preserves both sessions across lease contention.
 
 Caveats:
 - Omitted inventory/foreign generations never select replacement daemons.
@@ -61,9 +61,9 @@ Use for: Pending Windows stop or authenticated stopped replacement.
 - [`validate_archive`](../../crates/festerm-host-setup/src/artifacts.rs) — Accepts HOST8 or its complete pinned Windows pair; rejects foreign resources.
 
 Evidence:
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks preserved identity, grants and authenticated helper provenance.
+- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity/grants and helper provenance.
 - [`native_service_windows_stop_retries_transient_read_contention_without_task_mutation`](../../crates/festerm-host-setup/src/services/tests.rs) — Checks transient Busy observation without manager mutation.
-- [`microsoft_resources_are_pinned_but_not_first_party_task_executables`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks resource classification and hash refusal after equal-length owner writes.
+- [`microsoft_resources_are_pinned_but_not_first_party_task_executables`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks resource classification and hash refusal.
 
 Caveats:
 - Contention retries bounded observation and receipt persistence, never revocation or manager actions.
@@ -85,7 +85,9 @@ Caveats:
 
 ## Rooted file access
 
-Use for: Separate legacy or authenticated HOST file streams; UI remains separate.
+Use for: Separate legacy or authenticated HOST file streams; file-manager UI remains separate.
 
 - [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded operations and distinct legacy/HOST openings; no replay.
 - [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Retained root/pool, exact scope and fresh file consent.
+
+- [`require_host_files`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks exact authenticated helper support before file-consented effects.
