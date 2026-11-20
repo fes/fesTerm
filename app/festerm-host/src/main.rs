@@ -1131,6 +1131,7 @@ mod tests {
             "update",
             "run-status",
             "run-desktop-status",
+            "owner-readiness",
         ] {
             initialize_serving_store(command, || {
                 panic!("foreground route must not change Keychain UI")

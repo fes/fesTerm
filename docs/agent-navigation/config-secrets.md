@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "d28a184425cb01067d22e6bff42a24e7be51bcf1a4dc4a3f4e23bc5afd1506b2"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "3058a62b3ea9ac1ec9602f23e225f468fc955845698f5e2753fa81723ef80823"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,7 +46,7 @@ Caveats:
 Use for: Native credential and opaque-reference custody.
 
 - [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than password or token data.
-- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
+- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete; explicit noninteractive updates refuse unavailable backends.
 
 Evidence:
 - [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Shows config persists only the opaque reference and keeps the value opaque.
@@ -56,6 +56,7 @@ Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
 - Unsupported, missing, locked, or unavailable native storage is a first-class error.
 - Secret references are opaque and must remain canonical UUIDv4 strings.
+- Explicit noninteractive updates retain the existing reference and never fall back to UI.
 
 ## File security
 

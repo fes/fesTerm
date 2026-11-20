@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cb41836192b63ff45ab77e813d19f1c41c5bf805facf87e60301d70b03596c05"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -90,3 +90,17 @@ Caveats:
 - Containment retries preserve receipts without mutating live service state.
 - Helper gate checks reject unsupported or foreign capabilities before consent.
 - Owner diagnostics grant no credential, retry or serving authority.
+
+## Ordinary readiness and attachment diagnostics
+
+Use for: A healthy ordinary serving run renews admission or an attachment reports a finite failure.
+
+- [`read`](../../crates/festerm-host-setup/src/controller/runtime_diagnostics.rs) — Reads bounded static runtime history without granting authority.
+
+Evidence:
+- [`ordinary_successful_maintenance_keeps_same_serving_future_live`](../../crates/festerm-host-setup/src/controller.rs) — Keeps the existing serving future through successful maintenance.
+- [`ordinary_failed_renewal_drains_workers_and_is_not_relay_retryable`](../../crates/festerm-host-setup/src/controller.rs) — Drains failed maintenance instead of replaying relay admission.
+
+Caveats:
+- Changed scope, cancellation and failed credential persistence refuse replacement readiness.
+- Attachment stage, category and refusal labels carry no raw transport body or authorization.

@@ -1164,8 +1164,10 @@ binding and durable generations; replacement must refuse changed/revoked scope,
 cancelled work and failed native credential persistence. No keychain prompts or
 interactive fallback are permitted. Retain the original error before Refresh;
 an expired prepared observer may refuse admission briefly until replacement.
-This new renewal gate is **UNRUN** natively; prior unchanged-file-digest refusals
-do not prove credential expiry or a root cause. Existing lifetime and no-replay
+This composed source cohort is **UNRUN** natively. Existing Windows signed15
+natural-renewal evidence remains attributed to its original protected run; it
+does not qualify this composition or other platforms. Prior unchanged-file-digest
+refusals do not prove credential expiry or a root cause. Existing lifetime and no-replay
 checks remain required.
 
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "c514d44207d3ef330bc5111a1f1db3e425320de249022549233e71a39ec0957a"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "24b4d01f4eb6e9cbcc23653d2e1bea116f1abbe315ba42aef73f11f8222efb67"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -71,3 +71,16 @@ Caveats:
 - Resume is treated as wake; suspend is intentionally ignored.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
+
+## Dedicated HOST Keychain fence
+
+Use for: A macOS HOST serving process starts before runtime threads or native vault access.
+
+- [`initialize_serving_store`](../../app/festerm-host/src/main.rs) — Applies the no-interaction initializer only to serving commands.
+
+Evidence:
+- [`headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses`](../../app/festerm-host/src/main.rs) — Rejects failed fence setup and excludes setup, status and owner-readiness commands.
+
+Caveats:
+- GUI, operator and diagnostic routes do not set this process-wide serving fence.
+- Native admission and recovery remain separate validation gates.
