@@ -1,25 +1,25 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "e77b258ed6bd028f591e3081b7de3e456fe6e68074b32b1a8a4fae5b6a25eea3"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a7eeb74c19cd2734fc37b27ed1f246fb811694aa97c447fb760cf715a98ce874"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal input and global actions.
+This domain owns app-wide command intents, singleton-tab routing, and keyboard gating for terminal and global input.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
 ## Command route
 
-Use for: A widget, launcher, or tab action needs to mutate app state.
+Use for: A widget or tab emits an action that must mutate app state without owning tab policy.
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, profiles, tabs, and sessions
-- [`AppState`](../../app/festerm/src/tabs.rs) — window-level coordinator owning tabs, documents, and UI state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path for app commands
-- [`with_primary_session`](../../app/festerm/src/tabs.rs) — creates the normal startup shell tab
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — App intents for launcher, settings, tabs, and sessions.
+- [`AppState`](../../app/festerm/src/tabs.rs) — Window-level coordinator for tabs, documents, and UI state.
+- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path for app commands.
+- [`with_primary_session`](../../app/festerm/src/tabs.rs) — Creates the default startup shell tab.
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the originating tab instead of its neighbor
-- [`docs/application-command-model.md`](../../docs/application-command-model.md) — single semantic command flow from invocation to state
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Close follows the originating tab instead of the neighbor.
+- [`docs/application-command-model.md`](../../docs/application-command-model.md) — Single semantic command flow from invocation to state.
 
 Caveats:
 - Widgets convert input to commands; they do not own session policy.
@@ -28,16 +28,16 @@ Caveats:
 
 ## Tab close path
 
-Use for: A tab is closing or a fallback focus choice is being selected.
+Use for: A tab is closing and the app must choose a safe fallback focus target.
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records the departure and resets unread state for the new active tab
-- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — keeps the most recent still-open tab in last-left order
-- [`last_used_tab`](../../app/festerm/src/tabs.rs) — returns the newest remembered tab that is still open
-- [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and picks a fallback
+- [`set_active`](../../app/festerm/src/tabs.rs) — Records departure and clears unread state on the new active tab.
+- [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — Keeps the most recent still-open tab in last-left order.
+- [`last_used_tab`](../../app/festerm/src/tabs.rs) — Returns the newest remembered tab that is still open.
+- [`close`](../../app/festerm/src/tabs.rs) — Removes the tab, releases documents, and picks a fallback.
 
 Evidence:
-- [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — singleton surfaces are passed through, not returned to
-- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — fallback order when activation history is absent
+- [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — Singleton surfaces are passed through, not returned to.
+- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — Fallback order when activation history is absent.
 
 Caveats:
 - Only remembered tabs are recorded; singleton surfaces are intentionally skipped.
@@ -46,32 +46,18 @@ Caveats:
 
 ## Keyboard route
 
-Use for: A raw key event is checked for eligibility, capture, and exact-match dispatch.
+Use for: A raw key event must be checked for capture, context eligibility, and exact binding match.
 
-- [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — context gate for global, terminal, markdown, and document actions
-- [`allows`](../../app/festerm/src/keyboard.rs) — checks scope, blocked state, palette state, and tab availability
-- [`activates`](../../app/festerm/src/keyboard.rs) — matches a raw key event against valid keyboard bindings
-- [`consume`](../../app/festerm/src/keyboard.rs) — removes exact matched input and clipboard-derived semantics
+- [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — Context gate for global, terminal, markdown, and document actions.
+- [`allows`](../../app/festerm/src/keyboard.rs) — Checks blocked state, palette state, scope, and tab availability.
+- [`activates`](../../app/festerm/src/keyboard.rs) — Matches a raw key event against valid keyboard bindings.
+- [`consume`](../../app/festerm/src/keyboard.rs) — Removes exact matched input and clipboard-derived semantics.
 
 Evidence:
-- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — context gating and exact-event capture stay aligned
-- [`docs/keyboard-shortcuts.md`](../../docs/keyboard-shortcuts.md) — defines binding scope and overlay behavior
+- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — Context gating and exact-event capture stay aligned.
+- [`docs/keyboard-shortcuts.md`](../../docs/keyboard-shortcuts.md) — Defines binding scope and overlay behavior.
 
 Caveats:
 - Exact modifier and key matching is enforced.
 - Repeats and releases are stripped before shortcut dispatch.
 - Unbound actions fall through and never invent terminal bytes.
-
-## Dev Tunnels Files
-
-Use for: Explicit Files connection, host selection and disconnected restore.
-
-- [`start_host_files`](../../app/festerm/src/host_files.rs) — Foreground account preparation pins two ordinary Files streams to one scope.
-- [`select_discovered_files_host`](../../app/festerm/src/screens/profiles/host_files.rs) — Typed Files intent refuses a stale editor instead of opening Control.
-- [`capture_workspace_configuration`](../../app/festerm/src/tabs.rs) — Persists Files metadata; restore starts disconnected.
-
-Evidence:
-- [`files_profile_host_picker_emits_files_intent_and_refuses_stale_editor_selection`](../../app/festerm/src/screens/profiles/host_files.rs) — Checks rendered selection and stale intent refusal.
-
-Caveats:
-- Explicit reconnect obtains fresh authority; profile edits never retarget a live endpoint.

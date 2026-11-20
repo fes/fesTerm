@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "codex-source-verified", "sources": "3ad1d287b2e72483231299b4a71fb8b624ccf289a1395518e5b7ca052d554939", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs", "crates/festerm-tunnel-bridge/src/mobile.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "754b934aa8174e9084f38d1b31e908edf127c0cb7d68d29e9cac1fd091d8fc83", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the
@@ -10,16 +10,15 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 | From | To | Trigger | Evidence |
 | --- | --- | --- | --- |
-| Starting | Running | authenticated SSH channel connects and starts the session | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-ssh/src/lib.rs::sftp_worker` |
-| Starting | Failed | permanent SSH connection failure while starting | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind`<br>`crates/festerm-ssh/src/lib.rs::sftp_failure_with_kind` |
-| Running | Stopping | shutdown is requested while active | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::request_stop` |
-| Running | Disconnected | transport loss without automatic recovery | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-sessiond/src/lib.rs::reconnect_failed` |
-| Running | Exited | remote or child process exits normally | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
-| Running | Failed | worker reports a terminal backend error | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
-| Running | Stopped | shutdown command ends the session | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
-| Stopping | Stopped | shutdown cleanup completes | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
-| Disconnected | Starting | user accepts manual reconnect or reconnect is requested | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Disconnected | Stopped | user shuts down while disconnected | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Starting | Running | SSH connection authenticated and transport opened | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Starting | Failed | reconnect worker startup or connection failed while starting | `crates/festerm-sessiond/src/lib.rs::try_reconnect` |
+| Running | Stopping | shutdown requested on active session | `crates/festerm-serial/src/lib.rs::request_stop` |
+| Running | Disconnected | transport lost or remote session cancelled | `crates/festerm-sessiond/src/lib.rs::reconnect_failed` |
+| Running | Exited | child process exited successfully | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Running | Failed | local PTY write or worker observation failed | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Running | Stopped | session detached or explicitly ended without a child exit | `crates/festerm-tunnel-bridge/src/mobile.rs::finish` |
+| Stopping | Stopped | shutdown completed after canceling reader | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Disconnected | Starting | explicit reconnect requested to re-establish session | `crates/festerm-sessiond/src/lib.rs::try_reconnect` |
 
 ## Property checks
 
@@ -30,6 +29,6 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 ## Coverage
 
-Transitions cite 4 of 17 production files that name a variant. A FAIL
+Transitions cite 5 of 18 production files that name a variant. A FAIL
 or an uncited file means the model may be incomplete, not that the code is wrong.
-Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-session/src/lib.rs`, `crates/festerm-tunnel-bridge/src/host_client/session.rs`, `crates/festerm-tunnel-bridge/src/host_terminal/native.rs`, `crates/festerm-tunnel-bridge/src/mobile.rs`, +1 more.
+Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-javascript-session/src/lib.rs`, `crates/festerm-session/src/lib.rs`, `crates/festerm-tunnel-bridge/src/host_client/session.rs`, `crates/festerm-tunnel-bridge/src/host_terminal/native.rs`, +1 more.

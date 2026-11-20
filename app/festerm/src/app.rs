@@ -9011,10 +9011,12 @@ impl FesTermApp {
 
 #[cfg(test)]
 impl FesTermApp {
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_for_test(&self) -> &AppState {
         &self.state
     }
 
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_mut_for_test(&mut self) -> &mut AppState {
         &mut self.state
     }
@@ -15398,7 +15400,7 @@ mod tests {
         let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
         let mut harness = editor_harness(app);
 
-        harness.get_by_label("Save As").click();
+        harness.get_by_label("Save As\u{2026}").click();
         harness.run();
 
         assert!(
@@ -16397,7 +16399,7 @@ mod tests {
             assert_eq!(harness.state().state.active(), snapshot_tab);
             assert_eq!(harness.state().state.active_document(), Some(document));
             assert_eq!(active_document_text(harness.state()), expected);
-            harness.get_by_label("Save As").click();
+            harness.get_by_label("Save As\u{2026}").click();
             harness.run();
             assert!(harness.state().overlays.save_as_picker.is_some());
             harness.get_by_label("Cancel").click();
@@ -20418,8 +20420,23 @@ mod tests {
                 "development — Local · festerm-inspector-test-command-that-does-not-exist",
             )
             .click();
-        harness.step();
-        harness.run();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            harness.run();
+            let failed = harness
+                .state()
+                .state
+                .session_tab(harness.state().state.active())
+                .is_some_and(|session| session.controller.start_error().is_some());
+            if failed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "local inspector fixture did not report its intentional start failure"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         harness
     }
 
