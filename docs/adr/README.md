@@ -54,6 +54,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0089: Bounded Inline Terminal Graphics](0089-bounded-inline-terminal-graphics.md) - proposed staged Kitty-first architecture: direct in-band transport, default-off local-PTY enablement, deterministic bounded state, and explicit deferred Sixel/recovery/recording gates
 - [ADR 0088: JavaScript Terminal Program Sessions](0088-javascript-terminal-program-sessions.md) - proposed own-tab ANSI program runtime motivated by a TradeWars 2002 port; bounded terminal I/O, interactive worker policy, private transactional saves and staged desktop qualification; no implementation or enablement
 
 - [ADR 0086: Provider-Authorized Ordinary Remoting](0086-provider-authorized-ordinary-remoting.md) - architecturally reviewed direction; implementation and native qualification remain open for the automatic account/host/shared-session flow, sealed provider-connect capability, explicit opt-in migration and separate advanced owner authority
