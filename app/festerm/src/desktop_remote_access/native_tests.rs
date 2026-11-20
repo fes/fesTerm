@@ -1045,3 +1045,157 @@ fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_ex
     assert_eq!(enable_scope(&work, &cancel), Err(Failure::Cancelled));
     assert_eq!(store.snapshot().unwrap(), active);
 }
+
+#[test]
+fn desktop_remote_access_native_deadline_is_distinct_from_operator_cancel_and_backend_failure() {
+    struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let runtime = runtime().unwrap();
+    for operator_cancelled in [false, true] {
+        let cancel = CancellationToken::new();
+        if operator_cancelled {
+            cancel.cancel();
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let owned = Dropped(dropped.clone());
+        let mut diagnostic = None;
+        let result: Result<(), Failure> = run_async_with_deadline(
+            &runtime,
+            &cancel,
+            &mut diagnostic,
+            std::time::Duration::ZERO,
+            async move {
+                let _owned = owned;
+                std::future::pending().await
+            },
+        );
+        assert_eq!(
+            result,
+            Err(if operator_cancelled {
+                Failure::Cancelled
+            } else {
+                Failure::Timeout
+            })
+        );
+        assert!(cancel.is_cancelled());
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "timed-out future must be dropped"
+        );
+        assert!(
+            diagnostic.is_none(),
+            "timer cannot invent backend stage metadata"
+        );
+    }
+    for kind in [io::ErrorKind::WouldBlock, io::ErrorKind::Other] {
+        let cancel = CancellationToken::new();
+        let mut diagnostic = None;
+        let result: Result<(), Failure> = run_async_with_deadline(
+            &runtime,
+            &cancel,
+            &mut diagnostic,
+            std::time::Duration::ZERO,
+            async { Err(io::Error::new(kind, "native_store private-error-canary")) },
+        );
+        assert_eq!(
+            result,
+            Err(if kind == io::ErrorKind::WouldBlock {
+                Failure::Busy
+            } else {
+                Failure::NativeVault
+            })
+        );
+        assert!(
+            !cancel.is_cancelled(),
+            "ready backend failure is not a deadline cancellation"
+        );
+        assert!(diagnostic.is_none());
+    }
+}
+
+#[test]
+fn desktop_remote_access_native_deadline_survives_successful_enable_revocation_fence() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    let mut work = request(&path, Operation::Enable, Scope::Present(before.into()));
+    work.draft.account = "42".into();
+    let cancel = CancellationToken::new();
+    let report = Native
+        .execute_with(
+            work,
+            &cancel,
+            mpsc::sync_channel(1).0,
+            |_, _| Ok(()),
+            |_, _| {
+                cancel.cancel();
+                Err(Failure::Timeout)
+            },
+        )
+        .unwrap();
+    assert_eq!(report.failure, Some(Failure::Timeout));
+    assert!(matches!(report.scope, Scope::Present(ref scope) if scope.phase == Phase::Disabled));
+    assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+    assert!(report.process.is_none());
+}
+
+#[test]
+fn desktop_remote_access_native_update_preserves_deadline_and_existing_failure_distinctions() {
+    let runtime = runtime().unwrap();
+    let cancel = CancellationToken::new();
+    let mut diagnostic = None;
+    let result: Result<(), Failure> = run_async_with_deadline(
+        &runtime,
+        &cancel,
+        &mut diagnostic,
+        std::time::Duration::ZERO,
+        std::future::pending(),
+    )
+    .map_err(update_failure);
+    assert_eq!(result, Err(Failure::Timeout));
+    assert_eq!(update_failure(Failure::Cancelled), Failure::Cancelled);
+    assert_eq!(update_failure(Failure::ScopeChanged), Failure::ScopeChanged);
+    assert_eq!(
+        update_failure(Failure::NativeVault),
+        Failure::UpdateIncomplete
+    );
+}
+
+#[test]
+fn desktop_remote_access_native_deadline_cannot_hide_revocation_fence_failure() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    let mut work = request(&path, Operation::Enable, Scope::Present(before.into()));
+    work.draft.account = "42".into();
+    let cancel = CancellationToken::new();
+    let held = Mutex::new(None);
+    let report = Native
+        .execute_with(
+            work,
+            &cancel,
+            mpsc::sync_channel(1).0,
+            |_, _| Ok(()),
+            |_, _| {
+                let directory = storage::private_directory(&path, false).unwrap();
+                let lease =
+                    storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+                        .unwrap();
+                fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+                *held.lock().unwrap() = Some(lease);
+                cancel.cancel();
+                Err(Failure::Timeout)
+            },
+        )
+        .unwrap();
+    assert_eq!(report.failure, Some(Failure::Busy));
+    assert_eq!(report.scope, Scope::Unobserved);
+    assert!(report.process.is_none());
+    drop(held);
+}

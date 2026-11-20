@@ -374,18 +374,49 @@ fn run_async<T>(
     diagnostic: &mut Option<HostSetupDiagnostic>,
     future: impl std::future::Future<Output = io::Result<T>>,
 ) -> Result<T, Failure> {
+    run_async_with_deadline(
+        runtime,
+        cancel,
+        diagnostic,
+        std::time::Duration::from_secs(300),
+        future,
+    )
+}
+
+// Private injection keeps deadline/cancellation/error tests deterministic without
+// changing the production timeout, the future's authority, or cleanup fences.
+fn run_async_with_deadline<T>(
+    runtime: &tokio::runtime::Runtime,
+    cancel: &CancellationToken,
+    diagnostic: &mut Option<HostSetupDiagnostic>,
+    deadline: std::time::Duration,
+    future: impl std::future::Future<Output = io::Result<T>>,
+) -> Result<T, Failure> {
     runtime.block_on(async {
-        match tokio::time::timeout(std::time::Duration::from_secs(300), future).await {
+        match tokio::time::timeout(deadline, future).await {
             Ok(result) => result.map_err(|error| {
                 *diagnostic = festerm_host_setup::diagnostics::from_io_error(&error);
                 failure(error)
             }),
             Err(_) => {
-                cancel.cancel();
-                Err(Failure::Cancelled)
+                // An already-requested operator cancellation is not reclassified
+                // as a timer failure. Ready backend errors retain their own cause.
+                if cancel.is_cancelled() {
+                    Err(Failure::Cancelled)
+                } else {
+                    cancel.cancel();
+                    Err(Failure::Timeout)
+                }
             }
         }
     })
+}
+
+fn update_failure(error: Failure) -> Failure {
+    match error {
+        Failure::Cancelled | Failure::Timeout | Failure::ScopeChanged => error,
+        _ => Failure::UpdateIncomplete,
+    }
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
@@ -489,11 +520,13 @@ impl Native {
             )
         })();
         if cancel.is_cancelled() && request.operation.needs_cancel_fence() {
+            let deadline_expired = matches!(result, Err(Failure::Timeout));
             // A blocked native call may outlive cancellation. Fence once it
             // really returns as well as through the independent revocation slot.
             let failure = match cancellation_scope(&store, &request) {
                 Ok(expected) => {
                     match controller::disable_if_current(&store, &request.root, &expected) {
+                        Ok(_) if deadline_expired => Failure::Timeout,
                         Ok(_) => Failure::Cancelled,
                         Err(error) => failure(error),
                     }
@@ -780,10 +813,7 @@ impl Native {
                         cancel,
                     ),
                 )
-                .map_err(|error| match error {
-                    Failure::Cancelled | Failure::ScopeChanged => error,
-                    _ => Failure::UpdateIncomplete,
-                })?;
+                .map_err(update_failure)?;
                 report(Some(store), &request.root)
             }
             Operation::Disable => {

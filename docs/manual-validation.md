@@ -5072,6 +5072,19 @@ with a live persistent shell must still reach confirmed Disabled after exact
 runtime-lease release and Task quiescence, then separately Enable and reconnect
 the same generation with fresh executed I/O. A Busy notice or absent worker
 alone is not confirmed Disable or evidence identifying the contended lock.
+The Desktop Reconcile/Enable/Update/Uninstall async boundary retains its existing
+five-minute deadline. Deadline expiry requests cancellation and reports a distinct
+**timed out** failure, rather than claiming the operator cancelled. Refresh local
+status and review Recovery before another change: native/cloud effects may have
+completed or may still be draining, and no automatic replay occurs. Successful
+revocation retains the timeout cause; a failed revocation/scope check keeps its
+own primary failure. Unreadable final scope stays unknown. Deterministic tests
+inject a private deadline; no five-minute wait or OS/provider action is needed.
+For native `HOSTSETUP-01`, retain the first actual deadline observation separately
+from user cancellation or a backend refusal. A long authentication wait alone
+does not prove which boundary expired; this diagnostic change does not identify
+or fix the cause of any prior native failure.
+
 **Primary desktop Setup source/mock increment (`HOSTSETUP-01`, not acceptance):**
 Settings → Remote access → explicit Enable now acquires only the current build's
 official native-target schema-2 bundle on the bounded background worker. Version,

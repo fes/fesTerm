@@ -6550,6 +6550,11 @@
         "ADR-0087"
       ],
       "automated_tests": [
+        "desktop_remote_access_native_deadline_is_distinct_from_operator_cancel_and_backend_failure",
+        "desktop_remote_access_native_deadline_survives_successful_enable_revocation_fence",
+        "desktop_remote_access_native_update_preserves_deadline_and_existing_failure_distinctions",
+        "desktop_remote_access_native_deadline_cannot_hide_revocation_fence_failure",
+        "desktop_remote_access_enable_timeout_clears_stale_scope_without_replay_and_renders_recovery",
         "desktop_remote_access_enable_confirmation_uses_task_copy_and_retains_disclosure",
         "desktop_remote_access_process_confirmation_is_plain_and_keeps_observation_intent",
         "desktop_remote_access_confirmation_keeps_bundle_mechanics_in_advanced",
