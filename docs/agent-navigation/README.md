@@ -16,9 +16,9 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state. |
 | [Terminal recording and export](recording.md) | The recording domain owns the private capture lifecycle, privacy gate, export preparation, and replay/retention checks for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST discovery, enterprise inventory, recipe metadata and Files/PowerShell trust. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-install gating, native smoke verification, macOS Finder/AppKit bridging, and wake/privacy monitoring for desktop OS hooks. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-install gating, native smoke validation, macOS Finder/AppKit bridging, and wake/privacy monitoring for desktop OS hooks. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile app lifecycle, protected local state, and native/SSH/HOST session flows across iOS and Android. |
-| [Desktop application shell and screens](app-shell.md) | Owns the desktop shell, windows, panes and host/session screens. |
+| [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
 

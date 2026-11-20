@@ -1,23 +1,23 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "47faff1b54f88176e5d9de6922067ab091d070edf4aafdee1e111081211d53b9"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "fca906db90a32d8c0575c2e14f07ef1288e9115ec95da69e3ea84d376778dece"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the desktop shell, windows, panes and host/session screens.
+Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## Startup flow
 
-Use for: Startup and restored windows/sessions
+Use for: Startup, restored windows, and saved workspace recovery
 
-- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native window startup.
-- [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns all windows and cross-window policy.
-- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after the primary exists.
+- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native viewport startup
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns every window and cross-window policy
+- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after primary exists
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn.
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn
 
 Caveats:
 - Primary window owns quit, wake, and secret-store policy.
@@ -26,13 +26,13 @@ Caveats:
 
 ## Frame loop
 
-Use for: Frames, close requests and focused rendering
+Use for: Frame logic, close requests, and focused pane rendering
 
-- [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry.
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome, overlays, and the active pane surface.
+- [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
+- [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome, overlays, and active pane surfaces
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render.
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -41,62 +41,62 @@ Caveats:
 
 ## Screen routing
 
-Use for: Profiles, settings and typed actions
+Use for: Profiles, settings, and typed app command dispatch
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect or save dispatch flow.
-- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, keyboard bindings, and automation preferences.
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect/save dispatch flow
+- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, bindings, and automation preferences
 
 Evidence:
-- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer.
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page order and state stay aligned with the flow.
+- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page order and state stay aligned with the flow
 
 Caveats:
-- Profile and settings actions are dispatched as AppCommand events, not direct mutation.
+- Profile and settings actions dispatch as AppCommand events, not direct mutation.
 - Draft state is keyed by tab or context; stale UI state can leak across editors.
 - Bindings and preference updates are committed outside the screen render itself.
 
 ## Host access
 
-Use for: Host discovery, inventory, attach and creation
+Use for: Host discovery, inventory, attach, and creation review
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review.
-- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Reviews exact folder/read/write/delete consent.
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry.
-- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness.
+- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry
+- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness
 
 Caveats:
-- Discovery needs no manual fingerprint or JSON; uncertain status requires Refresh.
+- Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
+- Host browser review is not a direct session mutation; it emits review actions.
+- Ownership and approval states are separate from the session runtime state.
 
 ## Lifecycle diagnostics
 
-Use for: Exit recovery and host failure history
+Use for: Exit recovery, crash evidence, and host failure history
 
-- [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook.
-- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context.
-- [`show`](../../app/festerm/src/desktop_remote_access/diagnostics.rs) — Renders setup results and separate Refresh-loaded runtime history.
+- [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context
 
 Evidence:
-- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes.
-- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Checks the historical pane without claiming readiness or setup result.
+- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes
+- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Checks the historical pane without claiming readiness or setup result
 
 Caveats:
 - Diagnostics preserve evidence but cannot fix runtime logic or app state.
+- Journal writes are best-effort and degrade gracefully when unavailable.
 
 ## File operation review
 
-Use for: Local/SFTP actions and ordinary Dev Tunnels Files.
+Use for: Remote file create/delete review and worker lifecycle
 
-- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory and selection.
-- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Retires stale remote reviews.
-- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, two pinned streams and bounded unknown outcomes.
-- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — At most eight exact worker-owned reviews before confirmation.
+- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Retires stale remote reviews and enforces connection scope
+- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory, and selection before confirm
+- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, bounded outcomes, and Files session lifecycle
+- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — Builds exact, bounded remote delete review for host files
 
 Evidence:
-- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks dialog geometry.
-- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Fences late disclosures; retains terminal outcomes.
+- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks dialog geometry and review framing
+- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Fences late disclosures while retaining terminal outcomes
 
 Caveats:
-- Local/SFTP delete is nonrecursive. Open2 write grants no delete; Open3 needs separate consent and exact review. Rename/chmod/links remain unavailable.
-- Files restore is disconnected; native/provider and GUI qualification remain pending.
+- Local/SFTP delete is nonrecursive; Open2 write grants no delete; Open3 needs separate consent and exact review.

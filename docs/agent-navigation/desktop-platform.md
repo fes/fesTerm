@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "615c0c6de6e89f76b181e4606da3abf511178b543c6083ffa3ba5d53d075de64"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "41122ee002e3d30ecd3d4cf6d2be851fd0a95280a2ddbc93eff86a80abf7204c"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged-install gating, native smoke verification, macOS Finder/AppKit bridging, and wake/privacy monitoring for desktop OS hooks.
+Desktop platform integration owns packaged-install gating, native smoke validation, macOS Finder/AppKit bridging, and wake/privacy monitoring for desktop OS hooks.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,12 +12,12 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: A packaged build is deciding whether self-update is allowed
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Build marker and verification-key gate for self-update eligibility
-- [`from_build`](../../app/festerm/src/updates.rs) — Reads install marker and updater public key from the build
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks packaged-update status and install safety.
+- [`from_build`](../../app/festerm/src/updates.rs) — Loads the install marker and verification key from the build.
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Refuses self-update without a verification key
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Limits in-place update markers to app, AppImage, and NSIS
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Refuses self-update without a verification key.
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Limits installable markers to app, AppImage, and NSIS.
 
 Caveats:
 - Install markers gate self-update; they do not replace code signing or host verification.
@@ -26,14 +26,14 @@ Caveats:
 
 ## Native smoke
 
-Use for: CI wants to prove a real native window and PTY pass a smoke flow
+Use for: CI needs to prove a real native window and PTY pass a smoke flow
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the real-window PTY smoke flow inside the app event loop
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires exactly one smoke mode and a result path
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the real-window PTY smoke flow inside the app event loop.
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires exactly one smoke mode and a result path.
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Prevents silent smoke admission
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates double-width emoji and trailing ASCII output
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Prevents silent smoke admission.
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates double-width emoji and trailing ASCII output.
 
 Caveats:
 - Only one smoke mode and one result path may be active.
@@ -44,12 +44,12 @@ Caveats:
 
 Use for: Finder or AppKit events are arriving from the native macOS app
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder document opens until the UI attaches
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Maps AppKit selectors into app-level menu actions
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Queues Finder document opens until the UI attaches.
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Maps AppKit selectors into app-level menu actions.
 
 Evidence:
-- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — Exercises queued Finder opens with a live AppleEvent
-- [`open_document_appleevent_rejects_oversized_paths_without_retaining_them`](../../crates/festerm-macos-window/src/lib.rs) — Rejects oversized file URLs instead of buffering them
+- [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — Exercises queued Finder opens with a live AppleEvent.
+- [`open_document_appleevent_rejects_oversized_paths_without_retaining_them`](../../crates/festerm-macos-window/src/lib.rs) — Rejects oversized file URLs instead of buffering them.
 
 Caveats:
 - The bridge queues events until the app drains and routes them.
@@ -60,12 +60,13 @@ Caveats:
 
 Use for: A platform needs to wake or revoke consent when the machine resumes or locks
 
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Observes Windows resume broadcasts through the native message loop
-- [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Fail-closes lock and suspend privacy loss for Linux sessions
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Observes Windows resume broadcasts through the native message loop.
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Listens to logind resume-only PrepareForSleep edges.
+- [`PrivacyMonitor`](../../crates/festerm-linux-power/src/privacy.rs) — Fail-closes on lock and suspend privacy loss for Linux sessions.
 
 Evidence:
-- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Confirms Windows resume broadcast classification
-- [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — Ignores suspend and keeps only resume edges
+- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Confirms resume broadcast classification.
+- [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — Ignores suspend and keeps only resume edges.
 
 Caveats:
 - Wake logic treats resume as wake and ignores suspend; it does not generalize to network changes.

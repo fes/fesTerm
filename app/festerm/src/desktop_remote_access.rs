@@ -287,6 +287,7 @@ pub enum Failure {
         kind: std::io::ErrorKind,
     },
     Cancelled,
+    Timeout,
     RefreshFirst,
     ScopeChanged,
     PrivateStorage,
@@ -323,6 +324,7 @@ impl Failure {
             Self::OwnerApproval => "Review owner approval in Advanced / Recovery.",
             Self::Busy => "Host state is busy. Wait, then refresh local status.",
             Self::Cancelled => "Revocation may still be draining. Wait before retrying.",
+            Self::Timeout => "The host operation timed out. Its outcome is uncertain; refresh local status and review Recovery.",
             Self::ShareCapability => "This running shell does not support HOST sharing.",
             Self::SessionChanged => "The running session changed. Review it again.",
             Self::BundleNotPublished => "The signed host bundle for this build is not published.",
@@ -356,6 +358,7 @@ impl Failure {
             Self::Observation { .. } => "A protected status read did not complete. Setup may already have committed. Current endpoint readiness is unknown. Refresh local status; do not repeat Enable or Start to refresh the display.",
             Self::Busy => "Wait for current work to finish, then refresh local status before another change.",
             Self::Cancelled => "Cancelled. Mutating work must finish revocation before retry.",
+            Self::Timeout => "The five-minute deadline expired and cancellation was requested. Native or cloud work may have completed or may still be draining. Refresh local status and review Recovery before another change; nothing is retried automatically.",
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
@@ -1268,6 +1271,7 @@ impl Controller {
                                     && matches!(
                                         error,
                                         Failure::Busy
+                                            | Failure::Timeout
                                             | Failure::PrivateStorage
                                             | Failure::ScopeChanged
                                             | Failure::Reconciliation
