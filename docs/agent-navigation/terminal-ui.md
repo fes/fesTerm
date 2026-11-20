@@ -1,34 +1,36 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "35d392a40ce0dc52780814d2ab0697dde74cbdd74f211b22c195668b8f10f4c4"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "mai-code-1.1-flash", "sources": "433e602d8e48d68f945896beb1c9488e74d385fd2d91aca1c4c4e318765e31b5"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns terminal presentation, bounded row caches, and native/software painting while keeping session I/O in the application layer.
+This domain owns terminal presentation, bounded viewport caches, and native/software rendering while keeping session I/O in the application layer.
 
 Canonical docs: [docs/ui-test-plan.md](../../docs/ui-test-plan.md), [docs/gui-design.md](../../docs/gui-design.md)
 
 ## Input routing
 
-Use for: When an input event, resize, or selection decision must flow through the terminal core without session I/O.
+Use for: When input events, paste bytes, or resize requests must flow through the terminal core without the UI doing session I/O.
 
 - [`EncodedInputSink`](../../crates/festerm-ui-egui/src/input.rs) — Application-owned sink for encoded terminal bytes and resize signals.
-- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains terminal input bytes into the sink without direct session I/O.
+- [`route_input`](../../crates/festerm-ui-egui/src/input.rs) — Drains core-encoded bytes into the sink with no session I/O.
+- [`route_mouse_input`](../../crates/festerm-ui-egui/src/input.rs) — Enforces local selection policy before terminal mouse reports can continue.
 
 Evidence:
 - [`warmed_character_routing_does_not_allocate_in_core_or_view`](../../crates/festerm-ui-egui/tests/routed_input_allocations.rs) — Proves routed bytes stay exact and the hot path remains allocation-free.
 
 Caveats:
-- UI never does session I/O; bytes must only reach the application-owned sink.
-- Resize remains app-owned unless the backend explicitly owns terminal resizing.
+- UI never does session I/O; bytes must only reach the application sink.
+- Resize remains app-owned unless the backend explicitly owns terminal sizing.
 - Selection and focus decisions stay local unless core input claims the event.
 
 ## Render cache
 
-Use for: When terminal output changes or viewport geometry shifts and a bounded row cache must repaint correctly.
+Use for: When terminal output changes or viewport geometry shifts and the visible rows must repaint without stale artifacts.
 
-- [`TerminalView`](../../crates/festerm-ui-egui/src/view.rs) — egui frame owner that invalidates and repaints a cache on resize and redraw.
-- [`TerminalRenderCache`](../../crates/festerm-ui-egui/src/cache.rs) — Row-level presentation cache with dirty-row and full-refresh rebuild logic.
+- [`TerminalView`](../../crates/festerm-ui-egui/src/view.rs) — egui frame owner that invalidates and repaints a row cache on resize and redraw.
+- [`TerminalRenderCache`](../../crates/festerm-ui-egui/src/cache.rs) — Bounded row cache that tracks dirty rows and rebuilds only when needed.
+- [`ResizeTracker`](../../crates/festerm-ui-egui/src/cache.rs) — Applies terminal resize requests only on actual dimension changes.
 
 Evidence:
 - [`full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state`](../../crates/festerm-ui-egui/src/view.rs) — Covers full-redraw invalidation and unchanged-row preservation.
@@ -38,15 +40,15 @@ Caveats:
 - Row correctness depends on matching the live row and screen generation.
 - A stale revision or skipped dirty row can leave artifacts after resize or clear.
 
-## Direct2D painting
+## Native painting
 
-Use for: When the app chooses a native Windows x64 Direct2D frame instead of the ordinary egui paint path.
+Use for: When the app chooses the Windows Direct2D path instead of ordinary egui painting for terminal frames.
 
-- [`install_from_environment`](../../app/festerm/src/direct2d.rs) — Selects native Direct2D or host-copy mode from adapter and framebuffer.
+- [`install_from_environment`](../../app/festerm/src/direct2d.rs) — Selects a native Direct2D composition path from adapter and framebuffer capabilities.
 - [`Renderer`](../../crates/festerm-windows-direct2d/src/renderer.rs) — Validates, uploads, and draws the bounded native terminal frame.
 
 Evidence:
-- [`integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`](../../app/festerm/src/direct2d.rs) — Proves the native path matches terminal pixels and fallback semantics.
+- [`integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`](../../app/festerm/src/direct2d.rs) — Proves native painting matches terminal pixels and preserves fallback semantics.
 
 Caveats:
 - Unsupported frames and device failures must fall back to ordinary egui painting.
@@ -55,15 +57,16 @@ Caveats:
 
 ## Software fallback
 
-Use for: When panel or viewport backgrounds need a software paint path without native composition.
+Use for: When panel and viewport backgrounds need a software paint path without native composition.
 
-- [`PanelRenderer`](../../app/festerm/src/software_background.rs) — Software background renderer for panel frames when native composition is unavailable.
+- [`PanelRenderer`](../../app/festerm/src/software_background.rs) — Software background renderer for eligible panel frames and palette layers.
 - [`opaque_window_frame`](../../app/festerm/src/software_background.rs) — Guards opaque replacement logic for owned window frames.
+- [`RootPanelBackground`](../../app/festerm/src/software_background.rs) — Rewrites root backgrounds to optimized software-painted panels when conditions allow.
 
 Evidence:
 - [`root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks`](../../app/festerm/src/software_background.rs) — Proves optimized panel paints preserve pixels and clip callbacks.
 
 Caveats:
 - A frame only uses the optimized software path when callback and format checks pass.
-- Software background painting must stay transparent to terminal state and app ownership.
+- Software painting must stay transparent to terminal state and app ownership.
 - Opaque replacements must not disturb local focus, selection, or input routing.

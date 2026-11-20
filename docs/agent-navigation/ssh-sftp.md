@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "7b8e70f1d1b64e25198b6774ca6d6da8d7c6ae956e659544407380f3e80b68a3"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "ed74926a2664fb05616df0e0199854411834b155a863e91050bd17eab38464a0"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns authenticated SSH transport, host-key trust enforcement, and the GUI-backed SFTP lifecycle from session creation through transfer execution and remote file reads.
+This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads.
 
 Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
@@ -28,8 +28,11 @@ Caveats:
 
 Use for: When the app opens a GUI-backed SFTP session and must pause for trust while keeping the transport alive.
 
-- [`connect_gui_sftp_session`](../../crates/festerm-ssh/src/lib.rs) — Starts the dedicated connect thread and emits trust prompts as needed.
+- [`connect_gui_sftp_session`](../../crates/festerm-ssh/src/lib.rs) — Starts a dedicated connect thread and emits trust prompts as needed.
 - [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh SFTP client and working-directory state.
+
+Evidence:
+- [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Connected remote reads succeed with verified, bounded results.
 
 Caveats:
 - The connect task uses a dedicated runtime so russh dispatch is not killed by a throw-away runtime.
@@ -40,12 +43,14 @@ Caveats:
 
 Use for: When remote browsing or copy operations need a bounded transfer queue, collision resolution, and event reporting.
 
-- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and final commit.
-- [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local/remote path pairs before scheduling work.
+- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and the final commit.
+- [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
+- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the existing planner, queue and local staging.
 
 Evidence:
-- [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped decisions remain scoped to one batch, including later conflicts.
-- [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf.
+- [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
+- [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
+- [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf on Windows.
 - [`windows_download_retained_handle_prevents_ancestor_rename_until_cleanup`](../../crates/festerm-ssh/src/sftp.rs) — Windows refuses moving the open file’s ancestor; the same rename succeeds after cleanup.
 
 Caveats:
@@ -62,6 +67,7 @@ Use for: When the GUI opens an SFTP tab, resolves trust prompts, and turns remot
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.
+- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The app sees host-key trust before password prompts in the same order as ssh.
 
 Caveats:
 - Remote reads are bound to a verified fingerprint and transport generation to avoid stale reads.

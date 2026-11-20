@@ -215,6 +215,52 @@ files for explicit operator cleanup. Authorized file sizes consume OS storage
 quota, not unbounded RAM or queues. New uploaded files are private and do not
 preserve source ACLs, executable bits or extended metadata.
 
+## Desktop file-manager composition
+
+The Desktop increment is an independent **Dev Tunnels Files** session, using
+ordinary account/host discovery and the Files role without Control inventory,
+a daemon session, terminal attachment or legacy/SFTP fallback. Its profile and
+workspace contain destination/account metadata only. Restore is disconnected;
+only an explicit foreground connection prepares native privacy monitoring and
+credentials. The presentation owns commands and observations, never Identity.
+
+Reuse the existing SFTP file-manager panes, worker commands, transfer planner,
+shared planning reservations, collision decisions and bounded transfer history.
+A narrow remote-endpoint/page boundary keeps planning internals private. Rooted
+uploads own their protocol publication; the queue must not emulate replacement
+with remote deletion/rename. Reserve one remote replacement review before
+opening its read handle. Retain the exact handle and its actual metadata from
+before the dialog through BeginUpload. Additional work stays parked in the
+existing bounded queue until resolution/cancellation releases that review.
+Keep Both is create-only; a concurrent creation requires a fresh review,
+including a fully received Exists/Conflict refusal at Finish. Only those known
+refusals retain the channel for new work; staging cleanup remains best effort.
+RecoveryRequired is terminal uncertainty and retains only the validated virtual
+recovery path for inspection, never an automatic retry.
+
+Returned source cancellation and known pre-admission refusals retain their
+classification. An uncertain finish is terminal, with no Retry/replay. If an
+owner drops an opaque upload future, a bounded endpoint-local observation of
+its virtual path/connection generation reports that the result was unobserved;
+it does not assert publication occurred. Reuse existing local staging,
+publication and retained-handle cleanup, including Windows creation handoff.
+
+Browsing and transfers use at most two independent Files streams pinned to the
+same host/installation/lifecycle scope. Previews serialize on browsing. Every
+stream retains the account/privacy guard and a tab-local child lifetime;
+closing a stream cannot cancel a sibling or global account. Account retirement
+invalidates queued reviews and late disclosures. Oversized folder views refuse
+without publishing an apparently complete truncated listing. Browsing reports
+skipped unsafe names; recursive transfer planning refuses skipped names rather
+than reporting an incomplete folder copy as complete.
+
+This v1 client supports browsing, upload/download, mkdir and bounded read-only
+previews. Remote delete, arbitrary rename and permission changes remain
+unsupported; write consent does not authorize them. Full command parity needs
+a separate protocol/capability/protected-consent extension. Mobile integration,
+provider/native service qualification and packaged GUI/accessibility evidence
+remain separate gates; this increment does not complete #778.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** ADR 0053's host filesystem grant now
@@ -222,7 +268,7 @@ preserve source ACLs, executable bits or extended metadata.
   host verification, generation pins, secret boundaries and bounded queues
   remain unchanged.
 - **GUI/action edges affected:** `TUNNEL-01`, `TUNNEL-03`, `TUNNEL-05`;
-  client UI implementation remains separate.
+  plus `DTFILES-01`–`DTFILES-03` for the Desktop client composition; Mobile remains separate.
 - **Automated tests required:** rooted traversal/listing/transfer/overwrite and
   cleanup tests, stream negotiation/frame bounds, legacy discovery, portable
   client-only dependency checks and managed policy migration/revocation tests.

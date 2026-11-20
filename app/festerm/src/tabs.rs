@@ -2595,6 +2595,7 @@ pub enum NewProfileKind {
     Sftp,
     Serial,
     DevTunnel,
+    DevTunnelFiles,
     /// The Dev Tunnel host-setup surface rather than a profile editor.
     HostSetup,
     SshFromDraft(SshProfileDraftSeed),
@@ -2712,6 +2713,18 @@ pub enum AppCommand {
     /// in first when it has no account.
     SaveAndConnectDevTunnel {
         profile: festerm_config::Profile,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    SelectDevTunnelFilesHost {
+        tab_id: TabId,
+        request: egui::Id,
+        host: crate::screens::host_workspace::HostChoice,
+    },
+    OpenDevTunnelFiles {
+        target: crate::sftp_file_manager::HostFilesLaunchTarget,
+    },
+    StartConfiguredDevTunnelFilesProfile {
+        profile_id: String,
     },
     StartConfiguredDevTunnelProfile {
         profile_id: String,
@@ -4000,6 +4013,29 @@ impl AppState {
                         ),
                     ))
                 }
+                WorkspaceTab::DevTunnelFiles(tab) => {
+                    let profile = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_dev_tunnel_files)
+                        .expect("validated workspace Files profile reference");
+                    let target = crate::sftp_file_manager::HostFilesLaunchTarget {
+                        label: profile.identifier().into(),
+                        profile_id: Some(profile.identifier().into()),
+                        account: profile.account().map(str::to_owned),
+                        locator: profile.host().into(),
+                    };
+                    let settings = configuration.interface_settings();
+                    let local = settings
+                        .default_sftp_local_directory()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(local_home_directory);
+                    TabContent::SftpFileManager(Box::new(SftpFileManagerTab::disconnected_files(
+                        target,
+                        local,
+                        settings.sftp_pane_order(),
+                        context,
+                    )))
+                }
                 WorkspaceTab::SerialSession(tab) => {
                     let serial = configuration
                         .profile(tab.profile_id())
@@ -4278,8 +4314,13 @@ impl AppState {
                 TabContent::SftpFileManager(tab) => tab
                     .profile_identifier
                     .as_deref()
-                    .map(|profile_id| {
-                        WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
+                    .map(|profile_id| match &tab.launch_target {
+                        crate::sftp_file_manager::FileManagerLaunchTarget::Sftp(_) => {
+                            WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
+                        }
+                        crate::sftp_file_manager::FileManagerLaunchTarget::HostFiles(_) => {
+                            WorkspaceTab::dev_tunnel_files(identifier.clone(), profile_id)
+                        }
                     })
                     .transpose()?,
                 TabContent::PowerShell(tab) => Some(WorkspaceTab::powershell_session(
@@ -4988,7 +5029,8 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReauthenticateHostAccount(_)
             | AppCommand::FindDevTunnelHosts { .. }
-            | AppCommand::ReviewDevTunnelHost { .. } => {}
+            | AppCommand::ReviewDevTunnelHost { .. }
+            | AppCommand::SelectDevTunnelFilesHost { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReviewHostFromProfiles { .. } => {}
             #[cfg(feature = "local-host-settings")]
@@ -5034,6 +5076,8 @@ impl AppState {
             | AppCommand::ConnectRunningDevTunnel { .. }
             | AppCommand::ConnectDevTunnelForm { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
+            | AppCommand::StartConfiguredDevTunnelFilesProfile { .. }
+            | AppCommand::OpenDevTunnelFiles { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
@@ -7845,7 +7889,7 @@ impl AppState {
         self.place_user_session(session);
     }
 
-    fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
+    pub(crate) fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
         tab_content.set_cleanup_reporter(self.sftp_cleanup_sender.clone());
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
@@ -10461,11 +10505,15 @@ mod tests {
         let TabContent::SftpFileManager(tab) = &state.active_tab().content else {
             panic!("stored GUI SFTP launch should place a file-manager tab");
         };
-        assert_eq!(tab.launch_target.host, "live.example.test");
-        assert_eq!(tab.launch_target.username, "deploy");
-        assert_eq!(tab.launch_target.port, 22);
+        assert_eq!(tab.launch_target.sftp().unwrap().host, "live.example.test");
+        assert_eq!(tab.launch_target.sftp().unwrap().username, "deploy");
+        assert_eq!(tab.launch_target.sftp().unwrap().port, 22);
         assert_eq!(
-            tab.launch_target.local_bind_policy.fixed_address(),
+            tab.launch_target
+                .sftp()
+                .unwrap()
+                .local_bind_policy
+                .fixed_address(),
             Some(live_address)
         );
     }

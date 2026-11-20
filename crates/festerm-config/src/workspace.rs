@@ -143,6 +143,7 @@ impl WorkspaceConfiguration {
                 | WorkspaceTab::SshSession(tab)
                 | WorkspaceTab::SftpSession(tab)
                 | WorkspaceTab::SftpFileManager(tab)
+                | WorkspaceTab::DevTunnelFiles(tab)
                 | WorkspaceTab::SerialSession(tab)
                     if tab.profile_id == original =>
                 {
@@ -412,6 +413,8 @@ pub enum WorkspaceTab {
     SftpSession(SessionTabConfiguration),
     /// A GUI SFTP file-manager tab recreated from an SSH profile.
     SftpFileManager(SessionTabConfiguration),
+    /// An ordinary Files manager; restored disconnected, with no handles.
+    DevTunnelFiles(SessionTabConfiguration),
     /// A serial session recreated from a serial profile.
     SerialSession(SessionTabConfiguration),
     /// A native PowerShell setup tab recreated from a PowerShell profile.
@@ -502,6 +505,21 @@ impl WorkspaceTab {
         Ok(tab)
     }
 
+    /// Saves only the file-session/profile relationship. Restoration must not
+    /// authenticate, resume transfers, or reuse a previous scope automatically.
+    pub fn dev_tunnel_files(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::DevTunnelFiles(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+            alias: None,
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
     /// Creates a serial-session tab which will reference a serial profile.
     pub fn serial_session(
         identifier: impl Into<String>,
@@ -541,6 +559,7 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
+            | Self::DevTunnelFiles(tab)
             | Self::SerialSession(tab)
             | Self::PowerShellSession(tab) => tab.identifier(),
         }
@@ -553,6 +572,7 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
+            | Self::DevTunnelFiles(tab)
             | Self::SerialSession(tab)
             | Self::PowerShellSession(tab) => Some(tab.profile_id()),
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
@@ -575,7 +595,10 @@ impl WorkspaceTab {
     }
 
     fn validate_metadata(&self) -> Result<(), ConfigError> {
-        if let Self::SftpFileManager(tab) | Self::PowerShellSession(tab) = self {
+        if let Self::SftpFileManager(tab)
+        | Self::DevTunnelFiles(tab)
+        | Self::PowerShellSession(tab) = self
+        {
             if tab.alias.is_some() {
                 return Err(ConfigError::new(ConfigErrorKind::InvalidSessionAlias));
             }
@@ -588,6 +611,7 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
+            | Self::DevTunnelFiles(tab)
             | Self::SerialSession(tab)
             | Self::PowerShellSession(tab) => tab.validate(),
         }
@@ -610,6 +634,11 @@ impl WorkspaceTab {
                 profiles,
                 tab.profile_id(),
                 ExpectedProfileKind::SftpTransport,
+            ),
+            Self::DevTunnelFiles(tab) => validate_session_profile(
+                profiles,
+                tab.profile_id(),
+                ExpectedProfileKind::DevTunnelFiles,
             ),
             Self::SerialSession(tab) => {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Serial)
@@ -708,6 +737,7 @@ fn validate_tab_identifier(identifier: &str) -> Result<(), ConfigError> {
 /// local-shell profile that happens to share an identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExpectedProfileKind {
+    DevTunnelFiles,
     Local,
     SshShell,
     SftpTransport,
@@ -740,6 +770,10 @@ fn validate_session_profile(
                 })
             )
             | (ExpectedProfileKind::SftpTransport, Profile::Ssh(_))
+            | (
+                ExpectedProfileKind::DevTunnelFiles,
+                Profile::DevTunnelFiles(_)
+            )
             | (ExpectedProfileKind::Serial, Profile::Serial(_))
             | (ExpectedProfileKind::PowerShell, Profile::PowerShell(_))
     );

@@ -73,7 +73,40 @@ pub enum Profile {
     Ssh(SshProfileConfiguration),
     Serial(SerialProfileConfiguration),
     DevTunnel(DevTunnelProfileConfiguration),
+    DevTunnelFiles(DevTunnelFilesProfileConfiguration),
     PowerShell(PowerShellProfileConfiguration),
+}
+
+/// An ordinary HOST Files destination. This is metadata only: no root,
+/// write grant, credential, lifecycle epoch, handle, or reconnect authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelFilesProfileConfiguration {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+    host: String,
+}
+impl DevTunnelFilesProfileConfiguration {
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+    pub fn account(&self) -> Option<&str> {
+        self.account.as_deref()
+    }
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if let Some(account) = &self.account {
+            validate_identifier(account)?;
+        }
+        // Use the existing strict public locator validation; this creates no
+        // transport and cannot select a legacy/session-bound file endpoint.
+        Profile::named_dev_tunnel(&self.id, &self.host)?;
+        Ok(())
+    }
 }
 
 /// Secret-free operator-trusted destination metadata. The file is read and
@@ -307,6 +340,26 @@ fn is_default_remote_profile_kind(kind: &RemoteProfileKind) -> bool {
 }
 
 impl Profile {
+    pub fn dev_tunnel_files(
+        identifier: impl Into<String>,
+        account: Option<String>,
+        host: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let value = Self::DevTunnelFiles(DevTunnelFilesProfileConfiguration {
+            id: identifier.into(),
+            account,
+            host: host.into(),
+        });
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn as_dev_tunnel_files(&self) -> Option<&DevTunnelFilesProfileConfiguration> {
+        if let Self::DevTunnelFiles(profile) = self {
+            Some(profile)
+        } else {
+            None
+        }
+    }
     pub fn dev_tunnel(
         identifier: impl Into<String>,
         destination_file: impl Into<String>,
@@ -366,6 +419,11 @@ impl Profile {
         mut self,
         account: Option<String>,
     ) -> Result<Self, ConfigError> {
+        if let Self::DevTunnelFiles(profile) = &mut self {
+            profile.account = account;
+            self.validate()?;
+            return Ok(self);
+        }
         let Self::DevTunnel(profile) = &mut self else {
             return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
         };
@@ -600,18 +658,18 @@ impl Profile {
             Self::Ssh(_) if provider == PersistenceProviderKind::FestermSessiond => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::NativePersistenceRequiresLocalProfile,
-                ))
+                ));
             }
             Self::Ssh(profile) => profile.persistence = persistence,
-            Self::Serial(_) | Self::DevTunnel(_) => {
+            Self::Serial(_) | Self::DevTunnel(_) | Self::DevTunnelFiles(_) => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
-                ))
+                ));
             }
             Self::PowerShell(_) => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
-                ))
+                ));
             }
         }
         self.validate()?;
@@ -651,6 +709,7 @@ impl Profile {
             Self::Ssh(profile) => profile.identifier(),
             Self::Serial(profile) => profile.identifier(),
             Self::DevTunnel(profile) => profile.identifier(),
+            Self::DevTunnelFiles(profile) => profile.identifier(),
             Self::PowerShell(profile) => profile.identifier(),
         }
     }
@@ -659,7 +718,11 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
+            Self::Ssh(_)
+            | Self::Serial(_)
+            | Self::DevTunnel(_)
+            | Self::DevTunnelFiles(_)
+            | Self::PowerShell(_) => None,
         }
     }
 
@@ -667,7 +730,11 @@ impl Profile {
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
             Self::Ssh(profile) => Some(profile),
-            Self::Local(_) | Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
+            Self::Local(_)
+            | Self::Serial(_)
+            | Self::DevTunnel(_)
+            | Self::DevTunnelFiles(_)
+            | Self::PowerShell(_) => None,
         }
     }
 
@@ -675,7 +742,11 @@ impl Profile {
     pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
         match self {
             Self::Serial(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
+            Self::Local(_)
+            | Self::Ssh(_)
+            | Self::DevTunnel(_)
+            | Self::DevTunnelFiles(_)
+            | Self::PowerShell(_) => None,
         }
     }
 
@@ -683,7 +754,11 @@ impl Profile {
     pub fn as_powershell(&self) -> Option<&PowerShellProfileConfiguration> {
         match self {
             Self::PowerShell(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
+            Self::Local(_)
+            | Self::Ssh(_)
+            | Self::Serial(_)
+            | Self::DevTunnel(_)
+            | Self::DevTunnelFiles(_) => None,
         }
     }
 
@@ -693,7 +768,7 @@ impl Profile {
             Self::Ssh(profile) => profile.credential_reference(),
             Self::DevTunnel(profile) => profile.credential_reference(),
             Self::PowerShell(profile) => profile.credential_reference(),
-            Self::Local(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Serial(_) | Self::DevTunnelFiles(_) => None,
         }
     }
 
@@ -704,7 +779,10 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
-            Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
+            Self::Serial(_)
+            | Self::DevTunnel(_)
+            | Self::DevTunnelFiles(_)
+            | Self::PowerShell(_) => None,
         }
     }
 
@@ -714,6 +792,7 @@ impl Profile {
             Self::Ssh(profile) => profile.validate(),
             Self::Serial(profile) => profile.validate(),
             Self::DevTunnel(profile) => profile.validate(),
+            Self::DevTunnelFiles(profile) => profile.validate(),
             Self::PowerShell(profile) => profile.validate(),
         }
     }
@@ -1940,7 +2019,7 @@ impl PersistenceConfiguration {
             PersistenceProviderKind::FestermSessiond => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::NativePersistenceRequiresLocalProfile,
-                ))
+                ));
             }
         };
         Ok(profile)

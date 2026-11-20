@@ -68,6 +68,7 @@ pub use sftp::{
 };
 use sftp_input::{SftpInputAction, SftpInputBuffer};
 pub use sftp_transfer::{
+    RemoteDirectoryPage, RemoteReplacementReview, RemoteTransferEndpoint, RemoteTransferFuture,
     SftpCollision, SftpCollisionDecision, SftpCollisionId, SftpCollisionResolution,
     SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath,
     SftpPathMetadata, SftpQueuedTransferBatch, SftpTransferBatchId, SftpTransferDirection,

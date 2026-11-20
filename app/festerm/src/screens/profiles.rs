@@ -9,6 +9,10 @@ use super::*;
 use crate::secret_input::{clear_secret_widget, new_secret_widget_id, SecretText};
 use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButtonRole};
 
+mod host_files;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use host_files::select_discovered_files_host;
+use host_files::HostFilesDraft;
 #[cfg(feature = "experimental-dev-tunnels")]
 mod host_recipes;
 #[cfg(all(test, feature = "experimental-dev-tunnels"))]
@@ -33,6 +37,7 @@ enum ProfilesScreenMode {
     EditSsh(Box<SshProfileDraft>),
     EditSerial(SerialProfileDraft),
     EditDevTunnel(DevTunnelProfileDraft),
+    EditHostFiles(HostFilesDraft),
     #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnel(PublicTunnelImportDraft),
     HostSetup(HostSetupDraft),
@@ -445,6 +450,18 @@ pub(crate) fn report_dev_tunnel_save_outcome(
         let Some(mut state) = data.get_temp::<ProfilesScreenState>(id) else {
             return false;
         };
+        if let ProfilesScreenMode::EditHostFiles(draft) = &mut state.mode {
+            if draft.pending_save != Some(request) {
+                return false;
+            }
+            draft.pending_save = None;
+            match outcome {
+                Ok(()) => state.mode = ProfilesScreenMode::List,
+                Err(message) => draft.error = Some(message),
+            }
+            data.insert_temp(id, state);
+            return true;
+        }
         let ProfilesScreenMode::EditDevTunnel(draft) = &mut state.mode else {
             return false;
         };
@@ -632,6 +649,15 @@ pub(crate) fn has_profile_screen_state_for_test(context: &egui::Context, tab_id:
 
 fn profile_table_item(profile: &Profile, configuration: &Configuration) -> ProfileTableItem {
     let (kind, location, subtitle) = match profile {
+        Profile::DevTunnelFiles(files) => (
+            ProfileTableKind::DevTunnelFiles,
+            files.host().into(),
+            files
+                .account()
+                .and_then(|key| configuration.account(key))
+                .map(|account| format!("GitHub · {}", account.login()))
+                .unwrap_or_else(|| "Sign in to connect".into()),
+        ),
         Profile::DevTunnel(tunnel) => (
             ProfileTableKind::DevTunnel,
             tunnel
@@ -1222,6 +1248,7 @@ impl SshProfileDraft {
             Profile::Local(_)
             | Profile::Serial(_)
             | Profile::DevTunnel(_)
+            | Profile::DevTunnelFiles(_)
             | Profile::PowerShell(_) => {
                 unreachable!("Profile::ssh returns SSH")
             }
@@ -1234,6 +1261,7 @@ impl SshProfileDraft {
             Profile::Local(_)
             | Profile::Serial(_)
             | Profile::DevTunnel(_)
+            | Profile::DevTunnelFiles(_)
             | Profile::PowerShell(_) => {
                 unreachable!("Profile::ssh returns SSH")
             }
@@ -1551,6 +1579,9 @@ pub(crate) fn show_profiles(
         if let Some(profile) = configuration.profile(&identifier) {
             clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
             state.mode = match profile {
+                Profile::DevTunnelFiles(files) => {
+                    ProfilesScreenMode::EditHostFiles(HostFilesDraft::from_profile(files))
+                }
                 Profile::DevTunnel(tunnel) => {
                     ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::from_profile(tunnel))
                 }
@@ -1573,6 +1604,9 @@ pub(crate) fn show_profiles(
     if let Some(kind) = pending_create {
         clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
         state.mode = match kind {
+            NewProfileKind::DevTunnelFiles => {
+                ProfilesScreenMode::EditHostFiles(HostFilesDraft::default())
+            }
             NewProfileKind::DevTunnel => {
                 #[cfg(feature = "experimental-dev-tunnels")]
                 {
@@ -1751,6 +1785,7 @@ pub(crate) fn show_profiles(
                 });
             });
         }
+        ProfilesScreenMode::EditHostFiles(draft) => host_files::show(ui, tab_id, configuration, draft, &mut command, &mut next_mode),
         ProfilesScreenMode::EditDevTunnel(draft) => {
             if let Some(profile) = draft.original_id.as_deref().and_then(|id| configuration.profile(id))
                 .and_then(Profile::as_dev_tunnel) {
@@ -1971,6 +2006,7 @@ pub(crate) fn show_profiles(
                                 { ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default()) }
                             }),
                             ("Legacy single-session Dev Tunnel", ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())),
+                            ("Dev Tunnels Files", ProfilesScreenMode::EditHostFiles(HostFilesDraft::default())),
                             ("SFTP", ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))),
                             (
                                 "Serial",
@@ -1978,7 +2014,7 @@ pub(crate) fn show_profiles(
                             ),
                             ("PowerShell", ProfilesScreenMode::EditPowerShell(Box::default())),
                         ] {
-                            if matches!(mode, ProfilesScreenMode::EditDevTunnel(_))
+                            if matches!(mode, ProfilesScreenMode::EditDevTunnel(_) | ProfilesScreenMode::EditHostFiles(_))
                                 && !cfg!(feature = "experimental-dev-tunnels")
                             {
                                 continue;
@@ -2052,6 +2088,7 @@ pub(crate) fn show_profiles(
                                     }
                                     ProfileTableAction::Edit => {
                                         next_mode = Some(match profile {
+                                            Profile::DevTunnelFiles(files) => ProfilesScreenMode::EditHostFiles(HostFilesDraft::from_profile(files)),
                                             Profile::DevTunnel(tunnel) => ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::from_profile(tunnel)),
                                             Profile::Local(local) => ProfilesScreenMode::EditLocal(
                                                 LocalProfileDraft::from_profile(local),
@@ -2074,6 +2111,11 @@ pub(crate) fn show_profiles(
                                     ProfileTableAction::Duplicate => {
                                         let duplicate_name = format!("{}-copy", item.identifier);
                                         next_mode = Some(match profile {
+                                            Profile::DevTunnelFiles(files) => {
+                                                let mut draft = HostFilesDraft::from_profile(files);
+                                                draft.original_id = None; draft.name = duplicate_name;
+                                                ProfilesScreenMode::EditHostFiles(draft)
+                                            }
                                             Profile::DevTunnel(tunnel) => {
                                                 let mut draft = DevTunnelProfileDraft::from_profile(tunnel);
                                                 draft.original_id = None;

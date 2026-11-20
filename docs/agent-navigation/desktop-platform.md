@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "be8df58bca289de656b7a51b6be73fc14fb6064beb9f089cbac30a0f93d80f85"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "04682fc1caa6bde057cab2df62094c277cecc3b0fa460b13770dd00d57aa091f"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration and packaging owns native installer gating, macOS app hooks, real-window smoke verification, and platform wake/privacy signaling.
+Desktop platform integration owns native installers, app hooks, and OS wake/privacy monitoring for desktop builds.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,17 +12,17 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: A packaged build is deciding whether self-update is allowed
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Build-time install marker and verification key gate self-update eligibility
-- [`from_build`](../../app/festerm/src/updates.rs) — Reads the install marker and updater public key from the build
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Build marker and verification-key gate for self-update eligibility
+- [`from_build`](../../app/festerm/src/updates.rs) — Reads install marker and updater public key from the build
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Refuses self-update without a verification key
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Limits in-place updates to app, appimage, and nsis
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Limits in-place updates to app, AppImage, and NSIS
 
 Caveats:
+- Install markers gate self-update, they do not replace code signing or host verification.
 - Package-smoke binaries are not signed release bundles.
-- Install markers gate self-update; they do not replace code-signing or host verification.
-- Updater trust is separate from the GUI config and embedded verification key.
+- Updater trust is separate from GUI config and the embedded verification key.
 
 ## Native smoke
 

@@ -162,7 +162,10 @@ impl Fixture {
             Scene::Authentication | Scene::PrivateKey => show_authentication_required(
                 ui,
                 id,
-                &self.tab.launch_target,
+                self.tab
+                    .launch_target
+                    .sftp()
+                    .expect("gallery uses SSH transport"),
                 false,
                 &mut self.authentication,
             ),
@@ -176,7 +179,15 @@ impl Fixture {
                     prompt =
                         prompt.with_previously_trusted_fingerprint("SHA256:previous-fixture-key");
                 }
-                show_host_key_prompt(ui, id, &self.tab.launch_target, &prompt)
+                show_host_key_prompt(
+                    ui,
+                    id,
+                    self.tab
+                        .launch_target
+                        .sftp()
+                        .expect("gallery uses SSH transport"),
+                    &prompt,
+                )
             }
             _ => self.tab.show(ui, id),
         };

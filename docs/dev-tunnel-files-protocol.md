@@ -2,10 +2,13 @@
 
 This is the host/client integration contract for ADR 0067. Host implementation
 lives in `festerm-tunnel-bridge`. Its portable `client` feature also exposes the
-sequential `file_client::Client` engine; desktop/iOS transport and file-manager
-integration remain separate. Portable Rust DTOs/constants are in `file_protocol.rs`. Do not send these
-operations as terminal input, invoke a remote shell, or fall back to SFTP/local
-files. No desktop/iOS file-manager integration is claimed by this host PR.
+sequential `file_client::Client` engine. Desktop composition uses ordinary
+`open_files` and the existing SFTP file-manager presentation and queue for browse,
+upload/download, mkdir and bounded read-only previews. Remote delete, rename and
+chmod are unavailable; rooted v1 write consent does not authorize them. Mobile
+integration and native/provider Desktop qualification remain pending. Portable
+Rust DTOs/constants are in `file_protocol.rs`. Do not send these operations as
+terminal input, invoke a remote shell, or fall back to SFTP/local files.
 
 ## Legacy rooted authorization and existing installations
 

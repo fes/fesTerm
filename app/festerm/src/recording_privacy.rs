@@ -320,6 +320,7 @@ fn install(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "experimental-dev-tunnels")]
     #[test]
     fn session_privacy_loss_cancels_before_wake_without_a_ui_frame() {
         let loss = Arc::new(AtomicBool::new(false));

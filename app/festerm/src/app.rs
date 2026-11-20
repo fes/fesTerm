@@ -11,6 +11,9 @@ pub(crate) mod gallery;
 #[path = "host_browser.rs"]
 mod host_browser;
 #[cfg(feature = "experimental-dev-tunnels")]
+#[path = "host_files.rs"]
+pub(crate) mod host_files;
+#[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use host_browser::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 mod panes;
 #[cfg(test)]
@@ -3820,9 +3823,10 @@ impl FesTermApp {
                         tab.target.host, tab.target.port
                     )),
                 ),
-                TabContent::SftpFileManager(tab) => {
-                    (tab.label.clone(), Some("GUI SFTP file manager".to_owned()))
-                }
+                TabContent::SftpFileManager(tab) => (
+                    tab.label.clone(),
+                    Some(tab.connection_description().to_owned()),
+                ),
                 TabContent::PowerShell(tab) => (
                     tab.title(),
                     Some(format!("Structured PowerShell · {}", tab.state().label())),
@@ -6108,7 +6112,7 @@ impl FesTermApp {
                     ),
                     TabContent::SftpFileManager(tab) => (
                         tab.label.clone(),
-                        Some("GUI SFTP file manager".to_owned()),
+                        Some(tab.connection_description().to_owned()),
                         ChipStatus::Neutral,
                     ),
                     TabContent::PowerShell(tab) => (
@@ -6564,7 +6568,7 @@ impl FesTermApp {
                 // the bar the way the mockup's `.fsftp-statusline` does
                 // rather than leaving 24px of empty chrome under the panes.
                 TabContent::SftpFileManager(tab) => (
-                    Some("SFTP"),
+                    Some(tab.kind_label()),
                     None,
                     Some(std::borrow::Cow::Owned(tab.status_bar_endpoints())),
                     tab.chip_status(),
@@ -8018,6 +8022,40 @@ impl FesTermApp {
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::ImportPublicDevTunnelProfile { import } => {
                     self.import_public_tunnel_profile(import);
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::SelectDevTunnelFilesHost {
+                    tab_id,
+                    request,
+                    host,
+                } => {
+                    if self.state.active_tab().id == tab_id
+                        && matches!(self.state.active_tab().content, TabContent::Profiles)
+                        && ui.ctx().input(|input| input.focused)
+                        && self.state.configuration().account(&host.account).is_some()
+                    {
+                        screens::select_discovered_files_host(ui.ctx(), tab_id, request, &host);
+                    }
+                }
+                AppCommand::OpenDevTunnelFiles { target } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.start_host_files(target, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = target;
+                        self.secure_storage_feedback =
+                            Some("Files connections require a Dev Tunnels-enabled build.");
+                    }
+                }
+                AppCommand::StartConfiguredDevTunnelFilesProfile { profile_id } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.start_configured_files(&profile_id, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = profile_id;
+                        self.secure_storage_feedback =
+                            Some("Files connections require a Dev Tunnels-enabled build.");
+                    }
                 }
                 AppCommand::StartConfiguredDevTunnelProfile { profile_id } => {
                     #[cfg(feature = "experimental-dev-tunnels")]

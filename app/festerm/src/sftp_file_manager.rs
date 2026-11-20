@@ -1,3 +1,7 @@
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "sftp_file_manager/host_files.rs"]
+mod host_files;
+
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
@@ -1761,6 +1765,11 @@ impl<Id: Copy + Eq + std::hash::Hash> TransferDrawerState<Id> {
             .iter()
             .filter(|item| matches!(item.state, SftpTransferState::Failed { .. }))
             .count();
+        let uncertain = self
+            .items
+            .iter()
+            .filter(|item| matches!(item.state, SftpTransferState::PublicationUncertain { .. }))
+            .count();
         let total_known_bytes = self
             .items
             .iter()
@@ -1774,7 +1783,22 @@ impl<Id: Copy + Eq + std::hash::Hash> TransferDrawerState<Id> {
         let progress = (total_known_bytes > 0)
             .then_some((transferred_bytes as f32 / total_known_bytes as f32).clamp(0.0, 1.0));
         let summary = if active > 0 {
-            format!("{active} active · {}", format_size(Some(total_known_bytes)))
+            let active_summary =
+                format!("{active} active · {}", format_size(Some(total_known_bytes)));
+            if uncertain > 0 {
+                format!("{active_summary} · {uncertain} outcome unknown")
+            } else {
+                active_summary
+            }
+        } else if uncertain > 0 {
+            let mut parts = vec![format!("{uncertain} outcome unknown")];
+            if failed > 0 {
+                parts.push(format!("{failed} failed"));
+            }
+            if completed > 0 {
+                parts.push(format!("{completed} completed"));
+            }
+            parts.join(" · ")
         } else if failed > 0 {
             if completed > 0 {
                 format!("{failed} failed · {completed} completed")
@@ -1861,12 +1885,38 @@ impl SftpCleanupReporter {
     }
 
     fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
+        self.report_with_headline(label, error, repaint, "SFTP cleanup is incomplete");
+    }
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn report_files(
+        &self,
+        label: String,
+        error: festerm_ssh::SftpSessionError,
+        repaint: &egui::Context,
+    ) {
+        let headline = if matches!(
+            error,
+            festerm_ssh::SftpSessionError::PublicationUncertain { .. }
+        ) {
+            "Files publication outcome is unknown"
+        } else {
+            "Files cleanup is incomplete"
+        };
+        self.report_with_headline(label, error, repaint, headline);
+    }
+    fn report_with_headline(
+        &self,
+        label: String,
+        error: festerm_ssh::SftpSessionError,
+        repaint: &egui::Context,
+        headline: &'static str,
+    ) {
         let notice = crate::overlay_state::OpenRefusalNotice {
             title: None,
             acknowledgement_path: None,
             name: label,
             path: String::new(),
-            headline: "SFTP cleanup is incomplete".to_owned(),
+            headline: headline.to_owned(),
             detail: error.to_string(),
         };
         let delivered = self
@@ -1901,10 +1951,70 @@ struct SftpWorkerNotifications {
     reporter: SftpCleanupReporter,
 }
 
+/// Public destination metadata only. The presentation never owns a provider
+/// Identity, native credential, root grant, or a reusable connection proof.
+#[derive(Clone, Debug)]
+pub(crate) struct HostFilesLaunchTarget {
+    pub label: String,
+    pub profile_id: Option<String>,
+    #[cfg_attr(not(feature = "experimental-dev-tunnels"), allow(dead_code))]
+    pub account: Option<String>,
+    pub locator: String,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum FileManagerLaunchTarget {
+    Sftp(SftpFileManagerLaunchTarget),
+    HostFiles(HostFilesLaunchTarget),
+}
+impl FileManagerLaunchTarget {
+    fn label(&self) -> &str {
+        match self {
+            Self::Sftp(target) => &target.label,
+            Self::HostFiles(target) => &target.label,
+        }
+    }
+    fn profile_id(&self) -> Option<&str> {
+        match self {
+            Self::Sftp(target) => target.profile_id.as_deref(),
+            Self::HostFiles(target) => target.profile_id.as_deref(),
+        }
+    }
+    fn identity_label(&self) -> String {
+        match self {
+            Self::Sftp(target) => format!("{}@{}", target.username, target.host),
+            Self::HostFiles(target) => format!("HOST Files · {}", target.locator),
+        }
+    }
+    fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Sftp(_) => "SFTP",
+            Self::HostFiles(_) => "Dev Tunnels Files",
+        }
+    }
+    pub(crate) fn sftp(&self) -> Option<&SftpFileManagerLaunchTarget> {
+        if let Self::Sftp(target) = self {
+            Some(target)
+        } else {
+            None
+        }
+    }
+}
+
+struct FileManagerChannels {
+    command_sender: tokio::sync::mpsc::Sender<WorkerCommand>,
+    shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    event_sender: WorkerEventSender,
+    event_receiver: WorkerEventReceiver,
+    cleanup_reporter: SftpCleanupReporter,
+    file_operations: file_operations::State,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_files_cancel: Option<tokio_util::sync::CancellationToken>,
+}
+
 pub(crate) struct SftpFileManagerTab {
     pub(crate) label: String,
     pub(crate) profile_identifier: Option<String>,
-    pub(crate) launch_target: SftpFileManagerLaunchTarget,
+    pub(crate) launch_target: FileManagerLaunchTarget,
     pub(crate) local_pane: SftpPaneState,
     pub(crate) remote_pane: SftpPaneState,
     pub(crate) pane_order: SftpPaneOrderPreference,
@@ -1928,6 +2038,12 @@ pub(crate) struct SftpFileManagerTab {
     file_operations: file_operations::State,
     command_sender: tokio::sync::mpsc::Sender<WorkerCommand>,
     shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_files_cancel: Option<tokio_util::sync::CancellationToken>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    files_source: Option<host_files::FilesSource>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_files_retired: bool,
     cleanup_reporter: SftpCleanupReporter,
     event_receiver: WorkerEventReceiver,
     event_sender: WorkerEventSender,
@@ -1950,7 +2066,7 @@ pub(crate) struct SftpFileManagerTab {
     /// Set synchronously by `open_item` when a *local* Markdown file is
     /// double-clicked (no worker roundtrip needed); consumed by `show`'s
     /// tail, same as `pending_markdown_open` for the remote case.
-    pending_markdown_command: Option<crate::tabs::AppCommand>,
+    pending_application_command: Option<crate::tabs::AppCommand>,
     /// Screen rects each pane occupied the last time it actually rendered
     /// (split mode renders both every frame; narrow mode renders only
     /// `narrow_focus`'s pane and explicitly clears its sibling's rect --
@@ -2015,7 +2131,7 @@ impl SftpFileManagerTab {
         Self {
             label,
             profile_identifier: None,
-            launch_target: target,
+            launch_target: FileManagerLaunchTarget::Sftp(target),
             local_pane,
             remote_pane,
             pane_order,
@@ -2029,6 +2145,12 @@ impl SftpFileManagerTab {
             file_operations: file_operations::State::default(),
             command_sender,
             shutdown_sender: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_cancel: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_source: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_retired: false,
             cleanup_reporter: SftpCleanupReporter::default(),
             event_receiver,
             event_sender,
@@ -2041,7 +2163,7 @@ impl SftpFileManagerTab {
             pending_markdown_request: None,
             pending_markdown_open: None,
             operation_error: None,
-            pending_markdown_command: None,
+            pending_application_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
         }
@@ -2055,52 +2177,125 @@ impl SftpFileManagerTab {
         pane_order: SftpPaneOrderPreference,
         context: &egui::Context,
     ) -> Self {
-        let local_pane = SftpPaneState::new(SftpPath::local(local_directory));
-        let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
+        let launch_target = target.clone();
+        Self::new_worker(
+            FileManagerLaunchTarget::Sftp(target),
+            local_directory,
+            pane_order,
+            context,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            None,
+            move |commands, events, repaint, owner| {
+                run_worker(
+                    launch_target,
+                    authentication,
+                    known_host_fingerprint,
+                    commands,
+                    events,
+                    repaint,
+                    owner,
+                )
+            },
+        )
+    }
+
+    fn new_worker<F, Work>(
+        target: FileManagerLaunchTarget,
+        local_directory: PathBuf,
+        pane_order: SftpPaneOrderPreference,
+        context: &egui::Context,
+        #[cfg(feature = "experimental-dev-tunnels")] host_files_cancel: Option<
+            tokio_util::sync::CancellationToken,
+        >,
+        worker: F,
+    ) -> Self
+    where
+        F: FnOnce(
+                tokio::sync::mpsc::Receiver<WorkerCommand>,
+                WorkerEventSender,
+                egui::Context,
+                SftpWorkerOwner,
+            ) -> Work
+            + Send
+            + 'static,
+        Work: std::future::Future<Output = ()> + 'static,
+    {
         let (command_sender, command_receiver) =
             tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let cleanup_reporter = SftpCleanupReporter::default();
         let worker_reporter = cleanup_reporter.clone();
         let (event_sender, event_receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
-        let local_loader =
-            LocalDirectoryLoader::new(format!("festerm-gui-sftp-local-{}", target.label));
         let repaint = context.clone();
-        let launch_target = target.clone();
         let worker_event_sender = event_sender.clone();
         let file_operations = file_operations::State::default();
         let connection_scope = file_operations.connection.clone();
         thread::Builder::new()
-            .name(format!("festerm-gui-sftp-{}", target.label))
+            .name(format!("festerm-gui-sftp-{}", target.label()))
             .spawn(move || {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("could not build tokio runtime for GUI SFTP worker");
-                runtime.block_on(async move {
-                    run_worker(
-                        launch_target,
-                        authentication,
-                        known_host_fingerprint,
-                        command_receiver,
-                        worker_event_sender,
-                        repaint,
-                        SftpWorkerOwner {
-                            connection_scope,
-                            shutdown: shutdown_receiver,
-                            reporter: worker_reporter,
-                        },
-                    )
-                    .await;
-                });
+                runtime.block_on(worker(
+                    command_receiver,
+                    worker_event_sender,
+                    repaint,
+                    SftpWorkerOwner {
+                        connection_scope,
+                        shutdown: shutdown_receiver,
+                        reporter: worker_reporter,
+                    },
+                ));
                 // Already-started filesystem calls cannot be aborted by dropping their futures.
                 runtime.shutdown_background();
             })
             .expect("could not spawn GUI SFTP worker thread");
 
+        Self::from_channels(
+            target,
+            local_directory,
+            pane_order,
+            context,
+            SftpConnectionState::Connecting,
+            FileManagerChannels {
+                command_sender,
+                shutdown_sender: Some(shutdown_sender),
+                event_sender,
+                event_receiver,
+                cleanup_reporter,
+                file_operations,
+                #[cfg(feature = "experimental-dev-tunnels")]
+                host_files_cancel,
+            },
+        )
+    }
+
+    fn from_channels(
+        target: FileManagerLaunchTarget,
+        local_directory: PathBuf,
+        pane_order: SftpPaneOrderPreference,
+        context: &egui::Context,
+        connection_state: SftpConnectionState,
+        channels: FileManagerChannels,
+    ) -> Self {
+        let FileManagerChannels {
+            command_sender,
+            shutdown_sender,
+            event_sender,
+            event_receiver,
+            cleanup_reporter,
+            file_operations,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_cancel,
+        } = channels;
+        let local_pane = SftpPaneState::new(SftpPath::local(local_directory));
+        let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
+        let local_loader =
+            LocalDirectoryLoader::new(format!("festerm-gui-sftp-local-{}", target.label()));
         let mut tab = Self {
-            label: target.label.clone(),
-            profile_identifier: target.profile_id.clone(),
+            label: target.label().to_owned(),
+            profile_identifier: target.profile_id().map(str::to_owned),
             launch_target: target,
             local_pane,
             remote_pane,
@@ -2108,13 +2303,19 @@ impl SftpFileManagerTab {
             status_bar_visible: true,
             focused_pane: PaneFocus::Local,
             narrow_focus: PaneFocus::Local,
-            connection_state: SftpConnectionState::Connecting,
+            connection_state,
             has_connected_once: false,
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
             file_operations,
             command_sender,
-            shutdown_sender: Some(shutdown_sender),
+            shutdown_sender,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_cancel,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_source: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_retired: false,
             cleanup_reporter,
             event_receiver,
             event_sender,
@@ -2127,13 +2328,32 @@ impl SftpFileManagerTab {
             pending_markdown_request: None,
             pending_markdown_open: None,
             operation_error: None,
-            pending_markdown_command: None,
+            pending_application_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
         };
         let initial_local = tab.local_pane.current_path.clone();
         load_path(&mut tab, PaneFocus::Local, initial_local, false);
         tab
+    }
+
+    /// Metadata-only restoration. No runtime, credential, handshake, or saved
+    /// transfer is recreated; Connect explicitly enters foreground preparation.
+    pub(crate) fn disconnected_files(
+        target: HostFilesLaunchTarget,
+        local_directory: PathBuf,
+        pane_order: SftpPaneOrderPreference,
+        context: &egui::Context,
+    ) -> Self {
+        let (command_sender, receiver) = tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+        drop(receiver);
+        let (event_sender, event_receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
+        Self::from_channels(FileManagerLaunchTarget::HostFiles(target), local_directory, pane_order, context,
+            SftpConnectionState::Disconnected { summary: "Files connection required".into(), details: "Restored Files destination. Connect explicitly to review the current account and host permission.".into() },
+            FileManagerChannels { command_sender, shutdown_sender: None, event_sender, event_receiver,
+                cleanup_reporter: SftpCleanupReporter::default(), file_operations: file_operations::State::default(),
+                #[cfg(feature = "experimental-dev-tunnels")] host_files_cancel: None,
+            })
     }
 
     pub(crate) fn set_cleanup_reporter(
@@ -2143,7 +2363,34 @@ impl SftpFileManagerTab {
         self.cleanup_reporter.set_sender(sender);
     }
 
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn retire_files_if_cancelled(&mut self) {
+        if !self.host_files_retired
+            && self
+                .host_files_cancel
+                .as_ref()
+                .is_some_and(|cancel| cancel.is_cancelled())
+        {
+            self.host_files_retired = true;
+            self.file_operations.connection.retire();
+            self.file_operations.clear_review();
+            self.collision_dialog = None;
+            for item in &mut self.transfer_drawer.items {
+                item.pending_collision = None;
+            }
+            self.pending_markdown_request = None;
+            self.pending_markdown_open = None;
+            self.files_source = None;
+            self.remote_pane.stale = true;
+            self.remote_pane.loading = false;
+            self.connection_state = SftpConnectionState::Disconnected { summary: "Files session ended".into(),
+                details: "The account, device privacy, or tab lifetime changed. In-flight work may have completed; inspect before new work. Connect explicitly when ready.".into() };
+        }
+    }
+
     pub(crate) fn poll(&mut self) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.retire_files_if_cancelled();
         for _ in 0..GUI_SFTP_POLL_BUDGET {
             let Ok(event) = self.event_receiver.try_recv() else {
                 break;
@@ -2168,8 +2415,9 @@ impl SftpFileManagerTab {
             let maximum = SftpTransferManager::max_batch_items();
             if requests.len() > maximum {
                 let details = format!(
-                    "The SFTP batch limit is {maximum} items; this action selected {}. \
+                    "The {} batch limit is {maximum} items; this action selected {}. \
                      Select fewer items and try again.",
+                    self.kind_label(),
                     requests.len(),
                 );
                 self.operation_error =
@@ -2180,15 +2428,19 @@ impl SftpFileManagerTab {
         self.command_sender.try_send(command).map_err(|error| {
             let details = match error {
                 tokio::sync::mpsc::error::TrySendError::Full(_) => format!(
-                    "The SFTP command queue is full ({GUI_SFTP_COMMAND_CAPACITY} queued commands). \
-                     Try again after pending work finishes."
+                    "The {} command queue is full ({GUI_SFTP_COMMAND_CAPACITY} queued commands). \
+                     Try again after pending work finishes.",
+                    self.kind_label()
                 ),
                 tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                    "The SFTP worker has closed. Reopen this tab to retry.".to_owned()
+                    format!(
+                        "The {} worker has closed. Reopen this tab to retry.",
+                        self.kind_label()
+                    )
                 }
             };
             self.operation_error = Some((
-                "Could not queue the SFTP action.".to_owned(),
+                format!("Could not queue the {} action.", self.kind_label()),
                 details.clone(),
             ));
             details
@@ -2196,6 +2448,12 @@ impl SftpFileManagerTab {
     }
 
     fn request_reconnect(&mut self) {
+        if let FileManagerLaunchTarget::HostFiles(target) = &self.launch_target {
+            self.pending_application_command = Some(crate::tabs::AppCommand::OpenDevTunnelFiles {
+                target: target.clone(),
+            });
+            return;
+        }
         if self.submit_worker_command(WorkerCommand::Reconnect).is_ok() {
             self.connection_state = SftpConnectionState::Connecting;
             self.remote_pane.loading = true;
@@ -2214,6 +2472,16 @@ impl SftpFileManagerTab {
     /// the mockup's `SFTP · Local + ops@prod-03.example` status line rather
     /// than restating the heading: the heading names the remote target, this
     /// names the pair the panes actually show.
+    pub(crate) fn kind_label(&self) -> &'static str {
+        self.launch_target.kind_label()
+    }
+    pub(crate) fn connection_description(&self) -> &'static str {
+        match self.launch_target {
+            FileManagerLaunchTarget::Sftp(_) => "GUI SFTP file manager",
+            FileManagerLaunchTarget::HostFiles(_) => "Dev Tunnels Files",
+        }
+    }
+
     pub(crate) fn status_bar_endpoints(&self) -> String {
         format!("Local + {}", self.label)
     }
@@ -2270,8 +2538,8 @@ impl SftpFileManagerTab {
         let narrow = ui.available_width() < SFTP_SPLIT_VIEW_MIN_WIDTH;
         let toolbar_command = self.show_toolbar(ui, narrow, tab_id);
         if let Some(pending) = self.pending_host_key.as_ref() {
-            return show_host_key_prompt(ui, tab_id, &self.launch_target, &pending.prompt)
-                .or(toolbar_command);
+            let target = self.launch_target.sftp()?;
+            return show_host_key_prompt(ui, tab_id, target, &pending.prompt).or(toolbar_command);
         }
         if !self.has_connected_once {
             // Nothing has ever been browsed yet, so don't show empty/stale
@@ -2279,7 +2547,7 @@ impl SftpFileManagerTab {
             // failed" status -- the banner above already carries the
             // Retry/Edit connection… actions.
             show_pre_connect_placeholder(ui, &self.connection_state);
-            return toolbar_command;
+            return self.take_pending_markdown_command().or(toolbar_command);
         }
         if narrow {
             self.show_narrow(ui);
@@ -2383,7 +2651,7 @@ impl SftpFileManagerTab {
     /// same `poll()` call -- and turns it into the `AppCommand` that opens
     /// local Markdown in editor Preview or a remote snapshot in the viewer.
     fn take_pending_markdown_command(&mut self) -> Option<crate::tabs::AppCommand> {
-        if let Some(command) = self.pending_markdown_command.take() {
+        if let Some(command) = self.pending_application_command.take() {
             return Some(command);
         }
         let pending = self.pending_markdown_open.take()?;
@@ -2469,7 +2737,11 @@ impl SftpFileManagerTab {
     }
 
     fn show_heading(&self, ui: &mut Ui) {
-        ui.heading(format!("SFTP · {}", self.label));
+        ui.heading(format!(
+            "{} · {}",
+            self.launch_target.kind_label(),
+            self.label
+        ));
         ui.label(
             RichText::new(match &self.connection_state {
                 SftpConnectionState::Connecting => "Connecting…",
@@ -2514,9 +2786,19 @@ impl SftpFileManagerTab {
             self.request_reconnect();
         }
         if action.edit_connection {
+            if let FileManagerLaunchTarget::HostFiles(target) = &self.launch_target {
+                return Some(match &target.profile_id {
+                    Some(identifier) => crate::tabs::AppCommand::OpenProfileEditor {
+                        identifier: identifier.clone(),
+                    },
+                    None => crate::tabs::AppCommand::CreateProfile {
+                        kind: crate::tabs::NewProfileKind::DevTunnelFiles,
+                    },
+                });
+            }
             return Some(crate::tabs::AppCommand::RetrySftpFileManagerConnection {
                 tab_id,
-                target: self.launch_target.clone(),
+                target: self.launch_target.sftp()?.clone(),
             });
         }
         None
@@ -2575,6 +2857,15 @@ impl SftpFileManagerTab {
         let mut request_create_directory = false;
         let mut request_delete = false;
         let operations_idle = !self.file_operations.pending;
+        let remote_delete_supported =
+            matches!(self.launch_target, FileManagerLaunchTarget::Sftp(_));
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let files_worker_available =
+            !matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
+                || !self.host_files_retired;
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let files_worker_available =
+            !matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_));
         let remote_ready = matches!(self.connection_state, SftpConnectionState::Ready)
             && self.file_operations.current_connection();
         let mut request_open: Option<SftpDirectoryItem> = None;
@@ -2585,10 +2876,7 @@ impl SftpFileManagerTab {
         let pane_focused = self.focused_pane == focus;
         let remote_state =
             (focus == PaneFocus::Remote).then(|| pane_state_text(&self.connection_state));
-        let remote_identity = format!(
-            "· {}@{}",
-            self.launch_target.username, self.launch_target.host
-        );
+        let remote_identity = format!("· {}", self.launch_target.identity_label());
         let reconnect_visible = matches!(
             self.connection_state,
             SftpConnectionState::Disconnected { .. }
@@ -2952,7 +3240,7 @@ impl SftpFileManagerTab {
                     pane_chrome_row(ui, pane_width, SFTP_PANE_ACTION_ROW_HEIGHT, |ui| {
                         ui.add_space(SFTP_TOOLBAR_PADDING);
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        let writable = operations_idle
+                        let writable = operations_idle && files_worker_available
                             && !pane.loading
                             && !pane.stale
                             && pane.is_writable()
@@ -2966,7 +3254,7 @@ impl SftpFileManagerTab {
                             )
                         });
                         request_create_directory = create.clicked();
-                        let delete_enabled = writable
+                        let delete_enabled = writable && (focus == PaneFocus::Local || remote_delete_supported)
                             && pane.selected_count() > 0
                             && pane.selected_count() <= SftpTransferManager::max_batch_items()
                             && {
@@ -2985,7 +3273,11 @@ impl SftpFileManagerTab {
                             )
                         });
                         request_delete = delete.clicked();
-                        delete.on_disabled_hover_text(format!("Select up to {} files, links or directories in this folder. Directories must be empty.", SftpTransferManager::max_batch_items()));
+                        if focus == PaneFocus::Remote && !remote_delete_supported {
+                            delete.on_disabled_hover_text("Remote delete is unavailable for this Files connection.");
+                        } else {
+                            delete.on_disabled_hover_text(format!("Select up to {} files, links or directories in this folder. Directories must be empty.", SftpTransferManager::max_batch_items()));
+                        }
                     });
                     if let Some(error) = error_summary {
                         egui::Frame::new()
@@ -3893,7 +4185,7 @@ impl SftpFileManagerTab {
         }
         match &item.path {
             SftpPath::Local(path) => {
-                self.pending_markdown_command =
+                self.pending_application_command =
                     Some(crate::tabs::AppCommand::OpenLocalMarkdownFile {
                         path: path.clone(),
                         replacing: None,
@@ -3933,8 +4225,12 @@ impl SftpFileManagerTab {
     /// remote pane -- but this keeps the identity's validated invariants
     /// honest rather than fabricating a fingerprint).
     fn remote_markdown_identity(&self, remote_path: &str) -> Option<RemoteMarkdownSource> {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Some(source) = &self.files_source {
+            return source.markdown(self.profile_identifier.as_deref(), remote_path);
+        }
         let fingerprint = self.verified_host_key_fingerprint.as_deref()?;
-        build_remote_markdown_source(&self.launch_target, fingerprint, remote_path)
+        build_remote_markdown_source(self.launch_target.sftp()?, fingerprint, remote_path)
     }
 
     fn queue_transfer(&mut self, source_focus: PaneFocus) {
@@ -3981,7 +4277,10 @@ impl SftpFileManagerTab {
         paths: Vec<PathBuf>,
     ) -> Result<usize, String> {
         if !matches!(self.connection_state, SftpConnectionState::Ready) {
-            return Err("The remote SFTP connection is unavailable.".to_owned());
+            return Err(format!(
+                "The remote {} connection is unavailable.",
+                self.kind_label()
+            ));
         }
         if !self.remote_pane.is_writable() {
             return Err("The remote destination is read-only.".to_owned());
@@ -4001,7 +4300,59 @@ impl SftpFileManagerTab {
     }
 
     fn apply_event(&mut self, event: WorkerEvent) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.retire_files_if_cancelled();
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if self.host_files_retired
+            && matches!(
+                &event,
+                WorkerEvent::FilesConnected { .. }
+                    | WorkerEvent::FilesDirectoryLoaded { .. }
+                    | WorkerEvent::Connected { .. }
+                    | WorkerEvent::RemoteDirectoryLoaded { .. }
+                    | WorkerEvent::MarkdownSnapshotLoaded { .. }
+                    | WorkerEvent::HostKeyVerificationRequired { .. }
+            )
+        {
+            return;
+        }
         match event {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::FilesConnected {
+                connection_scope,
+                snapshot,
+                metadata,
+                source,
+                skipped,
+            } => {
+                self.files_source = Some(source);
+                self.apply_event(WorkerEvent::Connected {
+                    connection_scope,
+                    remote_directory: snapshot,
+                    remote_metadata: Some(metadata),
+                    verified_host_key_fingerprint: String::new(),
+                });
+                if skipped > 0 {
+                    self.operation_error = Some(("Some entries are unavailable".into(), format!("{skipped} unsupported or inaccessible entries were omitted by the host.")));
+                }
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::FilesDirectoryLoaded {
+                connection_scope,
+                snapshot,
+                metadata,
+                skipped,
+            } => {
+                self.apply_event(WorkerEvent::RemoteDirectoryLoaded {
+                    connection_scope,
+                    snapshot,
+                    metadata: Some(metadata),
+                    verified_host_key_fingerprint: String::new(),
+                });
+                if skipped > 0 {
+                    self.operation_error = Some(("Some entries are unavailable".into(), format!("{skipped} unsupported or inaccessible entries were omitted by the host.")));
+                }
+            }
             WorkerEvent::FileOperationFinished { request, result } => {
                 self.file_operation_finished(request, result)
             }
@@ -4136,9 +4487,22 @@ impl SftpFileManagerTab {
     }
 
     fn apply_transfer_event(&mut self, event: SftpTransferEvent) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            self.retire_files_if_cancelled();
+            if self.host_files_retired
+                && (matches!(&event, SftpTransferEvent::Collision(_))
+                    || matches!(&event, SftpTransferEvent::DestinationDirectoryRefreshRequested { directory, .. }
+                        if directory.location() == SftpLocation::Remote))
+            {
+                return;
+            }
+        }
+
         let finished_id = match &event {
             SftpTransferEvent::ItemCompleted { transfer_id, .. }
             | SftpTransferEvent::ItemFailed { transfer_id, .. }
+            | SftpTransferEvent::ItemPublicationUncertain { transfer_id, .. }
             | SftpTransferEvent::ItemCancelled { transfer_id, .. }
             | SftpTransferEvent::ItemSkipped { transfer_id, .. } => Some(*transfer_id),
             _ => None,
@@ -4146,8 +4510,10 @@ impl SftpFileManagerTab {
         match event {
             SftpTransferEvent::BatchQueued { .. } | SftpTransferEvent::BatchFinished { .. } => {}
             SftpTransferEvent::CleanupIncomplete { error } => {
-                self.operation_error =
-                    Some(("SFTP cleanup is incomplete".to_owned(), error.to_string()));
+                self.operation_error = Some((
+                    format!("{} cleanup is incomplete", self.kind_label()),
+                    error.to_string(),
+                ));
             }
             SftpTransferEvent::ItemStarted {
                 transfer_id,
@@ -4223,6 +4589,21 @@ impl SftpFileManagerTab {
                     item.pending_collision = None;
                 }
             }
+            SftpTransferEvent::ItemPublicationUncertain {
+                transfer_id,
+                destination,
+                reason,
+                ..
+            } => {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
+                    item.state = SftpTransferState::PublicationUncertain {
+                        reason: reason.clone(),
+                    };
+                    item.destination = destination;
+                    item.details = Some(reason);
+                    item.pending_collision = None;
+                }
+            }
             SftpTransferEvent::ItemCancelled {
                 transfer_id,
                 destination,
@@ -4258,6 +4639,10 @@ impl SftpFileManagerTab {
 
 impl Drop for SftpFileManagerTab {
     fn drop(&mut self) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Some(cancel) = &self.host_files_cancel {
+            cancel.cancel();
+        }
         if let Some(pending) = self.pending_host_key.take() {
             let _ = pending.resolver.cancel(&pending.prompt);
         }
@@ -4296,6 +4681,21 @@ enum WorkerCommand {
 
 #[derive(Debug)]
 enum WorkerEvent {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    FilesConnected {
+        connection_scope: Arc<()>,
+        snapshot: SftpDirectorySnapshot,
+        metadata: SftpPathMetadata,
+        source: host_files::FilesSource,
+        skipped: usize,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    FilesDirectoryLoaded {
+        connection_scope: Arc<()>,
+        snapshot: SftpDirectorySnapshot,
+        metadata: SftpPathMetadata,
+        skipped: usize,
+    },
     FileOperationFinished {
         request: file_operations::Request,
         result: Result<(), String>,
@@ -5126,7 +5526,9 @@ fn pane_state_text(connection_state: &SftpConnectionState) -> (&'static str, Col
 fn transfer_state_color(state: &SftpTransferState) -> Color32 {
     match state {
         SftpTransferState::Completed => theme::STATUS_RUNNING,
-        SftpTransferState::Failed { .. } => theme::STATUS_ERROR,
+        SftpTransferState::Failed { .. } | SftpTransferState::PublicationUncertain { .. } => {
+            theme::STATUS_ERROR
+        }
         SftpTransferState::AwaitingCollision(_) => theme::STATUS_STARTING,
         SftpTransferState::Skipped | SftpTransferState::Cancelled => theme::TEXT_MUTED,
         _ => theme::ACCENT_PRIMARY,
@@ -5874,6 +6276,13 @@ fn load_path(
     path: SftpPath,
     push_history: bool,
 ) -> bool {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    if focus == PaneFocus::Remote {
+        tab.retire_files_if_cancelled();
+        if tab.host_files_retired {
+            return false;
+        }
+    }
     if let (PaneFocus::Remote, SftpPath::Remote(remote)) = (focus, &path) {
         if tab
             .submit_worker_command(WorkerCommand::LoadRemote {
@@ -6383,6 +6792,7 @@ fn transfer_state_label(state: &SftpTransferState) -> &'static str {
         SftpTransferState::Running => "Running",
         SftpTransferState::Completed => "Completed",
         SftpTransferState::Failed { .. } => "Failed",
+        SftpTransferState::PublicationUncertain { .. } => "Outcome uncertain",
         SftpTransferState::Cancelled => "Cancelled",
         SftpTransferState::Skipped => "Skipped",
     }
@@ -7238,7 +7648,7 @@ pub(crate) mod tests {
         SftpFileManagerTab {
             label: target.label.clone(),
             profile_identifier: target.profile_id.clone(),
-            launch_target: target,
+            launch_target: FileManagerLaunchTarget::Sftp(target),
             local_pane: SftpPaneState::new(SftpPath::local(PathBuf::from("/tmp"))),
             remote_pane: SftpPaneState::new(SftpPath::remote("/")),
             pane_order: SftpPaneOrderPreference::default(),
@@ -7252,6 +7662,12 @@ pub(crate) mod tests {
             file_operations: file_operations::State::default(),
             command_sender,
             shutdown_sender: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_cancel: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_source: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_files_retired: false,
             cleanup_reporter: SftpCleanupReporter::default(),
             event_receiver,
             event_sender,
@@ -7264,7 +7680,7 @@ pub(crate) mod tests {
             pending_markdown_request: None,
             pending_markdown_open: None,
             operation_error: None,
-            pending_markdown_command: None,
+            pending_application_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
         }
@@ -10677,5 +11093,257 @@ pub(crate) mod tests {
         assert_eq!(label, "Show in File Explorer");
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         assert_eq!(label, "Open Containing Folder");
+    }
+    #[test]
+    fn files_uncertain_publication_is_finished_history_without_retry_or_completed_copy() {
+        let started = festerm_ssh::gallery_transfer_events(false)
+            .into_iter()
+            .find(|event| matches!(event, SftpTransferEvent::ItemStarted { .. }))
+            .unwrap();
+        let (batch_id, transfer_id) = match &started {
+            SftpTransferEvent::ItemStarted {
+                batch_id,
+                transfer_id,
+                ..
+            } => (*batch_id, *transfer_id),
+            _ => unreachable!(),
+        };
+        let mut tab = test_tab();
+        tab.apply_transfer_event(started);
+        tab.apply_transfer_event(SftpTransferEvent::ItemPublicationUncertain {
+            batch_id,
+            transfer_id,
+            destination: Some(SftpPath::remote("/owned-target")),
+            reason: "Owned Finish result was not observed.".into(),
+        });
+        assert!(matches!(
+            tab.transfer_drawer.items[0].state,
+            SftpTransferState::PublicationUncertain { .. }
+        ));
+        assert!(!tab.transfer_drawer.has_active_transfer(transfer_id));
+        assert_eq!(
+            tab.transfer_drawer.summary().unwrap().summary,
+            "1 outcome unknown"
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 600.0))
+            .build_ui_state(
+                |ui, tab: &mut SftpFileManagerTab| {
+                    tab.show_transfer_drawer(ui);
+                },
+                tab,
+            );
+        harness.run();
+        assert!(harness.query_by_label("Outcome uncertain").is_some());
+        assert!(harness.query_by_label("Retry").is_none());
+        assert!(harness.query_by_label("1 outcome unknown").is_some());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn files_account_retirement_clears_review_and_refuses_late_ready_disclosure() {
+        let root = tempfile::tempdir().unwrap();
+        let context = egui::Context::default();
+        let target = HostFilesLaunchTarget {
+            label: "owned Files".into(),
+            profile_id: None,
+            account: Some("owned-account".into()),
+            locator: "owned.use".into(),
+        };
+        let mut tab = SftpFileManagerTab::disconnected_files(
+            target,
+            root.path().into(),
+            SftpPaneOrderPreference::LocalLeft,
+            &context,
+        );
+        let cancel = tokio_util::sync::CancellationToken::new();
+        tab.host_files_cancel = Some(cancel.clone());
+        let scope = tab.file_operations.connection.capture();
+        let snapshot = SftpDirectorySnapshot {
+            location: SftpLocation::Remote,
+            path: SftpPath::remote("/"),
+            loaded_at: SystemTime::now(),
+            entries: vec![SftpDirectoryItem {
+                path: SftpPath::remote("/known-before.txt"),
+                ..item("known-before.txt", SftpEntryType::File, Some(3))
+            }],
+        };
+        let metadata = SftpPathMetadata {
+            path: SftpPath::remote("/"),
+            file_type: SftpEntryType::Directory,
+            size: Some(0),
+            modified_at: None,
+            permissions: Some(0o700),
+        };
+        tab.apply_event(WorkerEvent::Connected {
+            connection_scope: scope.clone(),
+            remote_directory: snapshot.clone(),
+            remote_metadata: Some(metadata.clone()),
+            verified_host_key_fingerprint: String::new(),
+        });
+        tab.review_file_operation(PaneFocus::Remote, false);
+        assert!(tab.file_operation_open());
+        tab.pending_markdown_request = Some(PendingMarkdownRequest {
+            request_id: 1,
+            path: "/owned.md".into(),
+        });
+        let mut late_snapshot = snapshot.clone();
+        late_snapshot.entries = vec![SftpDirectoryItem {
+            path: SftpPath::remote("/undisclosed-after.txt"),
+            ..item("undisclosed-after.txt", SftpEntryType::File, Some(99))
+        }];
+        let mut late_metadata = metadata.clone();
+        late_metadata.permissions = Some(0o500);
+        tab.event_sender
+            .try_send(WorkerEvent::FilesDirectoryLoaded {
+                connection_scope: scope.clone(),
+                snapshot: late_snapshot,
+                metadata: late_metadata,
+                skipped: 0,
+            })
+            .unwrap();
+        let mut transfer_events = festerm_ssh::gallery_transfer_events(true).into_iter();
+        let started = transfer_events.next().unwrap();
+        let (batch_id, transfer_id) = match &started {
+            SftpTransferEvent::ItemStarted {
+                batch_id,
+                transfer_id,
+                ..
+            } => (*batch_id, *transfer_id),
+            _ => unreachable!(),
+        };
+        tab.apply_transfer_event(started);
+        let progress = transfer_events.next().unwrap();
+        let collision = transfer_events
+            .find(|event| matches!(event, SftpTransferEvent::Collision(_)))
+            .unwrap();
+        tab.event_sender
+            .try_send(WorkerEvent::Transfer(collision))
+            .unwrap();
+        tab.event_sender
+            .try_send(WorkerEvent::Transfer(
+                SftpTransferEvent::DestinationDirectoryRefreshRequested {
+                    batch_id,
+                    transfer_id,
+                    directory: SftpPath::remote("/"),
+                },
+            ))
+            .unwrap();
+        cancel.cancel();
+        tab.poll();
+        assert_eq!(
+            tab.remote_pane.snapshot.as_ref().unwrap().entries[0].name,
+            "known-before.txt"
+        );
+        assert_eq!(
+            tab.remote_pane
+                .directory_metadata
+                .as_ref()
+                .unwrap()
+                .permissions,
+            Some(0o700)
+        );
+        assert!(tab.host_files_retired);
+        assert!(tab.remote_pane.stale);
+        assert!(!tab.file_operation_open());
+        assert!(tab.pending_markdown_request.is_none());
+        assert!(tab.collision_dialog.is_none());
+        assert!(tab.transfer_drawer.items[0].pending_collision.is_none());
+        assert!(
+            tab.operation_error.is_none(),
+            "retired remote refresh must not dispatch"
+        );
+        tab.event_sender
+            .try_send(WorkerEvent::Transfer(progress))
+            .unwrap();
+        tab.event_sender
+            .try_send(WorkerEvent::Transfer(
+                SftpTransferEvent::ItemPublicationUncertain {
+                    batch_id,
+                    transfer_id,
+                    destination: Some(SftpPath::remote("/owned-target")),
+                    reason: "Owned publication result was not observed.".into(),
+                },
+            ))
+            .unwrap();
+        tab.poll();
+        assert_eq!(tab.transfer_drawer.items[0].bytes_transferred, 4096);
+        assert!(matches!(
+            tab.transfer_drawer.items[0].state,
+            SftpTransferState::PublicationUncertain { .. }
+        ));
+        assert!(!Arc::ptr_eq(
+            &scope,
+            &tab.file_operations.connection.capture()
+        ));
+        tab.apply_event(WorkerEvent::Connected {
+            connection_scope: scope,
+            remote_directory: snapshot,
+            remote_metadata: Some(metadata),
+            verified_host_key_fingerprint: "late-public-key".into(),
+        });
+        assert!(matches!(
+            tab.connection_state,
+            SftpConnectionState::Disconnected { .. }
+        ));
+        assert!(tab.remote_pane.stale);
+        assert!(tab.files_source.is_none());
+    }
+    #[test]
+    fn files_workspace_restore_is_disconnected_without_transport_and_keeps_files_kind() {
+        let context = egui::Context::default();
+        let local = tempfile::tempdir().unwrap();
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![
+                festerm_config::WorkspaceTab::dev_tunnel_files("owned-files-tab", "owned-files")
+                    .unwrap(),
+            ],
+            Some("owned-files-tab".into()),
+        )
+        .unwrap();
+        let configuration = festerm_config::Configuration::new_with_workspace(
+            vec![
+                festerm_config::Profile::dev_tunnel_files("owned-files", None, "owned.use")
+                    .unwrap(),
+            ],
+            workspace.clone(),
+        )
+        .unwrap()
+        .with_interface_settings(
+            festerm_config::InterfaceSettings::DEFAULT.with_default_sftp_local_directory(Some(
+                local.path().to_string_lossy().into_owned(),
+            )),
+        )
+        .unwrap();
+        let state =
+            crate::tabs::AppState::with_restored_workspace(&context, configuration, &workspace);
+        let crate::tabs::TabContent::SftpFileManager(tab) = &state.active_tab().content else {
+            panic!("Files metadata must restore the shared file presentation")
+        };
+        assert!(matches!(
+            tab.launch_target,
+            FileManagerLaunchTarget::HostFiles(_)
+        ));
+        assert!(matches!(
+            tab.connection_state,
+            SftpConnectionState::Disconnected { .. }
+        ));
+        assert!(tab.shutdown_sender.is_none());
+        assert!(tab.command_sender.is_closed());
+        assert!(tab.transfer_drawer.items.is_empty());
+        assert_eq!(tab.kind_label(), "Dev Tunnels Files");
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            assert!(tab.host_files_cancel.is_none());
+            assert!(tab.files_source.is_none());
+        }
+        let mut next_profile_id = 1;
+        let captured = state
+            .capture_workspace_configuration(Vec::new(), &mut next_profile_id, None)
+            .unwrap();
+        assert!(matches!(
+            captured.workspace().unwrap().tabs()[0],
+            festerm_config::WorkspaceTab::DevTunnelFiles(_)
+        ));
     }
 }

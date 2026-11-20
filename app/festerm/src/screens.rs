@@ -54,8 +54,6 @@ pub(crate) use profiles::clear_profiles_screen_state;
 pub(crate) use profiles::install_host_recipe_request_for_test;
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::report_local_profile_save_outcome;
-#[cfg(feature = "experimental-dev-tunnels")]
-pub(crate) use profiles::select_host_for_profile;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
@@ -68,6 +66,8 @@ pub(crate) use profiles::{
     local_host_account_request, profiles_has_open_editor, report_local_host_account,
 };
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{select_discovered_files_host, select_host_for_profile};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};
 #[cfg(feature = "local-host-settings")]
@@ -87,6 +87,8 @@ pub(crate) use settings::{
 /// local shell, or a saved local/SSH profile.
 enum LauncherItemKind<'a> {
     NewDevTunnel,
+    NewHostFiles,
+    HostFilesProfile(&'a str),
     DevTunnelProfile(&'a str),
     /// A running tunnel of the signed-in account that has no saved profile.
     RunningTunnel(&'a RunningTunnelRow),
@@ -144,6 +146,7 @@ enum ProfileTableKind {
     Local,
     Ssh,
     DevTunnel,
+    DevTunnelFiles,
     Sftp,
     Serial,
     PowerShell,
@@ -153,6 +156,7 @@ impl ProfileTableKind {
     fn type_label(self) -> &'static str {
         match self {
             Self::DevTunnel => "Dev Tunnel",
+            Self::DevTunnelFiles => "Dev Tunnels Files",
             Self::Local => "Local",
             Self::Ssh => "SSH",
             Self::Sftp => "SFTP",
@@ -166,7 +170,9 @@ impl ProfileTableKind {
             Self::DevTunnel => (Icon::DevTunnel, theme::ICON_SESSION_REMOTE),
             Self::Local => (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL),
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
-            Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
+            Self::Sftp | Self::DevTunnelFiles => {
+                (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER)
+            }
             Self::Serial => (Icon::Serial, theme::ICON_SESSION_SERIAL),
             Self::PowerShell => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
         }
@@ -185,6 +191,9 @@ struct ProfileTableItem {
 impl ProfileTableItem {
     fn connect_command(&self) -> AppCommand {
         match self.kind {
+            ProfileTableKind::DevTunnelFiles => AppCommand::StartConfiguredDevTunnelFilesProfile {
+                profile_id: self.identifier.clone(),
+            },
             ProfileTableKind::DevTunnel => AppCommand::StartConfiguredDevTunnelProfile {
                 profile_id: self.identifier.clone(),
             },
@@ -244,6 +253,7 @@ impl LauncherItem<'_> {
     fn profile_table_item(&self) -> ProfileTableItem {
         let kind = match self.kind {
             LauncherItemKind::DevTunnelProfile(_) => ProfileTableKind::DevTunnel,
+            LauncherItemKind::HostFilesProfile(_) => ProfileTableKind::DevTunnelFiles,
             LauncherItemKind::LocalProfile(_) => ProfileTableKind::Local,
             LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
             LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
@@ -268,6 +278,7 @@ impl LauncherItem<'_> {
         match self.kind {
             LauncherItemKind::LocalDefault
             | LauncherItemKind::NewDevTunnel
+            | LauncherItemKind::NewHostFiles
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
@@ -277,6 +288,7 @@ impl LauncherItem<'_> {
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::DevTunnelProfile(id)
+            | LauncherItemKind::HostFilesProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
             | LauncherItemKind::SerialProfile(id)
@@ -302,7 +314,10 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewSsh | LauncherItemKind::SshProfile(_) => {
                 (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
             }
-            LauncherItemKind::NewSftp | LauncherItemKind::SftpProfile(_) => {
+            LauncherItemKind::NewSftp
+            | LauncherItemKind::SftpProfile(_)
+            | LauncherItemKind::NewHostFiles
+            | LauncherItemKind::HostFilesProfile(_) => {
                 (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER)
             }
             LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
@@ -315,6 +330,14 @@ impl LauncherItem<'_> {
 
     fn command(&self) -> AppCommand {
         match self.kind {
+            LauncherItemKind::NewHostFiles => AppCommand::CreateProfile {
+                kind: NewProfileKind::DevTunnelFiles,
+            },
+            LauncherItemKind::HostFilesProfile(profile_id) => {
+                AppCommand::StartConfiguredDevTunnelFilesProfile {
+                    profile_id: profile_id.into(),
+                }
+            }
             LauncherItemKind::NewDevTunnel => {
                 unreachable!("the Dev Tunnel item opens the Dev Tunnel form, not an AppCommand")
             }
@@ -3814,6 +3837,20 @@ pub fn show_launcher(
             ),
         );
     }
+    if cfg!(feature = "experimental-dev-tunnels") {
+        let position = items
+            .iter()
+            .position(|item| matches!(item.kind, LauncherItemKind::NewSftp))
+            .unwrap_or(items.len());
+        items.insert(
+            position,
+            LauncherItem::untabulated(
+                "Dev Tunnels Files".into(),
+                "Browse and transfer host files".into(),
+                LauncherItemKind::NewHostFiles,
+            ),
+        );
+    }
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
     // #70) lead the Running Sessions panel. An already-attached
@@ -3883,6 +3920,11 @@ pub fn show_launcher(
     let profiles_start = items.len();
     items.extend(profiles.iter().map(|profile| {
         let (kind, type_label, location) = match profile {
+            Profile::DevTunnelFiles(files) => (
+                LauncherItemKind::HostFilesProfile(profile.identifier()),
+                "Dev Tunnels Files",
+                files.host().into(),
+            ),
             Profile::DevTunnel(tunnel) => (
                 LauncherItemKind::DevTunnelProfile(profile.identifier()),
                 "Dev Tunnel",
@@ -4735,11 +4777,15 @@ fn show_saved_profiles_panel(
                                                 "Dev Tunnel · Experimental",
                                                 NewProfileKind::DevTunnel,
                                             ),
+                                            ("Dev Tunnels Files", NewProfileKind::DevTunnelFiles),
                                             ("SFTP", NewProfileKind::Sftp),
                                             ("Serial", NewProfileKind::Serial),
                                         ] {
-                                            if kind == NewProfileKind::DevTunnel
-                                                && !cfg!(feature = "experimental-dev-tunnels")
+                                            if matches!(
+                                                kind,
+                                                NewProfileKind::DevTunnel
+                                                    | NewProfileKind::DevTunnelFiles
+                                            ) && !cfg!(feature = "experimental-dev-tunnels")
                                             {
                                                 continue;
                                             }
