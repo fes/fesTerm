@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "be2ffe33387ed3d1e2da43d7d6ff87f9fb826cb4fade3fc919e0c81be59de952"} -->
+<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "48e0d8eee2fcb597ad2a7b8702de3194a3a376a6fa5abf41cbaba404f9a63813"} -->
 # Terminal recording and export
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns private terminal capture, privacy enforcement, synchronized export preparation, and source-safe replay/recovery for recordings.
+Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings.
 
 Canonical docs: [docs/terminal-recording-design.md](../../docs/terminal-recording-design.md), [docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md](../../docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md)
 
@@ -12,8 +12,8 @@ Canonical docs: [docs/terminal-recording-design.md](../../docs/terminal-recordin
 
 Use for: Need to begin capture or confirm a selected session is still eligible before private output is accepted
 
-- [`begin`](../../app/festerm/src/application/recording.rs) — Validates settings, privacy, and tab identity before a private source is prepared
-- [`start_capture`](../../app/festerm/src/application/recording.rs) — Accepts the prepared source and binds live terminal streams under the privacy guard
+- [`begin`](../../app/festerm/src/application/recording.rs) — Validates tab identity, settings, and privacy before a private source is prepared
+- [`start_capture`](../../app/festerm/src/application/recording.rs) — Binds live terminal streams to the prepared source under the privacy guard
 
 Evidence:
 - [`consent_identity_rejects_reconnected_or_replaced_sessions`](../../app/festerm/src/application/recording_tests.rs) — Rejects stale identities before the capture source is accepted

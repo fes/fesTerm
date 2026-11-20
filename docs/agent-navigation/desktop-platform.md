@@ -1,16 +1,16 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "51e3fd921acb8f26128cb9e09daa4bd6a38daf6e04677594d30a318ce12e6e1c"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f6945c89472f9cb4a16bdc08e0150885f687d52ea392c22af19636a3a93c79bf"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaging gates, real native smoke checks, AppKit/Finder bridges, and wake/privacy callbacks across desktop platforms.
+Desktop platform integration owns packaging gates, native smoke verification, AppKit/Finder bridges, and platform wake/privacy callbacks for packaged desktop builds.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
 ## Packaging gate
 
-Use for: When packaging decides whether self-update is allowed
+Use for: When packaging decides whether self-update is allowed or denied
 
 - [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to installability and trust policy
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks install kind and update readiness for packaged builds

@@ -3080,7 +3080,7 @@ fn capture_text_editor_save_as() -> image::RgbaImage {
     );
     harness.run();
 
-    harness.get_by_label("Save As").click();
+    harness.get_by_label("Save As\u{2026}").click();
     harness.run();
     // The listing arrives on a worker thread, so the sheet is empty for the
     // first frames after it opens.

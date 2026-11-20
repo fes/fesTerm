@@ -3449,9 +3449,11 @@ pub enum AppCommand {
     ToggleJavascriptEnabled,
     SetJavaScriptProgramStorage(festerm_config::JavaScriptProgramStorageSettings),
     DeleteJavaScriptProgramStorage {
+        #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
         digest: String,
     },
     RevealJavaScriptProgramStorage {
+        #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
         digest: String,
     },
     RetryAutomationSettings,
@@ -4922,6 +4924,7 @@ impl AppState {
         self.javascript_enabled = javascript;
     }
 
+    #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
     pub(crate) fn javascript_program_storage(
         &self,
     ) -> &[festerm_config::JavaScriptProgramStorageSettings] {

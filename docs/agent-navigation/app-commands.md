@@ -1,37 +1,39 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1d8384ef13927df7f4b240cb1cd4122814a56878f5f0bc9601b480a514c8ebbb"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "33c94272b800ff6b8bddaf7949e3d15f5702fe4241c908e1f3d0e9fa9b4cd445"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns app-wide command intents, singleton-tab routing, and keyboard capture around session and tab actions.
+This domain owns app-wide command intents, singleton-tab routing, keyboard capture scope, overlay gating, and editor command parsing.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
 ## Command route
 
-Use for: a widget or launcher needs to turn a gesture into a state-changing intent
+Use for: A widget or launcher needs to turn a gesture into a state-changing intent
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents for launcher, settings, tabs, and sessions
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from commands to state
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — Typed app intents for launcher, settings, tabs, and sessions.
+- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path from commands to state.
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — close returns to the opener rather than the neighbor
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Close returns to the opener instead of the neighbor.
+- [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — Singleton surfaces are skipped from close fallback.
 
 Caveats:
 - Widgets emit commands; they do not own session policy.
-- dispatch is the single mutation path; direct widget-side tab policy is rejected by design.
+- dispatch is the single mutation path; widget-side tab policy is rejected by design.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 
 ## Tab close flow
 
-Use for: a tab is closing and the fallback focus target must be chosen
+Use for: A tab is closing and the fallback focus target must be chosen
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears unread output on the newly active session
-- [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and selects the next active tab
+- [`set_active`](../../app/festerm/src/tabs.rs) — Records departure and clears unseen output on the newly active session.
+- [`close`](../../app/festerm/src/tabs.rs) — Removes the tab, releases documents, and selects the next active tab.
 
 Evidence:
-- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — fallback order when activation history is absent
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Fallback returns to the opener rather than the neighbor.
+- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — Fallback order when activation history is absent.
 
 Caveats:
 - Only remembered tabs are recorded; singleton surfaces are intentionally skipped.
@@ -40,13 +42,14 @@ Caveats:
 
 ## Keyboard route
 
-Use for: a raw key event is checked for eligibility, capture, and exact-match dispatch
+Use for: A raw key event is checked for eligibility, capture, and exact-match dispatch
 
-- [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — context gate for terminal, markdown, document, and global actions
-- [`consume`](../../app/festerm/src/keyboard.rs) — removes exact matched input and clipboard-derived semantics
+- [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — Context gate for terminal, markdown, document, and global actions.
+- [`consume`](../../app/festerm/src/keyboard.rs) — Removes exact matches and clipboard-derived semantics.
+- [`consume_exact`](../../app/festerm/src/keyboard.rs) — Consumes only the exact expected key combination.
 
 Evidence:
-- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — scope gating and exact-event capture stay aligned
+- [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — Scope gating and exact-event capture stay aligned.
 
 Caveats:
 - Exact modifier and key matching is enforced.
@@ -55,12 +58,13 @@ Caveats:
 
 ## Overlay gate
 
-Use for: a modal or confirmation blocks terminal input while app state remains authoritative
+Use for: A modal or confirmation blocks terminal input while app state remains authoritative
 
-- [`OverlayState`](../../app/festerm/src/overlay_state.rs) — single holder for confirmation prompts, file pickers, and modal blockers
+- [`OverlayState`](../../app/festerm/src/overlay_state.rs) — Single holder for confirmation prompts, file pickers, and modal blockers.
+- [`blocks_terminal_input`](../../app/festerm/src/overlay_state.rs) — Decides whether terminal input should be intercepted.
 
 Evidence:
-- [`blocks_terminal_input_is_true_while_a_confirmation_is_pending`](../../app/festerm/src/overlay_state.rs) — destructive confirmations gate terminal events
+- [`blocks_terminal_input_is_true_while_a_confirmation_is_pending`](../../app/festerm/src/overlay_state.rs) — Destructive confirmations gate terminal events.
 
 Caveats:
 - Password-store lookups and transient notices are excluded from blocking.
@@ -69,9 +73,16 @@ Caveats:
 
 ## Editor commands
 
-Use for: a user types a Vim-style command in the command area and needs it mapped to app behavior
+Use for: A user types a Vim-style command in the command area and needs it mapped to app behavior
 
-- [`ViCommand`](../../app/festerm/src/vi_command.rs) — typed line semantics mapped to standard save, close, and refresh actions
+- [`ViCommand`](../../app/festerm/src/vi_command.rs) — Typed line semantics mapped to save, close, and refresh actions.
+- [`parse`](../../app/festerm/src/vi_command.rs) — Maps a raw command line to a supported editor action.
+- [`completions`](../../app/festerm/src/vi_command.rs) — Offers only commands that are actually valid.
+
+Evidence:
+- [`write_without_a_destination_is_the_ordinary_save`](../../app/festerm/src/vi_command.rs) — Plain save commands resolve to the ordinary save path.
+- [`save_and_close_spellings_all_reach_the_same_command`](../../app/festerm/src/vi_command.rs) — Equivalent save/close spellings collapse to one action.
+- [`the_wider_ex_environment_is_refused_by_name`](../../app/festerm/src/vi_command.rs) — Unsupported Vim config commands are rejected without side effects.
 
 Caveats:
 - Unsupported commands are refused with no side effects.
