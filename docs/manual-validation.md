@@ -5896,6 +5896,18 @@ followed by failed registration does not imply an owner-vault failure. Missing
 lines are inconclusive because logging remains best effort. No automatic retry,
 permission change or retrospective qualification of an older build follows.
 
+After owner/native-registration success, correlate `host.enable_completion`
+lines by the same GUI PID, operation interval and epoch. Fixed boundaries cover
+protected report projection, service context, signed-stage reopening, service
+start and final scope read. Retain only stage/outcome/kind/failure and correlation
+metadata, optional numeric OS code and the closed reason code. Exact known
+static service errors receive a finite reason; all other text remains unknown
+and is never retained. Kind is an I/O classification, not proof of a Keychain cause;
+report errors have kind `none`. Successful projection/start observations are not
+endpoint-readiness proof. No raw errors, protected files, account/reference data
+or paths should be captured. These observations preserve existing failures and
+do not authorize another Enable, Start, permission grant or automatic replay.
+
 A separately authenticated helper that supports it can first run the read-only
 `owner-readiness --state-dir PATH --origin desktop` command for this exact selected
 installation (explicit `headless` is also accepted for that origin). Capture only

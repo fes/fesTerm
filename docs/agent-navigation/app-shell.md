@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "9331dba792bb589cf2547368787eb6022778a782a461c395bd6a3f1fdf4a0030"} -->
+<!-- agent-navigation: {"domain":"app-shell","generator":"2","model":"codex-source-verified","sources":"ad2339bf803175f73569a5eb709fc5cb6c89efa32230e5864178aed5da80b8ed"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -76,10 +76,11 @@ Use for: Exit recovery, crash evidence, and host failure history
 
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context
+- [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs) — Enable boundaries.
 
 Evidence:
 - [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes
-- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Checks the historical pane without claiming readiness or setup result
+- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Historical pane only; no readiness claim
 
 Caveats:
 - Diagnostics preserve evidence but cannot fix runtime logic or app state.
@@ -89,7 +90,7 @@ Caveats:
 
 Use for: Remote file create/delete review and worker lifecycle
 
-- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Retires stale remote reviews and enforces connection scope
+- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Fences retired remote reviews
 - [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory, and selection before confirm
 - [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, bounded outcomes, and Files session lifecycle
 - [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — Builds exact, bounded remote delete review for host files

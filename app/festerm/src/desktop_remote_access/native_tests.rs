@@ -1199,3 +1199,228 @@ fn desktop_remote_access_native_deadline_cannot_hide_revocation_fence_failure() 
     assert!(report.process.is_none());
     drop(held);
 }
+
+#[test]
+fn desktop_remote_access_enable_completion_preserves_boundary_failures_and_redacts() {
+    for (boundary, observation) in [
+        (
+            CompletionBoundary::ServiceContext,
+            ObservationBoundary::ServiceContext,
+        ),
+        (
+            CompletionBoundary::ServiceStage,
+            ObservationBoundary::ServiceStage,
+        ),
+        (
+            CompletionBoundary::ServiceStart,
+            ObservationBoundary::ServiceStart,
+        ),
+        (
+            CompletionBoundary::FinalScope,
+            ObservationBoundary::FinalScope,
+        ),
+    ] {
+        for (kind, message, expected) in [
+            (
+                io::ErrorKind::NotFound,
+                "PRIVATE-REFERENCE-PATH",
+                Failure::PrivateStorage,
+            ),
+            (
+                io::ErrorKind::PermissionDenied,
+                "PRIVATE-REFERENCE-PATH",
+                Failure::PrivateStorage,
+            ),
+            (
+                io::ErrorKind::WouldBlock,
+                "PRIVATE-REFERENCE-PATH",
+                Failure::Observation {
+                    boundary: observation,
+                    kind: io::ErrorKind::WouldBlock,
+                },
+            ),
+            (
+                io::ErrorKind::Other,
+                "owner.vault_locked_PRIVATE",
+                Failure::NativeVault,
+            ),
+            (
+                io::ErrorKind::Other,
+                "host.scope_changed_PRIVATE",
+                Failure::ScopeChanged,
+            ),
+        ] {
+            let root = storage::private_test_directory();
+            let calls = std::cell::Cell::new(0);
+            let error = completion_io::<()>(root.path(), 6, boundary, observation, || {
+                calls.set(calls.get() + 1);
+                Err(io::Error::new(kind, message))
+            })
+            .unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(calls.get(), 1);
+            let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+            assert_eq!(log.lines().count(), 2);
+            assert!(log.contains(&format!(
+                "stage={} outcome=error kind={}",
+                boundary.code(),
+                completion_kind(kind)
+            )));
+            assert!(!log.contains("PRIVATE"));
+            assert!(!log.contains("run="));
+            assert!(!log.contains(&root.path().display().to_string()));
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_enable_completion_report_and_log_failure_preserve_results() {
+    for broken_log in [false, true] {
+        let root = storage::private_test_directory();
+        if broken_log {
+            std::fs::create_dir(root.path().join("worker.log")).unwrap();
+        }
+        for expected in [
+            Failure::PrivateStorage,
+            Failure::ScopeChanged,
+            Failure::Cancelled,
+            Failure::Timeout,
+        ] {
+            let result = completion_report(root.path(), 6, || Err(expected));
+            assert!(matches!(result, Err(actual) if actual == expected));
+        }
+        let report = completion_report(root.path(), 6, || {
+            Ok(Report {
+                setup_complete: true,
+                failure: Some(Failure::PrivateStorage),
+                ..Report::default()
+            })
+        })
+        .unwrap();
+        assert!(report.setup_complete);
+        assert_eq!(report.failure, Some(Failure::PrivateStorage));
+        let value = completion_io(
+            root.path(),
+            6,
+            CompletionBoundary::ServiceStart,
+            ObservationBoundary::ServiceStart,
+            || Ok(17),
+        )
+        .unwrap();
+        assert_eq!(value, 17);
+        let error = completion_io::<()>(
+            root.path(),
+            6,
+            CompletionBoundary::FinalScope,
+            ObservationBoundary::FinalScope,
+            || Err(io::Error::other("host.scope_changed")),
+        )
+        .unwrap_err();
+        assert_eq!(error, Failure::ScopeChanged);
+        if !broken_log {
+            let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+            assert!(log.contains("stage=report outcome=error kind=none failure=private_storage"));
+            assert!(log.contains("stage=service_start outcome=ok kind=none failure=none"));
+        }
+        assert!(!root.path().join("host-runtime.json").exists());
+    }
+}
+
+#[test]
+fn desktop_remote_access_enable_completion_actual_io_retains_existing_log_bounds() {
+    let root = storage::private_test_directory();
+    completion_event(
+        root.path(),
+        6,
+        CompletionBoundary::Report,
+        CompletionOutcome::Begin,
+        None,
+    );
+    std::fs::write(root.path().join("worker.log"), vec![b'x'; 256 * 1024]).unwrap();
+    let path = root.path().join("PRIVATE-credential-reference-canary");
+    assert_eq!(
+        completion_io(
+            root.path(),
+            6,
+            CompletionBoundary::ServiceStage,
+            ObservationBoundary::ServiceStage,
+            || std::fs::read(&path)
+        )
+        .unwrap_err(),
+        Failure::PrivateStorage
+    );
+    let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+    assert_eq!(
+        std::fs::metadata(root.path().join("worker.log.1"))
+            .unwrap()
+            .len(),
+        256 * 1024
+    );
+    assert!(log.lines().all(|line| line.len() < 1024));
+    assert!(log.contains("kind=missing failure=private_storage"));
+    assert!(!log.contains("PRIVATE"));
+    assert!(log
+        .lines()
+        .all(|line| line.contains(&format!("pid={} ", std::process::id()))));
+}
+
+#[test]
+fn desktop_remote_access_enable_completion_reason_allowlist_and_numeric_os_are_bounded() {
+    for (message, expected) in [
+        (
+            "host.service_native_operation_failed",
+            "native_operation_failed",
+        ),
+        (
+            "host.service_start_not_observed_running",
+            "start_not_observed_running",
+        ),
+        ("host.service_executable_changed", "executable_changed"),
+        (
+            "host.service_authenticated_bundle_changed",
+            "authenticated_bundle_changed",
+        ),
+        ("host.staged_artifact_mismatch", "staged_artifact_mismatch"),
+        (
+            "host.service_native_operation_failed PRIVATE-CREDENTIAL",
+            "unknown",
+        ),
+    ] {
+        let root = storage::private_test_directory();
+        let expected_failure = failure(io::Error::other(message));
+        assert_eq!(
+            completion_io::<()>(
+                root.path(),
+                6,
+                CompletionBoundary::ServiceStart,
+                ObservationBoundary::ServiceStart,
+                || Err(io::Error::other(message))
+            )
+            .unwrap_err(),
+            expected_failure
+        );
+        let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+        assert!(log.contains(&format!("os=none reason={expected}")));
+        assert!(!log.contains("PRIVATE"));
+        assert!(!log.contains("host.service_"));
+    }
+    let root = storage::private_test_directory();
+    let original = io::Error::from_raw_os_error(13);
+    let expected = observation_failure(
+        io::Error::from_raw_os_error(13),
+        ObservationBoundary::ServiceStart,
+    );
+    assert_eq!(
+        completion_io::<()>(
+            root.path(),
+            6,
+            CompletionBoundary::ServiceStart,
+            ObservationBoundary::ServiceStart,
+            || Err(original)
+        )
+        .unwrap_err(),
+        expected
+    );
+    let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+    assert!(log.contains("os=13 reason=unknown"));
+}

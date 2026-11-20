@@ -2529,6 +2529,17 @@ Callbacks do not reacquire the installation lease. Logging is best effort and
 old runtime-history readers skip these lines; there is no new authority, retry,
 UI readiness claim or diagnosis of the retained #816 native failure.
 
+The app records post-registration completion through the separate bounded
+`host.enable_completion` line kind: protected report, service context, signed
+stage reopening, start and final scope. Closed stage/outcome/I/O-kind/failure
+labels, optional numeric OS code and a small exact-static-reason allowlist
+preserve existing failure mapping, cancellation, fences and call order. The new
+reason classification uses exact literals only; unknown text is never retained.
+The existing failure mapping, including its substring classification, is unchanged.
+No run is invented, owner noninteractive reads are unchanged, and no raw error
+or resource/credential identifier is logged. These observations distinguish
+boundaries without turning their success into serving authority or readiness.
+
 The separate `owner-readiness --state-dir PATH --origin desktop|headless` helper command opens
 only existing selected native-vault state and uses the current noninteractive
 snapshot plus the same consent predicate. Its bounded schema-1 reply explicitly
