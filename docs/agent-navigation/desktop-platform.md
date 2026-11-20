@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "86fbfefac1d3878af1d390ab0c79ebc9c8ec7f714c598af6863de5c2e4baba43"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "294a581d8b3f476b8f4d0f6c8f7b2d56138c814c3ae7427ba95f4aa9baad1445"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged self-update gating, native smoke proofs, Finder/AppKit event bridging, and OS wake/privacy hooks for the desktop app.
+Desktop platform integration owns packaged updater gating, native smoke proofing, macOS Finder/AppKit bridging, and OS wake/privacy hooks for the desktop app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,8 +12,8 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: A packaged build decides whether self-update is allowed
 
-- [`UpdateController`](../../app/festerm/src/updates.rs) — tracks the install kind and update readiness state
-- [`from_build_marker`](../../app/festerm/src/updates.rs) — maps build markers to installable self-update modes
+- [`UpdateController`](../../app/festerm/src/updates.rs) — tracks install kind and update readiness state
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — maps build markers to installable self-update modes
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — fails closed when packaged builds omit the update key
@@ -22,7 +22,6 @@ Evidence:
 Caveats:
 - Install markers gate updater availability, not signing.
 - Public-key presence is required before any self-update path.
-- Package-smoke binaries are not release bundles.
 
 ## Native smoke
 
@@ -38,7 +37,6 @@ Evidence:
 Caveats:
 - Only one smoke mode and result path may be active.
 - This checks real app and PTY behavior, not mocks.
-- Native focus checks are platform-specific and not interchangeable.
 
 ## macOS bridge
 
@@ -54,7 +52,6 @@ Evidence:
 Caveats:
 - The bridge queues events until the app drains and routes them.
 - Menu semantics are app policy; the bridge only emits commands.
-- Native event payloads are bounded and rejected rather than silently stored.
 
 ## Wake and privacy
 
@@ -70,4 +67,3 @@ Evidence:
 Caveats:
 - Resume is treated as wake; suspend is intentionally ignored.
 - Linux privacy depends on logind and compatible GNOME session semantics.
-- Unknown or broken bus state counts as privacy loss.
