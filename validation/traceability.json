@@ -2610,7 +2610,12 @@
         "sftp_input_backspace_reclaims_exceptional_capacity_with_hysteresis",
         "sftp_input_refusal_survives_full_queue_without_reallocating_or_failing_the_session",
         "sftp_input_refusal_is_retried_while_a_command_waits_for_io",
-        "text_sftp_refuses_overlong_prefixes_and_fragments_then_executes_the_next_command"
+        "text_sftp_refuses_overlong_prefixes_and_fragments_then_executes_the_next_command",
+        "single_upload_lost_open_reply_reports_uncertainty_with_primary_error",
+        "batch_upload_lost_open_reply_reports_uncertainty_before_primary_failure",
+        "upload_open_generic_failure_is_not_creation_rollback_proof",
+        "upload_open_definitive_refusals_never_claim_owned_output",
+        "upload_open_cancel_keeps_unconfirmed_creation_for_owner_cleanup"
       ],
       "manual_scenarios": [
         "SFTP-01",
@@ -4609,7 +4614,12 @@
         "enqueue_external_drop_upload_enqueues_one_request_per_dropped_path",
         "build_reveal_command_targets_the_given_path_on_this_platform",
         "reveal_in_file_manager_label_names_the_current_platform_action",
-        "the_filter_field_centres_its_contents_in_the_box"
+        "the_filter_field_centres_its_contents_in_the_box",
+        "single_upload_lost_open_reply_reports_uncertainty_with_primary_error",
+        "batch_upload_lost_open_reply_reports_uncertainty_before_primary_failure",
+        "upload_open_generic_failure_is_not_creation_rollback_proof",
+        "upload_open_definitive_refusals_never_claim_owned_output",
+        "upload_open_cancel_keeps_unconfirmed_creation_for_owner_cleanup"
       ],
       "manual_scenarios": [
         "FD-05",
