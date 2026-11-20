@@ -1892,6 +1892,11 @@ CLI setup/run now invoke this component through the shared controller, and proce
 Running is not Ready. Signed native install/start/cleanup and persistent
 daemon/startup qualification remain gates; see
 [native component boundaries](../native-host-services.md).
+Launchd process observations use the enclosing service's fields, excluding
+nested resource/jetsam coalition state/PID/exit data while preserving exact
+private definition, identity, argv and current-epoch fences. Duplicate direct
+fields or malformed nesting refuse observation; parser fixtures do not replace
+matching native GUI Disable qualification.
 
 **Bounded stage 7 progress (#681):** Separate host package schema 2 requires `festerm-host` on
 all six existing targets. Optional shared HTTP acquisition and headless
@@ -2200,6 +2205,10 @@ blocked and a pending result is not successful uninstall. See the
   `native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup`,
   `native_service_outstanding_effect_retains_cross_instance_exclusion_after_timeout`,
   `native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin`,
+  `native_service_macos_observation_ignores_nested_coalition_fields`,
+  `native_service_macos_observation_rejects_duplicate_direct_fields`,
+  `native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting`,
+  `native_service_macos_observation_preserves_flat_fixture_format`,
   `authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache`
   and `failed_native_qualification_never_adds_execute_permission`.
   `authenticated_runtime_bundle_qualifies_every_helper_and_fences_changed_sessiond`,

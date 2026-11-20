@@ -594,6 +594,15 @@ and actual binary refusal tests cover this seam, not real native installation.
 Windows publisher/graceful-stop restrictions and Linux sign-in admission remain
 unchanged.
 
+Launchd observation scopes path, program, exact argv and process state/PID/exit
+to the enclosing service dictionary. Nested resource/jetsam coalitions may have
+active states or PIDs while the service is stopped; those fields carry no
+service-process authority. Duplicate direct fields, nested-only identity,
+unbalanced blocks and inconsistent nesting refuse observation. Literal argv
+values are not parsed as dictionaries. The existing flat injected-manager
+fixture format remains supported. This changes neither native commands nor the
+protected receipt/definition/epoch fences, and Running still does not mean Ready.
+
 `services::Services::current_user(&Store, state_dir)` binds the actual protected
 store directory and current OS account, never an arbitrary configured service
 user. Native operations have a separate exclusive lease, allowing the short
