@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "d28a184425cb01067d22e6bff42a24e7be51bcf1a4dc4a3f4e23bc5afd1506b2"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "443a66113700b4dd9b09a1a1655cce0be50513af3b5fa833fc202973b5d25bb9"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -56,6 +56,7 @@ Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
 - Unsupported, missing, locked, or unavailable native storage is a first-class error.
 - Secret references are opaque and must remain canonical UUIDv4 strings.
+- Dedicated macOS owner-readiness disables process Keychain UI before store construction; shared foreground getters do not.
 
 ## File security
 

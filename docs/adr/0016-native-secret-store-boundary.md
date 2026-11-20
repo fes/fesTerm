@@ -36,3 +36,16 @@ private keys, passphrases, agents, key files, or host trust.
   on Linux; KWallet is usable only through its Secret Service integration.
 - TOML remains secret-free: it can contain only an opaque reference for a
   native stored SSH password.
+
+### Dedicated read-only diagnostic process fence
+
+The macOS `owner-readiness` CLI permanently disables process Keychain UI and
+verifies false readback before selected-store construction. Setter/readback
+failure refuses before observation. The shared native store and foreground GUI
+getters never install this fence. It changes only the diagnostic process, grants
+no item access, and retains per-query noninteractive matching.
+
+Validation impact: initializer ordering/refusal and setter/readback fixture logic,
+plus isolated CLI invocation, cover the boundary without proving native credential
+access. Native prompt-free qualification remains separate; see
+[ADR 0084](0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).

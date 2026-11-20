@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "1743582e20c9de2fdc3fb236e82bf0e26759a2f1ca6bf3bcfa572342504a959f"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -90,3 +90,4 @@ Caveats:
 - Containment retries preserve receipts without mutating live service state.
 - Helper gate checks reject unsupported or foreign capabilities before consent.
 - Owner diagnostics grant no credential, retry or serving authority.
+- macOS owner-readiness installs the dedicated process no-UI fence before any selected-store observation.
