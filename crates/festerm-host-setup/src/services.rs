@@ -866,21 +866,117 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Explicit start requires current protected native-vault policy. A locked
     /// vault propagates its actionable error; it never triggers sign-in/fallback.
     pub fn start(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        {
+            let repeated = std::cell::Cell::new(false);
+            self.start_with(stage, epoch, || {
+                self.require_start_credentials_observed(epoch, repeated.replace(true))
+            })
+        }
+        #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
         self.start_with(stage, epoch, || self.require_start_credentials())
     }
 
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn require_start_credentials_observed(&self, epoch: u64, repeated: bool) -> io::Result<()> {
+        self.require_start_credentials_observed_with(epoch, repeated, || {
+            self.store.owner_enrollment()
+        })
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn require_start_credentials_observed_with(
+        &self,
+        epoch: u64,
+        repeated: bool,
+        open: impl FnOnce() -> io::Result<crate::enrollment::OwnerEnrollment<'a>>,
+    ) -> io::Result<()> {
+        use crate::enrollment::{
+            observe_owner_result, OwnerAdmissionEvent, OwnerAdmissionStage as Stage,
+        };
+        let mut observe = |event| self.start_owner_event(epoch, repeated, false, event);
+        observe(OwnerAdmissionEvent::Begin(Stage::StartCredentials));
+        let result = (|| {
+            let enrollment = observe_owner_result(Stage::StoreOpen, &mut observe, open)?;
+            self.require_start_credentials_with_observed(&enrollment, &mut |event| {
+                self.start_owner_event(epoch, repeated, true, event)
+            })
+        })();
+        observe(match &result {
+            Ok(_) => OwnerAdmissionEvent::Pass(Stage::StartCredentials),
+            Err(error) => OwnerAdmissionEvent::Fail(
+                Stage::StartCredentials,
+                crate::enrollment::OwnerAdmissionFailure::from_io(error),
+            ),
+        });
+        result
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn start_owner_event(
+        &self,
+        epoch: u64,
+        repeated: bool,
+        noninteractive: bool,
+        event: crate::enrollment::OwnerAdmissionEvent,
+    ) {
+        use crate::enrollment::OwnerAdmissionEvent;
+        let (stage, outcome, category) = match event {
+            OwnerAdmissionEvent::Begin(stage) => (stage, "begin", "none"),
+            OwnerAdmissionEvent::Pass(stage) => (stage, "ok", "none"),
+            OwnerAdmissionEvent::Fail(stage, reason) => (stage, "error", reason.code()),
+        };
+        festerm_tunnel_bridge::worker_log::WorkerLog::new(&self.state).event(
+            if noninteractive {
+                "host.owner_start_noninteractive"
+            } else {
+                "host.start_credentials"
+            },
+            &[
+                ("epoch", &epoch.to_string()),
+                (
+                    "check",
+                    if repeated {
+                        "before_mutation"
+                    } else {
+                        "initial"
+                    },
+                ),
+                ("stage", stage.code()),
+                ("outcome", outcome),
+                ("category", category),
+            ],
+        );
+    }
+
+    #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
     fn require_start_credentials(&self) -> io::Result<()> {
         let enrollment = self.store.owner_enrollment()?;
         self.require_start_credentials_with(&enrollment)
     }
 
+    #[cfg(any(test, not(all(feature = "cloud", feature = "host-runtime"))))]
     fn require_start_credentials_with(
         &self,
         enrollment: &crate::enrollment::OwnerEnrollment<'_>,
     ) -> io::Result<()> {
+        self.require_start_credentials_with_observed(enrollment, &mut |_| {})
+    }
+
+    fn require_start_credentials_with_observed(
+        &self,
+        enrollment: &crate::enrollment::OwnerEnrollment<'_>,
+        observe: &mut dyn FnMut(crate::enrollment::OwnerAdmissionEvent),
+    ) -> io::Result<()> {
         let expected = self.store.snapshot()?;
         if expected.settings.ordinary_access == crate::lifecycle::OrdinaryAccess::ProviderOwner {
-            let current = enrollment.current_snapshot_noninteractive()?;
+            #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+            let current = enrollment.current_snapshot_noninteractive_observed(observe)?;
+            #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
+            let current = {
+                let _ = observe;
+                enrollment.current_snapshot_noninteractive()?
+            };
             if current.installation() != &expected || expected.phase != Phase::Provisioned {
                 return Err(refused("host.runtime_consent_changed"));
             }

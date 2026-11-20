@@ -5908,6 +5908,17 @@ endpoint-readiness proof. No raw errors, protected files, account/reference data
 or paths should be captured. These observations preserve existing failures and
 do not authorize another Enable, Start, permission grant or automatic replay.
 
+During native start, `host.start_credentials` marks each existing credential
+check (`initial` or `before_mutation`). Nested `host.owner_start_noninteractive`
+lines identify the provider-owner NI snapshot API path with the same finite
+owner stages/categories; that label does not prove actual OS prompt behavior.
+OwnerOnly retains its existing getter and has no NI snapshot events. Capture
+only the correlated GUI PID/time/epoch/check/stage/outcome/category. The exact
+static native timeout is now `reason=native_timeout`; it remains an error, never
+permission to reset the unchanged 15-second native-operation deadline. The
+retained R4 duration/prompts fit budget exhaustion but do not establish that
+cause without the exact result. No native retry or authority change follows.
+
 A separately authenticated helper that supports it can first run the read-only
 `owner-readiness --state-dir PATH --origin desktop` command for this exact selected
 installation (explicit `headless` is also accepted for that origin). Capture only

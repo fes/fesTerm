@@ -6888,6 +6888,8 @@
         "legacy_reader_refuses_explicit_provider_owner_but_keeps_owner_only_compatible",
         "ordinary_mode_configuration_is_explicit_disabled_consent_not_a_runtime_grant",
         "native_service_start_zero_admin_requires_fresh_provider_snapshot_and_keeps_owner_only_strict",
+        "native_service_start_credential_delay_exhausts_inherited_budget_without_effects",
+        "native_service_start_credential_observations_use_ni_reads_and_keep_locked_refusal",
         "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend",
         "fixed_worker_routes_reject_arbitrary_origin_flags_and_relative_paths",
         "windows_desktop_worker_revision6_binds_both_roles_and_retains_raw_observation",

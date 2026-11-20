@@ -97,6 +97,7 @@ fn completion_kind(kind: io::ErrorKind) -> &'static str {
 #[derive(Clone, Copy)]
 enum CompletionReason {
     NativeOperationFailed,
+    NativeTimeout,
     StartNotObservedRunning,
     ExecutableChanged,
     AuthenticatedBundleChanged,
@@ -109,6 +110,7 @@ impl CompletionReason {
         // by substring, or walk a possibly credential-bearing source chain.
         match error.to_string().as_str() {
             "host.service_native_operation_failed" => Self::NativeOperationFailed,
+            "host.service_native_timeout" => Self::NativeTimeout,
             "host.service_start_not_observed_running" => Self::StartNotObservedRunning,
             "host.service_executable_changed" => Self::ExecutableChanged,
             "host.service_authenticated_bundle_changed" => Self::AuthenticatedBundleChanged,
@@ -119,6 +121,7 @@ impl CompletionReason {
     fn code(self) -> &'static str {
         match self {
             Self::NativeOperationFailed => "native_operation_failed",
+            Self::NativeTimeout => "native_timeout",
             Self::StartNotObservedRunning => "start_not_observed_running",
             Self::ExecutableChanged => "executable_changed",
             Self::AuthenticatedBundleChanged => "authenticated_bundle_changed",

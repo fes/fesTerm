@@ -2776,3 +2776,140 @@ fn native_service_windows_fresh_reservation_retains_raw_snapshot_and_never_start
 #[cfg(all(feature = "cloud", feature = "host-runtime"))]
 #[path = "windows_worker_tests.rs"]
 mod windows_worker_tests;
+
+#[test]
+fn native_service_start_credential_delay_exhausts_inherited_budget_without_effects() {
+    struct DeadlineRunner(FakeRunner);
+    impl CommandRunner for DeadlineRunner {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            if native::check_operation_for_test().is_err() {
+                // Exercise the real runner's pre-spawn refusal after expiry;
+                // still-live requests use the owned in-process manager fixture.
+                return native::NativeRunner.execute(request);
+            }
+            self.0.execute(request)
+        }
+    }
+    for expire_at in [1, 2] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Linux);
+        base.install(&stage, snapshot.epoch).unwrap();
+        base.runner.state.borrow_mut().calls.clear();
+        let active = Services {
+            store: &store,
+            state: base.state,
+            context: base.context,
+            runner: DeadlineRunner(base.runner),
+        };
+        let checks = std::cell::Cell::new(0);
+        let error = active
+            .start_with(&stage, snapshot.epoch, || {
+                checks.set(checks.get() + 1);
+                if checks.get() == expire_at {
+                    native::expire_operation_for_test();
+                }
+                Ok(())
+            })
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), "host.service_native_timeout");
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(checks.get(), expire_at);
+        let state = active.runner.0.state.borrow();
+        assert!(!state.running);
+        assert!(state.calls.iter().all(|request| matches!(request,
+            NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "show"))));
+        assert_eq!(state.calls.len(), usize::from(expire_at == 2));
+        drop(state);
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+        assert!(!active.state.join("host-runtime.json").exists());
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_start_credential_observations_use_ni_reads_and_keep_locked_refusal() {
+    for locked in [false, true] {
+        let (root, store, vault) = crate::enrollment::tests::setup_origin(Origin::Desktop);
+        let owners = crate::enrollment::tests::fixture_owners(&store, vault.clone());
+        owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        reconfigure_lifecycle_mode(
+            &store,
+            false,
+            crate::lifecycle::OrdinaryAccess::ProviderOwner,
+        );
+        owners.snapshot().unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let mut active = services(root.path(), &store, Platform::Linux);
+        active.state = root.path().join("installation");
+        active.runner.receipt = active.state.join(RECORD);
+        let stage = trusted::fixture(root.path());
+        active
+            .install_with_recovery(&stage, snapshot.epoch)
+            .unwrap();
+        let interactive = vault
+            .interactive_reads
+            .load(std::sync::atomic::Ordering::Acquire);
+        let ni = vault
+            .noninteractive_reads
+            .load(std::sync::atomic::Ordering::Acquire);
+        vault
+            .locked
+            .store(locked, std::sync::atomic::Ordering::Release);
+        let repeated = std::cell::Cell::new(false);
+        let result = active.start_with(&stage, snapshot.epoch, || {
+            active.require_start_credentials_observed_with(
+                snapshot.epoch,
+                repeated.replace(true),
+                || {
+                    Ok(crate::enrollment::tests::fixture_owners(
+                        &store,
+                        vault.clone(),
+                    ))
+                },
+            )
+        });
+        if locked {
+            assert_eq!(
+                result.err().unwrap().to_string(),
+                "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
+            );
+            assert!(!active.runner.state.borrow().running);
+        } else {
+            assert_eq!(result.unwrap().process, ProcessState::Running);
+        }
+        assert_eq!(
+            vault
+                .interactive_reads
+                .load(std::sync::atomic::Ordering::Acquire),
+            interactive
+        );
+        assert_eq!(
+            vault
+                .noninteractive_reads
+                .load(std::sync::atomic::Ordering::Acquire)
+                - ni,
+            if locked { 1 } else { 2 }
+        );
+        let log = std::fs::read_to_string(active.state.join("worker.log")).unwrap();
+        assert!(log.contains("host.owner_start_noninteractive"));
+        assert!(log.contains("check=initial stage=anchor_read"));
+        assert_eq!(
+            log.contains("check=before_mutation stage=anchor_read"),
+            !locked
+        );
+        assert_eq!(
+            log.contains("stage=anchor_read outcome=error category=locked_or_unavailable"),
+            locked
+        );
+        assert!(!log.contains("github:1234"));
+        assert!(!log.contains("run="));
+        assert!(!log.contains(&active.state.display().to_string()));
+    }
+}

@@ -1371,6 +1371,7 @@ fn desktop_remote_access_enable_completion_reason_allowlist_and_numeric_os_are_b
             "host.service_native_operation_failed",
             "native_operation_failed",
         ),
+        ("host.service_native_timeout", "native_timeout"),
         (
             "host.service_start_not_observed_running",
             "start_not_observed_running",

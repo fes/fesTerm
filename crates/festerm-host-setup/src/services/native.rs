@@ -182,6 +182,20 @@ impl CommandRunner for NativeRunner {
     }
 }
 
+// Test-only deadline manipulation reuses the actual runner's remaining check;
+// no sleeping, native manager, or production timeout override is introduced.
+#[cfg(test)]
+pub(super) fn expire_operation_for_test() {
+    UNTIL.with(|slot| {
+        assert!(slot.get().is_some());
+        slot.set(Some(Instant::now() - Duration::from_secs(1)));
+    });
+}
+#[cfg(test)]
+pub(super) fn check_operation_for_test() -> io::Result<()> {
+    remaining(UNTIL.with(|slot| slot.get().expect("owned operation"))).map(|_| ())
+}
+
 fn remaining(until: Instant) -> io::Result<Duration> {
     until
         .checked_duration_since(Instant::now())
