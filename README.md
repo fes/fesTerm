@@ -61,9 +61,11 @@ frontend-owned terminal adoption and account fencing. Its original manually
 paired owner path is advanced administration and does not qualify normal
 account-based remoting. The ordinary provider-authorized server/client and UI
 integration has focused regression and controlled native-helper coverage. The
-[two controlled Windows-client/Linux-server cases](validation/dev-tunnels/windows-client-linux-0.17.12.json)
-include both creation policies and matched-grid Copilot comparisons; the full
-24-case native matrix remains incomplete. Explicit
+[Windows-client/Linux-server](validation/dev-tunnels/windows-client-linux-0.17.12.json)
+and [Linux-client/Windows-server](validation/dev-tunnels/linux-client-windows-native.json)
+records cover both creation policies and matched-grid Copilot comparisons.
+These four accepted cases use pinned cohorts; the full 24-case matrix and
+combined-release qualification remain incomplete. Explicit
 creation keeps its issued action after an uncertain result, with no replacement
 create, automatic enrollment or legacy fallback. This is not stage-6 completion.
 The opt-in mobile client has a protected native-vault original-action checkpoint:

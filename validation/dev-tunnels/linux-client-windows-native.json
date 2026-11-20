@@ -1,0 +1,228 @@
+{
+  "record_version": 1,
+  "status": "accepted controlled functional cases on pinned OFF and ON cohorts",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "server": "Windows",
+    "client": "Linux"
+  },
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "OFF and ON use different pinned artifacts. Both functional cases are accepted; this does not qualify one final combined release.",
+  "creation_OFF": {
+    "status": "root-agent accepted full pinned case",
+    "sources": {
+      "Linux_GUI": {
+        "source": "4b37e60f88013ffd9000be08f9b4b8cfd61e2809",
+        "version": "0.17.12",
+        "ELF_sha256": "079074ce706dbde0014a0b6d4dfd68c1e43018033da7d2409c5712b880ebe131"
+      },
+      "Windows_GUI_and_signed_HOST": {
+        "source": "870d83674bd55d23eb6af14b451de121047ac325",
+        "version": "0.17.14"
+      },
+      "SDK": {
+        "source": "cef17c70a2b98f587d6767c838a9c752114b0ea1",
+        "artifact_id": 14569815228,
+        "ELF_sha256": "984d7b4b7a5e945a2e39006a25d1ff646df57fa3fd0b7584524530f6170fe218"
+      }
+    },
+    "GUI": "Normal discovery, shared/private inventory, same-shell saved reconnect and fresh I/O; never-opened Start disabled and new HOST shell hidden.",
+    "SDK": "Private omission and direct Denied or Stale; stopped-profile and generic creation denied; shared ensure/attach twice with parsed fresh output and exact detach survival.",
+    "paired_visual_and_queries": "Both 74x19 and 79x20: ten single replies, six equal environment fields and root-agent-reviewed normal unauthenticated Copilot semantic layout.",
+    "preservation": "All 18 Windows actors and 17 Linux actors, full protected records and six Linux journals preserved after normal GUI/SDK cleanup.",
+    "first_failure": "Initial earlier SDK raw-line proof timed out. Observation screenshot demonstrated execution; original raw transport output was not captured. Corrected terminal-screen proof SDK passed once in 20.404 seconds. Original failure retained.",
+    "acceptance": {
+      "basename": "ROOT-LINUX-WINDOWS-OFF-CASE-ACCEPTANCE.json",
+      "sha256": "aa792c8d1d38a252ea287154621abe974b3b64dcfac4bd069d2b3b3b40b45261"
+    },
+    "visual_review": {
+      "basename": "ROOT-OFF34-PAIRED-QUERY-AND-VISUAL-ACCEPTANCE.json",
+      "sha256": "24bdb575221918371348cd5e5cade8587aa5b777736efaadef05061bad136d1c"
+    }
+  },
+  "creation_ON": {
+    "status": "accepted full pinned functional case",
+    "GUI_sources": {
+      "source": "8281078a9fdc29c79ebcb9dfaed62245ab7f3c44",
+      "checkout": "5c881f7c0328fb0921c51a198577926e4f3f3e7a",
+      "tree": "a11856efc5b9fc0a4616def15bdb457de9cfc311",
+      "version": "0.17.15",
+      "Windows_artifact_id": 14567782337,
+      "Windows_PE_sha256": "1842afc5245c790b452cc1ed6209a269ef20c48ab3af9b78364c59851c616eb2",
+      "Linux_artifact_id": 14565263882,
+      "Linux_ELF_sha256": "49cecfbf70d40c1ae73b74a50ec20f16ff42b1a59fe28d56f9bc6b1e5426542d",
+      "Linux_packaging": "13-file development AppImage core prefix with provenance; not an AppImage"
+    },
+    "signed_HOST_and_new_daemon": {
+      "source": "1046b6abf907a98161e2f26a0b8dc440886cd761",
+      "version": "0.17.15",
+      "Windows_archive_sha256": "b8b26cacb777400610714809ffda05505eeddbeba3357f18078521108ba06cbc",
+      "offline_authentication_receipt_sha256": "07afea372be3da76c6c36df968c533c3df95d6e8ab2cf083b7a389504a3248f2",
+      "later_core_fixes_deployed": false
+    },
+    "SDK": {
+      "source": "5ab081644f27120b8fef47dc041bfb39cb966789",
+      "artifact_id": 14576371143,
+      "ELF_sha256": "1d1fd8a954f5235b344d5771c7b8ec0a85fcee726aba6b174c199134883aad17",
+      "result": "One bounded whole workflow passed in 22.538 seconds. Existing shared ensure twice reused its generation; one persistent generic was created and ensured again with the same generation; fresh I/O and detach survival passed. Private target refused; the unused negative-control logical ID remained absent.",
+      "cohort_limit": "Existing shared recovery used a retained 0.17.12 daemon. New generic creation and all current GUI/query/Copilot/reconnect observations used the newly created signed 0.17.15 daemon.",
+      "receipt": {
+        "basename": "ONE-PASS-ON-SHARED794-AGGREGATE.json",
+        "sha256": "f6e2be2d6aa26dff11cb7b315bccdf44377523cb09401a7465d5f688716507d0"
+      }
+    },
+    "GUI": "Normal Find Connect showed creation affordance and excluded the private profile. Connected once to the SDK-created running generic; observed adopted terminal and fresh standalone ASCII output. Normal Save As Profile created an exact-generation AttachOnly recipe. Explicit disconnect and saved recipe reconnect preserved the same daemon and shell with fresh output.",
+    "post_TUI_reconnect": "After both fresh Copilot processes and resizes, one explicit disconnect and same saved AttachOnly reconnect recovered the post-TUI terminal and produced new standalone ASCII output. No replacement, takeover, Start or reset.",
+    "post_TUI_output": {
+      "basename": "75-POSTTUI-one-output-enter.png",
+      "sha256": "bd8dbaca61f5cc4da4352cc822052e9885d5f4da4512b1a8dc74d96db76fd51c"
+    },
+    "ConPTY": {
+      "local": "The actual Windows GUI loaded the install-relative pinned Microsoft ConPTY DLL; its local OpenConsole used the matching prefix. Two fresh sidecars came from the authenticated signed HOST archive.",
+      "DLL_sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+      "OpenConsole_sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+      "remote_limit": "New daemon/helper runtime paths and creation after authenticated HOST15 activation bind the remote runtime. No new independent live-cache/OpenConsole rehash is claimed."
+    },
+    "collector_sha256": "d8f556bbf0828acb23c8be14dec18c8911b6e5f8dde723fcc4d8d0944de50abf",
+    "Copilot": {
+      "version": "1.0.112",
+      "PE_sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62",
+      "procedure": "Fresh normal CLI on both sides at each actual matched grid, same public cwd, ordinary folder trust acknowledgement, no sign-in, subscription activation or paid/model request. Both original image pairs independently reviewed by the root agent."
+    },
+    "pairs": [
+      {
+        "grid": [
+          74,
+          19
+        ],
+        "result": "passed",
+        "queries": 10,
+        "single_reply_each": true,
+        "environment_fields_equal": 6,
+        "actual_grid_stable": true,
+        "terminal_restored": true,
+        "collector_drained": true,
+        "DSR_row_column": [
+          6,
+          1
+        ],
+        "reply_bytes_each": 202,
+        "local_raw": {
+          "basename": "raw-L-result.json",
+          "sha256": "972e5a60e99b2d531a4b646a14c2d643556123a658f2698dea3791d7f661f742"
+        },
+        "remote_raw": {
+          "basename": "raw-R-result.json",
+          "sha256": "a0b819e62860cd79af22236033c65db1b45f02514e369f4cf29013c910992c1f"
+        },
+        "pair_receipt": {
+          "basename": "FIRST-CHANGED-FIXTURE-ACTUAL-PAIR-RESULT.json",
+          "sha256": "56e521419e3eee78570d53867cab119acadb7f4a9f805bb64f69537c4b040762"
+        },
+        "local_Copilot": {
+          "basename": "LOCAL-normal-Copilot.png",
+          "sha256": "c55cab7baed0f7b7aa90e08d3b5ce7290839f7230ab9ee72262d50622a9b7a6e"
+        },
+        "remote_Copilot": {
+          "basename": "REMOTE-normal-Copilot-settled.png",
+          "sha256": "63666a2ea4da5f1b85db3ac4f40d9d9caa999661ea3a3b447aa588b7eb4a7a8b"
+        }
+      },
+      {
+        "grid": [
+          79,
+          20
+        ],
+        "result": "passed",
+        "queries": 10,
+        "single_reply_each": true,
+        "environment_fields_equal": 6,
+        "actual_grid_stable": true,
+        "terminal_restored": true,
+        "collector_drained": true,
+        "DSR_row_column": [
+          6,
+          1
+        ],
+        "reply_bytes_each": 202,
+        "local_raw": {
+          "basename": "raw-L-result.json",
+          "sha256": "d9fc00005297f14df0c20c4fed2b5b7a2ed0d005abbc66a64c7d510e0925b699"
+        },
+        "remote_raw": {
+          "basename": "raw-R-result.json",
+          "sha256": "98481d6a95a69ce47c3edb5d1eb58ecda55508c2ec372fb5848265e049cc63c7"
+        },
+        "pair_receipt": {
+          "basename": "FIRST-ACTUAL-PAIR-RESULT.json",
+          "sha256": "321b24a30a76fb203d5d656c0da5e6e328ef4a980ebe406d0a3ecb0a09827abd"
+        },
+        "local_Copilot": {
+          "basename": "LOCAL-normal-Copilot.png",
+          "sha256": "b2437b39f7a6f20c9ee52b6b9e51051eb2a16647a535de256693e50ba2fbaf8a"
+        },
+        "remote_Copilot": {
+          "basename": "REMOTE-normal-Copilot.png",
+          "sha256": "1cff7c844f362b00aa8c07193d1041cff630325cb4712885269d31d43c310466"
+        }
+      }
+    ],
+    "first_query_observation": {
+      "status": "retained; stopped before further input",
+      "difference": "Initial 74x19 DSR reported local row11 versus remote row19, both column1. Other nine replies, six environment fields, grids and restoration/drain flags matched. Different prior cursor context is an inference; no product regression established.",
+      "changed_control": "One new 74x19 pair was run after ordinary CMD CLS on both sides and the same cwd with equal-length role/case outputs. The unchanged collector then matched; the first 79x20 pair used the same CLS precondition. No normalization or reply injection.",
+      "receipt": {
+        "basename": "FIRST-EXACT-DIFF-AND-INPUT-HOLD.json",
+        "sha256": "9b837e0bce19abe4daf29ceb4526be5865e3f15d358798b843eba83ab5c1c269"
+      },
+      "local_raw": {
+        "basename": "raw-L-result.json",
+        "sha256": "3655e90c0aeff0edcecd09364df499e5f1419badbf40942ce879cd1ecedd1e87"
+      },
+      "remote_raw": {
+        "basename": "raw-R-result.json",
+        "sha256": "3312f25c946044bc169ba1a775e8077ceccd421ad66e8ba894bebeef2ebbe093"
+      }
+    },
+    "cleanup": {
+      "GUIs": "Both normal exit0; owned supervisors/input, all four Copilot processes and the one ephemeral local reference shell drained. Cutoff removed; no lease extension.",
+      "common_lease_seconds": 3600,
+      "precutoff_seconds": 195,
+      "cleanup_reserve_seconds": 180,
+      "preservation": "All original 18 Windows actors plus the three new persistent generic actors retained exact births and full records. Linux original16 plus new HOST15, all six journals, full catalog/profile/account bindings preserved. Remote generic detached and idle; both background HOST15 processes left listening.",
+      "pause_attribution": "Windows remained continuously running throughout this cohort. Linux was subsequently suspended, after fresh preservation guards and cleanup, for separate source compilation."
+    },
+    "aggregate": {
+      "basename": "FINAL-CURRENT15-COHORT-AGGREGATE.json",
+      "sha256": "f526b21b0fe458929687b90c754f4af9c1a4c15a9abb9687c79a2ede48a60b37"
+    },
+    "acceptance": {
+      "basename": "ROOT-LINUX-WINDOWS-ON-CASE-ACCEPTANCE.json",
+      "sha256": "1e73b2b2d0298526c05fcb0345fc9427067cc5763150597fcf10c516dfe1dd6f",
+      "accepted_at": "2026-11-20T01:04:34.171281+00:00"
+    },
+    "environment_fields": [
+      "COLORTERM",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "TERM",
+      "TERM_PROGRAM"
+    ]
+  },
+  "limits": [
+    "Semantic layout, wrapping, colors and input position match at equal character grids; native DPI (~2x), Windows activation watermark, cursor blink and animation differ. No raster identity or physical-cell equality claim.",
+    "Final combined release qualification remains pending; deployed GUI828/HOST1046 do not contain later core/recovery/UI fixes.",
+    "Original retained-session recovery failure #800 remains open and untouched; the healthy new target does not resolve it.",
+    "Native ordinary in-place renewal observation #795 remains pending; no forced expiry, credential refresh or clock change.",
+    "Linux Remote Access GUI stale Disabled/draining display despite backend Listening remains tracked in #803; functional backend lifecycle is not whole UI acceptance."
+  ],
+  "publication_privacy": "Only bounded semantic results, public source/artifact pins and private evidence basenames/SHA256 are published. Raw captures/logs, network addresses, account/session names or IDs, configuration, credentials, vault values and device codes remain private.",
+  "matrix_at_acceptance": {
+    "accepted": 4,
+    "partial": 4,
+    "unstarted": 16,
+    "total": 24
+  }
+}

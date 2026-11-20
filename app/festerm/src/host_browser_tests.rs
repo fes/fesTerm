@@ -1175,7 +1175,18 @@ fn ordinary_desktop_privacy_unavailable_refuses_before_bootstrap() {
     app.host_browser.as_mut().unwrap().ordinary_privacy_loss =
         Some(Arc::new(std::sync::atomic::AtomicBool::new(true)));
     app.begin_ordinary_host(&ctx);
+    let account_lifetime = app
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .ordinary_lifetime
+        .clone()
+        .unwrap();
     wait_ordinary_ui(&mut app, &ctx);
+    assert!(account_lifetime.is_cancelled());
+    // Cancellation can occur between the poll's lifetime check and receipt of
+    // the worker error. Observe the next frame's privacy-cancellation projection.
+    app.poll_host_browser(&ctx);
     let browser = app.host_browser.as_ref().unwrap();
     assert_eq!(
         browser.feedback.as_deref(),
