@@ -451,6 +451,40 @@ runtime failure stops that run under the current policy; a generic
 `RuntimeFailed` result alone does not establish its cause. Historical events
 do not establish current readiness or permission to retry an uncertain action.
 
+**Capturing a daemon recovery rejection.** The daemon's lifecycle journal is
+separate from the HOST worker logs above. For an already identified daemon,
+copy only `<exact-runtime-root>/lifecycle/<exact-daemon-name>.json`; retain its
+PID, birth generation, failure time/timezone and GUI/helper versions with the
+report. The journal has bounded numeric identity/time fields and finite events;
+it does not contain terminal contents, command arguments, paths or error
+strings. Do not collect `registry.json`, capability files or the whole runtime
+directory. Do not guess another session's journal or restart/replace a shell
+to obtain diagnostics.
+
+The default ordinary native runtime root is `%LOCALAPPDATA%\fesTerm\sessiond`
+on Windows (falling back to `%USERPROFILE%\AppData\Local\fesTerm\sessiond`),
+and `${XDG_STATE_HOME:-$HOME/.local/state}/festerm/sessiond` on Unix, including
+macOS. An explicit `FESTERM_SESSIOND_RUNTIME_ROOT` takes precedence. A desktop
+HOST catalog daemon instead uses the state directory from the table above
+with `daemon` appended. Imported sessions retain their original runtime root.
+Use the exact selected daemon's root and name, not a profile's display label.
+
+Helpers containing the recovery-encoding journal change add an optional
+`recovery` category to an existing `failure` event with `stage: "daemon"`:
+`validation`, `budget`, `allocation`, `serialization`, `length` or
+`unclassified`. Allocation means a recoverable wire-buffer reservation failed;
+process aborts are not guaranteed to leave an event. The journal retains at
+most 64 events/32 KiB and diagnostic lock waits remain bounded to about 100 ms.
+Missing evidence is not permission to retry or replace a session. Older
+readers ignore the extra field and older writers may drop it; new readers
+map an unknown future category to `unclassified`.
+
+The GUI does not yet present this daemon journal; **Remote access runtime
+history** presents HOST worker evidence only. Updating the GUI or HOST alone
+does not retrofit an already running older daemon. Issue #800's original
+signed14 failure remains unexplained; these categories do not retrospectively
+establish its cause or qualify recovery of its preserved session.
+
 **Completing a pending Disable.** `StopRequested` means access consent has
 already been revoked; it does not mean stop completion has been confirmed.
 Screenshot the visible failure, then select **Refresh local status**. Expand

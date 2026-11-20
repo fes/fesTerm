@@ -930,6 +930,7 @@ pub fn process_alive(pid: u32) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersistentSessionError {
     message: String,
+    recovery_failure: Option<lifecycle::RecoveryFailureCategory>,
     #[cfg(any(test, feature = "test-support"))]
     native_failure: Option<NativeConnectionFailure>,
 }
@@ -961,9 +962,21 @@ impl PersistentSessionError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            recovery_failure: None,
             #[cfg(any(test, feature = "test-support"))]
             native_failure: None,
         }
+    }
+
+    /// Content-free classification only; Display retains the original cause.
+    pub fn recovery_failure_category(&self) -> lifecycle::RecoveryFailureCategory {
+        self.recovery_failure
+            .unwrap_or(lifecycle::RecoveryFailureCategory::Unclassified)
+    }
+
+    fn at_recovery_boundary(mut self, category: lifecycle::RecoveryFailureCategory) -> Self {
+        self.recovery_failure = Some(category);
+        self
     }
 
     fn at_native_boundary(
@@ -3974,15 +3987,31 @@ pub fn encode_recovery_snapshot(terminal: &Terminal) -> Result<Vec<u8>, Persiste
     encode_recovery_snapshot_with_limit(terminal, MAX_RECOVERY_SNAPSHOT_BYTES)
 }
 
+fn recovery_sizing_category(error: &bincode::ErrorKind) -> lifecycle::RecoveryFailureCategory {
+    match error {
+        bincode::ErrorKind::SizeLimit => lifecycle::RecoveryFailureCategory::Budget,
+        _ => lifecycle::RecoveryFailureCategory::Serialization,
+    }
+}
+
+fn recovery_allocation_error(error: std::collections::TryReserveError) -> PersistentSessionError {
+    PersistentSessionError::new(format!(
+        "could not allocate terminal recovery snapshot: {error}"
+    ))
+    .at_recovery_boundary(lifecycle::RecoveryFailureCategory::Allocation)
+}
+
 pub fn encode_recovery_snapshot_with_limit(
     terminal: &Terminal,
     maximum: usize,
 ) -> Result<Vec<u8>, PersistentSessionError> {
+    use lifecycle::RecoveryFailureCategory as Category;
     if maximum < MAX_RECOVERY_SNAPSHOT_BYTES {
         if terminal.scrollback_stats().charged_bytes() > maximum {
             return Err(PersistentSessionError::new(
                 "retained history exceeds recovery request budget",
-            ));
+            )
+            .at_recovery_boundary(Category::Budget));
         }
         // Check the borrowed state before cloning potentially large history.
         // Ephemeral input/reply queues disappear in recovery_clone below.
@@ -3990,17 +4019,21 @@ pub fn encode_recovery_snapshot_with_limit(
         let encoded_size = bincode_options()
             .with_limit(preflight as u64)
             .serialized_size(terminal)
-            .map_err(|_| PersistentSessionError::new("terminal exceeds recovery request budget"))?;
+            .map_err(|error| {
+                PersistentSessionError::new("terminal exceeds recovery request budget")
+                    .at_recovery_boundary(recovery_sizing_category(&error))
+            })?;
         if encoded_size > preflight as u64 {
-            return Err(PersistentSessionError::new(
-                "terminal exceeds recovery request budget",
-            ));
+            return Err(
+                PersistentSessionError::new("terminal exceeds recovery request budget")
+                    .at_recovery_boundary(Category::Budget),
+            );
         }
     }
     let snapshot = terminal.recovery_clone();
-    snapshot
-        .validate_recovery_snapshot()
-        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    snapshot.validate_recovery_snapshot().map_err(|error| {
+        PersistentSessionError::new(error.to_string()).at_recovery_boundary(Category::Validation)
+    })?;
     let payload_len = bincode_options()
         .with_limit(maximum as u64)
         .serialized_size(&snapshot)
@@ -4008,29 +4041,30 @@ pub fn encode_recovery_snapshot_with_limit(
             PersistentSessionError::new(format!(
                 "could not size terminal recovery snapshot: {error}"
             ))
+            .at_recovery_boundary(recovery_sizing_category(&error))
         })?;
     let terminal_len = usize::try_from(payload_len).map_err(|_| {
         PersistentSessionError::new("terminal recovery snapshot length overflows usize")
+            .at_recovery_boundary(Category::Length)
     })?;
     let payload_len = terminal_len.checked_add(1).ok_or_else(|| {
         PersistentSessionError::new("terminal recovery snapshot length overflows usize")
+            .at_recovery_boundary(Category::Length)
     })?;
     if payload_len > maximum {
         return Err(PersistentSessionError::new(format!(
             "terminal recovery snapshot exceeds the {}-byte protocol limit",
             maximum
-        )));
+        ))
+        .at_recovery_boundary(Category::Budget));
     }
     let encoded_len = RECOVERY_HEADER_BYTES
         .checked_add(payload_len)
         .ok_or_else(|| {
             PersistentSessionError::new("terminal recovery prelude length overflows usize")
+                .at_recovery_boundary(Category::Length)
         })?;
-    let mut encoded = RecoveryWireBuffer::zeroed(encoded_len).map_err(|error| {
-        PersistentSessionError::new(format!(
-            "could not allocate terminal recovery snapshot: {error}"
-        ))
-    })?;
+    let mut encoded = RecoveryWireBuffer::zeroed(encoded_len).map_err(recovery_allocation_error)?;
     encoded.bytes[..RECOVERY_MAGIC.len()].copy_from_slice(RECOVERY_MAGIC);
     encoded.bytes[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
         .copy_from_slice(&(payload_len as u64).to_be_bytes());
@@ -4047,11 +4081,13 @@ pub fn encode_recovery_snapshot_with_limit(
             PersistentSessionError::new(format!(
                 "could not serialize terminal recovery snapshot: {error}"
             ))
+            .at_recovery_boundary(Category::Serialization)
         })?;
     if destination.position() != terminal_len as u64 {
         return Err(PersistentSessionError::new(
             "terminal recovery snapshot serialized length changed",
-        ));
+        )
+        .at_recovery_boundary(Category::Length));
     }
     Ok(encoded.into_vec())
 }
@@ -4666,6 +4702,56 @@ mod recovery_wire_tests {
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
         assert!(measurement.read().peak <= RECOVERY_READ_CHUNK_BYTES);
         assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn recovery_encoding_failure_categories_preserve_causes() {
+        use lifecycle::RecoveryFailureCategory as Category;
+        let terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        let mut value = serde_json::to_value(terminal.recovery_clone()).unwrap();
+        value["tab_stops"] = serde_json::Value::Array(Vec::new());
+        let invalid: Terminal = serde_json::from_value(value).unwrap();
+        let cause = invalid
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string();
+        let failure = encode_recovery_snapshot(&invalid).unwrap_err();
+        assert_eq!(failure.recovery_failure_category(), Category::Validation);
+        assert_eq!(failure.to_string(), cause);
+
+        let failure = encode_recovery_snapshot_with_limit(&terminal, 1).unwrap_err();
+        assert_eq!(failure.recovery_failure_category(), Category::Budget);
+        assert_eq!(
+            failure.to_string(),
+            "could not size terminal recovery snapshot: the size limit has been reached"
+        );
+        let reserve_error = RecoveryWireBuffer::zeroed(usize::MAX).err().unwrap();
+        let cause = format!("could not allocate terminal recovery snapshot: {reserve_error}");
+        let failure = recovery_allocation_error(reserve_error);
+        assert_eq!(failure.recovery_failure_category(), Category::Allocation);
+        assert_eq!(failure.to_string(), cause);
+        assert_eq!(
+            recovery_sizing_category(&bincode::ErrorKind::SizeLimit),
+            Category::Budget
+        );
+        assert_eq!(
+            recovery_sizing_category(&bincode::ErrorKind::Custom("synthetic".into())),
+            Category::Serialization
+        );
+        for category in [
+            Category::Serialization,
+            Category::Length,
+            Category::Unclassified,
+        ] {
+            let failure =
+                PersistentSessionError::new("unchanged cause").at_recovery_boundary(category);
+            assert_eq!(failure.recovery_failure_category(), category);
+            assert_eq!(failure.to_string(), "unchanged cause");
+        }
+        assert_eq!(
+            PersistentSessionError::new("unclassified cause").recovery_failure_category(),
+            Category::Unclassified
+        );
     }
 
     #[test]

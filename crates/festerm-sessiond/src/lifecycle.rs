@@ -32,10 +32,25 @@ pub enum Event {
     Failure {
         stage: FailureStage,
         os_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery: Option<RecoveryFailureCategory>,
     },
     Shutdown {
         success: bool,
     },
+}
+
+/// Finite recovery-encoder evidence, never terminal content or an error string.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryFailureCategory {
+    Validation,
+    Budget,
+    Allocation,
+    Serialization,
+    Length,
+    #[serde(other)]
+    Unclassified,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -180,6 +195,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recovery_failure_journal_is_compatible_content_free_and_stop_safe() {
+        // This is the previous Failure payload: unknown nested fields are
+        // ignored by old readers; old writers can drop the new category.
+        #[derive(Deserialize, Serialize)]
+        #[serde(rename_all = "snake_case")]
+        enum LegacyEvent {
+            Failure {
+                stage: FailureStage,
+                os_code: Option<i32>,
+            },
+        }
+        let event = Event::Failure {
+            stage: FailureStage::Daemon,
+            os_code: None,
+            recovery: Some(RecoveryFailureCategory::Validation),
+        };
+        let bytes = serde_json::to_vec(&event).unwrap();
+        let legacy: LegacyEvent = serde_json::from_slice(&bytes).unwrap();
+        let rewritten = serde_json::to_vec(&legacy).unwrap();
+        let reread: Event = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(
+            reread,
+            Event::Failure {
+                stage: FailureStage::Daemon,
+                os_code: None,
+                recovery: None,
+            }
+        );
+        let future: Event = serde_json::from_str(
+            r#"{"failure":{"stage":"daemon","os_code":null,"recovery":"future_category"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            future,
+            Event::Failure {
+                stage: FailureStage::Daemon,
+                os_code: None,
+                recovery: Some(RecoveryFailureCategory::Unclassified),
+            }
+        );
+
+        let root = private_storage::test_directory();
+        let identity = NativeSessionIdentity {
+            name: "recovery".into(),
+            pid: 8,
+            created_at_unix_ms: 9,
+            endpoint: "unused".into(),
+        };
+        record(&root, &identity, Event::StopRequested).unwrap();
+        record(&root, &identity, event.clone()).unwrap();
+        record(&root, &identity, future).unwrap();
+        let history = history(&root, &identity).unwrap();
+        assert_eq!(history[1].event, event);
+        assert!(!unexpected_exit(&history));
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("lifecycle/recovery.json")).unwrap())
+                .unwrap();
+        assert_eq!(value[1]["event"]["failure"].as_object().unwrap().len(), 3);
+        assert_eq!(value[1]["event"]["failure"]["recovery"], "validation");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn starter_diagnostics_are_numeric_bounded_and_never_daemon_identity() {
         let root = private_storage::test_directory();
         let identity = NativeSessionIdentity {
@@ -197,6 +275,7 @@ mod tests {
                 Event::Failure {
                     stage: FailureStage::IndependentSpawn,
                     os_code: Some(5),
+                    recovery: None,
                 },
             )
             .unwrap();
@@ -222,7 +301,8 @@ mod tests {
             entries[0].event,
             Event::Failure {
                 stage: FailureStage::IndependentSpawn,
-                os_code: Some(5)
+                os_code: Some(5),
+                recovery: None,
             }
         );
         assert_eq!(

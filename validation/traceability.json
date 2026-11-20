@@ -2166,7 +2166,10 @@
         "recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin",
         "recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster",
         "recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer",
-        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster"
+        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster",
+        "recovery_encoding_failure_categories_preserve_causes",
+        "recovery_failure_journal_is_compatible_content_free_and_stop_safe",
+        "recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged"
       ],
       "manual_scenarios": [
         "CP-12",
@@ -4697,7 +4700,10 @@
         "ssh_profile_editor_adds_a_port_forward_and_saves_it_with_the_profile",
         "ssh_profile_editor_can_remove_a_saved_port_forward_before_saving",
         "ssh_profile_editor_rejects_an_invalid_port_forward_without_saving",
-        "a_detected_local_tmux_default_is_applied_when_the_toggle_is_first_enabled"
+        "a_detected_local_tmux_default_is_applied_when_the_toggle_is_first_enabled",
+        "recovery_encoding_failure_categories_preserve_causes",
+        "recovery_failure_journal_is_compatible_content_free_and_stop_safe",
+        "recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged"
       ],
       "manual_scenarios": [
         "CP-05",

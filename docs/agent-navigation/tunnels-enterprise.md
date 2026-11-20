@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "e3ea1d49d5c5ce57c691c7bbddfa5bd02eac27e17ce2c7c14c61ed55ebacda04"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-agent", "sources": "60ac59e3b3e44f48806c57600ff28379dcdc99701e1d078aa1db15ad4cd2012b"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -17,7 +17,7 @@ Use for: HOST selection, inventory and exact binding.
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous HOST labels.
-- [`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`](../../crates/festerm-tunnel-bridge/src/host_control_tests.rs) — Requires exact generation and bounded inventory reads on real daemons.
+- [`native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Requires exact Unknown during lease contention, then both original sessions healthy within one deadline.
 
 Caveats:
 - HOST resolution refuses bridge fallback and ambiguous ports; it does not infer a legacy target.

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "bd6bf34ff4d4b2430ce7e1f25de81d2d1da6cd6270f3daa4ebbceffcc06a3777"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-agent", "sources": "b4f558e9db4d05c28a32c6b482a5af6aa0fb6162e8cf22dc1a7e832570a84411"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,15 +46,18 @@ Use for: How is a named session resumed, reconnected, or mirrored for persistenc
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery synchronization.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Intentional backend-owned mirror drains replies while ingesting bytes.
 - [`stage_windows_daemon`](../../crates/festerm-sessiond/src/lib.rs) — Copies the helper and its fixed ConPTY sidecar into the per-release generation.
+- [`RecoveryFailureCategory`](../../crates/festerm-sessiond/src/lifecycle.rs) — Finite recovery-encoding evidence in the bounded daemon journal, separate from HOST worker history.
 
 Evidence:
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect policy, and explicit attach semantics.
 - [`the_conpty_sidecar_is_staged_beside_the_helper_that_loads_it`](../../crates/festerm-sessiond/src/lib.rs) — Checks executable-relative sidecar retention.
+- [`recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged`](../../crates/festerm-sessiond/src/main.rs) — Checks that recording an encoding failure does not adopt an attachment or change held output.
 
 Caveats:
 - Daemon protocol and recovery schema versions must remain compatible.
 - Reconnects intentionally keep same-generation takeover policy.
 - RecoverySync is session-ordered and not shell-controlled output.
+- Recovery journal categories contain no terminal text and do not retrofit running older daemons or authorize retries.
 
 ## Terminal flow
 
