@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "codex-agent", "sources": "51dfa5533e55104484dd24f8f57c6dbe06c6510028461caf98800df382c8a270"} -->
+<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "mai-code-1.1-flash", "sources": "623a98a4d7aa7ed98d79fed85e6a3b5764c4462179047be2373c61b4b5258436"} -->
 # Terminal core and fixtures
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Terminal core owns VT parsing and screen state, encodes typed input into a single transport queue, and validates behavior against property and golden-fixture regressions.
+Terminal core owns VT parsing, typed input encoding, screen reflow, and recovery invariants for golden-fixture regressions.
 
 Canonical docs: [tests/fixtures/README.md](../../tests/fixtures/README.md), [docs/standards-and-implementation-notes.md](../../docs/standards-and-implementation-notes.md)
 
@@ -12,27 +12,27 @@ Canonical docs: [tests/fixtures/README.md](../../tests/fixtures/README.md), [doc
 
 Use for: A PTY byte stream fails at the parser boundary or reset semantics must be checked
 
-- [`Parser`](../../crates/festerm-core/src/parser.rs) — state machine for CSI/DCS/OSC parsing and recovery
-- [`ingest`](../../crates/festerm-core/src/terminal.rs) — ASCII fast path plus parser loop for raw output
+- [`Parser`](../../crates/festerm-core/src/parser.rs) — State machine for ESC/CSI/DCS/OSC recovery and typed operations
+- [`ingest`](../../crates/festerm-core/src/terminal.rs) — ASCII fast path and parser loop for raw PTY output
 
 Evidence:
-- [`ris_restores_fresh_visible_behavior_after_arbitrary_output`](../../crates/festerm-core/tests/parser_properties.rs) — RIS resets visible state after arbitrary output
-- [`assert_invariants`](../../crates/festerm-core/tests/parser_properties.rs) — cursor and grid bounds remain valid after hostile input
+- [`ris_restores_fresh_visible_behavior_after_arbitrary_output`](../../crates/festerm-core/tests/parser_properties.rs) — RIS brings the visible state back to a known clean baseline
+- [`assert_invariants`](../../crates/festerm-core/tests/parser_properties.rs) — Cursor and grid bounds remain valid after hostile input
 
 Caveats:
 - Ground-state ambiguity from raw C1 and UTF-8 bytes is easy to regress.
 - CSI parameter overflow and string terminators must reset cleanly.
-- Printable ASCII fast-path must not bypass parser state or wrap semantics.
+- Printable ASCII fast path must not bypass parser state or wrap semantics.
 
 ## Input encoding
 
 Use for: Key, paste, focus, or mouse events must become PTY bytes without mutating the queue
 
-- [`InputEvent`](../../crates/festerm-core/src/input.rs) — typed UI contract for keys, paste, focus, and mouse events
-- [`handle_input`](../../crates/festerm-core/src/terminal.rs) — mode-aware encoding and atomic queue admission for typed input
+- [`InputEvent`](../../crates/festerm-core/src/input.rs) — Typed UI contract for keys, paste, focus, and mouse events
+- [`handle_input`](../../crates/festerm-core/src/terminal.rs) — Mode-aware queue admission for single-event transport writes
 
 Evidence:
-- [`prepared_input_matches_core_encoding_without_mutating_the_queue`](../../crates/festerm-core/src/input.rs) — prepared bytes match terminal modes without touching queued input
+- [`prepared_input_matches_core_encoding_without_mutating_the_queue`](../../crates/festerm-core/src/input.rs) — Prepared bytes match terminal modes without touching queued input
 
 Caveats:
 - Mode-dependent bytes differ across DECKPAM and DECAWM.
@@ -43,11 +43,11 @@ Caveats:
 
 Use for: Resizing, wrapping, or scrollback logic is changing
 
-- [`Screen`](../../crates/festerm-core/src/screen.rs) — visible grid, dirty rows, and cell ownership for the presented screen
-- [`resize_with_content_positions`](../../crates/festerm-core/src/terminal.rs) — reflows primary screen and preserves scrollback anchors across resize
+- [`Screen`](../../crates/festerm-core/src/screen.rs) — Visible grid, dirty rows, and cell ownership for the presented screen
+- [`resize_with_content_positions`](../../crates/festerm-core/src/terminal.rs) — Reflows primary screen and preserves logical anchors across resize
 
 Evidence:
-- [`assert_invariants`](../../crates/festerm-core/tests/parser_properties.rs) — cursor and screen bounds remain valid across arbitrary output
+- [`assert_invariants`](../../crates/festerm-core/tests/parser_properties.rs) — Screen bounds remain valid across arbitrary output and resize
 
 Caveats:
 - Two-cell grapheme repairs and continuation cells are easy to break.
@@ -58,26 +58,14 @@ Caveats:
 
 Use for: Adding a terminal regression or compatibility fix with golden corpus coverage
 
-- [`assert_fixture`](../../crates/festerm-test-support/src/lib.rs) — loads a fixture, ingests bytes, and checks the final grid
-- [`discover_fixtures`](../../crates/festerm-test-support/src/lib.rs) — discovers repository fixtures for validation
+- [`assert_fixture`](../../crates/festerm-test-support/src/lib.rs) — Loads a fixture, ingests bytes, and checks the final grid
+- [`validate_recovery_snapshot`](../../crates/festerm-core/src/terminal.rs) — Rejects malformed recovery state before consumers trust it
 
 Evidence:
-- [`repository_fixtures_are_discovered_and_pass`](../../crates/festerm-test-support/tests/fixtures.rs) — all repository fixtures are discovered and asserted in CI
+- [`repository_fixtures_are_discovered_and_pass`](../../crates/festerm-test-support/tests/fixtures.rs) — All repository fixtures are discovered and asserted in CI
+- [`recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer`](../../crates/festerm-core/src/lib.rs) — A legitimate armed wrap survives an alternate-buffer handoff
 
 Caveats:
 - Fixture input and replies must stay exact; escapes are easy to misread.
 - Dirty rows and cell width are often the only proof a bug was fixed.
-- Compatibility assumptions are encoded by the golden corpus across versions.
-
-## Recovery validation
-
-Use for: A live terminal cannot produce a recovery snapshot.
-
-- [`validate_recovery_snapshot`](../../crates/festerm-core/src/terminal.rs) — Validates both buffers, including wide cluster ends and stored margin wrap boundaries.
-
-Evidence:
-- [`recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer`](../../crates/festerm-core/src/lib.rs) — Preserves a legitimate armed wrap outside the presented buffer.
-- [`recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster`](../../crates/festerm-core/src/lib.rs) — Rejects forged interior wrap states.
-
-Caveats:
-- Core tests do not establish the cause of an older running daemon's native recovery failure.
+- Recovery validation rejects forged wrap states and queued transport bytes.

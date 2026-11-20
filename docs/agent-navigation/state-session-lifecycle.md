@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "codex-source-verified", "sources": "3ad1d287b2e72483231299b4a71fb8b624ccf289a1395518e5b7ca052d554939", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "3ad1d287b2e72483231299b4a71fb8b624ccf289a1395518e5b7ca052d554939", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the
@@ -10,16 +10,15 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 | From | To | Trigger | Evidence |
 | --- | --- | --- | --- |
-| Starting | Running | authenticated SSH channel connects and starts the session | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-ssh/src/lib.rs::sftp_worker` |
-| Starting | Failed | permanent SSH connection failure while starting | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind`<br>`crates/festerm-ssh/src/lib.rs::sftp_failure_with_kind` |
-| Running | Stopping | shutdown is requested while active | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::request_stop` |
-| Running | Disconnected | transport loss without automatic recovery | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-sessiond/src/lib.rs::reconnect_failed` |
-| Running | Exited | remote or child process exits normally | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
-| Running | Failed | worker reports a terminal backend error | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind`<br>`crates/festerm-pty/src/lib.rs::control_worker` |
-| Running | Stopped | shutdown command ends the session | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
-| Stopping | Stopped | shutdown cleanup completes | `crates/festerm-ssh/src/lib.rs::sftp_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
-| Disconnected | Starting | user accepts manual reconnect or reconnect is requested | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
-| Disconnected | Stopped | user shuts down while disconnected | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Starting | Running | connection established and authenticated | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-ssh/src/lib.rs::sftp_worker` |
+| Starting | Stopped | shutdown before connection completes | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-ssh/src/lib.rs::sftp_worker` |
+| Running | Stopping | stop requested | `crates/festerm-pty/src/lib.rs::request_stop`<br>`crates/festerm-serial/src/lib.rs::request_stop` |
+| Running | Disconnected | transport loss or SSH channel closes | `crates/festerm-sessiond/src/lib.rs::reconnect_failed` |
+| Running | Exited | remote process or PTY child exits | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Running | Failed | reader/writer or worker error | `crates/festerm-pty/src/lib.rs::control_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
+| Stopping | Stopped | shutdown completes after cancellation | `crates/festerm-pty/src/lib.rs::control_worker`<br>`crates/festerm-serial/src/lib.rs::control_worker` |
+| Disconnected | Starting | manual reconnect requested | `crates/festerm-ssh/src/lib.rs::ssh_worker` |
+| Disconnected | Stopped | shutdown while disconnected | `crates/festerm-ssh/src/lib.rs::ssh_worker`<br>`crates/festerm-sessiond/src/lib.rs::finish_cancelled_reconnect` |
 
 ## Property checks
 
