@@ -5893,6 +5893,19 @@ update and true missing owner-only consent. Provider-owner with no enrolled
 keys alone is not missing owner-only consent. No permission grant, automatic
 retry, plaintext fallback or rollback-check bypass is authorized by a diagnostic.
 
+Foreground Enable can fail before a HOST run exists. For a helper/frontend
+composition containing the foreground setup diagnostics, retain only
+`host.owner_setup` lines from the same bounded logs, correlated by the actual
+foreground GUI PID, UTC operation interval and lifecycle epoch. These lines have
+no run ID. They distinguish owner-store open, snapshot/initialization, the
+high-water prepare/native-anchor-update/policy-publication steps and native
+registration. Keep only the fixed stage/outcome/category fields; do not export
+error text, references or protected records. An unclassified registration failure
+identifies that boundary, not its underlying cause. A successful owner publication
+followed by failed registration does not imply an owner-vault failure. Missing
+lines are inconclusive because logging remains best effort. No automatic retry,
+permission change or retrospective qualification of an older build follows.
+
 A separately authenticated helper that supports it can first run the read-only
 `owner-readiness --state-dir PATH --origin desktop` command for this exact selected
 installation (explicit `headless` is also accepted for that origin). Capture only
