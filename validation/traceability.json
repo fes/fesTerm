@@ -35,6 +35,36 @@
   ],
   "coverage": [
     {
+      "id": "bounded-inline-terminal-graphics",
+      "edges": [
+        "GFX-0[1-3]"
+      ],
+      "requirements": [
+        "REQUIREMENTS.md#deferred-requirements",
+        "COMPATIBILITY.md"
+      ],
+      "decisions": [
+        "ADR-0089"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "GFX-01",
+        "GFX-02",
+        "GFX-03"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Phase 0 bounded APC/DCS framing and discard-resynchronization must be accepted independently of image enablement",
+        "New terminal semantics must negotiate or adapt sessiond, tunnel/mobile snapshots and recording replay explicitly",
+        "Physical cell geometry, PTY pixel winsize and reply geometry must become authoritative terminal state",
+        "Kitty direct-only parser, fixed per-session protocol reservation, deterministic store, quota, cursor/erase/scroll/reset behavior and local-PTY decode backpressure require complete portable coverage",
+        "Default-off renderer clipping, z-order, texture and native-painter evidence, real client interoperability and DPI/zoom qualification remain required",
+        "Windows ConPTY remains ineligible until pinned/inbox APC passthrough and cursor resynchronization are qualified",
+        "Sessiond/tunnel/mobile, recording, scrollback persistence, placeholders, relative placements, animation and all non-direct Kitty media remain separate gates",
+        "Sixel requires a separately accepted compatibility profile, including DECSDM, palette, HLS, geometry, XTSMGRAPHICS and streaming-decoder decisions"
+      ]
+    },
+    {
       "id": "recording-settings",
       "edges": [
         "REC-01"
