@@ -2,6 +2,112 @@ use super::*;
 use std::time::{Duration, Instant};
 
 #[test]
+fn desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup() {
+    let confirmed = provisioned_scope();
+    let mut previous = match &confirmed {
+        Scope::Present(snapshot) => snapshot.as_ref().clone(),
+        _ => unreachable!(),
+    };
+    previous.epoch -= 1;
+    previous.phase = Phase::Disabled;
+    let calls = Arc::new(AtomicU8::new(0));
+    let counted = calls.clone();
+    let projected = confirmed.clone();
+    let warning = Failure::Observation {
+        boundary: ObservationBoundary::ServiceStart,
+        kind: std::io::ErrorKind::WouldBlock,
+    };
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Ok(Report {
+            scope: projected.clone(),
+            setup_complete: true,
+            failure: Some(warning),
+            ..Report::default()
+        })
+    })));
+    controller.view.scope = Scope::Present(previous.into());
+    let context = egui::Context::default();
+    controller.start(Operation::Enable, false, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.scope, confirmed);
+    assert_eq!(controller.view.bundle_status, BundleStatus::Complete);
+    assert_eq!(controller.view.failure, Some(warning));
+    assert!(controller.view.last_run.is_none() && controller.view.process.is_none());
+    assert!(!controller.view.owner_approved);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn desktop_remote_access_setup_completion_does_not_mask_cancel_or_scope_failure() {
+    for failure in [
+        Failure::Cancelled,
+        Failure::ScopeChanged,
+        Failure::NativeVault,
+    ] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            Ok(Report {
+                setup_complete: true,
+                scope: Scope::Unobserved,
+                failure: Some(failure),
+                ..Report::default()
+            })
+        })));
+        let context = egui::Context::default();
+        controller.start(Operation::Enable, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(failure));
+        assert_eq!(
+            controller.view.bundle_status,
+            if failure == Failure::Cancelled {
+                BundleStatus::Cancelled
+            } else {
+                BundleStatus::Blocked
+            }
+        );
+        assert!(!controller.view.access_enabled());
+    }
+}
+
+#[test]
+fn desktop_remote_access_failed_mandatory_observation_clears_obsolete_scope() {
+    for setup_complete in [false, true] {
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            let warning = Failure::Observation {
+                boundary: ObservationBoundary::Scope,
+                kind: std::io::ErrorKind::WouldBlock,
+            };
+            if setup_complete {
+                Ok(Report {
+                    setup_complete,
+                    failure: Some(warning),
+                    ..Report::default()
+                })
+            } else {
+                Err(warning)
+            }
+        })));
+        controller.view.scope = provisioned_scope();
+        controller.view.owner_approved = true;
+        let context = egui::Context::default();
+        controller.start(Operation::Enable, false, &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.scope, Scope::Unobserved);
+        assert!(!controller.view.access_enabled());
+        assert!(!controller.view.owner_approved);
+        assert!(controller.view.last_run.is_none() && controller.view.process.is_none());
+        assert_eq!(
+            controller.view.bundle_status,
+            if setup_complete {
+                BundleStatus::Complete
+            } else {
+                BundleStatus::Blocked
+            }
+        );
+    }
+}
+
+#[test]
 fn desktop_remote_access_hostname_seed_fits_friendly_name_contract() {
     for hostname in [
         "Build-Mac.local".to_owned(),
@@ -1472,6 +1578,40 @@ fn desktop_remote_access_sign_in_delivery_controls_do_not_replace_pending_work()
 }
 
 #[test]
+fn desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for requested in [false, true] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1200.0))
+            .build_ui_state(
+                |ui, view: &mut View| {
+                    show(ui, view, &[]);
+                },
+                View {
+                    scope: Scope::Unobserved,
+                    access_requested: Some(requested),
+                    bundle_status: BundleStatus::Complete,
+                    failure: Some(Failure::Observation {
+                        boundary: ObservationBoundary::Scope,
+                        kind: std::io::ErrorKind::WouldBlock,
+                    }),
+                    ..View::default()
+                },
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Remote access status is unavailable. Refresh local status.")
+            .is_some());
+        assert!(harness
+            .query_by_label("Setup pending. Remote access is not enabled yet.")
+            .is_none());
+        assert!(harness
+            .query_by_label("Remote access is enabled. No current host report is available.")
+            .is_none());
+    }
+}
+
+#[test]
 fn desktop_remote_access_summary_does_not_claim_pending_or_unobserved_access_is_on() {
     let mut view = View::default();
     assert_eq!(view.access_summary(), "Not observed");
@@ -2154,6 +2294,34 @@ fn desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmati
         .get_by_label("Update host…")
         .accesskit_node()
         .is_disabled());
+
+    // A retained committed update is history, including after a later Disable.
+    // It must not be presented as the result of the current operation.
+    harness.state_mut().0.scope = update_fixture_scope();
+    harness.state_mut().0.release.as_mut().unwrap().replacement =
+        Some(festerm_host_setup::services::ReplacementReport {
+            operation: "historical-update".into(),
+            from_version: "0.0.1".into(),
+            to_version: festerm_host_setup::VERSION.into(),
+            state: festerm_host_setup::services::ReplacementState::Committed,
+            previous_provenance: None,
+            candidate_provenance: None,
+            candidate_executable: PathBuf::from("fixture-host"),
+            candidate_bundle_sha256: "a".repeat(64),
+            meaning: "Recorded update history only.",
+        });
+    harness.state_mut().1 = None;
+    harness.run();
+    let disabled_notice = "Remote access is disabled. Enable it separately when ready.";
+    harness.get_by_label(disabled_notice);
+    assert!(harness
+        .query_by_label("Host updated. Enable remote access separately when ready.")
+        .is_none());
+    assert!(harness.state().1.is_none());
+    harness.state_mut().0.scope = provisioned_scope();
+    harness.run();
+    assert!(harness.query_by_label(disabled_notice).is_none());
+    assert!(harness.state().1.is_none());
 }
 
 #[test]

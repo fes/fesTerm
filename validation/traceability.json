@@ -6770,7 +6770,14 @@
         "desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation",
         "desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition",
         "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
-        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback"
+        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback",
+        "desktop_remote_access_confirmed_scope_survives_contended_run_history",
+        "desktop_remote_access_observation_warning_does_not_downgrade_final_fences",
+        "desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup",
+        "desktop_remote_access_failed_mandatory_observation_clears_obsolete_scope",
+        "desktop_remote_access_setup_completion_does_not_mask_cancel_or_scope_failure",
+        "desktop_remote_access_final_failure_survives_unreadable_reobservation",
+        "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

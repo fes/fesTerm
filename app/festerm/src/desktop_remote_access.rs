@@ -206,8 +206,35 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservationBoundary {
+    Scope,
+    RunHistory,
+    ServiceContext,
+    ServiceStage,
+    ServiceStart,
+    FinalScope,
+}
+
+impl ObservationBoundary {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Scope => "protected scope",
+            Self::RunHistory => "run history",
+            Self::ServiceContext => "native service context",
+            Self::ServiceStage => "native service stage",
+            Self::ServiceStart => "native start observation",
+            Self::FinalScope => "final protected scope",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Failure {
     Busy,
+    Observation {
+        boundary: ObservationBoundary,
+        kind: std::io::ErrorKind,
+    },
     Cancelled,
     RefreshFirst,
     ScopeChanged,
@@ -232,15 +259,17 @@ pub enum Failure {
 impl Failure {
     pub fn notice(self) -> &'static str {
         match self {
+            Self::Observation { .. } => {
+                "Status observation is unavailable. Refresh local status before another change."
+            }
             Self::SignIn => {
                 "Host account verification is required. Review access settings to sign in."
             }
             Self::NativeVault => "Unlock the credential store, then retry.",
             Self::RefreshFirst | Self::ScopeChanged => "Refresh local status, then review again.",
             Self::OwnerApproval => "Review owner approval in Advanced / Recovery.",
-            Self::Busy | Self::Cancelled => {
-                "Revocation may still be draining. Wait before retrying."
-            }
+            Self::Busy => "Host state is busy. Wait, then refresh local status.",
+            Self::Cancelled => "Revocation may still be draining. Wait before retrying.",
             Self::ShareCapability => "This running shell does not support HOST sharing.",
             Self::SessionChanged => "The running session changed. Review it again.",
             Self::BundleNotPublished => "The signed host bundle for this build is not published.",
@@ -265,7 +294,8 @@ impl Failure {
 
     pub fn message(self) -> &'static str {
         match self {
-            Self::Busy => "An operation is still draining. Retry after it actually finishes.",
+            Self::Observation { .. } => "A protected status read did not complete. Setup may already have committed. Current endpoint readiness is unknown. Refresh local status; do not repeat Enable or Start to refresh the display.",
+            Self::Busy => "Wait for current work to finish, then refresh local status before another change.",
             Self::Cancelled => "Cancelled. Mutating work must finish revocation before retry.",
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
@@ -285,6 +315,16 @@ impl Failure {
             Self::UpdateBlocked => "Updating requires a bound disabled host, a newer current-build signed bundle and the same recorded update intent. Finish an interrupted update with its original signed bundle; do not reinstall or repair the cache.",
             Self::InvalidDraft => "A field exceeds its bounded input limit. Shorten it before review.",
             Self::CloudUncertain => "Cloud access is denied, offline or uncertain. Retain the protected receipt and access fence; retry explicitly with the original account. There is no verified removal target.",
+        }
+    }
+
+    fn observation_detail(self) -> Option<String> {
+        match self {
+            Self::Observation { boundary, kind } => Some(format!(
+                "Status boundary: {}; I/O kind: {kind:?}.",
+                boundary.label()
+            )),
+            _ => None,
         }
     }
 }
@@ -457,6 +497,8 @@ struct Request {
 
 #[derive(Default)]
 struct Report {
+    /// Authenticated setup returned; independent of subsequent status reads.
+    setup_complete: bool,
     scope: Scope,
     release: Option<festerm_host_setup::services::ReleaseMetadata>,
     process: Option<String>,
@@ -1046,11 +1088,20 @@ impl Controller {
                     self.device_actions = super::tunnel_browser::DeviceActions::default();
                     if matches!(pending.operation, Operation::Enable | Operation::Update) {
                         self.view.bundle_status = match &result {
-                            Ok(report) if report.failure.is_none() => BundleStatus::Complete,
                             Ok(report) if report.failure == Some(Failure::Cancelled) => {
                                 BundleStatus::Cancelled
                             }
                             Err(Failure::Cancelled) => BundleStatus::Cancelled,
+                            Ok(report)
+                                if report.failure.is_none()
+                                    || report.setup_complete
+                                        && matches!(
+                                            report.failure,
+                                            Some(Failure::Observation { .. })
+                                        ) =>
+                            {
+                                BundleStatus::Complete
+                            }
                             _ => BundleStatus::Blocked,
                         };
                     }
@@ -1119,6 +1170,25 @@ impl Controller {
                             }
                         }
                         Err(error) => {
+                            // A failed mandatory observation cannot leave an
+                            // obsolete pre-operation phase presented as current.
+                            if pending.operation == Operation::Refresh
+                                || matches!(error, Failure::Observation { .. })
+                                || pending.operation == Operation::Enable
+                                    && matches!(
+                                        error,
+                                        Failure::Busy
+                                            | Failure::PrivateStorage
+                                            | Failure::ScopeChanged
+                                            | Failure::Reconciliation
+                                            | Failure::CloudUncertain
+                                    )
+                            {
+                                self.view.scope = Scope::Unobserved;
+                                self.view.owner_binding = None;
+                                self.view.owner_approved = false;
+                                self.view.owner_revision = None;
+                            }
                             self.view.last_run = None;
                             self.view.runtime_history.clear();
                             self.view.process = None;
