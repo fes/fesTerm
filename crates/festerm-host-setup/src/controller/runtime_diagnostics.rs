@@ -142,6 +142,30 @@ pub enum Correlation {
     ManagedHistory,
 }
 
+// Foreground setup precedes any runtime reservation. Never fabricate a run ID.
+// WorkerLog does not reacquire the installation lease held by owner snapshots.
+pub(super) fn foreground_owner_event(
+    state: &Path,
+    epoch: u64,
+    event: crate::enrollment::OwnerAdmissionEvent,
+) {
+    use crate::enrollment::OwnerAdmissionEvent;
+    let (stage, outcome, category) = match event {
+        OwnerAdmissionEvent::Begin(stage) => (stage, "begin", "none"),
+        OwnerAdmissionEvent::Pass(stage) => (stage, "ok", "none"),
+        OwnerAdmissionEvent::Fail(stage, reason) => (stage, "error", reason.code()),
+    };
+    WorkerLog::new(state).event(
+        "host.owner_setup",
+        &[
+            ("epoch", &epoch.to_string()),
+            ("stage", stage.code()),
+            ("outcome", outcome),
+            ("category", category),
+        ],
+    );
+}
+
 pub(super) struct Log {
     writer: WorkerLog,
     epoch: u64,
@@ -406,6 +430,42 @@ mod owner_admission_tests {
             OwnerAdmissionStage as Stage,
         },
     };
+
+    #[test]
+    fn host_owner_setup_log_has_no_run_and_retains_bounds_and_old_reader_skip() {
+        let root = private_storage::private_test_directory();
+        foreground_owner_event(
+            root.path(),
+            6,
+            Event::Fail(Stage::PolicyPublish, Failure::Unclassified),
+        );
+        let text = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+        assert!(text.contains(
+            "host.owner_setup epoch=6 stage=policy_publish outcome=error category=unclassified"
+        ));
+        assert!(text.contains(&format!("pid={} ", std::process::id())));
+        assert!(!text.contains("run="));
+        assert!(text.len() < LINE_BYTES);
+        assert!(parse(text.trim()).is_none());
+        std::fs::write(root.path().join("worker.log"), vec![b'x'; 256 * 1024]).unwrap();
+        foreground_owner_event(root.path(), 6, Event::Pass(Stage::NativeRegistration));
+        assert_eq!(
+            std::fs::metadata(root.path().join("worker.log.1"))
+                .unwrap()
+                .len(),
+            256 * 1024
+        );
+        assert!(
+            std::fs::metadata(root.path().join("worker.log"))
+                .unwrap()
+                .len()
+                < LINE_BYTES as u64
+        );
+        // A missing/unusable log root must not create an installation or panic.
+        let absent = root.path().join("absent-private-canary");
+        foreground_owner_event(&absent, 6, Event::Begin(Stage::StoreOpen));
+        assert!(!absent.exists());
+    }
 
     #[test]
     fn host_owner_admission_log_is_bounded_and_old_runtime_reader_skips_it() {

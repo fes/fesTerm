@@ -348,16 +348,25 @@ pub(crate) async fn setup_scoped_with(
         .ok_or_else(|| refused("host.cloud_binding_changed"))?
         .account
         .clone();
-    let owners = boundary.owners(store)?;
-    let initial = match owners.snapshot() {
+    use crate::enrollment::{observe_owner_result, OwnerAdmissionStage as OwnerStage};
+    let mut observe =
+        |event| runtime_diagnostics::foreground_owner_event(state, expected_epoch, event);
+    let owners = observe_owner_result(OwnerStage::StoreOpen, &mut observe, || {
+        boundary.owners(store)
+    })?;
+    let initial = match owners.snapshot_observed(&mut observe) {
         Ok(existing) => existing,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            owners.initialize_at_epoch(Path::new(HOST_IDENTITY_FILE), account, expected_epoch)?
+            observe_owner_result(OwnerStage::Initialization, &mut observe, || {
+                owners.initialize_at_epoch(Path::new(HOST_IDENTITY_FILE), account, expected_epoch)
+            })?
         }
         Err(error) => return Err(error),
     };
     let native_registration =
-        boundary.complete_setup(store, state, stage, &current, &initial, cancel)?;
+        observe_owner_result(OwnerStage::NativeRegistration, &mut observe, || {
+            boundary.complete_setup(store, state, stage, &current, &initial, cancel)
+        })?;
     Ok(SetupResult {
         native_registration,
         owner_approval_prerequisite: initial,

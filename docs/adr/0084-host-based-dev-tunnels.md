@@ -2516,8 +2516,20 @@ or unlock condition caused it.
 
 The strict runtime journal is unchanged. Existing runtime-log readers skip the
 new line kind; it is captured from the private log for diagnosis, with no new
-GUI presentation, readiness, retry or credential authority. The separate
-`owner-readiness --state-dir PATH --origin desktop|headless` helper command opens
+GUI presentation, readiness, retry or credential authority.
+
+Foreground setup uses the separate `host.owner_setup` event kind in the same
+bounded WorkerLog, with foreground caller PID/time and epoch but no invented runtime run ID.
+It observes the existing owner-store open, snapshot/initialization and native
+registration boundaries. High-water observations distinguish private proposal
+preparation, native-anchor update and final private policy publication without
+changing their order or the original error. Categories are finite; filesystem
+permission denial is distinct from missing, busy and unclassified failures.
+Callbacks do not reacquire the installation lease. Logging is best effort and
+old runtime-history readers skip these lines; there is no new authority, retry,
+UI readiness claim or diagnosis of the retained #816 native failure.
+
+The separate `owner-readiness --state-dir PATH --origin desktop|headless` helper command opens
 only existing selected native-vault state and uses the current noninteractive
 snapshot plus the same consent predicate. Its bounded schema-1 reply explicitly
 says `scope=local_owner_admission` and `status_only=true`; it contains only finite

@@ -2199,6 +2199,52 @@ mod tests {
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
+    async fn host_owner_setup_foreground_failure_logs_exact_boundary_without_runtime() {
+        for broken_log in [false, true] {
+            let (root, store, secrets) = fixture();
+            if broken_log {
+                std::fs::create_dir(root.path().join("host/worker.log")).unwrap();
+            }
+            let boundary = controller_boundary(&store, secrets);
+            boundary.fail_install.set(true);
+            let stage = crate::services::fixture_stage(&root.path().join("stage"));
+            let error = crate::controller::setup_with(
+                crate::controller::SetupRequest {
+                    store: &store,
+                    state: &root.path().join("host"),
+                    stage: &stage,
+                    account: 42,
+                    cancel: &CancellationToken::new(),
+                },
+                |_| {},
+                &boundary,
+            )
+            .await
+            .err()
+            .unwrap();
+            assert_eq!(error.to_string(), "host.fixture_install_failed");
+            assert_eq!(store.snapshot().unwrap().phase, Phase::Provisioned);
+            assert!(!root.path().join("host/host-runtime.json").exists());
+            if broken_log {
+                continue;
+            }
+            let log = std::fs::read_to_string(root.path().join("host/worker.log")).unwrap();
+            for entry in [
+                "stage=store_open outcome=ok category=none",
+                "stage=initialization outcome=ok category=none",
+                "stage=native_registration outcome=error category=unclassified",
+            ] {
+                assert!(log.contains(entry), "{entry}");
+            }
+            assert!(!log.contains("host.fixture_install_failed"));
+            assert!(!log.contains("github:42"));
+            assert!(!log.contains("run="));
+            assert!(!root.path().join("host/host-runtime.json").exists());
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
     async fn host_controller_setup_orders_real_identity_account_policy_and_registration_without_shells(
     ) {
         let (root, store, secrets) = fixture();
