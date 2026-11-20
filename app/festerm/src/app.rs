@@ -13,6 +13,8 @@ mod host_browser;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "host_files.rs"]
 pub(crate) mod host_files;
+#[cfg(test)]
+mod inline_graphics_tests;
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use host_browser::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 mod panes;
@@ -65,6 +67,7 @@ use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 use festerm_ui_egui::theme;
 use festerm_ui_egui::{
     TerminalFontFamily, TerminalFontGeneration, TerminalFontSet, TerminalHistoryAction,
+    TerminalImageExportAction, TerminalImageExportRequest,
 };
 
 use crate::configuration_startup::{
@@ -101,6 +104,27 @@ const PASTE_PREVIEW_LINE_LIMIT: usize = 8;
 /// How still a window has to be before a move or resize is written to the
 /// workspace, so one drag produces one write rather than one per frame.
 const GEOMETRY_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+fn save_terminal_image_file(
+    image: &egui::ColorImage,
+    path: &std::path::Path,
+    destination: &crate::document_store::ConfirmedDestination,
+) -> Result<std::path::PathBuf, String> {
+    let png = festerm_ui_egui::encode_color_image_png(image)?;
+    crate::document_store::save(
+        path,
+        &png,
+        crate::document_store::SaveExpectation::Destination(destination),
+    )
+    .map(|_| path.to_path_buf())
+    .map_err(|error| {
+        format!(
+            "Could not save terminal image. {} {}",
+            error.headline(),
+            error.detail()
+        )
+    })
+}
 
 #[derive(Clone, Copy)]
 enum ApplicationShortcut {
@@ -495,6 +519,9 @@ pub struct FesTermApp {
     /// several call sites that need "is anything blocking terminal input"
     /// have one shared answer.
     overlays: OverlayState,
+    pending_terminal_image_save: Option<festerm_core::kitty::KittyImage>,
+    terminal_image_copy_result: Option<mpsc::Receiver<Result<egui::ColorImage, String>>>,
+    terminal_image_save_result: Option<mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     native_menu: festerm_macos_window::NativeMenu,
     native_menu_shortcut_cache: NativeMenuShortcutCache,
     /// Resume-from-sleep notifier (see `install_wake_monitor`). `None` until
@@ -1002,6 +1029,9 @@ impl FesTermApp {
             rename_restore_tab: None,
             clipboard_paste: None,
             overlays: OverlayState::default(),
+            pending_terminal_image_save: None,
+            terminal_image_copy_result: None,
+            terminal_image_save_result: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
@@ -3196,6 +3226,9 @@ impl FesTermApp {
             session.controller.flush_pending_writes();
             session.controller.flush_pending_resize();
             if let Some(delay) = session.controller.next_resize_repaint_delay() {
+                context.request_repaint_after(delay);
+            }
+            if let Some(delay) = session.controller.next_output_backlog_repaint_delay() {
                 context.request_repaint_after(delay);
             }
         }
@@ -5426,6 +5459,174 @@ impl FesTermApp {
         ctx.request_repaint();
     }
 
+    fn open_terminal_image_save_picker(
+        &mut self,
+        image: festerm_core::kitty::KittyImage,
+        ctx: &egui::Context,
+    ) {
+        if self.overlays.save_as_picker.is_some()
+            || self.terminal_image_copy_result.is_some()
+            || self.terminal_image_save_result.is_some()
+        {
+            self.overlays.transient_notice = Some((
+                "Finish the current image save before saving another image.".to_owned(),
+                Instant::now() + Duration::from_secs(5),
+            ));
+            return;
+        }
+        let directory = self
+            .overlays
+            .save_as_directory
+            .clone()
+            .unwrap_or_else(crate::sftp_file_manager::local_home_directory);
+        self.pending_terminal_image_save = Some(image);
+        self.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+            directory,
+            "terminal-image.png".to_owned(),
+            ctx.clone(),
+        ));
+        ctx.request_repaint();
+    }
+
+    fn handle_terminal_image_export(
+        &mut self,
+        request: TerminalImageExportRequest,
+        ctx: &egui::Context,
+    ) {
+        match request.action() {
+            TerminalImageExportAction::Copy => {
+                self.start_terminal_image_copy(request.into_image(), ctx);
+            }
+            TerminalImageExportAction::Save => {
+                self.open_terminal_image_save_picker(request.into_image(), ctx);
+            }
+        }
+    }
+
+    fn start_terminal_image_copy(
+        &mut self,
+        image: festerm_core::kitty::KittyImage,
+        ctx: &egui::Context,
+    ) {
+        if self.overlays.save_as_picker.is_some()
+            || self.pending_terminal_image_save.is_some()
+            || self.terminal_image_copy_result.is_some()
+            || self.terminal_image_save_result.is_some()
+        {
+            self.overlays.transient_notice = Some((
+                "Finish the current terminal image export before starting another.".to_owned(),
+                Instant::now() + Duration::from_secs(5),
+            ));
+            return;
+        }
+        let wake = ctx.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        match thread::Builder::new()
+            .name("festerm-terminal-image-copy".to_owned())
+            .spawn(move || {
+                let _ = sender.send(festerm_ui_egui::decode_kitty_image_for_export(&image));
+                wake.request_repaint_of(egui::ViewportId::ROOT);
+            }) {
+            Ok(_) => {
+                self.terminal_image_copy_result = Some(receiver);
+                ctx.request_repaint();
+            }
+            Err(error) => {
+                self.overlays.transient_notice = Some((
+                    format!("Could not start terminal image copy: {error}"),
+                    Instant::now() + Duration::from_secs(5),
+                ));
+            }
+        }
+    }
+
+    fn process_terminal_image_copy_result(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = self.terminal_image_copy_result.take() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(image)) => ctx.copy_image(image),
+            Ok(Err(error)) => {
+                self.overlays.transient_notice =
+                    Some((error, Instant::now() + Duration::from_secs(8)));
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.terminal_image_copy_result = Some(receiver);
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.overlays.transient_notice = Some((
+                    "Terminal image copy ended before it could report a result.".to_owned(),
+                    Instant::now() + Duration::from_secs(8),
+                ));
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn start_terminal_image_save(
+        &mut self,
+        image: festerm_core::kitty::KittyImage,
+        path: std::path::PathBuf,
+        destination: Box<crate::document_store::ConfirmedDestination>,
+        ctx: &egui::Context,
+    ) {
+        let wake = ctx.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        match thread::Builder::new()
+            .name("festerm-terminal-image-save".to_owned())
+            .spawn(move || {
+                let result =
+                    festerm_ui_egui::decode_kitty_image_for_export(&image).and_then(|decoded| {
+                        save_terminal_image_file(&decoded, &path, destination.as_ref())
+                    });
+                let _ = sender.send(result);
+                wake.request_repaint_of(egui::ViewportId::ROOT);
+            }) {
+            Ok(_) => {
+                self.terminal_image_save_result = Some(receiver);
+                ctx.request_repaint();
+            }
+            Err(error) => {
+                self.overlays.transient_notice = Some((
+                    format!("Could not start terminal image save: {error}"),
+                    Instant::now() + Duration::from_secs(5),
+                ));
+            }
+        }
+    }
+
+    fn process_terminal_image_save_result(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = self.terminal_image_save_result.take() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(_)) => {
+                self.overlays.transient_notice = Some((
+                    "Terminal image saved as PNG.".to_owned(),
+                    Instant::now() + Duration::from_secs(4),
+                ));
+            }
+            Ok(Err(error)) => {
+                self.overlays.transient_notice =
+                    Some((error, Instant::now() + Duration::from_secs(8)));
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.terminal_image_save_result = Some(receiver);
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.overlays.transient_notice = Some((
+                    "Terminal image save ended before it could report a result.".to_owned(),
+                    Instant::now() + Duration::from_secs(8),
+                ));
+            }
+        }
+        ctx.request_repaint();
+    }
+
     fn close_save_as_picker(&mut self, ctx: &egui::Context) {
         if let Some(picker) = self.overlays.save_as_picker.take() {
             self.overlays.save_as_directory = picker.current_directory();
@@ -5436,6 +5637,7 @@ impl FesTermApp {
 
     fn cancel_save_as_picker(&mut self, ctx: &egui::Context) {
         self.overlays.pending_document_close_after_save_as = None;
+        self.pending_terminal_image_save = None;
         self.cancel_active_editor_close_after_save();
         self.close_save_as_picker(ctx);
     }
@@ -5477,7 +5679,11 @@ impl FesTermApp {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
-                ui.heading("Save As");
+                ui.heading(if self.pending_terminal_image_save.is_some() {
+                    "Save Image"
+                } else {
+                    "Save As"
+                });
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
             },
@@ -5485,22 +5691,27 @@ impl FesTermApp {
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path, destination }) => {
                 self.close_save_as_picker(ctx);
-                self.state.dispatch(
-                    AppCommand::SaveTextDocumentTo {
-                        path,
-                        destination: *destination,
-                    },
-                    ctx,
-                );
-                if let Some(pending) = self.overlays.pending_document_close_after_save_as.take() {
-                    if self.state.document_close_consequence(pending.tab).is_none() {
-                        self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
-                        self.continue_document_close(pending.then, ctx);
-                    } else {
+                if let Some(image) = self.pending_terminal_image_save.take() {
+                    self.start_terminal_image_save(image, path, destination, ctx);
+                } else {
+                    self.state.dispatch(
+                        AppCommand::SaveTextDocumentTo {
+                            path,
+                            destination: *destination,
+                        },
+                        ctx,
+                    );
+                    if let Some(pending) = self.overlays.pending_document_close_after_save_as.take()
+                    {
+                        if self.state.document_close_consequence(pending.tab).is_none() {
+                            self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
+                            self.continue_document_close(pending.then, ctx);
+                        } else {
+                            self.cancel_active_editor_close_after_save();
+                        }
+                    } else if self.active_editor_still_dirty() {
                         self.cancel_active_editor_close_after_save();
                     }
-                } else if self.active_editor_still_dirty() {
-                    self.cancel_active_editor_close_after_save();
                 }
             }
             Some(crate::save_as::SaveAsOutcome::Cancelled) => {
@@ -7023,6 +7234,14 @@ impl FesTermApp {
             .filter(|session| session.recording_eligible())
     }
 
+    /// Whether `id` is a session that recording refuses because its frozen
+    /// ADR 0089 decision enabled inline graphics.
+    pub(crate) fn recording_refuses_inline_graphics(&self, id: TabId) -> bool {
+        self.state
+            .session_tab(id)
+            .is_some_and(|session| session.inline_graphics().is_eligible())
+    }
+
     pub(crate) fn recording_active_tab(&self) -> TabId {
         self.state.active()
     }
@@ -7204,6 +7423,8 @@ impl FesTermApp {
         }
         self.handle_dropped_files(context);
         self.process_pending_password_store(context);
+        self.process_terminal_image_copy_result(context);
+        self.process_terminal_image_save_result(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
         self.state.reprompt_rejected_ssh_passwords(context);
@@ -7500,6 +7721,7 @@ impl FesTermApp {
         let mut deferred_links = Vec::new();
         let mut deferred_terminal_path_open = None;
         let mut deferred_history_actions = Vec::new();
+        let mut deferred_image_export_requests = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
@@ -7612,6 +7834,8 @@ impl FesTermApp {
                                     .state
                                     .rectangle_copy_trim_trailing_spaces(),
                                 scrollback_limit: self.state.scrollback_limit(),
+                                inline_graphics: self.state.inline_graphics(),
+                                inline_graphics_sessions: self.state.inline_graphics_sessions(),
                                 image_memory_budget: self.image_budget.preference(),
                                 image_memory_over_budget: self.image_budget.is_over_budget(),
                                 quick_switch_overlay: self.state.quick_switch_overlay(),
@@ -7794,6 +8018,7 @@ impl FesTermApp {
                             if session.terminal.dimensions() != dimensions_before {
                                 session.controller.record_resize(&session.terminal);
                             }
+                            session.observe_inline_graphics_geometry(ui.ctx().pixels_per_point());
                             if session.search.is_open()
                                 && session.search.has_query()
                                 && session
@@ -7869,6 +8094,8 @@ impl FesTermApp {
                                 deferred_terminal_path_open = Some(active_tab_id);
                             }
                             deferred_history_actions = session.view.take_history_actions();
+                            deferred_image_export_requests =
+                                session.view.take_image_export_requests();
                         }
                         session
                             .controller
@@ -7917,6 +8144,9 @@ impl FesTermApp {
         }
         if deferred_find_request {
             self.open_terminal_search(ui.ctx());
+        }
+        for request in deferred_image_export_requests {
+            self.handle_terminal_image_export(request, ui.ctx());
         }
         for action in deferred_history_actions {
             self.dispatch_terminal_history_action(action, ui.ctx());
@@ -8382,6 +8612,7 @@ impl FesTermApp {
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::TogglePaneHandles
                 | AppCommand::TogglePaneHighContrast
+                | AppCommand::ToggleInlineGraphics
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::ToggleExtendDevTunnelLifetime
@@ -9084,6 +9315,9 @@ impl FesTermApp {
             rename_restore_tab: None,
             clipboard_paste: None,
             overlays: OverlayState::default(),
+            pending_terminal_image_save: None,
+            terminal_image_copy_result: None,
+            terminal_image_save_result: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
@@ -9141,6 +9375,19 @@ impl FesTermApp {
         (app, tab, session)
     }
 
+    /// A window whose local test session was placed after opting in, so its
+    /// frozen decision enables inline graphics where the build allows it.
+    #[cfg(unix)]
+    pub(crate) fn for_test_with_inline_graphics_session() -> (Self, TabId) {
+        let mut app = Self::for_test_with_configuration(
+            Configuration::empty()
+                .with_interface_settings(InterfaceSettings::DEFAULT.with_inline_graphics(true))
+                .unwrap(),
+        );
+        let tab = app.state.place_test_local_session();
+        (app, tab)
+    }
+
     #[cfg(all(windows, target_arch = "x86_64"))]
     pub(crate) fn active_terminal_dimensions_for_test(&self) -> festerm_core::Dimensions {
         self.state
@@ -9156,6 +9403,23 @@ mod tests {
     use std::{fs, path::PathBuf, thread, time::Duration};
 
     use super::*;
+
+    #[test]
+    fn terminal_image_save_writes_exact_png_through_confirmed_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("terminal-image.png");
+        let destination = crate::document_store::observe_destination(&path).unwrap();
+        let source =
+            egui::ColorImage::from_rgba_unmultiplied([2, 1], &[255, 0, 0, 255, 0, 255, 0, 127]);
+
+        assert_eq!(
+            save_terminal_image_file(&source, &path, &destination).unwrap(),
+            path
+        );
+        let decoded = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(decoded.dimensions(), (2, 1));
+        assert_eq!(decoded.as_raw(), &[255, 0, 0, 255, 0, 255, 0, 127]);
+    }
 
     #[test]
     fn dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save() {
@@ -10968,6 +11232,69 @@ mod tests {
         assert_ne!(harness.state().state.active(), tab_id);
         assert!(harness.state().state.active_editor_options().is_some());
         assert!(harness.state().state.session_tab(tab_id).is_some());
+    }
+
+    #[test]
+    fn dpi_only_change_republishes_pty_pixel_geometry_for_an_eligible_local_session() {
+        let mut app = FesTermApp::for_test_with_configuration(
+            Configuration::empty()
+                .with_interface_settings(InterfaceSettings::DEFAULT.with_inline_graphics(true))
+                .unwrap(),
+        );
+        let tab = app.state.place_test_local_session();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .with_pixels_per_point(1.0)
+            .build_ui_state(run_frame, app);
+        let settled = |harness: &mut Harness<'static, FesTermApp>| {
+            harness.run_steps(4);
+            thread::sleep(festerm_ui_egui::TERMINAL_RESIZE_DEBOUNCE);
+            harness.run_steps(2);
+            let session = harness.state().state.session_tab(tab).unwrap();
+            let size = session
+                .controller
+                .resize_probe()
+                .generations()
+                .last()
+                .unwrap()
+                .dimensions;
+            let dimensions = session.terminal.dimensions();
+            assert_eq!(
+                (usize::from(size.columns()), usize::from(size.rows())),
+                (dimensions.columns(), dimensions.rows())
+            );
+            size
+        };
+        let standard = settled(&mut harness);
+        harness.set_pixels_per_point(2.0);
+        let retina = settled(&mut harness);
+        if !crate::inline_graphics::BUILD.is_available() {
+            assert_eq!(standard.pixel_width(), None);
+            assert_eq!(retina.pixel_width(), None);
+            return;
+        }
+        let (Some(width), Some(height)) = (standard.pixel_width(), standard.pixel_height()) else {
+            panic!("an eligible session publishes pixels: {standard:?}");
+        };
+        assert_eq!(width % standard.columns(), 0);
+        assert_eq!(height % standard.rows(), 0);
+        let cell = |size: festerm_session::TerminalSize| {
+            (
+                size.pixel_width().unwrap() / size.columns(),
+                size.pixel_height().unwrap() / size.rows(),
+            )
+        };
+        let (cell_width, cell_height) = cell(standard);
+        let (retina_width, retina_height) = cell(retina);
+        // Device pixels per cell scale with DPI; rounding may differ by one.
+        assert!(
+            retina_width.abs_diff(cell_width * 2) <= 1,
+            "{standard:?} {retina:?}"
+        );
+        assert!(
+            retina_height.abs_diff(cell_height * 2) <= 1,
+            "{standard:?} {retina:?}"
+        );
     }
 
     #[test]

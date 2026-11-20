@@ -386,10 +386,7 @@ fn encode_checkpoint(checkpoint: &RecordingCheckpoint) -> Result<Vec<u8>, Artifa
         .estimated_allocation_bytes()
         .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))?;
     let mut payload = Vec::new();
-    payload.push(match checkpoint.semantics() {
-        TerminalSemantics::Legacy => 0,
-        TerminalSemantics::Current => 1,
-    });
+    payload.push(checkpoint.semantics().wire_id());
     checkpoint_options()
         .serialize_into(&mut payload, checkpoint)
         .map_err(|error| ArtifactError::new(format!("checkpoint encoding failed: {error}")))?;
@@ -701,15 +698,12 @@ fn decode_checkpoint(payload: &[u8], legacy: bool) -> Result<(Terminal, bool), A
     let (semantics, payload) = if legacy {
         (TerminalSemantics::Legacy, payload)
     } else {
-        match payload.split_first() {
-            Some((0, payload)) => (TerminalSemantics::Legacy, payload),
-            Some((1, payload)) => (TerminalSemantics::Current, payload),
-            _ => {
-                return Err(ArtifactError::new(
-                    "unsupported recording terminal semantics",
-                ))
-            }
-        }
+        payload
+            .split_first()
+            .and_then(|(&id, payload)| {
+                TerminalSemantics::from_wire_id(id).map(|value| (value, payload))
+            })
+            .ok_or_else(|| ArtifactError::new("unsupported recording terminal semantics"))?
     };
     let checkpoint: RecordingCheckpoint = checkpoint_options()
         .deserialize(payload)

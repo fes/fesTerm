@@ -2,7 +2,13 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_CSI_INTERMEDIATES, MAX_CSI_PARAMETERS, MAX_STRING_BYTES};
+use crate::{
+    kitty::{
+        clone_staging, reserve_staging, KittyAbort, KittyPacket, MAX_CONTROL_BYTES,
+        MAX_KITTY_PACKET_BYTES,
+    },
+    TerminalSemantics, MAX_CSI_INTERMEDIATES, MAX_CSI_PARAMETERS, MAX_STRING_BYTES,
+};
 
 /// A device-control string this parser understands.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -397,6 +403,13 @@ enum StringKind {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+enum DiscardKind {
+    Other,
+    Kitty,
+    Sixel,
+}
+
 /// Which `G` graphic character set slot a `ESC (` / `ESC )` designation
 /// targets (ISO 2022; VT100 only implements `G0`/`G1`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -435,13 +448,63 @@ enum ParserState {
         kind: StringKind,
         bytes: usize,
     },
+    // Keep the discriminants above frozen for bincode recovery snapshots.
+    ApcEntry,
+    DcsEntry,
+    Discard {
+        kind: DiscardKind,
+        escaped: bool,
+    },
+    DiscardEscapeIntermediate {
+        kind: DiscardKind,
+        intermediate: u8,
+    },
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum KittyPacketState {
+    #[default]
+    Idle,
+    Controls,
+    Payload,
+    Ready(Option<KittyAbort>),
+}
+
+#[derive(Default, Eq, PartialEq)]
+struct KittyFraming {
+    enabled: bool,
+    collect: bool,
+    bytes: Vec<u8>,
+    state: KittyPacketState,
+}
+
+impl Clone for KittyFraming {
+    fn clone(&self) -> Self {
+        Self {
+            bytes: if self.enabled && self.bytes.capacity() == 0 {
+                Vec::with_capacity(MAX_KITTY_PACKET_BYTES)
+            } else {
+                clone_staging(&self.bytes)
+            },
+            ..*self
+        }
+    }
+}
+
+impl std::fmt::Debug for KittyFraming {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KittyFraming")
+            .field("enabled", &self.enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A bounded state-machine parser for ESC and CSI input.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Parser {
     #[serde(skip)]
-    semantics: crate::TerminalSemantics,
+    semantics: TerminalSemantics,
     state: ParserState,
     parameters: CsiParameters,
     parameter_digits: u8,
@@ -452,6 +515,8 @@ pub struct Parser {
     string_payload: Vec<u8>,
     osc_action: Option<OscAction>,
     dcs_action: Option<DcsAction>,
+    #[serde(skip)]
+    kitty: KittyFraming,
     /// The charset designated into `G0` (via `ESC (`); active unless
     /// shifted out with `SO` (0x0E).
     g0_charset: Charset,
@@ -465,14 +530,14 @@ pub struct Parser {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct RecordingParser {
     #[serde(skip)]
-    semantics: crate::TerminalSemantics,
+    semantics: TerminalSemantics,
     g0_charset: Charset,
     g1_charset: Charset,
     shifted_to_g1: bool,
 }
 
 impl RecordingParser {
-    pub(crate) fn semantics(&self) -> crate::TerminalSemantics {
+    pub(crate) fn semantics(&self) -> TerminalSemantics {
         self.semantics
     }
 
@@ -538,7 +603,7 @@ impl Default for Parser {
 impl Parser {
     pub const fn new() -> Self {
         Self {
-            semantics: crate::TerminalSemantics::Current,
+            semantics: TerminalSemantics::SafeFraming,
             state: ParserState::Ground,
             parameters: CsiParameters {
                 values: [0; MAX_CSI_PARAMETERS],
@@ -553,18 +618,85 @@ impl Parser {
             string_payload: Vec::new(),
             osc_action: None,
             dcs_action: None,
+            kitty: KittyFraming {
+                enabled: false,
+                collect: false,
+                bytes: Vec::new(),
+                state: KittyPacketState::Idle,
+            },
             g0_charset: Charset::Ascii,
             g1_charset: Charset::Ascii,
             shifted_to_g1: false,
         }
     }
 
-    pub(crate) fn semantics(&self) -> crate::TerminalSemantics {
+    pub(crate) fn semantics(&self) -> TerminalSemantics {
         self.semantics
     }
 
-    pub(crate) fn set_semantics(&mut self, semantics: crate::TerminalSemantics) {
+    pub(crate) fn set_semantics(&mut self, semantics: TerminalSemantics) {
         self.semantics = semantics;
+    }
+
+    pub(crate) fn enable_kitty(&mut self) -> Option<()> {
+        self.kitty.bytes = reserve_staging(MAX_KITTY_PACKET_BYTES)?;
+        self.kitty.enabled = true;
+        Some(())
+    }
+
+    pub(crate) fn disable_kitty(&mut self) {
+        self.kitty = KittyFraming::default();
+    }
+
+    pub(crate) fn set_kitty_geometry_ready(&mut self, ready: bool) {
+        self.kitty.collect = self.kitty.enabled && ready;
+        self.kitty.bytes.clear();
+        self.kitty.state = KittyPacketState::Idle;
+    }
+
+    pub(crate) fn reset(&mut self) {
+        let semantics = self.semantics;
+        let kitty = std::mem::take(&mut self.kitty);
+        *self = Self::new();
+        self.semantics = semantics;
+        self.kitty = kitty;
+    }
+
+    pub(crate) const fn kitty_enabled(&self) -> bool {
+        self.kitty.enabled
+    }
+
+    pub(crate) fn take_kitty_packet(&mut self) -> Option<KittyPacket> {
+        let KittyPacketState::Ready(abort) = self.kitty.state else {
+            return None;
+        };
+        self.kitty.state = KittyPacketState::Idle;
+        Some(KittyPacket {
+            bytes: std::mem::take(&mut self.kitty.bytes),
+            abort,
+        })
+    }
+
+    pub(crate) fn recycle_kitty_packet(&mut self, mut packet: KittyPacket) {
+        packet.bytes.clear();
+        self.kitty.bytes = packet.bytes;
+    }
+
+    fn finish_kitty_packet(&mut self, abort: Option<KittyAbort>) {
+        match self.kitty.state {
+            KittyPacketState::Controls | KittyPacketState::Payload => {}
+            _ => return,
+        }
+        if abort.is_some() {
+            let header = &self.kitty.bytes[..self.kitty.bytes.len().min(MAX_CONTROL_BYTES + 1)];
+            if let Some(separator) = header.iter().position(|&byte| byte == b';') {
+                self.kitty.bytes.truncate(separator + 1);
+            } else if abort == Some(KittyAbort::Limit) {
+                let prefix = header.iter().rposition(|&byte| byte == b',').unwrap_or(0);
+                self.kitty.bytes.truncate(prefix);
+            }
+        }
+        self.kitty.state = KittyPacketState::Ready(abort);
     }
 
     pub(crate) fn is_ground(&self) -> bool {
@@ -608,18 +740,49 @@ impl Parser {
     /// Advances one byte and returns at most one fully typed operation.
     pub fn advance(&mut self, byte: u8) -> TerminalOp {
         if matches!(byte, 0x18 | 0x1a) {
+            self.finish_kitty_packet(Some(KittyAbort::Interrupted));
+            if self.state == ParserState::DcsEntry {
+                self.string_payload.clear();
+            }
             self.state = ParserState::Ground;
             self.clear_csi();
             return TerminalOp::Ignored;
         }
-        if matches!(
-            self.state,
-            ParserState::String { .. } | ParserState::StringEscape { .. }
-        ) {
-            if let Some(operation) = c0_operation(byte) {
-                return operation;
+        match self.state {
+            ParserState::String {
+                kind: StringKind::Dcs,
+                ..
+            } if self.semantics == TerminalSemantics::SafeFraming
+                && self.string_payload == b"$" =>
+            {
+                // Older safe-framing snapshots buffered this partial header.
+                self.state = ParserState::DcsEntry;
+                return self.advance_dcs_entry(byte);
             }
-            return self.advance_string(byte);
+            ParserState::String { kind, .. } | ParserState::StringEscape { kind, .. } => {
+                if self.semantics == TerminalSemantics::SafeFraming
+                    && (kind == StringKind::Other
+                        || (kind == StringKind::Dcs && !self.string_payload.starts_with(b"$q")))
+                {
+                    let escaped = matches!(self.state, ParserState::StringEscape { .. });
+                    self.string_payload.clear();
+                    self.state = Self::discard(DiscardKind::Other, escaped);
+                    return self.advance_discard(DiscardKind::Other, escaped, byte);
+                }
+                if let Some(operation) = c0_operation(byte) {
+                    return operation;
+                }
+                return self.advance_string(byte);
+            }
+            ParserState::ApcEntry => return self.advance_apc_entry(byte),
+            ParserState::DcsEntry => return self.advance_dcs_entry(byte),
+            ParserState::Discard { kind, escaped } => {
+                return self.advance_discard(kind, escaped, byte);
+            }
+            ParserState::DiscardEscapeIntermediate { kind, intermediate } => {
+                return self.advance_discard_escape_intermediate(kind, intermediate, byte);
+            }
+            _ => {}
         }
 
         if byte == 0x1b {
@@ -678,8 +841,13 @@ impl Parser {
                 }
                 TerminalOp::Ignored
             }
-            ParserState::String { .. } | ParserState::StringEscape { .. } => {
-                unreachable!("string states return before parser dispatch")
+            ParserState::String { .. }
+            | ParserState::StringEscape { .. }
+            | ParserState::ApcEntry
+            | ParserState::DcsEntry
+            | ParserState::Discard { .. }
+            | ParserState::DiscardEscapeIntermediate { .. } => {
+                unreachable!("string states return before dispatch")
             }
         }
     }
@@ -721,6 +889,14 @@ impl Parser {
                 ParserState::CsiEntry
             }
             b']' => self.start_string(StringKind::Osc),
+            b'P' | b'_' | b'X' | b'^' if self.semantics == TerminalSemantics::SafeFraming => {
+                self.string_payload.clear();
+                match byte {
+                    b'P' => ParserState::DcsEntry,
+                    b'_' => ParserState::ApcEntry,
+                    _ => Self::discard(DiscardKind::Other, false),
+                }
+            }
             b'P' => self.start_string(StringKind::Dcs),
             b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
             b'(' => ParserState::CharsetDesignate(CharsetSlot::G0),
@@ -747,8 +923,8 @@ impl Parser {
             },
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
-            b'c' if self.semantics == crate::TerminalSemantics::Current => {
-                *self = Self::new();
+            b'c' if self.semantics != TerminalSemantics::Legacy => {
+                self.reset();
                 TerminalOp::ResetToInitialState
             }
             _ => TerminalOp::Ignored,
@@ -791,6 +967,147 @@ impl Parser {
             0x40..=0x7e => self.complete_csi(byte),
             _ => self.ignore_csi(),
         }
+    }
+
+    fn advance_apc_entry(&mut self, byte: u8) -> TerminalOp {
+        match byte {
+            b'G' => {
+                if self.kitty.collect {
+                    debug_assert_eq!(self.kitty.bytes.len(), 0);
+                    self.kitty.state = KittyPacketState::Controls;
+                }
+                self.state = Self::discard(DiscardKind::Kitty, false);
+            }
+            0x1b => self.state = Self::discard(DiscardKind::Other, true),
+            0x00..=0x1f | 0x7f => {}
+            _ => self.state = Self::discard(DiscardKind::Other, false),
+        }
+        TerminalOp::Ignored
+    }
+
+    fn advance_dcs_entry(&mut self, byte: u8) -> TerminalOp {
+        let bytes = self.string_payload.len();
+        match byte {
+            0x1b => {
+                self.string_payload.clear();
+                self.state = Self::discard(DiscardKind::Other, true);
+            }
+            0x00..=0x1f | 0x7f => {}
+            b'q' if self.string_payload == b"$" => {
+                self.advance_string_payload(StringKind::Dcs, bytes, &[byte]);
+            }
+            b'q' => {
+                self.string_payload.clear();
+                self.state = Self::discard(DiscardKind::Sixel, false);
+            }
+            b'$' if bytes == 0 => self.string_payload.push(byte),
+            0x30..=0x3f if self.string_payload != b"$" => {
+                if bytes + 1 == MAX_STRING_BYTES {
+                    // The final byte is still unknown. Discard rather than let
+                    // an oversized header expose a possible Sixel payload.
+                    self.string_payload.clear();
+                    self.state = Self::discard(DiscardKind::Sixel, false);
+                } else {
+                    self.string_payload.push(byte);
+                }
+            }
+            _ => {
+                self.string_payload.clear();
+                self.state = Self::discard(DiscardKind::Other, false);
+            }
+        }
+        TerminalOp::Ignored
+    }
+
+    const fn discard(kind: DiscardKind, escaped: bool) -> ParserState {
+        ParserState::Discard { kind, escaped }
+    }
+
+    fn advance_discard(&mut self, kind: DiscardKind, escaped: bool, byte: u8) -> TerminalOp {
+        match byte {
+            0x1b => {
+                if escaped {
+                    self.finish_kitty_packet(Some(KittyAbort::Interrupted));
+                }
+                self.state = Self::discard(kind, true);
+            }
+            0x00..=0x1f | 0x7f => {}
+            b'\\' if escaped => {
+                self.state = ParserState::Ground;
+                self.finish_kitty_packet(None);
+            }
+            _ if escaped => {
+                self.finish_kitty_packet(Some(KittyAbort::Interrupted));
+                self.abandon_string();
+                if matches!(byte, 0x20..=0x2f) {
+                    self.state = ParserState::DiscardEscapeIntermediate {
+                        kind,
+                        intermediate: byte,
+                    };
+                    return TerminalOp::Ignored;
+                }
+                let operation = self.advance_escape(byte);
+                // An unsupported escape does not expose the remaining payload.
+                if operation == TerminalOp::Ignored && self.is_ground() {
+                    self.state = Self::discard(kind, false);
+                }
+                return operation;
+            }
+            _ => {
+                let length = self.kitty.bytes.len();
+                match self.kitty.state {
+                    KittyPacketState::Controls if byte == b';' => {
+                        self.kitty.bytes.push(byte);
+                        self.kitty.state = KittyPacketState::Payload;
+                    }
+                    KittyPacketState::Controls if length < MAX_CONTROL_BYTES => {
+                        self.kitty.bytes.push(byte);
+                    }
+                    KittyPacketState::Payload if length < MAX_KITTY_PACKET_BYTES => {
+                        self.kitty.bytes.push(byte);
+                    }
+                    KittyPacketState::Controls | KittyPacketState::Payload => {
+                        self.finish_kitty_packet(Some(KittyAbort::Limit));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TerminalOp::Ignored
+    }
+
+    fn advance_discard_escape_intermediate(
+        &mut self,
+        kind: DiscardKind,
+        intermediate: u8,
+        byte: u8,
+    ) -> TerminalOp {
+        match byte {
+            0x1b => self.state = Self::discard(kind, true),
+            0x00..=0x1f | 0x7f => {}
+            0x20..=0x2f => {
+                // No supported escape has more than one intermediate.
+                self.state = ParserState::DiscardEscapeIntermediate {
+                    kind,
+                    intermediate: 0,
+                };
+            }
+            0x30..=0x7e if intermediate == b'(' || intermediate == b')' => {
+                let slot = if intermediate == b'(' {
+                    CharsetSlot::G0
+                } else {
+                    CharsetSlot::G1
+                };
+                self.designate_charset(slot, byte);
+                self.state = ParserState::Ground;
+            }
+            b'8' if intermediate == b'#' => {
+                self.state = ParserState::Ground;
+                return TerminalOp::ScreenAlignmentPattern;
+            }
+            _ => self.state = Self::discard(kind, false),
+        }
+        TerminalOp::Ignored
     }
 
     fn advance_string(&mut self, byte: u8) -> TerminalOp {
@@ -853,7 +1170,12 @@ impl Parser {
             self.string_payload.extend_from_slice(payload);
         }
         self.state = if bytes >= MAX_STRING_BYTES {
-            ParserState::Ground
+            if kind == StringKind::Dcs && self.semantics == TerminalSemantics::SafeFraming {
+                self.string_payload.clear();
+                Self::discard(DiscardKind::Other, false)
+            } else {
+                ParserState::Ground
+            }
         } else {
             ParserState::String { kind, bytes }
         };
@@ -1076,6 +1398,39 @@ impl Parser {
                     bytes
                 ));
             }
+        }
+        match self.state {
+            ParserState::ApcEntry
+            | ParserState::DcsEntry
+            | ParserState::Discard { .. }
+            | ParserState::DiscardEscapeIntermediate { .. }
+                if self.semantics != TerminalSemantics::SafeFraming =>
+            {
+                return Err("parser discard state requires safe terminal framing".to_owned());
+            }
+            ParserState::ApcEntry
+            | ParserState::Discard { .. }
+            | ParserState::DiscardEscapeIntermediate { .. }
+                if !self.string_payload.is_empty() =>
+            {
+                return Err("parser discard state must not retain a payload".to_owned());
+            }
+            ParserState::DiscardEscapeIntermediate { intermediate, .. }
+                if intermediate != 0 && !matches!(intermediate, 0x20..=0x2f) =>
+            {
+                return Err("parser stores an invalid discard escape intermediate".to_owned());
+            }
+            ParserState::DcsEntry
+                if self.string_payload != b"$"
+                    && (self.string_payload.len() == MAX_STRING_BYTES
+                        || self
+                            .string_payload
+                            .iter()
+                            .any(|byte| !matches!(byte, 0x30..=0x3f | 0x00..=0x1f | 0x7f))) =>
+            {
+                return Err("parser stores an invalid DCS header".to_owned());
+            }
+            _ => {}
         }
         Ok(())
     }
