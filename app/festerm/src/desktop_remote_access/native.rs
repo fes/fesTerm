@@ -58,6 +58,7 @@ fn completion_failure_code(error: Failure) -> &'static str {
         Failure::Observation { .. } => "observation",
         Failure::Cancelled => "cancelled",
         Failure::Timeout => "timeout",
+        Failure::NativeTimeout => "native_timeout",
         Failure::RefreshFirst => "refresh_first",
         Failure::ScopeChanged => "scope_changed",
         Failure::PrivateStorage => "private_storage",
@@ -380,7 +381,14 @@ fn failure(error: io::Error) -> Failure {
     // Error details can contain credential diagnostics or resource URLs. Only
     // classify them; never forward native/cloud error strings to a widget.
     let detail = error.to_string();
-    if detail == "host.file_helper_unsupported" {
+    if error.kind() == io::ErrorKind::Other
+        && detail == "host.service_native_timeout"
+        && !error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<io::Error>() || inner.source().is_some())
+    {
+        Failure::NativeTimeout
+    } else if detail == "host.file_helper_unsupported" {
         Failure::FileHelperUnsupported
     } else if detail.contains("vault")
         || detail.contains("native_store")
@@ -636,7 +644,9 @@ fn run_async_with_deadline<T>(
 
 fn update_failure(error: Failure) -> Failure {
     match error {
-        Failure::Cancelled | Failure::Timeout | Failure::ScopeChanged => error,
+        Failure::Cancelled | Failure::Timeout | Failure::NativeTimeout | Failure::ScopeChanged => {
+            error
+        }
         _ => Failure::UpdateIncomplete,
     }
 }

@@ -1425,3 +1425,69 @@ fn desktop_remote_access_enable_completion_reason_allowlist_and_numeric_os_are_b
     let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
     assert!(log.contains("os=13 reason=unknown"));
 }
+
+#[test]
+fn desktop_remote_access_native_timeout_classification_is_exact_and_preserves_contention() {
+    let reason = "host.service_native_timeout";
+    assert_eq!(failure(io::Error::other(reason)), Failure::NativeTimeout);
+    assert_eq!(
+        failure(io::Error::new(io::ErrorKind::WouldBlock, reason)),
+        Failure::Busy
+    );
+    for kind in [io::ErrorKind::TimedOut, io::ErrorKind::PermissionDenied] {
+        assert_eq!(
+            failure(io::Error::new(kind, reason)),
+            Failure::PrivateStorage
+        );
+    }
+    for detail in [
+        "prefix host.service_native_timeout",
+        "host.service_native_timeout PRIVATE-DETAIL",
+        "host.service_native_timeout\n",
+    ] {
+        let classified = failure(io::Error::other(detail));
+        assert_eq!(classified, Failure::PrivateStorage);
+        assert!(!classified.message().contains(detail));
+    }
+    // Display alone must not promote an unknown wrapped error into the known
+    // native service result. Do not inspect or expose its source chain.
+    assert_eq!(
+        failure(io::Error::other(io::Error::other(reason))),
+        Failure::PrivateStorage
+    );
+}
+
+#[test]
+fn desktop_remote_access_native_timeout_completion_keeps_primary_result_and_recovery() {
+    let root = storage::private_test_directory();
+    let error = completion_io::<()>(
+        root.path(),
+        7,
+        CompletionBoundary::ServiceStart,
+        ObservationBoundary::ServiceStart,
+        || Err(io::Error::other("host.service_native_timeout")),
+    )
+    .unwrap_err();
+    assert_eq!(error, Failure::NativeTimeout);
+    assert_eq!(update_failure(error), error);
+    for primary in [
+        Failure::NativeTimeout,
+        Failure::Cancelled,
+        Failure::ScopeChanged,
+    ] {
+        assert!(
+            matches!(completion_report(root.path(), 7, || Err(primary)), Err(actual) if actual == primary)
+        );
+    }
+    assert_eq!(completion_failure_code(error), "native_timeout");
+    let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+    assert!(log.contains("reason=native_timeout"));
+    assert!(log.contains("failure=native_timeout"));
+    assert!(!error.message().contains("five-minute"));
+    assert!(!error.message().contains("cancellation was requested"));
+    assert!(error
+        .message()
+        .contains("may not have run or may have completed"));
+    assert!(error.message().contains("Nothing is retried automatically"));
+    assert!(Failure::Timeout.message().contains("five-minute"));
+}

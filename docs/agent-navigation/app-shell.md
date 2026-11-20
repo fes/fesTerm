@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain":"app-shell","generator":"2","model":"codex-source-verified","sources":"e6dc3fcf27017224f646b295b5e7785bc94057bb85f27c1257944282ea432d36"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "380a06e0c86b0d6dcc0964d51d209be4fb7256a453f9d2a9139ab29e7dbf4d40"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 
 ## Startup flow
 
-Use for: Startup, restored windows, and saved workspace recovery
+Use for: Startup and workspace recovery
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native viewport startup
 - [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns every window and cross-window policy
@@ -26,7 +26,7 @@ Caveats:
 
 ## Frame loop
 
-Use for: Frame logic, close requests, and focused pane rendering
+Use for: Frame logic and focused panes
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
 - [`ui_content`](../../app/festerm/src/app.rs) — Builds UI; applies border cursor feedback last
@@ -72,23 +72,24 @@ Caveats:
 
 ## Lifecycle diagnostics
 
-Use for: Exit recovery, crash evidence, and host failure history
+Use for: Exit recovery and host failure history
 
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
+- [`Failure`](../../app/festerm/src/desktop_remote_access.rs) — Native timeout recovery.
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context
 - [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs) — Enable boundaries.
 
 Evidence:
-- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Diagnostic recovery and artifact retention survive partial writes
+- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Preserves partial-write artifacts
 - [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Historical pane only; no readiness claim
 
 Caveats:
-- Diagnostics preserve evidence but cannot fix runtime logic or app state.
+- Diagnostics preserve evidence, not runtime authority.
 - Journal writes are best-effort and degrade gracefully when unavailable.
 
 ## File operation review
 
-Use for: Remote file create/delete review and worker lifecycle
+Use for: Remote file review and worker lifecycle
 
 - [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Fences retired remote reviews
 - [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory, and selection before confirm

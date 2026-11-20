@@ -6930,7 +6930,10 @@
         "desktop_remote_access_failed_mandatory_observation_clears_obsolete_scope",
         "desktop_remote_access_setup_completion_does_not_mask_cancel_or_scope_failure",
         "desktop_remote_access_final_failure_survives_unreadable_reobservation",
-        "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled"
+        "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled",
+        "desktop_remote_access_native_timeout_classification_is_exact_and_preserves_contention",
+        "desktop_remote_access_native_timeout_completion_keeps_primary_result_and_recovery",
+        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
