@@ -68,6 +68,9 @@ fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Fai
         if !matches!(snapshot.phase, Phase::Disabled | Phase::Provisioned) {
             return Err(Failure::Reconciliation);
         }
+        if snapshot.settings.filesystem.is_some() {
+            return Err(Failure::FileAccessReview);
+        }
         if snapshot
             .binding
             .as_ref()

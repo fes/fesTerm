@@ -37,6 +37,7 @@ const AUTH_REFUSAL_RESERVE: Duration = Duration::from_millis(100);
 pub enum StreamRole {
     Control,
     Terminal,
+    Files,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -289,6 +290,7 @@ async fn authenticate_client_using_guard(
             .write_u8(match role {
                 StreamRole::Control => 0,
                 StreamRole::Terminal => 1,
+                StreamRole::Files => 2,
             })
             .await?;
         stream.flush().await?;
@@ -438,6 +440,7 @@ pub struct HostRuntime<A: ProtectedPolicySource> {
     terminal: Arc<NativeTerminal<A>>,
     budgets: Budgets,
     output: OutputScheduler,
+    filesystem: Option<Arc<crate::host_files::Prepared>>,
 }
 
 #[cfg(feature = "relay")]
@@ -453,7 +456,22 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
             policy,
             budgets: Budgets::default(),
             output: OutputScheduler::default(),
+            filesystem: None,
         }
+    }
+
+    /// Native preparation, never file consent or remote input. Call on a
+    /// blocking worker; current protected policy is rechecked on every use.
+    pub fn with_filesystem(
+        mut self,
+        policy: crate::file_protocol::HostPolicy,
+    ) -> std::io::Result<Self> {
+        self.filesystem = if policy.filesystem.is_some() {
+            Some(crate::host_files::Prepared::open(policy)?)
+        } else {
+            None
+        };
+        Ok(self)
     }
 
     /// Consume an existing authenticated relay listener. No fallback to legacy
@@ -530,6 +548,7 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
             match role {
                 StreamRole::Control => 0,
                 StreamRole::Terminal => 1,
+                StreamRole::Files => 2,
             }
         } else {
             tokio::select! {
@@ -564,6 +583,17 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
                 )
                 .await
             }
+            2 if ordinary_role == Some(StreamRole::Files) => crate::host_files::serve(
+                stream,
+                permit,
+                owner,
+                guard,
+                self.policy.clone(),
+                self.filesystem.clone(),
+                shutdown,
+            )
+            .await
+            .map_err(Error::from),
             _ => Err(ContractError::Malformed.into()),
         }
     }

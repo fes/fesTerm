@@ -44,6 +44,8 @@ pub struct Settings {
     /// Protected Enable consent; absent legacy fields never grant ordinary access.
     #[serde(default, skip_serializing_if = "OrdinaryAccess::is_owner_only")]
     pub ordinary_access: OrdinaryAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<festerm_tunnel_bridge::file_protocol::Policy>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -63,6 +65,16 @@ impl OrdinaryAccess {
 impl Settings {
     pub fn validate(&self) -> io::Result<()> {
         label(&self.friendly_name, 80)?;
+        if let Some(policy) = &self.filesystem {
+            if self.ordinary_access != OrdinaryAccess::ProviderOwner {
+                return Err(refused(
+                    "File access requires provider-authorized remote access.",
+                ));
+            }
+            policy
+                .validate()
+                .map_err(|_| refused("Choose an absolute local folder for file access."))?;
+        }
         // No platform has supplied pre-login service/vault qualification yet.
         if self.startup == Startup::BeforeLogin {
             return Err(refused("host.startup_before_login_unqualified"));
@@ -376,6 +388,9 @@ impl Store {
             crate::owned_migration::admit_enable(&self.directory, record)?;
             if record.phase != Phase::Disabled {
                 return Err(refused("host.reconcile_before_enable"));
+            }
+            if record.settings.filesystem != approved_settings.filesystem {
+                return Err(refused("File access changed. Review the file folder and permissions while remote access is disabled, then enable again."));
             }
             if expected.is_some() {
                 record.settings = approved_settings.clone();
@@ -766,11 +781,72 @@ mod tests {
 
     fn settings() -> Settings {
         Settings {
+            filesystem: None,
             ordinary_access: Default::default(),
             friendly_name: "Fixture host".into(),
             allow_creation: false,
             startup: Startup::Manual,
         }
+    }
+
+    #[test]
+    fn host_files_policy_is_default_off_strict_and_bound_to_reviewed_settings() {
+        let (_root, store) = fixture();
+        let original = store.snapshot().unwrap();
+        let mut requested = original.settings.clone();
+        requested.ordinary_access = OrdinaryAccess::ProviderOwner;
+        requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: std::env::temp_dir().join("owned-files-review"),
+            write: false,
+        });
+        let mut wrong_mode = requested.clone();
+        wrong_mode.ordinary_access = OrdinaryAccess::OwnerOnly;
+        assert!(store.configure(wrong_mode).is_err());
+        assert!(
+            store
+                .request_enable_if_current(&original, &requested)
+                .is_err(),
+            "new file grants require explicit Disabled configuration"
+        );
+        store.configure(requested.clone()).unwrap();
+        let configured = store.snapshot().unwrap();
+        let mut old_surface = requested.clone();
+        old_surface.filesystem = None;
+        assert!(store
+            .request_enable_if_current(&configured, &old_surface)
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), configured);
+        let ticket = store
+            .request_enable_if_current(&configured, &requested)
+            .unwrap();
+        assert_eq!(ticket.approved_settings(), &requested);
+        let current = store.snapshot().unwrap();
+        assert!(store.configure(old_surface).is_err());
+        assert_eq!(store.snapshot().unwrap(), current);
+        store.record_provisioned(&ticket, binding()).unwrap();
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        assert_eq!(stopped.settings.filesystem, requested.filesystem);
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let mut disabled = store.snapshot().unwrap().settings;
+        disabled.filesystem = None;
+        store.configure(disabled).unwrap();
+        assert!(store.snapshot().unwrap().settings.filesystem.is_none());
+        let mut malformed = serde_json::to_value(requested).unwrap();
+        malformed["filesystem"]["extra"] = true.into();
+        assert!(serde_json::from_value::<Settings>(malformed).is_err());
+        let mut relative = configured.settings;
+        relative.filesystem.as_mut().unwrap().root = "relative".into();
+        assert!(relative.validate().is_err());
+        let mut legacy = serde_json::to_value(original.settings).unwrap();
+        assert!(legacy.get("filesystem").is_none());
+        legacy["filesystem"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Settings>(legacy)
+            .unwrap()
+            .filesystem
+            .is_none());
     }
 
     #[test]

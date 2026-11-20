@@ -11,6 +11,7 @@ fn host_process_recovery_managed_entries_fail_closed_without_registration_and_st
             &state,
             origin,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "managed refusal fixture".into(),
                 allow_creation: false,
@@ -57,6 +58,7 @@ fn desktop_native_binary_entry_refuses_headless_origin_and_never_grants_from_met
             &state,
             origin,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "Synthetic desktop runner".into(),
                 allow_creation: false,
@@ -272,6 +274,7 @@ fn headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance() {
         &state,
         Origin::Headless,
         Settings {
+            filesystem: None,
             ordinary_access: Default::default(),
             friendly_name: "Cleanup fixture".into(),
             allow_creation: false,
@@ -426,4 +429,36 @@ fn headless_native_publication_rejects_untrusted_inputs_without_service_effects(
     assert!(!cache.exists());
     let diagnostic = String::from_utf8(output.stderr).unwrap();
     assert!(diagnostic.contains("artifact_authentication_failed"));
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
+fn headless_configure_cannot_erase_an_unreviewable_file_grant() {
+    use festerm_host_setup::lifecycle::{OrdinaryAccess, Origin, Settings, Startup, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let state = root.path().join("files-settings");
+    let store = Store::create(
+        &state,
+        Origin::Headless,
+        Settings {
+            friendly_name: "Files fixture".into(),
+            allow_creation: false,
+            startup: Startup::Manual,
+            ordinary_access: OrdinaryAccess::ProviderOwner,
+            filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
+                root: root.path().to_path_buf(),
+                write: false,
+            }),
+        },
+    )
+    .unwrap();
+    let before = store.snapshot().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["configure", "--name", "Changed", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot review existing file access"));
+    assert_eq!(store.snapshot().unwrap(), before);
 }

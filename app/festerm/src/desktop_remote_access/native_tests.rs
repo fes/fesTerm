@@ -939,3 +939,35 @@ fn desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_sc
         assert_eq!(store.snapshot().unwrap(), before);
     }
 }
+
+#[test]
+fn desktop_remote_access_file_consent_blocks_enable_before_acquisition_or_effects() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop-files");
+    let mut settings = Draft::default().settings();
+    settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        root: root.path().to_path_buf(),
+        write: false,
+    });
+    let store = Store::create(&path, Origin::Desktop, settings).unwrap();
+    let before = store.snapshot().unwrap();
+    let mut work = request(
+        &path,
+        Operation::Enable,
+        Scope::Present(Arc::new(before.clone())),
+    );
+    work.draft.account = "42".into();
+    let result = Native.execute_with(
+        work,
+        &CancellationToken::new(),
+        mpsc::sync_channel(1).0,
+        |_, _| -> Result<(), Failure> { panic!("unreviewed file consent cannot acquire a bundle") },
+        |_, _| panic!("unreviewed file consent cannot publish a bundle"),
+    );
+    assert!(matches!(result, Err(Failure::FileAccessReview)));
+    assert_eq!(store.snapshot().unwrap(), before);
+    assert!(!path.join("signed-release-cache").exists());
+    assert!(!Failure::FileAccessReview
+        .message()
+        .contains(root.path().to_str().unwrap()));
+}

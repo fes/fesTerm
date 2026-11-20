@@ -135,6 +135,7 @@ impl OrdinaryChallenge {
         message.push(match role {
             StreamRole::Control => 0,
             StreamRole::Terminal => 1,
+            StreamRole::Files => 2,
         });
         Ok(message)
     }
@@ -271,12 +272,28 @@ pub struct OrdinaryPolicy {
     pub host_info: OrdinaryHostInfo,
     pub session: crate::owner_auth::SessionPolicy,
     pub denied_keys: Vec<[u8; 32]>,
+    /// Independent current host-file consent; never a SessionGrant.
+    pub files: Option<crate::file_protocol::HostPolicy>,
 }
 impl Validate for OrdinaryPolicy {
     fn validate(&self) -> Result<(), ContractError> {
         self.host_info.validate()?;
         self.session.host.validate()?;
         self.session.capabilities.validate_permissions()?;
+        if let Some(files) = &self.files {
+            files
+                .scope
+                .validate()
+                .map_err(|_| ContractError::Malformed)?;
+            if files.scope.host != self.host_info.route.host.host
+                || files.scope.installation != self.host_info.installation
+            {
+                return Err(ContractError::Denied);
+            }
+            if let Some(policy) = &files.filesystem {
+                policy.validate().map_err(|_| ContractError::Malformed)?;
+            }
+        }
         if self.host_info.route.host != self.session.host
             || self.host_info.principal != self.session.principal
             || self.host_info.policy_epoch != self.session.grant_epoch
@@ -289,10 +306,19 @@ impl Validate for OrdinaryPolicy {
     }
 }
 
+#[cfg(feature = "relay")]
+struct FileCapture {
+    policy: crate::file_protocol::HostPolicy,
+    context: OrdinaryHostInfo,
+}
+
 /// Minted only by the runtime after fresh provider observation and channel proof.
 pub struct OrdinaryCapability {
     scope: crate::owner_auth::SessionScope,
     public_key: [u8; 32],
+    role: StreamRole,
+    #[cfg(feature = "relay")]
+    files: Option<Box<FileCapture>>,
 }
 impl OrdinaryCapability {
     #[cfg(feature = "relay")]
@@ -304,17 +330,48 @@ impl OrdinaryCapability {
         if policy.denied_keys.contains(&proof.public_key) {
             return Err(ContractError::Denied);
         }
+        if proof.role == StreamRole::Files && policy.files.is_none() {
+            return Err(ContractError::Denied);
+        }
         let (scope, guard) = crate::owner_auth::SessionScope::ordinary(&policy.session)?;
         Ok((
             Self {
                 scope,
                 public_key: proof.public_key,
+                role: proof.role,
+                files: if proof.role == StreamRole::Files {
+                    policy.files.as_ref().map(|files| {
+                        Box::new(FileCapture {
+                            policy: files.clone(),
+                            context: policy.host_info.clone(),
+                        })
+                    })
+                } else {
+                    None
+                },
             },
             guard,
         ))
     }
     pub(crate) fn principal(&self) -> &PrincipalId {
         self.scope.principal()
+    }
+    #[cfg(feature = "relay")]
+    pub(crate) fn authorize_files<'a>(
+        &self,
+        current: &'a OrdinaryPolicy,
+    ) -> Result<&'a crate::file_protocol::HostPolicy, ContractError> {
+        current.validate()?;
+        let captured = self.files.as_deref().ok_or(ContractError::Denied)?;
+        if self.role != StreamRole::Files
+            || captured.context != current.host_info
+            || current.denied_keys.contains(&self.public_key)
+            || current.files.as_ref() != Some(&captured.policy)
+        {
+            return Err(ContractError::Denied);
+        }
+        self.scope.authorize_connection(&current.session)?;
+        current.files.as_ref().ok_or(ContractError::Denied)
     }
     pub(crate) fn authorize(
         &self,
@@ -326,7 +383,8 @@ impl OrdinaryCapability {
     ) -> Result<festerm_host_protocol::AdmissionFence, ContractError> {
         use festerm_host_protocol::{LogicalState, Request};
         current.validate()?;
-        if current.denied_keys.contains(&self.public_key)
+        if self.role == StreamRole::Files
+            || current.denied_keys.contains(&self.public_key)
             || matches!(request.body, Request::ExplicitEnd { .. })
             || matches!(request.body, Request::EnsureProfile { .. })
                 && !policy.capabilities.creation_allowed
@@ -407,6 +465,16 @@ mod tests {
             .unwrap();
         assert_eq!(verified.public_key(), &key.public_key());
         assert_eq!(verified.role(), StreamRole::Control);
+        for substituted in [StreamRole::Control, StreamRole::Terminal] {
+            let issued = pending();
+            let mut proof = key
+                .prove(&client, &route, issued.challenge(), StreamRole::Files)
+                .unwrap();
+            proof.role = substituted;
+            assert!(issued
+                .verify(&proof, &info, server.owner_channel_binding().unwrap(), &[])
+                .is_err());
+        }
         for change in [
             "role",
             "key",

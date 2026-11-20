@@ -2349,3 +2349,26 @@ fn desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_ro
         .contains("Nothing was installed"));
     assert!(!controller.view.busy);
 }
+
+#[test]
+fn desktop_remote_access_old_draft_cannot_erase_protected_file_consent() {
+    use festerm_host_setup::lifecycle::{Origin, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let old_draft = Draft::default().settings();
+    let mut configured = old_draft.clone();
+    configured.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        root: root.path().to_path_buf(),
+        write: false,
+    });
+    let store = Store::create(
+        &root.path().join("desktop-files"),
+        Origin::Desktop,
+        configured,
+    )
+    .unwrap();
+    let before = store.snapshot().unwrap();
+    assert!(store
+        .request_enable_if_current(&before, &old_draft)
+        .is_err());
+    assert_eq!(store.snapshot().unwrap(), before);
+}

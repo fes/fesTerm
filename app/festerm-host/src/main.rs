@@ -591,6 +591,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                     .transpose()
             };
             let settings = Settings {
+                filesystem: None,
                 friendly_name: name.into(),
                 allow_creation: match choice("--creation")? {
                     Some("allow") => true,
@@ -611,7 +612,12 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             settings.validate()?;
             let state = path("--state-dir")?;
             match Store::open(&state, Origin::Headless) {
-                Ok(store) => store.configure(settings)?,
+                Ok(store) => {
+                    if store.snapshot()?.settings.filesystem.is_some() {
+                        return Err(io::Error::other("host.file_access_review_required"));
+                    }
+                    store.configure(settings)?;
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     Store::create(&state, Origin::Headless, settings)?;
                 }
@@ -868,6 +874,8 @@ fn diagnostic(error: &io::Error) -> &'static str {
         _ => {}
     }
     match error.to_string().as_str() {
+        "host.file_access_review_required" => "host.file_access_review_required; this command cannot review existing file access. Current settings were retained; disable remote access and obtain a file-access consent review before reconfiguration.",
+        "host.filesystem_root_unavailable" | "host.filesystem_preparation_failed" | "host.filesystem_preparation_timed_out" => "host.filesystem_root_unavailable; the file folder could not be prepared. Review its location and permissions; no permissions were changed. Keep remote access off until the folder is available or the file policy is explicitly reviewed.",
         "host.migration_binding_uncertain_resume_same_operation" =>
             "host.migration_binding_uncertain_resume_same_operation; preserve the exact journal and legacy session; resume the same operation or request exact rollback, never recreate",
         "host.migration_binding_busy" =>
@@ -1101,6 +1109,7 @@ mod tests {
             &state,
             Origin::Headless,
             Settings {
+                filesystem: None,
                 ordinary_access: OrdinaryAccess::OwnerOnly,
                 friendly_name: "Cleanup fixture".into(),
                 allow_creation: false,

@@ -3009,6 +3009,7 @@ mod tests {
                 &root.path().join("desktop"),
                 Origin::Desktop,
                 Settings {
+                    filesystem: None,
                     friendly_name: "This computer".into(),
                     allow_creation: false,
                     ordinary_access: festerm_host_setup::lifecycle::OrdinaryAccess::OwnerOnly,

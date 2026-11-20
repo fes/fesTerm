@@ -57,7 +57,7 @@ enum CurrentPolicy {
     Owner(CurrentOwnerPolicy),
     Ordinary {
         _lease: Lease,
-        policy: OrdinaryPolicy,
+        policy: Box<OrdinaryPolicy>,
     },
 }
 
@@ -198,6 +198,15 @@ impl CurrentHostPolicySource {
                     ..Capabilities::default()
                 },
             },
+            files: Some(festerm_tunnel_bridge::file_protocol::HostPolicy {
+                scope: festerm_tunnel_bridge::file_protocol::HostScope {
+                    host: enrollment.binding.host.host.clone(),
+                    installation: HostId::try_from(expected.installation.clone())
+                        .map_err(io::Error::from)?,
+                    epoch: expected.epoch.to_string(),
+                },
+                filesystem: expected.settings.filesystem.clone(),
+            }),
             denied_keys: enrollment
                 .keys
                 .iter()
@@ -240,7 +249,7 @@ impl CurrentHostPolicySource {
             }
             Ok(CurrentHostPolicy(CurrentPolicy::Ordinary {
                 _lease: lease,
-                policy: Self::policy_for(current, fresh, resource)?,
+                policy: Box::new(Self::policy_for(current, fresh, resource)?),
             }))
         })
     }
@@ -383,6 +392,16 @@ mod tests {
                 && !policy.session.capabilities.explicit_end
         );
         assert_eq!(policy.host_info.principal, original.binding.principal);
+        let files = policy.files.as_ref().unwrap();
+        assert!(files.filesystem.is_none());
+        assert_eq!(files.scope.host, policy.host_info.route.host.host);
+        assert_eq!(files.scope.installation, policy.host_info.installation);
+        assert_ne!(
+            expected.epoch,
+            verified.revision.get(),
+            "fixture must distinguish lifecycle and enrollment epochs"
+        );
+        assert_eq!(files.scope.epoch, expected.epoch.to_string());
         assert!(owners.snapshot().unwrap().keys.is_empty());
         let mut legacy = resource.clone();
         legacy.create_access = CreateAccess::LegacyGithubUsers;
