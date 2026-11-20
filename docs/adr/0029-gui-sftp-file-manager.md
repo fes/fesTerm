@@ -348,6 +348,15 @@ both uncertain paths, even when an exact handle remains. Remote output,
 unprovable Unix parents and crash/restart cleanup remain open; no suffix/age
 scavenging is introduced. Reporting releases the ledger for unrelated work.
 
+A remote upload OPEN may create its target before a reply is lost. Keep its
+unconfirmed ledger through timeout, transport loss, unexpected replies or a
+generic server Failure, and report that exact path without claiming ownership
+or deleting it. Explicit NoSuchFile, PermissionDenied and OpUnsupported replies
+retire the unconfirmed record. Text uploads retain the original OPEN failure
+with cleanup uncertainty; queued uploads deliver a separate cleanup notice
+before their original failure. Cancellation during OPEN retains the same owner
+cleanup path. These notices do not add remote deletion, resume or crash recovery.
+
 Closing the owner cancels connection, trust, browsing/read and transfer waits.
 Cleanup has a two-second grace, followed by non-waiting runtime retirement;
 already-started blocking I/O cannot be forcibly canceled. Incomplete cleanup
