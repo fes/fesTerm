@@ -2999,11 +2999,13 @@ version = "0.17.14"
 dependencies = [
  "festerm-secret-store",
  "festerm-session",
+ "festerm-windows-security",
  "russh",
  "russh-sftp",
  "ssh-key",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

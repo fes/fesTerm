@@ -2613,6 +2613,19 @@ separate PS-02/07/10 evidence.
 
 ### SFTP owner cancellation
 
+Windows local-download cleanup is a scoped part of #778 item 17, pending native
+qualification. Using ordinary owned download folders, interrupt a GUI and text
+download before publication and confirm the exact created output disappears;
+a similarly named unrelated file and replacement leaf/ancestor must survive.
+Interrupt publication separately: preserve either the temporary or already
+published output and report uncertainty. Retain original copy/cancel outcomes
+when cleanup fails and the existing two-second teardown bound. Portable
+regressions cover publication fencing and error preservation; Windows fixtures
+cover exact handles, replaced leaves, Windows refusal to rename an ancestor
+while the download handle is retained, and canceled creation handoff. Unix/remote uploads and
+crash/restart cleanup remain open; no suffix/age/size-based scavenging is allowed.
+Do not count these source fixtures as packaged native or accessibility evidence.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-01 | Using owned local/remote files, close GUI and text SFTP during connection/trust, browsing/metadata/Markdown reads, copying, and approved replacement. Keep a sibling shell usable. Verify interrupted operation handles retire, cleanup has a two-second grace, uncertain local/remote partials are preserved and reported for manual inspection, and uncertain replacement output remains recoverable. Introduce a destination during copying: its preserved-temporary notice must not prevent Replace, Skip or Keep Both. Move a GUI SFTP tab between windows before closing it: an incomplete-cleanup dialog must reach its current window without replacing another active error. Exercise replaced leaves/ancestors, stalled blocking filesystem work, full notice queue, whole-window close and final packaged process quit; distinguish requested cleanup from confirmed completion and check content-free diagnostics when no window remains. | Automated ownership/model + real loopback; native functional + accessibility/usability pending | Connect wait/observation drop, trust rejection, stalled text download/transport close with a reported partial, queue-independent cancellation, replaced local leaves and Unix ancestor symlinks, retained local/remote partials, late-collision choices without losing recovery output, interrupted replacement, unrelated-work continuation, two-second timeout, non-waiting text runtime retirement with a real blocked task, moved-window notice delivery and bounded notification fallback are automated. Windows reparse-point fault injection, packaged close/quit ordering, surviving shell/window behavior, diagnostic visibility and error-dialog keyboard/screen-reader usability remain manual on Windows/macOS/Linux. Process exit and already-sent server operations cannot be treated as rollback guarantees. |

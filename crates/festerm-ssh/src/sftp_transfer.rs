@@ -896,12 +896,25 @@ pub(crate) enum TransferWorkError {
         operation_error: Option<Box<TransferWorkError>>,
         close_error: SftpSessionError,
     },
+    CleanupFailed {
+        operation_error: Box<TransferWorkError>,
+        cleanup_error: SftpSessionError,
+    },
 }
 
 impl fmt::Display for TransferWorkError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Operation(error) => error.fmt(formatter),
+            Self::CleanupFailed {
+                operation_error,
+                cleanup_error,
+            } => {
+                write!(
+                    formatter,
+                    "{operation_error}; cleanup is incomplete: {cleanup_error}"
+                )
+            }
             Self::PlanningLimitExceeded {
                 limit,
                 observed,
@@ -1623,7 +1636,10 @@ impl WorkerState {
                 {
                     let error = match backend.cleanup_interrupted_copy().await {
                         Ok(()) => error,
-                        Err(cleanup_error) => cleanup_error.into(),
+                        Err(cleanup_error) => TransferWorkError::CleanupFailed {
+                            operation_error: Box::new(error),
+                            cleanup_error,
+                        },
                     };
                     self.finish_work_error(transfer_id, error, event_sender)
                         .await;
@@ -2435,6 +2451,9 @@ impl WorkerState {
                                 return Ok(());
                             }
                         }
+                        // A canceled rename may already have published the file.
+                        // Exact-handle cleanup must never delete that final object.
+                        backend.protect_partial_commit(&temp_destination, &destination);
                         backend.rename(&temp_destination, &destination).await?;
                         let item = self.items.get_mut(&transfer_id).expect("item exists");
                         item.root_state = TransferRootState::Ready(plan);
@@ -2470,10 +2489,10 @@ impl WorkerState {
         event_sender: &Sender<SftpTransferEvent>,
     ) -> Result<(), SftpSessionError> {
         match backend.cleanup_interrupted_copy().await {
-            Err(error @ SftpSessionError::PartialFileOwnershipUnconfirmed { .. }) => {
+            Err(error) => {
                 tracing::warn!(
                     target: "festerm::sftp",
-                    "SFTP temporary output was preserved; manual inspection is required"
+                    "SFTP temporary output cleanup is incomplete; manual inspection is required"
                 );
                 eprintln!("fesTerm: SFTP cleanup is incomplete: {error}");
                 self.emit_event(event_sender, SftpTransferEvent::CleanupIncomplete { error })
@@ -2893,6 +2912,9 @@ mod tests {
         commit_destination: Option<PathBuf>,
         replacement_removed: Option<Arc<Notify>>,
         fail_replace_rename: bool,
+        fail_copy: bool,
+        fail_cleanup: bool,
+        publication_completed: Option<Arc<Notify>>,
         /// Signalled once `copy_file` has emitted its final progress callback,
         /// so a test can wait for a transfer to finish without racing it.
         copy_finished: Option<std::sync::Arc<Notify>>,
@@ -2909,6 +2931,14 @@ mod tests {
                 if self.cleanup_delay_ms > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(self.cleanup_delay_ms))
                         .await;
+                }
+                if std::mem::take(&mut self.fail_cleanup) {
+                    self.partial_file = None;
+                    return Err(SftpSessionError::LocalOperationFailed {
+                        operation: "remove partial file",
+                        path: "controlled partial".to_owned(),
+                        reason: "controlled cleanup failure".to_owned(),
+                    });
                 }
                 if let (Some(temporary), Some(destination)) =
                     (self.partial_file.as_ref(), self.commit_destination.as_ref())
@@ -2994,7 +3024,9 @@ mod tests {
             Box::pin(async move {
                 let source = real_path(source);
                 let destination = real_path(destination);
-                if self.fail_replace_rename && self.commit_destination.is_some() {
+                if self.commit_destination.is_some()
+                    && std::mem::take(&mut self.fail_replace_rename)
+                {
                     return Err(SftpSessionError::LocalOperationFailed {
                         operation: "rename file",
                         path: display_path(&source),
@@ -3004,6 +3036,11 @@ mod tests {
                 fs::rename(&source, &destination)
                     .await
                     .map_err(|error| local_error("rename file", &source, error))?;
+                if let Some(completed) = &self.publication_completed {
+                    assert_eq!(self.commit_destination.as_ref(), Some(&destination));
+                    completed.notify_one();
+                    pending::<()>().await;
+                }
                 self.partial_file = None;
                 self.commit_destination = None;
                 Ok(())
@@ -3052,6 +3089,13 @@ mod tests {
                         ))
                     })?;
                     total += read as u64;
+                    if self.fail_copy {
+                        return Err(CopyFileError::Operation(local_error(
+                            "copy file",
+                            &destination,
+                            std::io::Error::other("controlled copy failure"),
+                        )));
+                    }
                     on_progress(total).map_err(|_| CopyFileError::Cancelled)?;
                     if self.delay_per_chunk_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(
@@ -3721,6 +3765,135 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_copy_keeps_cancelled_state_when_cleanup_fails() {
+        let root = unique_test_directory("cancelled-copy-cleanup-failure");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, vec![42; 1024 * 1024]).unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut events, _) = spawn_worker(TestBackend {
+                delay_per_chunk_ms: 10,
+                fail_cleanup: true,
+                ..Default::default()
+            })
+            .await;
+            let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while let Some(event) = events.recv().await {
+                    if matches!(event, SftpTransferEvent::ItemProgress { .. }) {
+                        return;
+                    }
+                }
+                panic!("copy must start before cancellation");
+            })
+            .await
+            .unwrap();
+            commands
+                .send(WorkerCommand::CancelTransfer(batch.transfer_ids[0]))
+                .await
+                .unwrap();
+            let events = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                collect_until_batch_finished(&mut events, batch.batch_id),
+            )
+            .await
+            .unwrap();
+            let notice = events
+                .iter()
+                .position(|event| matches!(event, SftpTransferEvent::CleanupIncomplete { .. }))
+                .expect("retained output must be reported");
+            let cancelled = events
+                .iter()
+                .position(|event| matches!(event, SftpTransferEvent::ItemCancelled { .. }))
+                .expect("retained output must not turn cancellation into failure");
+            assert!(notice < cancelled);
+            assert!(!events
+                .iter()
+                .any(|event| matches!(event, SftpTransferEvent::ItemFailed { .. })));
+        });
+        assert!(!destination.join("source.bin").exists());
+        let partial = stdfs::read(destination.join("source.bin.festerm-part")).unwrap();
+        assert!(!partial.is_empty());
+        assert!(partial.len() < 1024 * 1024);
+    }
+
+    #[test]
+    fn failed_copy_keeps_primary_error_and_reports_cleanup_failure() {
+        let root = unique_test_directory("copy-and-cleanup-failure");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, b"copy bytes").unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut events, _) = spawn_worker(TestBackend {
+                fail_copy: true, fail_cleanup: true, ..Default::default()
+            }).await;
+            let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            let events = tokio::time::timeout(Duration::from_secs(3),
+                collect_until_batch_finished(&mut events, batch.batch_id)).await.unwrap();
+            assert!(events.iter().any(|event| matches!(event,
+                SftpTransferEvent::CleanupIncomplete { error } if error.to_string().contains("controlled cleanup failure"))));
+            assert!(events.iter().any(|event| matches!(event,
+                SftpTransferEvent::ItemFailed { reason, .. } if reason.contains("controlled copy failure"))));
+        });
+        assert!(!destination.join("source.bin").exists());
+        assert_eq!(
+            stdfs::read(destination.join("source.bin.festerm-part")).unwrap(),
+            b"copy bytes"
+        );
+    }
+
+    #[test]
+    fn owner_shutdown_after_nonreplace_publication_preserves_final_output() {
+        let root = unique_test_directory("cancel-published-download");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, b"published bytes").unwrap();
+        test_runtime().block_on(async {
+            let completed = Arc::new(Notify::new());
+            let (commands, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+            let (events, _event_receiver) = channel(TRANSFER_EVENT_QUEUE_CAPACITY);
+            let (shutdown, cancellation) = oneshot::channel();
+            let worker = tokio::spawn(run_owned_transfer_worker(
+                TestBackend {
+                    publication_completed: Some(Arc::clone(&completed)),
+                    ..Default::default()
+                },
+                Arc::new(Mutex::new(SftpTransferQueueSnapshot::default())),
+                None,
+                command_receiver,
+                events,
+                TransferPlanningLimits::default(),
+                cancellation,
+            ));
+            queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            tokio::time::timeout(Duration::from_secs(3), completed.notified())
+                .await
+                .unwrap();
+            shutdown
+                .send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT)
+                .unwrap();
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(3), worker)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(SftpSessionError::TransferCommitInterrupted { .. })
+            ));
+        });
+        assert_eq!(
+            stdfs::read(destination.join("source.bin")).unwrap(),
+            b"published bytes"
+        );
+        assert!(!destination.join("source.bin.festerm-part").exists());
+    }
+
+    #[test]
     fn owner_shutdown_during_replace_preserves_the_completed_temporary_for_recovery() {
         let root = unique_test_directory("owner-cancel-replace");
         recreate_directory(&root);
@@ -3827,6 +4000,7 @@ mod tests {
                 SftpTransferEvent::ItemFailed { reason, .. }
                     if reason.contains("commit could not be confirmed")
                         && reason.contains("source.bin.festerm-part")
+                        && reason.contains("controlled replacement commit refusal")
             )));
             let next_batch = SftpTransferBatchId(2);
             commands
