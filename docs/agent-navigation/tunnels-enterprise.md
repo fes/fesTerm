@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "563ca557b9fb12d41c79b91e4a83753711c99de68063f30792818175ebb59bb9"} -->
+<!-- agent-navigation: {"domain":"tunnels-enterprise","generator":"2","model":"codex-source-verified","sources":"2e70fafdfc720be775c72969656180c768bc0e15d3e185861b527e7ad6b6552a"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -82,6 +82,7 @@ Use for: What record and consent prevent untrusted host replacement?
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; it grants no replacement authority.
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Noninteractive local owner-admission evidence; no state writes or HOST-ready claim.
+- [`foreground_owner_event`](../../crates/festerm-host-setup/src/controller/runtime_diagnostics.rs) — Foreground setup evidence; no invented HOST run.
 
 Evidence:
 - [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update.

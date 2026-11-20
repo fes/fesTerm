@@ -39,12 +39,27 @@ pub(crate) enum OwnerAdmissionStage {
     AnchorRead,
     PolicyVerification,
     HighWaterUpdate,
+    PolicyPrepare,
+    AnchorUpdate,
+    PolicyPublish,
     #[cfg(all(
         feature = "cloud",
         feature = "host-runtime",
         feature = "native-services"
     ))]
     Consent,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    Initialization,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    NativeRegistration,
 }
 impl OwnerAdmissionStage {
     #[cfg(all(
@@ -60,6 +75,11 @@ impl OwnerAdmissionStage {
             Self::AnchorRead => "anchor_read",
             Self::PolicyVerification => "policy_verification",
             Self::HighWaterUpdate => "high_water_update",
+            Self::PolicyPrepare => "policy_prepare",
+            Self::AnchorUpdate => "anchor_update",
+            Self::PolicyPublish => "policy_publish",
+            Self::Initialization => "initialization",
+            Self::NativeRegistration => "native_registration",
             Self::Consent => "consent",
         }
     }
@@ -75,6 +95,7 @@ pub(crate) enum OwnerAdmissionFailure {
     TooLarge,
     Busy,
     Unclassified,
+    PermissionDenied,
     Malformed,
     PolicyDigestMismatch,
     InvalidPolicy,
@@ -100,6 +121,7 @@ impl OwnerAdmissionFailure {
         match error.kind() {
             io::ErrorKind::NotFound => Self::Missing,
             io::ErrorKind::WouldBlock => Self::Busy,
+            io::ErrorKind::PermissionDenied => Self::PermissionDenied,
             _ => Self::Unclassified,
         }
     }
@@ -129,6 +151,7 @@ impl OwnerAdmissionFailure {
             Self::TooLarge => "too_large",
             Self::Busy => "busy",
             Self::Unclassified => "unclassified",
+            Self::PermissionDenied => "permission_denied",
             Self::Malformed => "malformed",
             Self::PolicyDigestMismatch => "policy_digest_mismatch",
             Self::InvalidPolicy => "invalid_policy",
@@ -213,6 +236,21 @@ impl std::fmt::Display for OwnerAdmissionError {
 impl std::error::Error for OwnerAdmissionError {}
 fn admission_error(message: &'static str, category: OwnerAdmissionFailure) -> io::Error {
     io::Error::other(OwnerAdmissionError { message, category })
+}
+
+// Observe one existing operation without changing its error, order or authority.
+pub(crate) fn observe_owner_result<T>(
+    stage: OwnerAdmissionStage,
+    observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    operation: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    observe(OwnerAdmissionEvent::Begin(stage));
+    let result = operation();
+    observe(match &result {
+        Ok(_) => OwnerAdmissionEvent::Pass(stage),
+        Err(error) => OwnerAdmissionEvent::Fail(stage, OwnerAdmissionFailure::from_io(error)),
+    });
+    result
 }
 
 fn vault_error(error: festerm_secret_store::SecretStoreError) -> io::Error {
@@ -825,12 +863,32 @@ impl OwnerEnrollment<'_> {
         previous: [u8; 32],
         publish: impl FnOnce(&File, &[u8]) -> io::Result<()>,
     ) -> io::Result<()> {
-        self.prepare(directory, record, previous)?;
-        let anchor = PolicyAnchor::for_record(record, previous)?;
-        self.vault
-            .update(reference, &SecretBytes::copy_from_slice(&anchor.encode()))
-            .map_err(|error| self.storage_error(error))?;
-        publish(directory, &record_bytes(record)?)
+        self.commit_observed(directory, reference, record, previous, publish, &mut |_| {})
+    }
+
+    fn commit_observed(
+        &self,
+        directory: &File,
+        reference: &SecretReference,
+        record: &EnrollmentSnapshot,
+        previous: [u8; 32],
+        publish: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+        observe: &mut dyn FnMut(OwnerAdmissionEvent),
+    ) -> io::Result<()> {
+        use OwnerAdmissionStage as Stage;
+        observe_owner_result(Stage::PolicyPrepare, observe, || {
+            self.prepare(directory, record, previous)
+        })?;
+        observe_owner_result(Stage::AnchorUpdate, observe, || {
+            let anchor = PolicyAnchor::for_record(record, previous)?;
+            self.vault
+                .update(reference, &SecretBytes::copy_from_slice(&anchor.encode()))
+                .map_err(|error| self.storage_error(error))?;
+            Ok(())
+        })?;
+        observe_owner_result(Stage::PolicyPublish, observe, || {
+            publish(directory, &record_bytes(record)?)
+        })
     }
 
     fn reference(&self, directory: &File, name: &str) -> io::Result<SecretReference> {
@@ -940,10 +998,17 @@ impl OwnerEnrollment<'_> {
                     observe(Fail(Stage::HighWaterUpdate, Failure::EpochExhausted));
                     refused("owner.epoch_exhausted")
                 })?)?;
-            self.commit(directory, &reference, &record, anchor.digest)
-                .inspect_err(|error| {
-                    observe(Fail(Stage::HighWaterUpdate, Failure::from_io(error)));
-                })?;
+            self.commit_observed(
+                directory,
+                &reference,
+                &record,
+                anchor.digest,
+                |directory, bytes| storage::replace_private(directory, Path::new(RECORD), bytes),
+                observe,
+            )
+            .inspect_err(|error| {
+                observe(Fail(Stage::HighWaterUpdate, Failure::from_io(error)));
+            })?;
             observe(Pass(Stage::HighWaterUpdate));
         }
         Ok((reference, record))
@@ -1910,6 +1975,128 @@ pub(crate) mod tests {
                 events.contains(&Fail(Stage::PolicyVerification, reason)),
                 "{events:?}"
             );
+        }
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    #[test]
+    fn host_owner_setup_native_error_kind_is_finite_and_preserves_primary_error() {
+        for (kind, category) in [
+            (io::ErrorKind::NotFound, OwnerAdmissionFailure::Missing),
+            (
+                io::ErrorKind::PermissionDenied,
+                OwnerAdmissionFailure::PermissionDenied,
+            ),
+            (io::ErrorKind::Other, OwnerAdmissionFailure::Unclassified),
+        ] {
+            let mut events = Vec::new();
+            let original = "private-error-canary-with-reference-and-path";
+            let error = observe_owner_result::<()>(
+                OwnerAdmissionStage::NativeRegistration,
+                &mut |event| events.push(event),
+                || Err(io::Error::new(kind, original)),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), original);
+            assert_eq!(
+                events,
+                [
+                    OwnerAdmissionEvent::Begin(OwnerAdmissionStage::NativeRegistration),
+                    OwnerAdmissionEvent::Fail(OwnerAdmissionStage::NativeRegistration, category),
+                ]
+            );
+            assert!(!format!("{events:?}").contains(original));
+        }
+    }
+
+    #[test]
+    fn host_owner_setup_commit_boundaries_preserve_order_and_failed_publication() {
+        use OwnerAdmissionEvent::{Begin, Fail, Pass};
+        use OwnerAdmissionStage as Stage;
+        for failed in [
+            Stage::PolicyPrepare,
+            Stage::AnchorUpdate,
+            Stage::PolicyPublish,
+        ] {
+            let (root, store, vault) = setup();
+            let enrollment = fixture_owners(&store, vault.clone());
+            let initial = initialize(&enrollment);
+            let policy = root.path().join("installation").join(RECORD);
+            let old = std::fs::read(&policy).unwrap();
+            store.revoke().unwrap();
+            let mut events = Vec::new();
+            let error = enrollment
+                .snapshot_observed(&mut |event| {
+                    events.push(event);
+                    if event == Begin(failed) {
+                        match failed {
+                            Stage::PolicyPrepare => {
+                                std::fs::remove_file(
+                                    root.path().join("installation").join(PREPARED),
+                                )
+                                .unwrap();
+                                std::fs::create_dir(
+                                    root.path().join("installation").join(PREPARED),
+                                )
+                                .unwrap();
+                            }
+                            Stage::AnchorUpdate => vault.locked.store(true, Ordering::Release),
+                            Stage::PolicyPublish => {
+                                std::fs::remove_file(&policy).unwrap();
+                                std::fs::create_dir(&policy).unwrap();
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                })
+                .unwrap_err();
+            assert!(events.contains(&Fail(failed, OwnerAdmissionFailure::from_io(&error))));
+            assert!(!events.contains(&Pass(Stage::HighWaterUpdate)));
+            if failed == Stage::PolicyPrepare {
+                assert!(!events.contains(&Begin(Stage::AnchorUpdate)));
+            } else {
+                assert!(events.contains(&Pass(Stage::PolicyPrepare)));
+            }
+            if failed != Stage::PolicyPublish {
+                assert!(!events.contains(&Begin(Stage::PolicyPublish)));
+                assert_eq!(std::fs::read(&policy).unwrap(), old);
+            } else {
+                assert!(events.contains(&Pass(Stage::AnchorUpdate)));
+                std::fs::remove_dir(&policy).unwrap();
+                store
+                    .with_locked(|directory, _| {
+                        storage::write_new_private(directory, Path::new(RECORD), &old)
+                    })
+                    .unwrap();
+            }
+            vault.locked.store(false, Ordering::Release);
+            let anchor_revision = store
+                .with_locked(|directory, _| {
+                    let reference = enrollment.reference(directory, ANCHOR)?;
+                    vault
+                        .memory
+                        .get(&reference)
+                        .unwrap()
+                        .with_bytes(PolicyAnchor::decode)
+                        .map(|anchor| anchor.revision)
+                })
+                .unwrap();
+            assert_eq!(
+                anchor_revision.get(),
+                initial.revision.get() + u64::from(failed == Stage::PolicyPublish)
+            );
+            if failed == Stage::PolicyPublish {
+                assert!(enrollment
+                    .snapshot()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("interrupted_commit"));
+            }
         }
     }
 
