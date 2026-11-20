@@ -1,107 +1,69 @@
-<!-- agent-navigation: {"domain":"tunnels-enterprise","generator":"2","model":"codex-source-verified","sources":"7b67abb84b1e540966c723884ba7866dc8cb76a71c551b919e62d1161f14ec8d"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "99bbf8653e45cbe5977b516709fcef54cf74616f75579171966370e2406d3ad1"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries.
+Owns HOST selection, owner consent, native service qualification, and the portable metadata boundary for dev tunnels, enterprise inventory, and PowerShell sessions.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
 ## Host Discovery
 
-Use for: Which HOST marker is selected without legacy bridge fallback?
+Use for: When resolving a HOST candidate or bounding inventory rows for a signed-in tab
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects only HOST markers and rejects legacy bridge fallback.
-
-Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels.
-
-Caveats:
-- Inventory rows are metadata only; they are not live daemon proof.
-- Foreign generations are ignored.
-
-## Enterprise Inventory
-
-Use for: How are Dev Box and project inventories bounded before presentation?
-
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns sign-in, worker loop, and tab lifecycle.
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Chooses HOST marker and rejects bridge fallback
+- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds worker results before showing project inventory
 
 Evidence:
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab.
-- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Caps rows and bytes before showing inventory.
+- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels
+- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab
 
 Caveats:
-- Worker results are generation-scoped; stale results cannot mutate a new tab.
-- Inventory rows and bytes are bounded before presentation.
+- Inventory rows are metadata, not live daemon proof
+- Foreign generations are ignored
 
-## Recipe Metadata
+## Owner Consent
 
-Use for: What portable recipe fields survive import and export?
+Use for: When a local owner pass is required before host replacement or direct admin operations
 
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust decisions, and grants.
-- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports or exports recipe metadata.
+- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds reviewed identity, public key, and permissions
+- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes.
+- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Checks local owner admission without writes or ready claim
+- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Validates identity, grants, and helper provenance
 
 Caveats:
-- Portable metadata is intentionally public-only.
-- Legacy defaults and attach generation semantics stay distinct.
+- Helper gate checks reject unsupported or foreign capabilities
+- Consent is local review, not network trust
 
-## Rooted Files
+## Native Services
 
-Use for: How is HOST file access granted without terminal or daemon authority?
+Use for: When observing or starting a native service without confusing process state with readiness
 
-- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Keeps filesystem root and policy for explicit consent reuse.
+- [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads service state for the active user
+- [`ProcessState`](../../crates/festerm-host-setup/src/services.rs) — Reports Absent, Stopped, Running, Failed, Transitioning
 
 Evidence:
-- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files access works without session admission or daemon dependency.
+- [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition fields and trusts direct state
+- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies service readiness
 
 Caveats:
-- Prepared roots do not grant hidden authority; every use revalidates scope.
-- A recreated stream cannot inherit terminal or daemon permissions by accident.
+- Running is not readiness
+- Native process observation is separate from cloud or endpoint health
 
-## PowerShell Lifecycle
+## Portable Metadata
 
-Use for: Which lifecycle state or action distinguishes close, cancel, and failure?
+Use for: When serializing recipes or reporting PowerShell close outcomes across clients
 
-- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close transitions.
+- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials and trust grants
+- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, runtime, close, cancel, and failure transitions
 
 Evidence:
-- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure remains distinct from a successful exit.
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes
+- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure stays distinct from a successful exit
 
 Caveats:
-- Stale worker generations cannot mutate the current state.
-- Close and cancel remain separate lifecycle commands.
-
-## Host Replacement
-
-Use for: What record and consent prevent untrusted host replacement?
-
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; it grants no replacement authority.
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
-- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Noninteractive local owner-admission evidence; no state writes or HOST-ready claim.
-- [`foreground_owner_event`](../../crates/festerm-host-setup/src/controller/runtime_diagnostics.rs) — Foreground setup evidence; no invented HOST run.
-
-Evidence:
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update.
-
-Caveats:
-- Containment retries preserve receipts without mutating live service state.
-- Helper gate checks reject unsupported or foreign capabilities before consent.
-- Owner diagnostics grant no credential, retry or serving authority.
-- macOS owner-readiness installs the dedicated process no-UI fence before any selected-store observation.
-
-## Native HOST observation
-
-Use for: A stopped macOS HOST is confused with its active launchd coalitions.
-
-- [`mac_state`](../../crates/festerm-host-setup/src/services/definitions.rs) — Reads service-level identity/argv/state/PID/exit; nested fields grant no process authority.
-
-Evidence:
-- [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Covers stopped/running observations with nested coalition states and PIDs.
-
-Caveats:
-- Duplicate direct fields and malformed scopes refuse observation; Running is not readiness.
-- Corrected packaged GUI Disable still needs native qualification.
+- Portable metadata is intentionally public-only
+- Close and cancel remain different lifecycle commands
