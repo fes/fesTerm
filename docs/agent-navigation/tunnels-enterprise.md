@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "65442867ef5fd4a4d099ddbc8bc84b3887500d9a14ed08602d92bf53d798a5c9"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "c3bfdac54b5d236f91873474f2fd7c0d14e2fdfcd40592ed6c6752bff53c8c09"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Routes HOST inventory, enterprise discovery, recipes, native stop/replacement and PowerShell.
+Routes HOST inventory, enterprise discovery and PowerShell.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -85,9 +85,10 @@ Caveats:
 
 ## Rooted file access
 
-Use for: Separate legacy or authenticated HOST file streams; file-manager UI remains separate.
+Use for: Separate authenticated file streams.
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded operations and distinct legacy/HOST openings; no replay.
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded legacy/HOST operations.
+- [`open_files`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/files.rs) — Opens Files with pinned scope and account lifetime.
 - [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Retained root/pool, exact scope and fresh file consent.
 
-- [`require_host_files`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks exact authenticated helper support before file-consented effects.
+- [`require_host_files`](../../crates/festerm-host-setup/src/services/trusted.rs) — Checks helper support before file consent.

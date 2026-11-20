@@ -143,6 +143,29 @@ ticket reservation, sign-in or replacement; cancellation and the complete scope
 are checked after the probe. Off consent makes no probe calls. Signature/version
 alone does not prove feature support; this probe grants neither access nor Ready.
 
+The shared ordinary client opens Files directly through the same authenticated
+provider route, pinned SSH channel and purpose-bound device-key preparation as
+Control discovery. It does not first obtain Control inventory or any daemon,
+PID, session grant or terminal capability. Authentication yields verified host
+and installation facts; the Files description on that same channel supplies
+the fresh lifecycle epoch. The enrollment `policy_epoch` is not that epoch.
+A supplied existing-handle scope must match before OPEN; never silently rebind
+it, reconnect or replay. Off is confirmed only by a valid authenticated null
+filesystem description; old-host/closed/malformed results remain errors.
+
+The file transport retains its aggregate connection permit until closed and
+owns an account-lifetime child token, so cancelling one file stream cannot
+cancel its account or siblings. The existing file engine checks the captured
+current-account guard before requests/chunks/finish and before disclosing
+replies or writing downloaded chunks, outside stream polling. Local staged
+download publication requires a final local account/lifetime check; this does
+not prove remote liveness or renewed consent. Already admitted I/O may finish
+after cutover. A Finish response crossing account cutover remains uncertain,
+with no replay. Control-operation saturation does not require inventory or
+block Files, while aggregate client and authentication-frame byte budgets still
+apply. These are shared client primitives, not desktop/iOS file-tab integration
+or provider/native qualification.
+
 Top-level desktop/iOS file tabs and reuse of SFTP
 pane/transfer presentation follow separately; unsupported delete/rename/chmod
 actions remain unavailable. Restore such tabs disconnected, never with live authority.

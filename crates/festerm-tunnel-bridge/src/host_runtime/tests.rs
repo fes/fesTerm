@@ -3432,25 +3432,29 @@ async fn ordinary_runtime_inventory_excludes_private_profiles_without_admin_veri
 
 #[tokio::test]
 async fn ordinary_client_legacy_challenge_requires_host_update_without_owner_fallback() {
-    let fixture = Fixture::new();
-    let route = ordinary_policy(&fixture).host_info.route;
-    let (client, stream, ssh) = fixture.pair().await;
-    let runtime = fixture.runtime.clone();
-    let server =
-        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
-    let result = authenticate_ordinary_client_using_guard(
-        client,
-        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
-        route,
-        StreamRole::Control,
-        CancellationToken::new(),
-        |_, _| panic!("legacy challenge must not trigger a proof"),
-        || Ok(()),
-    )
-    .await;
-    assert!(matches!(result, Err(Error::HostUpdateRequired)));
-    assert!(server.await.unwrap().is_err());
-    ssh.abort();
+    for role in [StreamRole::Control, StreamRole::Files] {
+        let fixture = Fixture::new();
+        let route = ordinary_policy(&fixture).host_info.route;
+        let (client, stream, ssh) = fixture.pair().await;
+        let runtime = fixture.runtime.clone();
+        let server =
+            tokio::spawn(
+                async move { runtime.serve_stream(stream, CancellationToken::new()).await },
+            );
+        let result = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            role,
+            CancellationToken::new(),
+            |_, _| panic!("legacy challenge must not trigger a proof"),
+            || Ok(()),
+        )
+        .await;
+        assert!(matches!(result, Err(Error::HostUpdateRequired)));
+        assert!(server.await.unwrap().is_err());
+        ssh.abort();
+    }
 }
 
 #[tokio::test]
@@ -4078,6 +4082,9 @@ struct FilesFixture {
 }
 impl FilesFixture {
     fn new(write: Option<bool>) -> Self {
+        Self::new_with_epoch(write, "1")
+    }
+    fn new_with_epoch(write: Option<bool>, lifecycle_epoch: &str) -> Self {
         let fixture = Fixture::new();
         let root = fixture.root.join("files");
         std::fs::create_dir(&root).unwrap();
@@ -4091,7 +4098,7 @@ impl FilesFixture {
             scope: crate::file_protocol::HostScope {
                 host: policy.host_info.route.host.host.clone(),
                 installation: policy.host_info.installation.clone(),
-                epoch: "1".into(),
+                epoch: lifecycle_epoch.into(),
             },
             filesystem: file_policy.clone(),
         });
@@ -4143,6 +4150,22 @@ impl FilesFixture {
         tokio::task::JoinHandle<Result<(), Error>>,
         tokio::task::JoinHandle<()>,
     ) {
+        let (client, permit, _, server, ssh) =
+            self.connect_info(role, shutdown, &Budgets::default()).await;
+        (client, permit, server, ssh)
+    }
+    async fn connect_info(
+        &self,
+        role: StreamRole,
+        shutdown: CancellationToken,
+        budgets: &Budgets,
+    ) -> (
+        ClientConnection,
+        ConnectionPermit,
+        crate::ordinary_auth::OrdinaryHostInfo,
+        tokio::task::JoinHandle<Result<(), Error>>,
+        tokio::task::JoinHandle<()>,
+    ) {
         use crate::ordinary_auth::OrdinaryDeviceKey;
         let route = self.source.policy.lock().unwrap().host_info.route.clone();
         let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
@@ -4153,9 +4176,9 @@ impl FilesFixture {
         let host = self.runtime.clone();
         let server = tokio::spawn(async move { host.serve_stream(stream, shutdown).await });
         let expected = route.clone();
-        let (client, permit, _) = authenticate_ordinary_client_using_guard(
+        let (client, permit, info) = authenticate_ordinary_client_using_guard(
             client,
-            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            ConnectionPermit::reserve(budgets).unwrap(),
             route,
             role,
             CancellationToken::new(),
@@ -4166,7 +4189,7 @@ impl FilesFixture {
         )
         .await
         .unwrap();
-        (client, permit, server, ssh)
+        (client, permit, info, server, ssh)
     }
     fn scope(&self) -> crate::file_protocol::HostScope {
         self.source
@@ -4575,4 +4598,262 @@ async fn host_files_close_isolated_from_parent_and_sibling_but_global_shutdown_p
         sibling_survived,
         "closing one Files stream must not retire its sibling"
     );
+}
+
+#[tokio::test]
+async fn ordinary_files_connector_uses_fresh_lifecycle_scope_and_retains_its_budget_without_sessions(
+) {
+    use crate::host_client::ordinary::{files::open_authenticated, OrdinaryAccountGuard};
+    use festerm_host_protocol::{Resource, MAX_CLIENTS, MAX_CONTROL_OPERATIONS};
+    let fixture = FilesFixture::new_with_epoch(Some(true), "29");
+    let budgets = Budgets::default();
+    let mut held = Vec::new();
+    for _ in 0..MAX_CONTROL_OPERATIONS {
+        held.push(
+            fixture
+                .runtime
+                .budgets
+                .reserve(Resource::Control, 1)
+                .unwrap(),
+        );
+        held.push(budgets.reserve(Resource::Control, 1).unwrap());
+    }
+    let other_clients: Vec<_> = (1..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&budgets).unwrap())
+        .collect();
+    let (stream, permit, info, server, ssh) = fixture
+        .connect_info(StreamRole::Files, CancellationToken::new(), &budgets)
+        .await;
+    assert_ne!(info.policy_epoch.get().to_string(), fixture.scope().epoch);
+    let account = CancellationToken::new();
+    let guard = OrdinaryAccountGuard::new(account.clone(), Arc::new(|| Ok(())));
+    let mut files = open_authenticated(
+        stream,
+        permit,
+        info.clone(),
+        guard,
+        &CancellationToken::new(),
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(files.scope(), &fixture.scope());
+    assert_eq!(files.host_info(), &info);
+    assert!(ConnectionPermit::reserve(&budgets).is_err());
+    std::fs::write(fixture.root.join("source"), b"fresh scope").unwrap();
+    let directory = files.client().open_directory("/").await.unwrap();
+    assert!(files
+        .client()
+        .read_directory(&directory, 64)
+        .await
+        .unwrap()
+        .entries
+        .iter()
+        .any(|entry| entry.name == "source"));
+    files.client().close(&directory).await.unwrap();
+    let mut output = Vec::new();
+    files
+        .client()
+        .download("/source", &mut output)
+        .await
+        .unwrap();
+    assert_eq!(output, b"fresh scope");
+    files
+        .client()
+        .upload("/uploaded", 3, None, &mut &b"new"[..])
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(fixture.root.join("uploaded")).unwrap(),
+        b"new"
+    );
+    fixture.assert_no_session_effect();
+    files.client().cancel();
+    assert!(!account.is_cancelled());
+    let released = ConnectionPermit::reserve(&budgets).unwrap();
+    drop(released);
+    drop(other_clients);
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+}
+
+#[tokio::test]
+async fn ordinary_files_connector_close_isolated_and_current_account_fences_existing_operations() {
+    use crate::host_client::ordinary::{files::open_authenticated, OrdinaryAccountGuard};
+    let fixture = FilesFixture::new(Some(true));
+    let account = CancellationToken::new();
+    let current = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let checked = current.clone();
+    let guard = OrdinaryAccountGuard::new(
+        account.clone(),
+        Arc::new(move || {
+            if checked.load(std::sync::atomic::Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err(ContractError::Stale)
+            }
+        }),
+    );
+    let mut opened = Vec::new();
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let (stream, permit, info, server, ssh) = fixture
+            .connect_info(
+                StreamRole::Files,
+                CancellationToken::new(),
+                &Budgets::default(),
+            )
+            .await;
+        opened.push(
+            open_authenticated(
+                stream,
+                permit,
+                info,
+                guard.clone(),
+                &CancellationToken::new(),
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+        );
+        tasks.push((server, ssh));
+    }
+    opened[0].client().cancel();
+    assert!(!account.is_cancelled());
+    opened[1].client().ping().await.unwrap();
+    current.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        opened[1].client().mkdir("/must-not-create").await,
+        Err(crate::file_client::Error::Cancelled)
+    ));
+    assert!(account.is_cancelled());
+    assert!(!fixture.root.join("must-not-create").exists());
+    assert!(opened[1].check_current().is_err());
+    for (server, ssh) in tasks {
+        assert!(server.await.unwrap().is_err());
+        ssh.abort();
+    }
+    fixture.assert_no_session_effect();
+}
+
+#[tokio::test]
+async fn ordinary_files_connector_off_is_not_failure_and_pinned_scope_never_rebinds() {
+    use crate::host_client::ordinary::{files::open_authenticated, OrdinaryAccountGuard};
+    let off = FilesFixture::new(None);
+    let (stream, permit, info, server, ssh) = off
+        .connect_info(
+            StreamRole::Files,
+            CancellationToken::new(),
+            &Budgets::default(),
+        )
+        .await;
+    let guard = || OrdinaryAccountGuard::new(CancellationToken::new(), Arc::new(|| Ok(())));
+    assert!(open_authenticated(
+        stream,
+        permit,
+        info,
+        guard(),
+        &CancellationToken::new(),
+        None
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert!(server.await.unwrap().is_ok());
+    ssh.abort();
+    let fixture = FilesFixture::new(Some(false));
+    for changed in ["host", "installation", "epoch"] {
+        let mut pinned = fixture.scope();
+        match changed {
+            "host" => pinned.host = Default::default(),
+            "installation" => pinned.installation = Default::default(),
+            _ => pinned.epoch = "2".into(),
+        }
+        let (stream, permit, info, server, ssh) = fixture
+            .connect_info(
+                StreamRole::Files,
+                CancellationToken::new(),
+                &Budgets::default(),
+            )
+            .await;
+        assert!(matches!(
+            open_authenticated(
+                stream,
+                permit,
+                info,
+                guard(),
+                &CancellationToken::new(),
+                Some(&pinned)
+            )
+            .await,
+            Err(crate::host_client::ordinary::FilesError::Files(
+                crate::file_client::Error::Protocol
+            ))
+        ));
+        assert!(server.await.unwrap().is_err());
+        ssh.abort();
+    }
+    let (stream, permit, info, server, ssh) = fixture
+        .connect_info(
+            StreamRole::Files,
+            CancellationToken::new(),
+            &Budgets::default(),
+        )
+        .await;
+    let mut files = open_authenticated(
+        stream,
+        permit,
+        info,
+        guard(),
+        &CancellationToken::new(),
+        Some(&fixture.scope()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!files.client().capabilities().write);
+    assert!(files.client().mkdir("/denied").await.is_err());
+    files.client().cancel();
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    fixture.assert_no_session_effect();
+}
+
+#[tokio::test]
+async fn ordinary_files_connector_cancelled_or_stale_open_never_publishes_a_handle() {
+    use crate::host_client::ordinary::{files::open_authenticated, OrdinaryAccountGuard};
+    let fixture = FilesFixture::new(Some(false));
+    for stale in [false, true] {
+        let (stream, permit, info, server, ssh) = fixture
+            .connect_info(
+                StreamRole::Files,
+                CancellationToken::new(),
+                &Budgets::default(),
+            )
+            .await;
+        let cancel = CancellationToken::new();
+        if !stale {
+            cancel.cancel();
+        }
+        let guard = OrdinaryAccountGuard::new(
+            CancellationToken::new(),
+            Arc::new(move || {
+                if stale {
+                    Err(ContractError::Stale)
+                } else {
+                    Ok(())
+                }
+            }),
+        );
+        assert!(
+            open_authenticated(stream, permit, info, guard, &cancel, None)
+                .await
+                .is_err()
+        );
+        assert!(server.await.unwrap().is_err());
+        ssh.abort();
+    }
+    fixture.assert_no_session_effect();
 }

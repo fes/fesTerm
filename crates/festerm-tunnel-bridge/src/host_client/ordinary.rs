@@ -5,7 +5,9 @@ use crate::ordinary_auth::{OrdinaryDeviceKey, OrdinaryHostInfo, OrdinaryRoute};
 use festerm_tunnel_client::{identity::Identity, service};
 use std::sync::Arc;
 
+pub(crate) mod files;
 mod ordinary_keys;
+pub use files::{open_files, Files, FilesError, FilesStream};
 #[cfg(all(test, feature = "testing"))]
 #[path = "ordinary/ordinary_tests.rs"]
 mod tests;
@@ -184,16 +186,25 @@ fn route(resolved: &service::ResolvedTunnel) -> Result<OrdinaryRoute, Failure> {
     Ok(route)
 }
 
-/// Resolve via the provider's authenticated management API, prepare the exact
-/// native account/route key before SSH, then return genuine HostInfo/inventory.
-pub async fn discover(
+struct Authenticated {
+    stream: relay::ClientConnection,
+    permit: ConnectionPermit,
+    info: OrdinaryHostInfo,
+    resolved: service::ResolvedTunnel,
+    key: NativeKey,
+}
+
+// Both fresh Control discovery and Files opening use this exact provider/key/
+// channel proof path. No inventory, daemon or session grant is prepared here.
+async fn authenticate_fresh(
     identity: &Identity,
     locator: &str,
     index: OrdinaryKeyIndex,
     budgets: &Budgets,
-    account_guard: OrdinaryAccountGuard,
+    account_guard: &OrdinaryAccountGuard,
     request_cancel: &CancellationToken,
-) -> Result<(OrdinaryContext, Inventory), Failure> {
+    role: StreamRole,
+) -> Result<Authenticated, Failure> {
     account_guard.check()?;
     identity
         .account
@@ -213,7 +224,7 @@ pub async fn discover(
     account_guard.check()?;
     let route = route(&resolved)?;
     let key_binding = KeyBinding::new(identity.account.id, route.clone())?;
-    let key_guard = key_guard_for_request(&account_guard, request_cancel);
+    let key_guard = key_guard_for_request(account_guard, request_cancel);
     let (key, permit) = tokio::select! {
         biased;
         _ = account_guard.cancel.cancelled() => return Err(Error::Cancelled.into()),
@@ -225,7 +236,7 @@ pub async fn discover(
         route.port,
         &resolved.connect_token,
         request_cancel,
-        &account_guard,
+        account_guard,
     )
     .await?;
     let signing = key.key.clone();
@@ -236,11 +247,11 @@ pub async fn discover(
         stream,
         permit,
         route,
-        StreamRole::Control,
+        role,
         request_cancel.clone(),
         move |connection, challenge| {
             proof_guard.check()?;
-            signing.prove(connection, &proof_route, challenge, StreamRole::Control)
+            signing.prove(connection, &proof_route, challenge, role)
         },
         move || publish_guard.check(),
     );
@@ -250,6 +261,41 @@ pub async fn discover(
         value = authenticated => value?,
     };
     account_guard.check()?;
+    Ok(Authenticated {
+        stream,
+        permit,
+        info,
+        resolved,
+        key,
+    })
+}
+
+/// Resolve via the provider's authenticated management API, prepare the exact
+/// native account/route key before SSH, then return genuine HostInfo/inventory.
+pub async fn discover(
+    identity: &Identity,
+    locator: &str,
+    index: OrdinaryKeyIndex,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+) -> Result<(OrdinaryContext, Inventory), Failure> {
+    let Authenticated {
+        stream,
+        permit,
+        info,
+        resolved,
+        key,
+    } = authenticate_fresh(
+        identity,
+        locator,
+        index,
+        budgets,
+        &account_guard,
+        request_cancel,
+        StreamRole::Control,
+    )
+    .await?;
     let binding = Binding::new(
         info.route.host.host.clone(),
         format!("github:{}", identity.account.id),
