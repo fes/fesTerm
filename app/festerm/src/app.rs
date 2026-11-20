@@ -9011,10 +9011,12 @@ impl FesTermApp {
 
 #[cfg(test)]
 impl FesTermApp {
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_for_test(&self) -> &AppState {
         &self.state
     }
 
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_mut_for_test(&mut self) -> &mut AppState {
         &mut self.state
     }
