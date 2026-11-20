@@ -37,12 +37,13 @@ pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use panes::{PaneAxis, PaneGroup, PanePreset, PaneSide, PaneTree, MAX_GROUP_PANES};
 pub use profiles::{
-    AccountProvider, CredentialKind, DevTunnelAccount, DevTunnelHost,
-    DevTunnelProfileConfiguration, KnownHostEntry, LocalBindPolicy, LocalProfileConfiguration,
-    LocalTunnelHosting, PersistenceConfiguration, PersistenceProviderKind,
-    PowerShellProfileConfiguration, PowerShellTransport, Profile, ProfileUsageEntry,
-    RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity, SerialProfileConfiguration,
-    SerialStopBits, SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
+    AccountProvider, CredentialKind, DevTunnelAccount, DevTunnelFilesProfileConfiguration,
+    DevTunnelHost, DevTunnelProfileConfiguration, KnownHostEntry, LocalBindPolicy,
+    LocalProfileConfiguration, LocalTunnelHosting, PersistenceConfiguration,
+    PersistenceProviderKind, PowerShellProfileConfiguration, PowerShellTransport, Profile,
+    ProfileUsageEntry, RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity,
+    SerialProfileConfiguration, SerialStopBits, SshPortForwardConfiguration,
+    SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use session_names::{
     DurableSessionAlias, DurableSessionIdentity, SessionAlias, MAX_DURABLE_SESSION_ALIASES,
@@ -446,8 +447,16 @@ impl Configuration {
     pub fn account_profile_count(&self, identifier: &str) -> usize {
         self.profiles
             .iter()
-            .filter_map(Profile::as_dev_tunnel)
-            .filter(|profile| profile.account() == Some(identifier))
+            .filter(|profile| {
+                profile
+                    .as_dev_tunnel()
+                    .and_then(|profile| profile.account())
+                    == Some(identifier)
+                    || profile
+                        .as_dev_tunnel_files()
+                        .and_then(|profile| profile.account())
+                        == Some(identifier)
+            })
             .count()
     }
 
@@ -500,6 +509,9 @@ impl Configuration {
             if profile
                 .as_dev_tunnel()
                 .is_some_and(|tunnel| tunnel.account() == Some(identifier))
+                || profile
+                    .as_dev_tunnel_files()
+                    .is_some_and(|files| files.account() == Some(identifier))
             {
                 *profile = profile.clone().with_tunnel_account_selection(None)?;
             }
@@ -904,6 +916,10 @@ impl Configuration {
                 .as_dev_tunnel()
                 .and_then(|profile| profile.account())
                 .is_some_and(|key| !account_keys.contains(key))
+                || profile
+                    .as_dev_tunnel_files()
+                    .and_then(|files| files.account())
+                    .is_some_and(|key| !account_keys.contains(key))
             {
                 return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
             }
@@ -4299,5 +4315,94 @@ schema_version = 99
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+    #[test]
+    fn dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind() {
+        let (configuration, key) = Configuration::empty()
+            .with_account(account("files-owner", 42, "files-owner"))
+            .unwrap();
+        let configuration = configuration
+            .with_profile(Profile::dev_tunnel_files("files", Some(key), "build.usw3").unwrap())
+            .unwrap()
+            .with_workspace(
+                WorkspaceConfiguration::new(
+                    vec![WorkspaceTab::dev_tunnel_files("files-tab", "files").unwrap()],
+                    Some("files-tab".into()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let text = configuration.to_toml().unwrap();
+        let document: toml::Value = toml::from_str(&text).unwrap();
+        let keys = document["profiles"][0]
+            .as_table()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from(["account", "host", "id", "kind"])
+        );
+        let reopened = Configuration::parse(&text).unwrap();
+        assert_eq!(reopened.profiles(), configuration.profiles());
+        assert!(matches!(
+            reopened.workspace().unwrap().tabs()[0],
+            WorkspaceTab::DevTunnelFiles(_)
+        ));
+        let mismatch = reopened
+            .with_workspace(
+                WorkspaceConfiguration::new(
+                    vec![WorkspaceTab::sftp_file_manager("files-tab", "files").unwrap()],
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            mismatch.kind(),
+            ConfigErrorKind::WorkspaceProfileKindMismatch
+        );
+    }
+
+    #[test]
+    fn dev_tunnel_files_profile_rejects_authority_fields_and_signout_preserves_disconnected_metadata(
+    ) {
+        for field in [
+            "root = '/private/root'",
+            "write = true",
+            "epoch = '2'",
+            "credential_id = 'native-key'",
+            "auto_reconnect = true",
+        ] {
+            let text = format!("schema_version = {SCHEMA_VERSION}\n[[profiles]]\nkind = 'dev_tunnel_files'\nid = 'files'\nhost = 'build.usw3'\n{field}\n");
+            assert!(
+                Configuration::parse(&text).is_err(),
+                "unexpected authority field {field}"
+            );
+        }
+        let (configuration, key) = Configuration::empty()
+            .with_account(account("files-owner", 42, "files-owner"))
+            .unwrap();
+        let configuration = configuration
+            .with_profile(
+                Profile::dev_tunnel_files("files", Some(key.clone()), "build.usw3").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(configuration.account_profile_count(&key), 1);
+        let signed_out = configuration.without_account(&key).unwrap();
+        let profile = signed_out
+            .profile("files")
+            .unwrap()
+            .as_dev_tunnel_files()
+            .unwrap();
+        assert_eq!(profile.host(), "build.usw3");
+        assert!(profile.account().is_none());
+        assert!(signed_out
+            .profile("files")
+            .unwrap()
+            .credential_reference()
+            .is_none());
+        assert_eq!(signed_out.account_profile_count(&key), 0);
     }
 }

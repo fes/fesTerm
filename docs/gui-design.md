@@ -332,6 +332,12 @@ The launcher may contain:
 - **SSH** — connect to a host or select a saved profile.
 - **SFTP** — open a text-mode file-transfer session over SSH using the same
   connection metadata and trust/authentication flow.
+- **Dev Tunnels Files** — an independent account/host file session in enabled
+  builds. Select a host through normal discovery; it needs no shell or daemon
+  session. Reuse the file-manager panes and transfer drawer. Host read/write
+  permission controls uploads and new folders; remote delete, rename and
+  permission changes are unavailable. Saved destinations restore disconnected
+  and require explicit connection; uncertain publication offers no Retry.
 - **Serial** — open a local serial device with explicit line settings.
 - **Recent sessions or profiles**.
 - **Recent workspaces**.

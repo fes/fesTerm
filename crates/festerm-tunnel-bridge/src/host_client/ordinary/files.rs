@@ -80,6 +80,11 @@ impl Files {
     pub fn client(&mut self) -> &mut file_client::Client<FilesStream> {
         &mut self.client
     }
+    /// Transfer ownership without changing the account guard, child lifetime,
+    /// host scope, or aggregate connection permit retained by the client.
+    pub fn into_client(self) -> file_client::Client<FilesStream> {
+        self.client
+    }
     /// Call in the worker immediately before publishing a local staged download.
     /// Already admitted OS work cannot be rolled back by a later account change.
     /// This checks local account/lifetime only, never remote liveness or consent.

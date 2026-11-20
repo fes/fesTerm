@@ -180,9 +180,18 @@ impl PrivacyPreparationFailure {
 }
 
 #[derive(Clone)]
-struct PrivacyPreparationDiagnostic {
+pub(super) struct PrivacyPreparationDiagnostic {
     generation: u64,
     failure: Arc<OnceLock<PrivacyPreparationFailure>>,
+}
+
+impl PrivacyPreparationDiagnostic {
+    pub(super) fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            failure: Arc::new(OnceLock::new()),
+        }
+    }
 }
 
 fn record_privacy_preparation_failure(
@@ -1406,7 +1415,6 @@ impl FesTermApp {
     }
 
     fn begin_ordinary_host(&mut self, context: &egui::Context) {
-        use host_client::ordinary::OrdinaryAccountGuard;
         #[cfg(not(test))]
         use host_client::ordinary::OrdinaryKeyIndex;
         let Some(browser) = self.host_browser.as_ref() else {
@@ -1480,7 +1488,6 @@ impl FesTermApp {
             failure: Arc::new(OnceLock::new()),
         };
         browser.privacy_preparation = Some(preparation.clone());
-        #[cfg(not(test))]
         let browser_cancel = browser.cancel.clone();
         let locator = browser.locator.clone();
         #[cfg(not(test))]
@@ -1496,85 +1503,17 @@ impl FesTermApp {
                     if cancel.is_cancelled() {
                         return Err("Host connection cancelled.".into());
                     }
-                    let on_loss = ordinary_privacy_loss(account_cancel.clone());
-                    #[cfg(not(test))]
-                    let privacy = {
-                        let report = |failure| {
-                            record_privacy_preparation_failure(
-                                &preparation,
-                                &browser_cancel,
-                                failure,
-                                &wake,
-                            )
-                        };
-                        let observed = preparation.clone();
-                        let observed_cancel = browser_cancel.clone();
-                        let observed_wake = wake.clone();
-                        let task = crate::recording_privacy::PrivacyTask::start_with_loss(
-                            Arc::new(|| {}),
-                            on_loss,
-                            permit.clone(),
-                            Arc::new(move |cleanup_unresolved| {
-                                record_privacy_preparation_failure(
-                                    &observed,
-                                    &observed_cancel,
-                                    if cleanup_unresolved {
-                                        PrivacyPreparationFailure::CleanupUnresolved
-                                    } else {
-                                        PrivacyPreparationFailure::Unavailable
-                                    },
-                                    &observed_wake,
-                                );
-                            }),
-                        )
-                        .map_err(|_| {
-                            report(PrivacyPreparationFailure::Unavailable);
-                            RequestFailure::from(PrivacyPreparationFailure::Unavailable.notice())
-                        })?;
-                        match task.wait(Duration::from_secs(30)) {
-                            Some(Ok(guard)) => guard,
-                            Some(Err(_)) => {
-                                report(PrivacyPreparationFailure::Unavailable);
-                                return Err(preparation
-                                    .failure
-                                    .get()
-                                    .copied()
-                                    .unwrap_or(PrivacyPreparationFailure::Unavailable)
-                                    .notice()
-                                    .into());
-                            }
-                            None => {
-                                report(PrivacyPreparationFailure::Timeout);
-                                return Err(PrivacyPreparationFailure::Timeout.notice().into());
-                            }
-                        }
-                    };
-                    #[cfg(test)]
-                    let privacy = {
-                        drop(on_loss);
-                        crate::recording_privacy::PrivacyGuard::for_test(privacy_loss)
-                    };
-                    let loss = privacy.loss_flag();
-                    let privacy = Arc::new(privacy);
-                    let check_cancel = account_cancel.clone();
-                    let guard = OrdinaryAccountGuard::new(
+                    let (identity, guard) = prepare_ordinary_account(
+                        &account,
+                        store.as_ref(),
                         account_cancel,
-                        Arc::new(move || {
-                            let _retained_monitor = &privacy;
-                            if check_cancel.is_cancelled()
-                                || loss.load(std::sync::atomic::Ordering::Acquire)
-                            {
-                                Err(festerm_host_protocol::ContractError::Stale)
-                            } else {
-                                Ok(())
-                            }
-                        }),
-                    );
-                    guard
-                        .check()
-                        .map_err(|_| "OS privacy or account state changed.")?;
-                    let identity = load_host_identity(&account, store.as_ref())?;
-                    drop(permit);
+                        permit,
+                        preparation,
+                        browser_cancel,
+                        wake.clone(),
+                        #[cfg(test)]
+                        privacy_loss,
+                    )?;
                     if cancel.is_cancelled() {
                         return Err("Host connection cancelled.".into());
                     }
@@ -2934,6 +2873,97 @@ fn saved_session_profile<'a>(
     target: &Target,
 ) -> Option<&'a PublicRecipe> {
     recipes.recipes().iter().find(|recipe| &recipe.host == host && recipe.logical_session == target.logical && matches!(recipe.behavior, ConnectionBehavior::AttachOnly { generation } if generation == target.generation))
+}
+
+/// Shared native privacy-before-vault preparation. Called only by the
+/// foreground composition owner; neither profiles nor file tabs carry Identity.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_ordinary_account(
+    account: &DevTunnelAccount,
+    store: &dyn SecretStore,
+    account_cancel: CancellationToken,
+    permit: Arc<ConnectionPermit>,
+    preparation: PrivacyPreparationDiagnostic,
+    browser_cancel: CancellationToken,
+    wake: egui::Context,
+    #[cfg(test)] privacy_loss: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(Identity, host_client::ordinary::OrdinaryAccountGuard), RequestFailure> {
+    use host_client::ordinary::OrdinaryAccountGuard;
+    #[cfg(test)]
+    let _ = (&preparation, &browser_cancel, &wake);
+    let on_loss = ordinary_privacy_loss(account_cancel.clone());
+    #[cfg(not(test))]
+    let privacy = {
+        let report = |failure| {
+            record_privacy_preparation_failure(&preparation, &browser_cancel, failure, &wake)
+        };
+        let observed = preparation.clone();
+        let observed_cancel = browser_cancel.clone();
+        let observed_wake = wake.clone();
+        let task = crate::recording_privacy::PrivacyTask::start_with_loss(
+            Arc::new(|| {}),
+            on_loss,
+            permit.clone(),
+            Arc::new(move |cleanup_unresolved| {
+                record_privacy_preparation_failure(
+                    &observed,
+                    &observed_cancel,
+                    if cleanup_unresolved {
+                        PrivacyPreparationFailure::CleanupUnresolved
+                    } else {
+                        PrivacyPreparationFailure::Unavailable
+                    },
+                    &observed_wake,
+                );
+            }),
+        )
+        .map_err(|_| {
+            report(PrivacyPreparationFailure::Unavailable);
+            RequestFailure::from(PrivacyPreparationFailure::Unavailable.notice())
+        })?;
+        match task.wait(Duration::from_secs(30)) {
+            Some(Ok(guard)) => guard,
+            Some(Err(_)) => {
+                report(PrivacyPreparationFailure::Unavailable);
+                return Err(preparation
+                    .failure
+                    .get()
+                    .copied()
+                    .unwrap_or(PrivacyPreparationFailure::Unavailable)
+                    .notice()
+                    .into());
+            }
+            None => {
+                report(PrivacyPreparationFailure::Timeout);
+                return Err(PrivacyPreparationFailure::Timeout.notice().into());
+            }
+        }
+    };
+    #[cfg(test)]
+    let privacy = {
+        drop(on_loss);
+        crate::recording_privacy::PrivacyGuard::for_test(privacy_loss)
+    };
+    let loss = privacy.loss_flag();
+    let privacy = Arc::new(privacy);
+    let check_cancel = account_cancel.clone();
+    let guard = OrdinaryAccountGuard::new(
+        account_cancel,
+        Arc::new(move || {
+            let _retained_monitor = &privacy;
+            if check_cancel.is_cancelled() || loss.load(std::sync::atomic::Ordering::Acquire) {
+                Err(festerm_host_protocol::ContractError::Stale)
+            } else {
+                Ok(())
+            }
+        }),
+    );
+    guard
+        .check()
+        .map_err(|_| "OS privacy or account state changed.")?;
+    let identity = load_host_identity(account, store)?;
+    drop(permit);
+    Ok((identity, guard))
 }
 
 fn load_host_identity(

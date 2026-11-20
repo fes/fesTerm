@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "codex-agent", "sources": "095028ebe524e561648ae073a85d54184383a9b679d4381ea6cc584d4acf27c0", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-serial/src/lib.rs", "crates/festerm-sessiond/src/lib.rs", "crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "codex-source-verified", "sources": "3ad1d287b2e72483231299b4a71fb8b624ccf289a1395518e5b7ca052d554939", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the

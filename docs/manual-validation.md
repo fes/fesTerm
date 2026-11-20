@@ -2672,6 +2672,22 @@ client integration accepted, validate those separate boundaries with owned
 roots, including cancellation and uncertain publication without replay. These
 source fixtures do not change existing native evidence or complete #778.
 
+### Desktop Dev Tunnels Files client
+
+`DTFILES-01`–`03` / DT-07 cover the Desktop composition separately from the
+portable connector. Qualification remains pending: use signed owned hosts on
+Windows/macOS/Linux with no daemon session, then normal account/host selection,
+Off/read-only/write grants, both transfer directions, recursive bounded plans,
+mkdir, browsing-stream previews and exact reviewed replacement. Exercise
+create/Keep Both races, explicit Skip/cancel, owner-close while Finish is held,
+account/scope retirement, late completions and disconnected workspace restore.
+Do not retry an unobserved publication. Confirm that remote delete, rename and
+permissions are unavailable and old terminal/Control behavior is unchanged.
+Capture actual queue/error/read-only UI, keyboard/accessibility and narrow
+layouts; automated fixtures/builds are not packaged/native acceptance. Full
+remote command parity needs additional explicit consent/protocol work; Mobile
+and the wider #778 queue remain open.
+
 ### SFTP owner cancellation
 
 Windows local-download cleanup is a scoped part of #778 item 17, pending native

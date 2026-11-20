@@ -373,8 +373,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         self.stream = None;
         self.handles.clear();
     }
+    /// Negative-only local fence before caller-owned local publication. Checks
+    /// stream/child cancellation and the captured account guard when present.
+    /// An unguarded legacy client does not verify an account. This performs no
+    /// network I/O and proves no remote liveness, current consent, or new grant.
     #[cfg(feature = "host-routing")]
-    pub(crate) fn check_current(&mut self) -> Result<()> {
+    pub fn check_current(&mut self) -> Result<()> {
         self.ready()
     }
     fn ready(&mut self) -> Result<()> {
@@ -805,11 +809,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         expected: Option<&Handle>,
         source: &mut (impl AsyncRead + Unpin),
     ) -> Result<u64> {
+        // The exchange itself closes uncertain/dropped admission. A fully
+        // received pre-admission refusal has created no upload and must leave
+        // the source unread so the caller can obtain a fresh collision review.
+        let handle = self.begin_upload(value, size, expected).await?;
         let transfer = Transfer {
             client: self,
             complete: false,
         };
-        let handle = transfer.client.begin_upload(value, size, expected).await?;
         let mut bytes = vec![0; transfer.client.capabilities.chunk_limit];
         let mut offset = 0;
         while offset < size {
@@ -838,9 +845,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         if extra != 0 {
             return Err(Error::Invalid);
         }
-        let size = transfer.client.finish_upload(&handle).await?;
-        transfer.finish();
-        Ok(size)
+        match transfer.client.finish_upload(&handle).await {
+            Ok(size) => {
+                transfer.finish();
+                Ok(size)
+            }
+            Err(
+                error @ Error::Remote {
+                    code: rpc::ErrorCode::Exists | rpc::ErrorCode::Conflict,
+                    ..
+                },
+            ) => {
+                // The server has consumed the upload handle and returned a
+                // completed publication refusal. Retain the channel for a new
+                // review, never replay Finish. Staging cleanup is best effort.
+                transfer.finish();
+                Err(error)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 // Also abort on a dropped high-level transfer future while local I/O is pending.
@@ -1538,6 +1561,193 @@ mod tests {
             assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
             std::fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn rooted_client_completed_upload_refusal_keeps_source_unread_and_allows_fresh_review() {
+        for code in [rpc::ErrorCode::Exists, rpc::ErrorCode::Conflict] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_open(&mut peer).await;
+                let begin = request(&mut peer).await;
+                assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+                write_frame(
+                    &mut peer,
+                    rpc::RESPONSE,
+                    &json(&rpc::Response {
+                        id: begin.id,
+                        result: None,
+                        error: Some(code),
+                        recovery_path: None,
+                    })
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+                let review = request(&mut peer).await;
+                assert!(matches!(review.operation, Operation::OpenRead { .. }));
+                reply(
+                    &mut peer,
+                    review.id,
+                    Reply::File {
+                        handle: 9,
+                        metadata: rpc::Metadata {
+                            kind: rpc::Kind::File,
+                            size: "1".into(),
+                            modified_ms: None,
+                        },
+                    },
+                )
+                .await;
+                let ping = request(&mut peer).await;
+                assert!(matches!(ping.operation, Operation::Ping { .. }));
+                reply(&mut peer, ping.id, Reply::Pong).await;
+                let close = request(&mut peer).await;
+                assert!(matches!(close.operation, Operation::Close { handle: 9 }));
+                reply(&mut peer, close.id, Reply::Closed).await;
+                let mut eof = [0];
+                assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+            });
+            let mut client = Client::open(stream, selected().1, CancellationToken::new())
+                .await
+                .unwrap();
+            let mut source = std::io::Cursor::new(b"new bytes");
+            assert!(matches!(
+                client.upload("/target", 9, None, &mut source).await,
+                Err(Error::Remote {
+                    code: rpc::ErrorCode::Exists | rpc::ErrorCode::Conflict,
+                    ..
+                })
+            ));
+            assert_eq!(source.position(), 0);
+            assert!(client.available());
+            let (review, metadata) = client.open_read("/target").await.unwrap();
+            assert_eq!(metadata.size, "1");
+            client.ping().await.unwrap();
+            client.close(&review).await.unwrap();
+            client.cancel();
+            tokio::time::timeout(std::time::Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_client_completed_finish_refusal_keeps_stream_and_allows_fresh_review() {
+        for code in [rpc::ErrorCode::Exists, rpc::ErrorCode::Conflict] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_open(&mut peer).await;
+                let begin = request(&mut peer).await;
+                assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+                reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+                let write = request(&mut peer).await;
+                assert!(matches!(
+                    write.operation,
+                    Operation::Write { handle: 1, .. }
+                ));
+                let (kind, bytes) = crate::wire::read_frame(&mut peer).await.unwrap();
+                assert_eq!(kind, rpc::DATA);
+                assert_eq!(u32::from_be_bytes(bytes[..4].try_into().unwrap()), write.id);
+                assert_eq!(&bytes[4..], b"new bytes");
+                reply(&mut peer, write.id, Reply::Written { offset: "9".into() }).await;
+                let finish = request(&mut peer).await;
+                assert!(matches!(
+                    finish.operation,
+                    Operation::FinishUpload { handle: 1 }
+                ));
+                write_frame(
+                    &mut peer,
+                    rpc::RESPONSE,
+                    &json(&rpc::Response {
+                        id: finish.id,
+                        result: None,
+                        error: Some(code),
+                        recovery_path: None,
+                    })
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+                let review = request(&mut peer).await;
+                assert!(matches!(review.operation, Operation::OpenRead { .. }));
+                reply(
+                    &mut peer,
+                    review.id,
+                    Reply::File {
+                        handle: 9,
+                        metadata: rpc::Metadata {
+                            kind: rpc::Kind::File,
+                            size: "1".into(),
+                            modified_ms: None,
+                        },
+                    },
+                )
+                .await;
+                let ping = request(&mut peer).await;
+                assert!(matches!(ping.operation, Operation::Ping { .. }));
+                reply(&mut peer, ping.id, Reply::Pong).await;
+                let close = request(&mut peer).await;
+                assert!(matches!(close.operation, Operation::Close { handle: 9 }));
+                reply(&mut peer, close.id, Reply::Closed).await;
+                let mut eof = [0];
+                assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+            });
+            let mut client = Client::open(stream, selected().1, CancellationToken::new())
+                .await
+                .unwrap();
+            let mut source = std::io::Cursor::new(b"new bytes");
+            assert!(matches!(
+                client.upload("/target", 9, None, &mut source).await,
+                Err(Error::Remote {
+                    code: rpc::ErrorCode::Exists | rpc::ErrorCode::Conflict,
+                    ..
+                })
+            ));
+            assert_eq!(source.position(), 9);
+            assert!(client.available());
+            let (review, metadata) = client.open_read("/target").await.unwrap();
+            assert_eq!(metadata.size, "1");
+            client.ping().await.unwrap();
+            client.close(&review).await.unwrap();
+            client.cancel();
+            tokio::time::timeout(std::time::Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_client_dropped_upload_begin_closes_without_reading_source() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            scripted_open(&mut peer).await;
+            let begin = request(&mut peer).await;
+            assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+            sent.send(()).unwrap();
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut client = Client::open(stream, selected().1, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut source = std::io::Cursor::new(b"new bytes");
+        {
+            let mut upload = Box::pin(client.upload("/target", 9, None, &mut source));
+            tokio::select! {
+                result = &mut upload => panic!("begin must remain pending: {result:?}"),
+                ready = received => ready.unwrap(),
+            }
+        }
+        assert!(!client.available());
+        assert_eq!(source.position(), 0);
+        tokio::time::timeout(std::time::Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

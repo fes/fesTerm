@@ -1,0 +1,1370 @@
+//! Desktop Files composition. Authentication stays in foreground ordinary HOST
+//! preparation; this adapter owns only one already-authorized Files stream.
+use festerm_ssh::{
+    RemoteDirectoryPage, RemoteReplacementReview, RemoteTransferEndpoint, RemoteTransferFuture,
+    SftpDirectoryItem, SftpEntryType, SftpPath, SftpPathMetadata, SftpSessionError,
+};
+use festerm_tunnel_bridge::{
+    file_client::{self, Client, Handle},
+    file_protocol as rpc,
+    host_client::ordinary::{Files, FilesStream},
+};
+use std::{
+    future::Future,
+    pin::Pin,
+    time::{Duration, UNIX_EPOCH},
+};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::sync::CancellationToken;
+
+pub(crate) struct FilesEndpoint<S> {
+    client: Client<S>,
+    lifetime: CancellationToken,
+    next: u64,
+    generation: uuid::Uuid,
+    in_flight_upload: Option<(uuid::Uuid, String)>,
+    directory: Option<(u64, Handle, String)>,
+    review: Option<(u64, Handle, String)>,
+}
+impl FilesEndpoint<FilesStream> {
+    pub(crate) fn new(files: Files, lifetime: CancellationToken) -> Self {
+        Self {
+            client: files.into_client(),
+            lifetime,
+            next: 1,
+            generation: uuid::Uuid::new_v4(),
+            in_flight_upload: None,
+            directory: None,
+            review: None,
+        }
+    }
+}
+impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
+    fn next_id(&mut self) -> Result<u64, SftpSessionError> {
+        let id = self.next;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or(SftpSessionError::SessionClosed)?;
+        Ok(id)
+    }
+    fn error(path: &str, operation: &'static str, error: file_client::Error) -> SftpSessionError {
+        match error {
+            file_client::Error::UncertainFinish(cause) => SftpSessionError::PublicationUncertain {
+                path: path.into(),
+                reason: cause.to_string(),
+            },
+            file_client::Error::Remote {
+                code: rpc::ErrorCode::RecoveryRequired,
+                recovery_path,
+            } => SftpSessionError::PublicationUncertain {
+                path: path.into(),
+                reason: recovery_path.map_or_else(
+                    || "Host publication requires recovery; do not retry automatically.".into(),
+                    |path| format!("Host publication requires recovery at {path}; do not retry automatically."),
+                ),
+            },
+            file_client::Error::Remote {
+                code: rpc::ErrorCode::Exists,
+                ..
+            } => SftpSessionError::DestinationExists { path: path.into() },
+            other => SftpSessionError::RemoteOperationFailed {
+                operation,
+                path: path.into(),
+                reason: other.to_string(),
+            },
+        }
+    }
+    fn metadata_value(
+        &self,
+        path: &str,
+        metadata: rpc::Metadata,
+    ) -> Result<SftpPathMetadata, SftpSessionError> {
+        let size = metadata
+            .size
+            .parse()
+            .map_err(|_| Self::error(path, "read metadata", file_client::Error::Protocol))?;
+        let modified_at = metadata
+            .modified_ms
+            .as_deref()
+            .map(|value| {
+                let millis = value.parse::<u64>().map_err(|_| {
+                    Self::error(path, "read metadata", file_client::Error::Protocol)
+                })?;
+                UNIX_EPOCH
+                    .checked_add(Duration::from_millis(millis))
+                    .ok_or_else(|| Self::error(path, "read metadata", file_client::Error::Protocol))
+            })
+            .transpose()?;
+        Ok(SftpPathMetadata {
+            path: SftpPath::remote(path),
+            file_type: kind(metadata.kind),
+            size: Some(size),
+            modified_at,
+            permissions: Some(if self.client.capabilities().write {
+                0o700
+            } else {
+                0o500
+            }),
+        })
+    }
+}
+fn kind(value: rpc::Kind) -> SftpEntryType {
+    match value {
+        rpc::Kind::File => SftpEntryType::File,
+        rpc::Kind::Directory => SftpEntryType::Directory,
+        rpc::Kind::Unsupported => SftpEntryType::Other,
+    }
+}
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
+    for FilesEndpoint<S>
+{
+    fn check_current(&mut self) -> Result<(), SftpSessionError> {
+        if self.lifetime.is_cancelled() {
+            self.client.cancel();
+            return Err(SftpSessionError::SessionClosed);
+        }
+        self.client
+            .check_current()
+            .map_err(|error| Self::error("/", "check Files authority", error))
+    }
+    fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let lifetime = self.lifetime.clone();
+        Box::pin(async move { lifetime.cancelled().await })
+    }
+    fn cleanup(&mut self) -> RemoteTransferFuture<'_, ()> {
+        Box::pin(async move {
+            let interrupted = self.in_flight_upload.take();
+            let mut failure = None;
+            if let Some((_, handle, path)) = self.directory.take() {
+                if let Err(error) = self.client.close(&handle).await {
+                    failure = Some(Self::error(&path, "close directory", error));
+                }
+            }
+            if let Some((_, handle, path)) = self.review.take() {
+                if let Err(error) = self.client.close(&handle).await {
+                    failure = Some(Self::error(&path, "close replacement review", error));
+                }
+            }
+            if let Some((generation, path)) = interrupted {
+                self.client.cancel();
+                return Err(SftpSessionError::PublicationUncertain { path, reason: format!("The upload future ended before its publication result was observed (connection {generation}). Inspect before starting new work.") });
+            }
+            if let Some(error) = failure {
+                self.client.cancel();
+                Err(error)
+            } else {
+                Ok(())
+            }
+        })
+    }
+    fn metadata<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> RemoteTransferFuture<'a, Option<SftpPathMetadata>> {
+        Box::pin(async move {
+            match self.client.stat(path).await {
+                Ok(value) => self.metadata_value(path, value).map(Some),
+                Err(file_client::Error::Remote {
+                    code: rpc::ErrorCode::NotFound,
+                    ..
+                }) => Ok(None),
+                Err(error) => Err(Self::error(path, "stat", error)),
+            }
+        })
+    }
+    fn open_directory<'a>(&'a mut self, path: &'a str) -> RemoteTransferFuture<'a, u64> {
+        Box::pin(async move {
+            if self.directory.is_some() {
+                return Err(Self::error(
+                    path,
+                    "open directory",
+                    file_client::Error::Invalid,
+                ));
+            }
+            let id = self.next_id()?;
+            let handle = self
+                .client
+                .open_directory(path)
+                .await
+                .map_err(|error| Self::error(path, "open directory", error))?;
+            self.directory = Some((id, handle, path.into()));
+            Ok(id)
+        })
+    }
+    fn read_directory(&mut self, id: u64) -> RemoteTransferFuture<'_, RemoteDirectoryPage> {
+        Box::pin(async move {
+            let (active, handle, path) = self
+                .directory
+                .as_ref()
+                .ok_or(SftpSessionError::SessionClosed)?;
+            if *active != id {
+                return Err(SftpSessionError::SessionClosed);
+            }
+            let page = self
+                .client
+                .read_directory(handle, self.client.capabilities().page_limit)
+                .await
+                .map_err(|error| Self::error(path, "read directory", error))?;
+            if page.skipped != 0 {
+                return Err(SftpSessionError::RemoteOperationFailed {
+                    operation: "plan directory transfer",
+                    path: path.clone(),
+                    reason: "The host omitted names that cannot be represented safely; a complete folder transfer could not be planned.".into(),
+                });
+            }
+            let permissions = Some(if self.client.capabilities().write {
+                0o700
+            } else {
+                0o500
+            });
+            Ok(RemoteDirectoryPage {
+                done: page.done,
+                entries: page
+                    .entries
+                    .into_iter()
+                    .map(|entry| {
+                        let child = if path == "/" {
+                            format!("/{0}", entry.name)
+                        } else {
+                            format!("{path}/{0}", entry.name)
+                        };
+                        SftpDirectoryItem {
+                            name: entry.name,
+                            path: SftpPath::remote(child),
+                            file_type: kind(entry.kind),
+                            size: None,
+                            modified_at: None,
+                            permissions,
+                        }
+                    })
+                    .collect(),
+            })
+        })
+    }
+    fn close_directory(&mut self, id: u64) -> RemoteTransferFuture<'_, ()> {
+        Box::pin(async move {
+            if !self
+                .directory
+                .as_ref()
+                .is_some_and(|(active, _, _)| *active == id)
+            {
+                return Err(SftpSessionError::SessionClosed);
+            }
+            let (_, handle, path) = self.directory.take().expect("checked directory");
+            self.client.close(&handle).await.map_err(|error| {
+                self.client.cancel();
+                Self::error(&path, "close directory", error)
+            })
+        })
+    }
+    fn mkdir<'a>(&'a mut self, path: &'a str) -> RemoteTransferFuture<'a, ()> {
+        Box::pin(async move {
+            self.client
+                .mkdir(path)
+                .await
+                .map_err(|error| Self::error(path, "create directory", error))
+        })
+    }
+    fn review_replacement<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> RemoteTransferFuture<'a, (RemoteReplacementReview, SftpPathMetadata)> {
+        Box::pin(async move {
+            if self.review.is_some() {
+                return Err(Self::error(
+                    path,
+                    "review replacement",
+                    file_client::Error::Invalid,
+                ));
+            }
+            let id = self.next_id()?;
+            let (handle, info) = self
+                .client
+                .open_read(path)
+                .await
+                .map_err(|error| Self::error(path, "review replacement", error))?;
+            let metadata = match self.metadata_value(path, info) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.client.cancel();
+                    return Err(error);
+                }
+            };
+            self.review = Some((id, handle, path.into()));
+            Ok((RemoteReplacementReview(id), metadata))
+        })
+    }
+    fn release_replacement(&mut self, id: RemoteReplacementReview) -> RemoteTransferFuture<'_, ()> {
+        Box::pin(async move {
+            if !self
+                .review
+                .as_ref()
+                .is_some_and(|(active, _, _)| *active == id.0)
+            {
+                return Err(SftpSessionError::SessionClosed);
+            }
+            let (_, handle, path) = self.review.take().expect("checked replacement");
+            self.client.close(&handle).await.map_err(|error| {
+                self.client.cancel();
+                Self::error(&path, "close replacement review", error)
+            })
+        })
+    }
+    fn upload<'a>(
+        &'a mut self,
+        path: &'a str,
+        size: u64,
+        expected: Option<RemoteReplacementReview>,
+        mut source: &'a mut (dyn AsyncRead + Unpin + Send),
+    ) -> RemoteTransferFuture<'a, u64> {
+        Box::pin(async move {
+            let expected = match expected {
+                Some(id) => {
+                    let (active, handle, reviewed_path) = self
+                        .review
+                        .as_ref()
+                        .ok_or(SftpSessionError::SessionClosed)?;
+                    if *active != id.0 || reviewed_path != path {
+                        return Err(SftpSessionError::SessionClosed);
+                    }
+                    Some(handle)
+                }
+                None => None,
+            };
+            self.in_flight_upload = Some((self.generation, path.into()));
+            let result = self.client.upload(path, size, expected, &mut source).await;
+            // All returned outcomes retain their actual classification. Only a
+            // dropped opaque future leaves the conservative observation marker.
+            self.in_flight_upload = None;
+            result.map_err(|error| Self::error(path, "upload", error))
+        })
+    }
+    fn download<'a>(
+        &'a mut self,
+        path: &'a str,
+        mut sink: &'a mut (dyn AsyncWrite + Unpin + Send),
+    ) -> RemoteTransferFuture<'a, u64> {
+        Box::pin(async move {
+            self.client
+                .download(path, &mut sink)
+                .await
+                .map_err(|error| Self::error(path, "download", error))
+        })
+    }
+}
+
+/// Worker-only ownership handoff. These streams never enter configuration or
+/// the tab's presentation state, and share the retained account lifetime.
+pub(crate) struct FilesConnection {
+    pub browsing: Files,
+    pub transfer: Files,
+    pub account_id: u64,
+    pub lifetime: CancellationToken,
+}
+pub(crate) type ConnectFiles = Pin<
+    Box<dyn Future<Output = Result<FilesConnection, super::host_browser::RequestFailure>> + Send>,
+>;
+
+const FILES_DIRECTORY_ENTRY_LIMIT: usize = 4096;
+const FILES_DIRECTORY_BYTE_LIMIT: usize = 4 * 1024 * 1024;
+const FILES_DIRECTORY_PAGE_LIMIT: usize = 1024;
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
+    pub(crate) async fn ping(&mut self) -> Result<(), SftpSessionError> {
+        self.check_current()?;
+        self.client
+            .ping()
+            .await
+            .map_err(|error| Self::error("/", "check Files connection", error))?;
+        self.check_current()
+    }
+    pub(crate) async fn directory_snapshot(
+        &mut self,
+        path: &str,
+    ) -> Result<(festerm_ssh::SftpDirectorySnapshot, SftpPathMetadata, usize), SftpSessionError>
+    {
+        let metadata = self.metadata(path).await?.ok_or_else(|| {
+            Self::error(
+                path,
+                "list directory",
+                file_client::Error::Remote {
+                    code: rpc::ErrorCode::NotFound,
+                    recovery_path: None,
+                },
+            )
+        })?;
+        if metadata.file_type != SftpEntryType::Directory {
+            return Err(SftpSessionError::RemotePathNotDirectory { path: path.into() });
+        }
+        let handle = self.open_directory(path).await?;
+        let result = async {
+            let mut entries = Vec::new();
+            let mut bytes = 0usize;
+            let mut skipped = 0usize;
+            for _ in 0..FILES_DIRECTORY_PAGE_LIMIT {
+                let (_, wire_handle, _) = self.directory.as_ref().ok_or(SftpSessionError::SessionClosed)?;
+                let limit = self.client.capabilities().page_limit;
+                let page = self.client.read_directory(wire_handle, limit).await.map_err(|error| Self::error(path, "list directory", error))?;
+                skipped = skipped.checked_add(usize::from(page.skipped)).ok_or(SftpSessionError::SessionClosed)?;
+                for entry in page.entries {
+                    let child = if path == "/" { format!("/{}", entry.name) } else { format!("{path}/{}", entry.name) };
+                    bytes = bytes.checked_add(child.len() + entry.name.len() + std::mem::size_of::<SftpDirectoryItem>()).ok_or(SftpSessionError::SessionClosed)?;
+                    if entries.len() >= FILES_DIRECTORY_ENTRY_LIMIT || bytes > FILES_DIRECTORY_BYTE_LIMIT {
+                        return Err(SftpSessionError::RemoteOperationFailed { operation: "list directory", path: path.into(), reason: "Folder exceeds the bounded Files view. No partial listing was published; enter a narrower folder path.".into() });
+                    }
+                    entries.push(SftpDirectoryItem { name: entry.name, path: SftpPath::remote(child), file_type: kind(entry.kind), size: None, modified_at: None, permissions: metadata.permissions });
+                }
+                if page.done {
+                    self.check_current()?;
+                    return Ok((festerm_ssh::SftpDirectorySnapshot { location: festerm_ssh::SftpLocation::Remote, path: SftpPath::remote(path), loaded_at: std::time::SystemTime::now(), entries }, metadata, skipped));
+                }
+            }
+            Err(SftpSessionError::RemoteOperationFailed { operation: "list directory", path: path.into(), reason: "Folder exceeds the Files page limit. No partial listing was published.".into() })
+        }.await;
+        let closed = self.close_directory(handle).await;
+        match (result, closed) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+
+    pub(crate) async fn markdown_snapshot(
+        &mut self,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SftpSessionError> {
+        let (handle, info) = self
+            .client
+            .open_read(path)
+            .await
+            .map_err(|error| Self::error(path, "open preview", error))?;
+        let result = async {
+            let size = info
+                .size
+                .parse::<u64>()
+                .map_err(|_| SftpSessionError::SessionClosed)?;
+            if size > max_bytes as u64 {
+                return Err(SftpSessionError::RemoteFileTooLarge {
+                    path: path.into(),
+                    limit_bytes: max_bytes,
+                });
+            }
+            self.check_current()?;
+            let mut bytes = Vec::with_capacity(size as usize);
+            let mut offset = 0;
+            loop {
+                let length = self.client.capabilities().chunk_limit as u32;
+                let chunk = self
+                    .client
+                    .read(&handle, offset, length)
+                    .await
+                    .map_err(|error| Self::error(path, "read preview", error))?;
+                self.check_current()?;
+                if chunk.bytes.len() > max_bytes.saturating_sub(bytes.len()) {
+                    return Err(SftpSessionError::RemoteFileTooLarge {
+                        path: path.into(),
+                        limit_bytes: max_bytes,
+                    });
+                }
+                offset += chunk.bytes.len() as u64;
+                bytes.extend_from_slice(&chunk.bytes);
+                if chunk.eof {
+                    return Ok(bytes);
+                }
+            }
+        }
+        .await;
+        let closed = self
+            .client
+            .close(&handle)
+            .await
+            .map_err(|error| Self::error(path, "close preview", error));
+        match (result, closed) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+}
+
+impl super::FesTermApp {
+    pub(super) fn start_configured_files(
+        &mut self,
+        profile_id: &str,
+        context: &eframe::egui::Context,
+    ) {
+        let Some(profile) = self
+            .state
+            .configuration()
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_dev_tunnel_files)
+        else {
+            return;
+        };
+        let target = crate::sftp_file_manager::HostFilesLaunchTarget {
+            label: profile.identifier().into(),
+            profile_id: Some(profile.identifier().into()),
+            account: profile.account().map(str::to_owned),
+            locator: profile.host().into(),
+        };
+        self.start_host_files(target, context);
+    }
+
+    pub(super) fn start_host_files(
+        &mut self,
+        target: crate::sftp_file_manager::HostFilesLaunchTarget,
+        context: &eframe::egui::Context,
+    ) {
+        use festerm_tunnel_bridge::host_client::{
+            self,
+            ordinary::{open_files, OrdinaryKeyIndex},
+        };
+        use festerm_tunnel_client::{host_control::ConnectionPermit, service};
+        if !context.input(|input| input.focused) {
+            return;
+        }
+        if festerm_config::Profile::dev_tunnel_files(
+            &target.label,
+            target.account.clone(),
+            &target.locator,
+        )
+        .is_err()
+        {
+            self.secure_storage_feedback = Some(
+                "The Files destination metadata is invalid. Review its name, account and host.",
+            );
+            return;
+        }
+        if service::locator(&target.locator).is_err() {
+            self.secure_storage_feedback =
+                Some("The selected Files host is invalid. Choose it again.");
+            return;
+        }
+        if let Some(profile_id) = &target.profile_id {
+            let current = self
+                .state
+                .configuration()
+                .profile(profile_id)
+                .and_then(festerm_config::Profile::as_dev_tunnel_files)
+                .is_some_and(|profile| {
+                    profile.host() == target.locator
+                        && profile.account() == target.account.as_deref()
+                });
+            if !current {
+                self.secure_storage_feedback =
+                    Some("The Files profile changed. Review it again before connecting.");
+                return;
+            }
+        }
+        let Some(account) = target
+            .account
+            .as_deref()
+            .and_then(|key| self.state.configuration().account(key))
+            .cloned()
+        else {
+            self.secure_storage_feedback =
+                Some("Choose a signed-in account in the Files profile before connecting.");
+            return;
+        };
+        let store = match &self.secret_store {
+            Ok(store) => store.clone(),
+            Err(_) => {
+                self.secure_storage_feedback =
+                    Some("Native secure storage is unavailable. No Files fallback was attempted.");
+                return;
+            }
+        };
+        let account_cancel = match self.state.ordinary_account_token(&account) {
+            Ok(token) => token,
+            Err(message) => {
+                self.secure_storage_feedback = Some(message);
+                return;
+            }
+        };
+        let permit = match ConnectionPermit::reserve(&self.state.host_client_budgets) {
+            Ok(permit) => std::sync::Arc::new(permit),
+            Err(_) => {
+                self.secure_storage_feedback =
+                    Some("The HOST connection budget is busy. Retry Files explicitly.");
+                return;
+            }
+        };
+        let lifetime = account_cancel.child_token();
+        let request = lifetime.clone();
+        let owner_cancel = lifetime.clone();
+        let budgets = self.state.host_client_budgets.clone();
+        let locator = target.locator.clone();
+        let wake = context.clone();
+        let connect: ConnectFiles = Box::pin(async move {
+            if request.is_cancelled() {
+                return Err("Files connection cancelled.".into());
+            }
+            let (identity, guard) = super::host_browser::prepare_ordinary_account(
+                &account,
+                store.as_ref(),
+                account_cancel,
+                permit,
+                super::host_browser::PrivacyPreparationDiagnostic::new(1),
+                request.clone(),
+                wake,
+                #[cfg(test)]
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )?;
+            if request.is_cancelled() {
+                return Err("Files connection cancelled.".into());
+            }
+            // Closing this tab fences only its two streams. The retained
+            // parent guard still observes account/privacy retirement, while
+            // closing one protocol client cannot cancel its sibling or account.
+            let parent_guard = guard;
+            let guard = host_client::ordinary::OrdinaryAccountGuard::new(
+                request.clone(),
+                std::sync::Arc::new(move || parent_guard.check()),
+            );
+            let index = OrdinaryKeyIndex::native()
+                .map_err(|error| super::host_browser::RequestFailure::from(error.message()))?;
+            let browsing = open_files(
+                &identity,
+                &locator,
+                index.clone(),
+                &budgets,
+                guard.clone(),
+                &request,
+                None,
+            )
+            .await
+            .map_err(|error| super::host_browser::RequestFailure::from(error.to_string()))?
+            .ok_or_else(|| {
+                super::host_browser::RequestFailure::from(
+                    "Files are disabled on the authenticated host.",
+                )
+            })?;
+            let scope = browsing.scope().clone();
+            let transfer = open_files(
+                &identity,
+                &locator,
+                index,
+                &budgets,
+                guard.clone(),
+                &request,
+                Some(&scope),
+            )
+            .await
+            .map_err(|error| super::host_browser::RequestFailure::from(error.to_string()))?
+            .ok_or_else(|| {
+                super::host_browser::RequestFailure::from(
+                    "Files were disabled while opening the transfer stream.",
+                )
+            })?;
+            guard
+                .check()
+                .map_err(|_| "OS privacy or account state changed.")?;
+            if request.is_cancelled() {
+                return Err("Files connection cancelled.".into());
+            }
+            Ok(FilesConnection {
+                browsing,
+                transfer,
+                account_id: account.account_id(),
+                lifetime: request,
+            })
+        });
+        let settings = self.state.configuration().interface_settings();
+        let local = settings
+            .default_sftp_local_directory()
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(crate::sftp_file_manager::local_home_directory);
+        let tab = crate::sftp_file_manager::SftpFileManagerTab::new_files(
+            target,
+            connect,
+            owner_cancel,
+            local,
+            settings.sftp_pane_order(),
+            context,
+        );
+        self.state.place_sftp_file_manager(tab);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use festerm_ssh::{SftpTransferManager, SftpTransferRequest};
+    use festerm_tunnel_bridge::{
+        protocol::Target,
+        wire::{read_frame, write_frame},
+    };
+    use tokio::io::{AsyncReadExt, DuplexStream};
+
+    fn limits() -> rpc::Capabilities {
+        rpc::Capabilities {
+            version: rpc::VERSION,
+            write: true,
+            chunk_limit: rpc::CHUNK_LIMIT,
+            page_limit: rpc::PAGE_LIMIT,
+            handle_limit: rpc::HANDLE_LIMIT,
+        }
+    }
+    async fn reply(
+        peer: &mut DuplexStream,
+        id: u32,
+        result: Option<rpc::Result>,
+        error: Option<rpc::ErrorCode>,
+    ) {
+        write_frame(
+            peer,
+            rpc::RESPONSE,
+            &serde_json::to_vec(&rpc::Response {
+                id,
+                result,
+                error,
+                recovery_path: None,
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+    async fn opened(peer: &mut DuplexStream) {
+        assert_eq!(read_frame(peer).await.unwrap().0, rpc::OPEN);
+        reply(
+            peer,
+            0,
+            Some(rpc::Result::Ready {
+                capabilities: limits(),
+            }),
+            None,
+        )
+        .await;
+    }
+    async fn request(peer: &mut DuplexStream) -> rpc::Request {
+        let (kind, bytes) = read_frame(peer).await.unwrap();
+        assert_eq!(kind, rpc::REQUEST);
+        serde_json::from_slice(&bytes).unwrap()
+    }
+    async fn endpoint(
+        stream: DuplexStream,
+        lifetime: CancellationToken,
+    ) -> FilesEndpoint<DuplexStream> {
+        let client = Client::open(
+            stream,
+            Target {
+                name: "owned-files-adapter".into(),
+                pid: std::process::id(),
+                generation: "123".into(),
+            },
+            lifetime.clone(),
+        )
+        .await
+        .unwrap();
+        FilesEndpoint {
+            client,
+            lifetime,
+            next: 1,
+            generation: uuid::Uuid::nil(),
+            in_flight_upload: None,
+            directory: None,
+            review: None,
+        }
+    }
+    async fn joined(task: tokio::task::JoinHandle<()>) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_owner_shutdown_during_actual_finish_is_uncertain_without_replay() {
+        let folder = tempfile::tempdir().unwrap();
+        let source = folder.path().join("owned-source");
+        std::fs::write(&source, b"new contents").unwrap();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (finish_sent, finish_seen) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            for _ in 0..16 {
+                let call = request(&mut peer).await;
+                match call.operation {
+                    rpc::Operation::Stat { .. } => {
+                        reply(&mut peer, call.id, None, Some(rpc::ErrorCode::NotFound)).await
+                    }
+                    rpc::Operation::BeginUpload { expected: None, .. } => {
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Upload { handle: 1 }),
+                            None,
+                        )
+                        .await
+                    }
+                    rpc::Operation::Write { offset, length, .. } => {
+                        let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                        assert_eq!(kind, rpc::DATA);
+                        assert_eq!(u32::from_be_bytes(bytes[..4].try_into().unwrap()), call.id);
+                        assert_eq!(&bytes[4..], b"new contents");
+                        assert_eq!(length, 12);
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Written {
+                                offset: (offset.parse::<u64>().unwrap() + u64::from(length))
+                                    .to_string(),
+                            }),
+                            None,
+                        )
+                        .await;
+                    }
+                    rpc::Operation::FinishUpload { .. } => {
+                        finish_sent.send(()).unwrap();
+                        // The actual Finish request is delivered, but its result
+                        // is withheld until the queue's owned shutdown drops it.
+                        let mut eof = [0];
+                        assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+                        return;
+                    }
+                    other => panic!("unexpected operation: {other:?}"),
+                }
+            }
+            panic!("bounded fixture never observed Finish");
+        });
+        let endpoint = endpoint(stream, CancellationToken::new()).await;
+        let manager = SftpTransferManager::from_remote_endpoint(endpoint);
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::local(&source),
+                SftpPath::remote("/target"),
+            )
+            .unwrap()])
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), finish_seen)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = manager.shutdown().await;
+        assert!(
+            matches!(result, Err(SftpSessionError::PublicationUncertain { ref path, .. }) if path == "/target")
+        );
+        joined(server).await;
+        assert_eq!(std::fs::read(source).unwrap(), b"new contents");
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_returned_refusal_clears_marker_and_preserves_fresh_review() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let begin = request(&mut peer).await;
+            assert!(matches!(
+                begin.operation,
+                rpc::Operation::BeginUpload { .. }
+            ));
+            reply(&mut peer, begin.id, None, Some(rpc::ErrorCode::Exists)).await;
+            let review = request(&mut peer).await;
+            assert!(matches!(review.operation, rpc::Operation::OpenRead { .. }));
+            reply(
+                &mut peer,
+                review.id,
+                Some(rpc::Result::File {
+                    handle: 7,
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "3".into(),
+                        modified_ms: None,
+                    },
+                }),
+                None,
+            )
+            .await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 7 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+        let mut source = std::io::Cursor::new(b"new");
+        assert!(matches!(
+            endpoint.upload("/target", 3, None, &mut source).await,
+            Err(SftpSessionError::DestinationExists { .. })
+        ));
+        assert_eq!(source.position(), 0);
+        assert!(endpoint.in_flight_upload.is_none());
+        let (review, metadata) = endpoint.review_replacement("/target").await.unwrap();
+        assert_eq!(metadata.size, Some(3));
+        endpoint.release_replacement(review).await.unwrap();
+        endpoint.ping().await.unwrap();
+        endpoint.cleanup().await.unwrap();
+        endpoint.client.cancel();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_queue_finish_creation_race_requires_fresh_review_without_replay() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("owned-source");
+        std::fs::write(&source, b"new").unwrap();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let mut collided = false;
+            let mut finished = false;
+            for _ in 0..32 {
+                let call = request(&mut peer).await;
+                match call.operation {
+                    rpc::Operation::Stat { .. } if !collided => {
+                        reply(&mut peer, call.id, None, Some(rpc::ErrorCode::NotFound)).await;
+                    }
+                    rpc::Operation::Stat { .. } => {
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Stat {
+                                metadata: rpc::Metadata {
+                                    kind: rpc::Kind::File,
+                                    size: "8".into(),
+                                    modified_ms: None,
+                                },
+                            }),
+                            None,
+                        )
+                        .await;
+                    }
+                    rpc::Operation::BeginUpload { expected: None, .. } if !finished => {
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Upload { handle: 1 }),
+                            None,
+                        )
+                        .await;
+                    }
+                    rpc::Operation::Write { handle: 1, .. } if !finished => {
+                        let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                        assert_eq!(kind, rpc::DATA);
+                        assert_eq!(u32::from_be_bytes(bytes[..4].try_into().unwrap()), call.id);
+                        assert_eq!(&bytes[4..], b"new");
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Written { offset: "3".into() }),
+                            None,
+                        )
+                        .await;
+                    }
+                    rpc::Operation::FinishUpload { handle: 1 } if !finished => {
+                        finished = true;
+                        collided = true;
+                        reply(&mut peer, call.id, None, Some(rpc::ErrorCode::Exists)).await;
+                    }
+                    rpc::Operation::OpenRead { .. } if collided => {
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::File {
+                                handle: 7,
+                                metadata: rpc::Metadata {
+                                    kind: rpc::Kind::File,
+                                    size: "8".into(),
+                                    modified_ms: None,
+                                },
+                            }),
+                            None,
+                        )
+                        .await;
+                    }
+                    rpc::Operation::Close { handle: 7 } => {
+                        reply(&mut peer, call.id, Some(rpc::Result::Closed), None).await;
+                        let mut eof = [0];
+                        assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+                        return;
+                    }
+                    other => panic!("unexpected operation or automatic replay: {other:?}"),
+                }
+            }
+            panic!("bounded collision fixture did not release its review");
+        });
+        let endpoint = endpoint(stream, CancellationToken::new()).await;
+        let mut manager = SftpTransferManager::from_remote_endpoint(endpoint);
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::local(&source),
+                SftpPath::remote("/target"),
+            )
+            .unwrap()])
+            .unwrap();
+        let collision = loop {
+            let event = tokio::time::timeout(Duration::from_secs(3), manager.recv_event())
+                .await
+                .unwrap()
+                .unwrap();
+            match event {
+                festerm_ssh::SftpTransferEvent::Collision(collision) => break collision,
+                festerm_ssh::SftpTransferEvent::ItemFailed { reason, .. } => {
+                    panic!("late collision must be reviewed: {reason}")
+                }
+                _ => {}
+            }
+        };
+        assert_eq!(collision.destination.size, Some(8));
+        manager
+            .resolve_collision(festerm_ssh::SftpCollisionResolution {
+                collision_id: collision.id,
+                decision: festerm_ssh::SftpCollisionDecision::Skip,
+                scope: festerm_ssh::SftpCollisionScope::ThisItem,
+            })
+            .unwrap();
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(3), manager.recv_event())
+                .await
+                .unwrap()
+                .unwrap();
+            if matches!(event, festerm_ssh::SftpTransferEvent::ItemSkipped { .. }) {
+                break;
+            }
+        }
+        manager.shutdown().await.unwrap();
+        joined(server).await;
+        assert_eq!(std::fs::read(source).unwrap(), b"new");
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_finish_recovery_is_terminal_and_retains_virtual_recovery_path() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let begin = request(&mut peer).await;
+            assert!(matches!(
+                begin.operation,
+                rpc::Operation::BeginUpload { .. }
+            ));
+            reply(
+                &mut peer,
+                begin.id,
+                Some(rpc::Result::Upload { handle: 1 }),
+                None,
+            )
+            .await;
+            let write = request(&mut peer).await;
+            assert!(matches!(
+                write.operation,
+                rpc::Operation::Write { handle: 1, .. }
+            ));
+            let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+            assert_eq!(kind, rpc::DATA);
+            assert_eq!(u32::from_be_bytes(bytes[..4].try_into().unwrap()), write.id);
+            assert_eq!(&bytes[4..], b"new");
+            reply(
+                &mut peer,
+                write.id,
+                Some(rpc::Result::Written { offset: "3".into() }),
+                None,
+            )
+            .await;
+            let finish = request(&mut peer).await;
+            assert!(matches!(
+                finish.operation,
+                rpc::Operation::FinishUpload { handle: 1 }
+            ));
+            write_frame(
+                &mut peer,
+                rpc::RESPONSE,
+                &serde_json::to_vec(&rpc::Response {
+                    id: finish.id,
+                    result: None,
+                    error: Some(rpc::ErrorCode::RecoveryRequired),
+                    recovery_path: Some("/folder/.festerm-transfer-owned".into()),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+        let mut source = std::io::Cursor::new(b"new");
+        let error = endpoint
+            .upload("/target", 3, None, &mut source)
+            .await
+            .unwrap_err();
+        let SftpSessionError::PublicationUncertain { path, reason } = error else {
+            panic!("recovery must never become a retryable failure");
+        };
+        assert_eq!(path, "/target");
+        assert!(reason.contains("/folder/.festerm-transfer-owned"));
+        assert!(!endpoint.client.available());
+        assert!(endpoint.in_flight_upload.is_none());
+        endpoint.cleanup().await.unwrap();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_returned_cancel_and_source_error_do_not_leave_unknown_markers() {
+        struct FailedSource;
+        impl AsyncRead for FailedSource {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                _: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+            }
+        }
+        for cancel_before_begin in [false, true] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                opened(&mut peer).await;
+                if !cancel_before_begin {
+                    let begin = request(&mut peer).await;
+                    assert!(matches!(
+                        begin.operation,
+                        rpc::Operation::BeginUpload { .. }
+                    ));
+                    reply(
+                        &mut peer,
+                        begin.id,
+                        Some(rpc::Result::Upload { handle: 1 }),
+                        None,
+                    )
+                    .await;
+                }
+                let mut eof = [0];
+                assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+            });
+            let lifetime = CancellationToken::new();
+            let mut endpoint = endpoint(stream, lifetime.clone()).await;
+            if cancel_before_begin {
+                lifetime.cancel();
+            }
+            let result = endpoint.upload("/target", 1, None, &mut FailedSource).await;
+            let error = result.unwrap_err();
+            let SftpSessionError::RemoteOperationFailed { reason, .. } = error else {
+                panic!("returned local refusal must preserve its original failure");
+            };
+            assert_eq!(
+                reason,
+                if cancel_before_begin {
+                    "rooted file operation cancelled"
+                } else {
+                    "local transfer I/O failed (BrokenPipe)"
+                }
+            );
+            assert!(endpoint.in_flight_upload.is_none());
+            endpoint.cleanup().await.unwrap();
+            joined(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_transfer_planning_refuses_skipped_names_and_releases_directory() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let open = request(&mut peer).await;
+            assert!(matches!(
+                open.operation,
+                rpc::Operation::OpenDirectory { .. }
+            ));
+            reply(
+                &mut peer,
+                open.id,
+                Some(rpc::Result::Directory { handle: 2 }),
+                None,
+            )
+            .await;
+            let page = request(&mut peer).await;
+            assert!(matches!(
+                page.operation,
+                rpc::Operation::ReadDirectory { handle: 2, .. }
+            ));
+            reply(
+                &mut peer,
+                page.id,
+                Some(rpc::Result::Entries {
+                    entries: Vec::new(),
+                    done: true,
+                    skipped: 1,
+                }),
+                None,
+            )
+            .await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 2 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+        let handle = endpoint.open_directory("/").await.unwrap();
+        let error = match endpoint.read_directory(handle).await {
+            Err(error) => error,
+            Ok(_) => panic!("incomplete directory must not become a complete plan"),
+        };
+        assert!(matches!(
+            error,
+            SftpSessionError::RemoteOperationFailed {
+                operation: "plan directory transfer",
+                ..
+            }
+        ));
+        endpoint.cleanup().await.unwrap();
+        assert!(endpoint.directory.is_none());
+        endpoint.client.cancel();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_directory_pages_continue_skips_and_refuse_truncated_views() {
+        for oversized in [false, true] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                opened(&mut peer).await;
+                let stat = request(&mut peer).await;
+                assert!(matches!(stat.operation, rpc::Operation::Stat { .. }));
+                reply(
+                    &mut peer,
+                    stat.id,
+                    Some(rpc::Result::Stat {
+                        metadata: rpc::Metadata {
+                            kind: rpc::Kind::Directory,
+                            size: "0".into(),
+                            modified_ms: None,
+                        },
+                    }),
+                    None,
+                )
+                .await;
+                let directory = request(&mut peer).await;
+                assert!(matches!(
+                    directory.operation,
+                    rpc::Operation::OpenDirectory { .. }
+                ));
+                reply(
+                    &mut peer,
+                    directory.id,
+                    Some(rpc::Result::Directory { handle: 2 }),
+                    None,
+                )
+                .await;
+                let empty = request(&mut peer).await;
+                assert!(matches!(
+                    empty.operation,
+                    rpc::Operation::ReadDirectory { .. }
+                ));
+                reply(
+                    &mut peer,
+                    empty.id,
+                    Some(rpc::Result::Entries {
+                        entries: Vec::new(),
+                        done: false,
+                        skipped: 1,
+                    }),
+                    None,
+                )
+                .await;
+                for page in 0..if oversized { 65 } else { 1 } {
+                    let call = request(&mut peer).await;
+                    assert!(matches!(
+                        call.operation,
+                        rpc::Operation::ReadDirectory { .. }
+                    ));
+                    let count = if oversized { 64 } else { 1 };
+                    let entries = (0..count)
+                        .map(|index| rpc::Entry {
+                            name: format!("owned-{:04}", page * 64 + index),
+                            kind: rpc::Kind::File,
+                        })
+                        .collect();
+                    reply(
+                        &mut peer,
+                        call.id,
+                        Some(rpc::Result::Entries {
+                            entries,
+                            done: !oversized,
+                            skipped: 0,
+                        }),
+                        None,
+                    )
+                    .await;
+                }
+                let close = request(&mut peer).await;
+                assert!(matches!(
+                    close.operation,
+                    rpc::Operation::Close { handle: 2 }
+                ));
+                reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+                let mut eof = [0];
+                assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+            });
+            let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+            let result = endpoint.directory_snapshot("/").await;
+            if oversized {
+                assert!(
+                    result.is_err(),
+                    "an oversized listing must not return a truncated complete snapshot"
+                );
+            } else {
+                let (snapshot, _, skipped) = result.unwrap();
+                assert_eq!(snapshot.entries.len(), 1);
+                assert_eq!(skipped, 1);
+            }
+            assert!(endpoint.directory.is_none());
+            assert!(endpoint.client.available());
+            endpoint.client.cancel();
+            joined(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_preview_refuses_size_before_any_read_and_closes_handle() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let open = request(&mut peer).await;
+            assert!(matches!(open.operation, rpc::Operation::OpenRead { .. }));
+            reply(
+                &mut peer,
+                open.id,
+                Some(rpc::Result::File {
+                    handle: 3,
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "5".into(),
+                        modified_ms: None,
+                    },
+                }),
+                None,
+            )
+            .await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 3 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+        assert!(matches!(
+            endpoint.markdown_snapshot("/owned.md", 4).await,
+            Err(SftpSessionError::RemoteFileTooLarge { limit_bytes: 4, .. })
+        ));
+        assert!(endpoint.client.available());
+        endpoint.client.cancel();
+        joined(server).await;
+    }
+}

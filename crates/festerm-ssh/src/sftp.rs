@@ -255,6 +255,11 @@ pub enum SftpSessionError {
         limit_bytes: usize,
     },
     SubsystemRejected,
+    /// Finish may already have published; never automatically replay it.
+    PublicationUncertain {
+        path: String,
+        reason: String,
+    },
     PartialFileOwnershipUnconfirmed {
         path: String,
     },
@@ -313,6 +318,12 @@ impl fmt::Display for SftpSessionError {
                     "remote file exceeds the {limit_bytes}-byte limit: {path}"
                 )
             }
+            Self::PublicationUncertain { path, reason } => {
+                write!(
+                    formatter,
+                    "publication outcome is uncertain for {path}; inspect before starting new work: {reason}"
+                )
+            }
             Self::SubsystemRejected => {
                 formatter.write_str("SSH server rejected the SFTP subsystem request")
             }
@@ -323,12 +334,21 @@ impl fmt::Display for SftpSessionError {
             Self::CancellationCleanupTimedOut => formatter.write_str(
                 "SFTP cancellation cleanup exceeded two seconds; partial output may remain",
             ),
-            Self::TransferCommitInterrupted { temporary, destination } => write!(
+            Self::TransferCommitInterrupted {
+                temporary,
+                destination,
+            } => write!(
                 formatter,
                 "transfer commit could not be confirmed; temporary output was not removed; inspect temporary and destination paths: {temporary} -> {destination}"
             ),
-            Self::TransferFailedWithIncompleteCleanup { operation_error, cleanup_error } => {
-                write!(formatter, "{operation_error}; cleanup is incomplete: {cleanup_error}")
+            Self::TransferFailedWithIncompleteCleanup {
+                operation_error,
+                cleanup_error,
+            } => {
+                write!(
+                    formatter,
+                    "{operation_error}; cleanup is incomplete: {cleanup_error}"
+                )
             }
             Self::LocalOperationFailed {
                 operation,
@@ -379,7 +399,7 @@ pub struct SftpSession {
     runtime_keepalive: Option<GuiSftpConnectionKeepAlive>,
 }
 
-struct PartialFile {
+pub(crate) struct PartialFile {
     path: SftpPath,
     owned: bool,
     commit_destination: Option<SftpPath>,
@@ -559,68 +579,14 @@ impl SftpSession {
     }
 
     fn begin_partial_file(&mut self, path: SftpPath) -> Result<(), SftpSessionError> {
-        if let Some(partial) = &self.partial_file {
-            return Err(SftpSessionError::LocalOperationFailed {
-                operation: "start transfer",
-                path: partial.path.display(),
-                reason: "previous partial output still requires cleanup".to_owned(),
-            });
-        }
-        self.partial_file = Some(PartialFile {
-            path,
-            owned: false,
-            commit_destination: None,
-            #[cfg(windows)]
-            local_file: None,
-        });
-        Ok(())
+        begin_transfer_partial(&mut self.partial_file, path)
     }
 
     async fn create_local_download_file(
         &mut self,
         path: &Path,
     ) -> Result<tokio::fs::File, SftpSessionError> {
-        #[cfg(windows)]
-        let result = async {
-            let owned_path = path.to_path_buf();
-            let creation = tokio::task::spawn_blocking(move || {
-                windows_download::Creation::create(&owned_path)
-            })
-            .await
-            .map_err(|error| {
-                local_error(
-                    "create destination file",
-                    path,
-                    std::io::Error::other(error),
-                )
-            })??;
-            // No suspension between receiving ownership and recording the exact
-            // handle. An abandoned blocking result cleans up its own creation.
-            let (writer, retained) = creation.into_files();
-            self.partial_file
-                .as_mut()
-                .expect("pending download")
-                .local_file = Some(retained);
-            Ok::<_, SftpSessionError>(tokio::fs::File::from_std(writer))
-        }
-        .await;
-        #[cfg(not(windows))]
-        let result = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)
-            .await
-            .map_err(|error| local_error("create destination file", path, error));
-        match result {
-            Ok(file) => {
-                self.confirm_partial_file();
-                Ok(file)
-            }
-            Err(error) => {
-                self.partial_file = None;
-                Err(error)
-            }
-        }
+        create_transfer_download_file(&mut self.partial_file, path).await
     }
 
     fn confirm_partial_file(&mut self) {
@@ -631,53 +597,15 @@ impl SftpSession {
     }
 
     pub(crate) fn forget_partial_file(&mut self, path: &SftpPath) {
-        if self
-            .partial_file
-            .as_ref()
-            .is_some_and(|partial| &partial.path == path)
-        {
-            self.partial_file = None;
-        }
+        forget_transfer_partial(&mut self.partial_file, path)
     }
 
     pub(crate) fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
-        if let Some(partial) = self.partial_file.as_mut() {
-            if &partial.path == temporary {
-                partial.commit_destination = Some(destination.clone());
-            }
-        }
+        protect_transfer_partial(&mut self.partial_file, temporary, destination)
     }
 
     pub(crate) async fn cleanup_interrupted_transfer(&mut self) -> Result<(), SftpSessionError> {
-        let Some(partial) = self.partial_file.take() else {
-            return Ok(());
-        };
-        if partial.owned {
-            if let Some(destination) = partial.commit_destination {
-                return Err(SftpSessionError::TransferCommitInterrupted {
-                    temporary: partial.path.display(),
-                    destination: destination.display(),
-                });
-            }
-        }
-        #[cfg(windows)]
-        if let Some(file) = partial.local_file {
-            let SftpPath::Local(path) = partial.path else {
-                unreachable!("local download handle")
-            };
-            return tokio::task::spawn_blocking(move || {
-                festerm_windows_security::remove_private_staging_file(&file)
-            })
-            .await
-            .map_err(|error| {
-                local_error("remove partial file", &path, std::io::Error::other(error))
-            })?
-            .map_err(|error| local_error("remove partial file", &path, error));
-        }
-        // Creation acknowledgement cannot prove what a mutable path names now.
-        Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
-            path: partial.path.display(),
-        })
+        cleanup_transfer_partial(&mut self.partial_file).await
     }
 
     async fn finish_failed_transfer(&mut self, error: SftpSessionError) -> SftpSessionError {
@@ -1536,6 +1464,125 @@ impl SftpSession {
         drop(remote_file);
 
         transfer_result
+    }
+}
+
+pub(crate) fn begin_transfer_partial(
+    partial: &mut Option<PartialFile>,
+    path: SftpPath,
+) -> Result<(), SftpSessionError> {
+    if let Some(partial) = partial.as_ref() {
+        return Err(SftpSessionError::LocalOperationFailed {
+            operation: "start transfer",
+            path: partial.path.display(),
+            reason: "previous partial output still requires cleanup".to_owned(),
+        });
+    }
+    *partial = Some(PartialFile {
+        path,
+        owned: false,
+        commit_destination: None,
+        #[cfg(windows)]
+        local_file: None,
+    });
+    Ok(())
+}
+
+pub(crate) fn forget_transfer_partial(partial: &mut Option<PartialFile>, path: &SftpPath) {
+    if partial.as_ref().is_some_and(|value| &value.path == path) {
+        *partial = None;
+    }
+}
+
+pub(crate) fn protect_transfer_partial(
+    partial: &mut Option<PartialFile>,
+    temporary: &SftpPath,
+    destination: &SftpPath,
+) {
+    if let Some(partial) = partial.as_mut() {
+        if &partial.path == temporary {
+            partial.commit_destination = Some(destination.clone());
+        }
+    }
+}
+
+pub(crate) async fn cleanup_transfer_partial(
+    partial: &mut Option<PartialFile>,
+) -> Result<(), SftpSessionError> {
+    let Some(partial) = partial.take() else {
+        return Ok(());
+    };
+    if partial.owned {
+        if let Some(destination) = partial.commit_destination {
+            return Err(SftpSessionError::TransferCommitInterrupted {
+                temporary: partial.path.display(),
+                destination: destination.display(),
+            });
+        }
+    }
+    #[cfg(windows)]
+    if let Some(file) = partial.local_file {
+        let SftpPath::Local(path) = partial.path else {
+            unreachable!("local download handle")
+        };
+        return tokio::task::spawn_blocking(move || {
+            festerm_windows_security::remove_private_staging_file(&file)
+        })
+        .await
+        .map_err(|error| local_error("remove partial file", &path, std::io::Error::other(error)))?
+        .map_err(|error| local_error("remove partial file", &path, error));
+    }
+    // Creation acknowledgement cannot prove what a mutable path names now.
+    Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
+        path: partial.path.display(),
+    })
+}
+
+/// Shared retained-handle creation for transfer transports. Ownership is
+/// recorded without suspension after the blocking Windows creation handoff.
+pub(crate) async fn create_transfer_download_file(
+    partial: &mut Option<PartialFile>,
+    path: &Path,
+) -> Result<tokio::fs::File, SftpSessionError> {
+    #[cfg(windows)]
+    let result = async {
+        let owned_path = path.to_path_buf();
+        let creation =
+            tokio::task::spawn_blocking(move || windows_download::Creation::create(&owned_path))
+                .await
+                .map_err(|error| {
+                    local_error(
+                        "create destination file",
+                        path,
+                        std::io::Error::other(error),
+                    )
+                })??;
+        // No suspension between receiving ownership and recording the exact
+        // handle. An abandoned blocking result cleans up its own creation.
+        let (writer, retained) = creation.into_files();
+        partial.as_mut().expect("pending download").local_file = Some(retained);
+        Ok::<_, SftpSessionError>(tokio::fs::File::from_std(writer))
+    }
+    .await;
+    #[cfg(not(windows))]
+    let result = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .await
+        .map_err(|error| local_error("create destination file", path, error));
+    match result {
+        Ok(file) => {
+            partial
+                .as_mut()
+                .expect("destination creation has a pending partial file")
+                .owned = true;
+            Ok(file)
+        }
+        Err(error) => {
+            *partial = None;
+            Err(error)
+        }
     }
 }
 

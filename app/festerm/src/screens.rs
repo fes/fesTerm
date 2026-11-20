@@ -54,8 +54,6 @@ pub(crate) use profiles::clear_profiles_screen_state;
 pub(crate) use profiles::install_host_recipe_request_for_test;
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::report_local_profile_save_outcome;
-#[cfg(feature = "experimental-dev-tunnels")]
-pub(crate) use profiles::select_host_for_profile;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
@@ -68,6 +66,8 @@ pub(crate) use profiles::{
     local_host_account_request, profiles_has_open_editor, report_local_host_account,
 };
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{select_discovered_files_host, select_host_for_profile};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};
 #[cfg(feature = "local-host-settings")]
@@ -87,6 +87,8 @@ pub(crate) use settings::{
 /// local shell, or a saved local/SSH profile.
 enum LauncherItemKind<'a> {
     NewDevTunnel,
+    NewHostFiles,
+    HostFilesProfile(&'a str),
     DevTunnelProfile(&'a str),
     /// A running tunnel of the signed-in account that has no saved profile.
     RunningTunnel(&'a RunningTunnelRow),
@@ -144,6 +146,7 @@ enum ProfileTableKind {
     Local,
     Ssh,
     DevTunnel,
+    DevTunnelFiles,
     Sftp,
     Serial,
     PowerShell,
@@ -153,6 +156,7 @@ impl ProfileTableKind {
     fn type_label(self) -> &'static str {
         match self {
             Self::DevTunnel => "Dev Tunnel",
+            Self::DevTunnelFiles => "Dev Tunnels Files",
             Self::Local => "Local",
             Self::Ssh => "SSH",
             Self::Sftp => "SFTP",
@@ -166,7 +170,9 @@ impl ProfileTableKind {
             Self::DevTunnel => (Icon::DevTunnel, theme::ICON_SESSION_REMOTE),
             Self::Local => (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL),
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
-            Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
+            Self::Sftp | Self::DevTunnelFiles => {
+                (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER)
+            }
             Self::Serial => (Icon::Serial, theme::ICON_SESSION_SERIAL),
             Self::PowerShell => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
         }
@@ -185,6 +191,9 @@ struct ProfileTableItem {
 impl ProfileTableItem {
     fn connect_command(&self) -> AppCommand {
         match self.kind {
+            ProfileTableKind::DevTunnelFiles => AppCommand::StartConfiguredDevTunnelFilesProfile {
+                profile_id: self.identifier.clone(),
+            },
             ProfileTableKind::DevTunnel => AppCommand::StartConfiguredDevTunnelProfile {
                 profile_id: self.identifier.clone(),
             },
@@ -244,6 +253,7 @@ impl LauncherItem<'_> {
     fn profile_table_item(&self) -> ProfileTableItem {
         let kind = match self.kind {
             LauncherItemKind::DevTunnelProfile(_) => ProfileTableKind::DevTunnel,
+            LauncherItemKind::HostFilesProfile(_) => ProfileTableKind::DevTunnelFiles,
             LauncherItemKind::LocalProfile(_) => ProfileTableKind::Local,
             LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
             LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
@@ -268,6 +278,7 @@ impl LauncherItem<'_> {
         match self.kind {
             LauncherItemKind::LocalDefault
             | LauncherItemKind::NewDevTunnel
+            | LauncherItemKind::NewHostFiles
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
@@ -277,6 +288,7 @@ impl LauncherItem<'_> {
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::DevTunnelProfile(id)
+            | LauncherItemKind::HostFilesProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
             | LauncherItemKind::SerialProfile(id)
@@ -302,7 +314,10 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewSsh | LauncherItemKind::SshProfile(_) => {
                 (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
             }
-            LauncherItemKind::NewSftp | LauncherItemKind::SftpProfile(_) => {
+            LauncherItemKind::NewSftp
+            | LauncherItemKind::SftpProfile(_)
+            | LauncherItemKind::NewHostFiles
+            | LauncherItemKind::HostFilesProfile(_) => {
                 (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER)
             }
             LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
@@ -315,6 +330,14 @@ impl LauncherItem<'_> {
 
     fn command(&self) -> AppCommand {
         match self.kind {
+            LauncherItemKind::NewHostFiles => AppCommand::CreateProfile {
+                kind: NewProfileKind::DevTunnelFiles,
+            },
+            LauncherItemKind::HostFilesProfile(profile_id) => {
+                AppCommand::StartConfiguredDevTunnelFilesProfile {
+                    profile_id: profile_id.into(),
+                }
+            }
             LauncherItemKind::NewDevTunnel => {
                 unreachable!("the Dev Tunnel item opens the Dev Tunnel form, not an AppCommand")
             }
@@ -3814,6 +3837,20 @@ pub fn show_launcher(
             ),
         );
     }
+    if cfg!(feature = "experimental-dev-tunnels") {
+        let position = items
+            .iter()
+            .position(|item| matches!(item.kind, LauncherItemKind::NewSftp))
+            .unwrap_or(items.len());
+        items.insert(
+            position,
+            LauncherItem::untabulated(
+                "Dev Tunnels Files".into(),
+                "Browse and transfer host files".into(),
+                LauncherItemKind::NewHostFiles,
+            ),
+        );
+    }
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
     // #70) lead the Running Sessions panel. An already-attached
@@ -3883,6 +3920,11 @@ pub fn show_launcher(
     let profiles_start = items.len();
     items.extend(profiles.iter().map(|profile| {
         let (kind, type_label, location) = match profile {
+            Profile::DevTunnelFiles(files) => (
+                LauncherItemKind::HostFilesProfile(profile.identifier()),
+                "Dev Tunnels Files",
+                files.host().into(),
+            ),
             Profile::DevTunnel(tunnel) => (
                 LauncherItemKind::DevTunnelProfile(profile.identifier()),
                 "Dev Tunnel",
@@ -4735,11 +4777,15 @@ fn show_saved_profiles_panel(
                                                 "Dev Tunnel · Experimental",
                                                 NewProfileKind::DevTunnel,
                                             ),
+                                            ("Dev Tunnels Files", NewProfileKind::DevTunnelFiles),
                                             ("SFTP", NewProfileKind::Sftp),
                                             ("Serial", NewProfileKind::Serial),
                                         ] {
-                                            if kind == NewProfileKind::DevTunnel
-                                                && !cfg!(feature = "experimental-dev-tunnels")
+                                            if matches!(
+                                                kind,
+                                                NewProfileKind::DevTunnel
+                                                    | NewProfileKind::DevTunnelFiles
+                                            ) && !cfg!(feature = "experimental-dev-tunnels")
                                             {
                                                 continue;
                                             }
@@ -7034,33 +7080,57 @@ mod tests {
         }
     }
 
-    #[test]
-    fn launcher_creation_cards_keep_type_order_at_feature_appropriate_widths() {
-        let width = if cfg!(feature = "experimental-dev-tunnels") {
-            1200.0
-        } else {
-            1000.0
-        };
-        let labels = [
+    fn expected_launcher_creation_labels() -> &'static [&'static str] {
+        &[
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
             #[cfg(feature = "experimental-dev-tunnels")]
             "Dev Tunnel · Experimental — Connect to a remote host",
+            #[cfg(feature = "experimental-dev-tunnels")]
+            "Dev Tunnels Files — Browse and transfer host files",
             "SFTP — Browse and transfer files",
             "Serial — Connect to a serial device",
             "Markdown — Open a Markdown workspace",
-        ];
-        for compact in [false, true] {
-            let mut harness = populated_launcher_harness(width, compact);
-            harness.run();
-            let first = harness.get_by_label(labels[0]).rect();
-            assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
-            let mut previous_right = first.left();
-            for label in labels {
-                let rect = harness.get_by_label(label).rect();
-                assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
-                assert!(rect.left() >= previous_right && rect.right() <= width);
-                previous_right = rect.right();
+        ]
+    }
+
+    #[test]
+    fn launcher_creation_cards_keep_type_order_at_feature_appropriate_widths() {
+        // Seven readable cards need a wider single row than the previous six.
+        // The narrower case must retain normal wrapping rather than shrink them.
+        let widths = if cfg!(feature = "experimental-dev-tunnels") {
+            [(1400.0, 7), (1200.0, 6)]
+        } else {
+            [(1000.0, 5), (860.0, 4)]
+        };
+        for (width, columns) in widths {
+            for compact in [false, true] {
+                let mut harness = populated_launcher_harness(width, compact);
+                harness.run();
+                let mut previous_bottom = None;
+                for row in expected_launcher_creation_labels().chunks(columns) {
+                    let first = harness.get_by_label(row[0]).rect();
+                    assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
+                    if let Some(bottom) = previous_bottom {
+                        assert!(
+                            first.top() > bottom,
+                            "wrapped cards must follow the prior row"
+                        );
+                    }
+                    let mut previous_right = first.left();
+                    for label in row {
+                        let rect = harness.get_by_label(label).rect();
+                        assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
+                        assert_eq!(rect.height(), first.height());
+                        assert!(
+                            rect.width() >= LAUNCH_CARD_MIN_WIDTH,
+                            "{label} became too narrow"
+                        );
+                        assert!(rect.left() >= previous_right && rect.right() <= width);
+                        previous_right = rect.right();
+                    }
+                    previous_bottom = Some(first.bottom());
+                }
             }
         }
     }
@@ -7308,11 +7378,27 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
-        for _ in 0..launch_cards {
+        let profile_label = "development — Local · cargo";
+        let mut keyboard_labels = expected_launcher_creation_labels().to_vec();
+        keyboard_labels.push(profile_label);
+        for label in expected_launcher_creation_labels() {
+            assert!(harness.query_by_label(label).is_some());
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
+            assert!(
+                harness.state().command.is_none(),
+                "navigation must not launch an item"
+            );
         }
+        let selected = harness.ctx.data(|data| {
+            data.get_temp::<LauncherState>(launcher_state_id(harness.state().tab_id))
+                .expect("rendered launcher retains its keyboard selection")
+                .selected
+        });
+        assert_eq!(
+            keyboard_labels[selected], profile_label,
+            "Enter must target the saved Local profile"
+        );
         harness.key_press(egui::Key::Enter);
         harness.run();
 

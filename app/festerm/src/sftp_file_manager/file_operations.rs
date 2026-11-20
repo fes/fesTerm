@@ -61,6 +61,10 @@ impl Default for State {
 }
 
 impl State {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(super) fn clear_review(&mut self) {
+        self.draft = None;
+    }
     pub(super) fn current_connection(&self) -> bool {
         self.connection.matches(&self.displayed)
     }
@@ -72,6 +76,16 @@ impl SftpFileManagerTab {
     }
 
     pub(super) fn review_file_operation(&mut self, focus: PaneFocus, delete: bool) {
+        if delete
+            && focus == PaneFocus::Remote
+            && matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
+        {
+            self.operation_error = Some((
+                "Remote delete is unavailable".into(),
+                "This Files permission supports uploads and new folders, not remote delete.".into(),
+            ));
+            return;
+        }
         if self.collision_dialog.is_some()
             || self.file_operations.pending
             || (focus == PaneFocus::Remote
@@ -154,7 +168,10 @@ impl SftpFileManagerTab {
                 ui.set_max_width(ui.available_width().min(460.0));
                 ui.heading(if deleting { "Delete permanently?" } else { "New directory" });
                 ui.label(format!("{} · {}", draft.request.focus.label(), if draft.request.focus == PaneFocus::Remote {
-                    format!("{}@{}:{}", self.launch_target.username, self.launch_target.host, self.launch_target.port)
+                    match &self.launch_target {
+                        FileManagerLaunchTarget::Sftp(target) => format!("{}@{}:{}", target.username, target.host, target.port),
+                        FileManagerLaunchTarget::HostFiles(target) => format!("Dev Tunnels Files · {}", target.locator),
+                    }
                 } else { "This computer".to_owned() }));
                 ui.label(format!("Folder: {}", draft.request.directory.display()));
                 match &mut draft.request.operation {
@@ -327,6 +344,27 @@ fn delete_command(
             Ok(festerm_ssh::SftpCommand::Rm { path: path.clone() })
         }
         SftpEntryType::Other => Err("Unsupported selected entry type.".into()),
+    }
+}
+
+/// Extract only the supported create-directory intent after the exact existing
+/// review/scope checks. Write consent never implies delete/rename permission.
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(super) fn rooted_mkdir(request: &Request, scope: &ConnectionScope) -> Result<String, String> {
+    checked_request(request)?;
+    if !scope.matches(&request.scope) {
+        return Err("The Files connection changed after review.".into());
+    }
+    let SftpPath::Remote(directory) = &request.directory else {
+        return Err("Expected a remote Files folder.".into());
+    };
+    match &request.operation {
+        Operation::CreateDirectory(name) => {
+            Ok(SftpPath::remote(directory).join_child(name).display())
+        }
+        Operation::Delete(_) => {
+            Err("This host's Files permission does not include remote delete.".into())
+        }
     }
 }
 
@@ -1040,5 +1078,112 @@ mod tests {
         };
         result.unwrap();
         assert!(root.path().join("offline-local").is_dir());
+    }
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn files_remote_delete_stays_disabled_with_write_permission_and_mkdir_rechecks_scope() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        let root = tempfile::tempdir().unwrap();
+        let mut tab = action_tab(root.path());
+        tab.launch_target = FileManagerLaunchTarget::HostFiles(HostFilesLaunchTarget {
+            label: "owned Files".into(),
+            profile_id: None,
+            account: Some("owned-account".into()),
+            locator: "owned.use".into(),
+        });
+        tab.remote_pane.directory_metadata = Some(SftpPathMetadata {
+            path: SftpPath::remote("/reviewed"),
+            file_type: SftpEntryType::Directory,
+            size: Some(0),
+            modified_at: None,
+            permissions: Some(0o700),
+        });
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1180.0, 850.0))
+            .build_ui_state(
+                |ui, tab: &mut SftpFileManagerTab| {
+                    tab.show_pane(ui, PaneFocus::Remote);
+                },
+                tab,
+            );
+        harness.run();
+        assert!(harness
+            .get_by_label("Delete selected Remote items")
+            .accesskit_node()
+            .is_disabled());
+        assert!(!harness
+            .get_by_label("New directory in Remote folder")
+            .accesskit_node()
+            .is_disabled());
+        let tab = harness.state_mut();
+        tab.review_file_operation(PaneFocus::Remote, true);
+        assert!(
+            tab.file_operations.draft.is_none(),
+            "write must not authorize delete even beneath UI"
+        );
+        tab.review_file_operation(PaneFocus::Remote, false);
+        let mut request = tab.file_operations.draft.as_ref().unwrap().request.clone();
+        request.operation = Operation::CreateDirectory("owned-new".into());
+        assert_eq!(
+            rooted_mkdir(&request, &tab.file_operations.connection).unwrap(),
+            "/reviewed/owned-new"
+        );
+        request.operation = Operation::Delete(tab.remote_pane.selected_items());
+        assert!(rooted_mkdir(&request, &tab.file_operations.connection).is_err());
+        request.operation = Operation::CreateDirectory("owned-new".into());
+        tab.file_operations.connection.retire();
+        assert!(rooted_mkdir(&request, &tab.file_operations.connection).is_err());
+        let (commands, mut received_commands) = tokio::sync::mpsc::channel(4);
+        tab.command_sender = commands;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        tab.host_files_cancel = Some(cancel.clone());
+        tab.file_operations.pending = true;
+        tab.operation_error = None;
+        cancel.cancel();
+        tab.event_sender
+            .try_send(WorkerEvent::FileOperationFinished {
+                request: request.clone(),
+                result: Ok(()),
+            })
+            .unwrap();
+        tab.poll();
+        assert!(
+            !tab.file_operations.pending,
+            "completion must still be observed"
+        );
+        assert!(
+            received_commands.try_recv().is_err(),
+            "retired remote completion must not refresh"
+        );
+        assert!(tab.operation_error.is_none());
+        tab.event_sender
+            .try_send(WorkerEvent::FileOperationFinished {
+                request: request.clone(),
+                result: Err("owned refusal".into()),
+            })
+            .unwrap();
+        tab.poll();
+        assert!(tab
+            .operation_error
+            .as_ref()
+            .unwrap()
+            .1
+            .contains("owned refusal"));
+        assert!(received_commands.try_recv().is_err());
+        let local_before = tab.next_local_request_id;
+        request.focus = PaneFocus::Local;
+        request.directory = tab.local_pane.current_path.clone();
+        tab.event_sender
+            .try_send(WorkerEvent::FileOperationFinished {
+                request,
+                result: Ok(()),
+            })
+            .unwrap();
+        tab.poll();
+        assert_eq!(
+            tab.next_local_request_id,
+            local_before + 1,
+            "local completion housekeeping remains available"
+        );
     }
 }

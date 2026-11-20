@@ -7025,6 +7025,51 @@
         "Natively qualify the pinned macOS Developer ID/team/runtime gate against actual protected fesTerm releases; Windows promotion refuses pending authoritative publisher/certificate, rotation and revocation policy; generic signatures and candidate-derived identities are not accepted",
         "Issue #681 / ADR 0084 section 11: older helpers remain deferred and usable. Any future live-stop option requires separate default-No exact-generation confirmation and stale-generation refusal; setup/sharing/migration consent never authorizes stop or restart"
       ]
+    },
+    {
+      "id": "desktop-dev-tunnels-files-session",
+      "edges": [
+        "DTFILES-0[123]"
+      ],
+      "requirements": [
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
+        "docs/gui-design.md#account-host-and-session-browser"
+      ],
+      "decisions": [
+        "ADR-0067",
+        "ADR-0086"
+      ],
+      "automated_tests": [
+        "dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind",
+        "dev_tunnel_files_profile_rejects_authority_fields_and_signout_preserves_disconnected_metadata",
+        "files_profile_host_picker_emits_files_intent_and_refuses_stale_editor_selection",
+        "rooted_queue_parks_second_replacement_until_first_review_releases",
+        "rooted_queue_replacement_retains_review_and_preserves_changed_target",
+        "rooted_queue_lost_finish_is_uncertain_and_is_never_replayed",
+        "rooted_client_completed_upload_refusal_keeps_source_unread_and_allows_fresh_review",
+        "rooted_client_completed_finish_refusal_keeps_stream_and_allows_fresh_review",
+        "files_endpoint_owner_shutdown_during_actual_finish_is_uncertain_without_replay",
+        "files_endpoint_returned_refusal_clears_marker_and_preserves_fresh_review",
+        "files_endpoint_finish_recovery_is_terminal_and_retains_virtual_recovery_path",
+        "files_endpoint_returned_cancel_and_source_error_do_not_leave_unknown_markers",
+        "files_endpoint_directory_pages_continue_skips_and_refuse_truncated_views",
+        "files_endpoint_preview_refuses_size_before_any_read_and_closes_handle",
+        "files_uncertain_publication_is_finished_history_without_retry_or_completed_copy",
+        "files_account_retirement_clears_review_and_refuses_late_ready_disclosure",
+        "files_workspace_restore_is_disconnected_without_transport_and_keeps_files_kind",
+        "files_remote_delete_stays_disabled_with_write_permission_and_mkdir_rechecks_scope",
+        "files_queue_finish_creation_race_requires_fresh_review_without_replay",
+        "files_endpoint_transfer_planning_refuses_skipped_names_and_releases_directory"
+      ],
+      "manual_scenarios": [
+        "DT-07"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "Current-source native/provider Desktop Files discovery, browse/upload/download/mkdir/preview, exact replacement review, cancellation and account retirement remain unqualified; portable protocol and rendered fixtures do not replace these checks.",
+        "Windows/macOS/Linux local staging and cleanup qualification must retain existing SFTP ownership guarantees. Mobile Files and remote delete/rename/chmod remain separate follow-on work; rooted v1 write consent does not authorize destructive commands.",
+        "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending."
+      ]
     }
   ]
 }
