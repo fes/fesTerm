@@ -1119,6 +1119,7 @@ impl TransferBackend for LiveTransferBackend {
 
     fn remove_file<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()> {
         Box::pin(async move {
+            self.session.check_partial_path(path).await?;
             let result = match path {
                 SftpPath::Local(path) => fs::remove_file(path)
                     .await
@@ -1138,6 +1139,7 @@ impl TransferBackend for LiveTransferBackend {
         destination: &'a SftpPath,
     ) -> BackendFuture<'a, ()> {
         Box::pin(async move {
+            self.session.check_partial_path(source).await?;
             let result = match (source, destination) {
                 (SftpPath::Local(source), SftpPath::Local(destination)) => {
                     fs::rename(source, destination)

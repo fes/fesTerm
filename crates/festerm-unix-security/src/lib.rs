@@ -537,6 +537,66 @@ mod imp {
             .map_err(io::Error::from)
     }
 
+    /// Opens an ordinary selected download parent, following its existing
+    /// symlink semantics but refusing non-directories without opening a FIFO.
+    pub fn open_download_parent(path: &Path) -> io::Result<File> {
+        nix::fcntl::open(
+            path,
+            nix::fcntl::OFlag::O_RDONLY
+                | nix::fcntl::OFlag::O_DIRECTORY
+                | nix::fcntl::OFlag::O_CLOEXEC,
+            nix::sys::stat::Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)
+    }
+
+    /// Creates an ordinary download without changing inherited mode or ACLs.
+    /// The caller must immediately retain ownership of the returned descriptor.
+    pub fn create_download_file(directory: &File, name: &Path) -> io::Result<File> {
+        use nix::{
+            fcntl::{openat, OFlag},
+            sys::stat::Mode,
+        };
+        one_component(name)?;
+        openat(
+            directory,
+            name,
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+            Mode::from_bits_truncate(0o666),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)
+    }
+
+    /// Checks the entry without opening it or following a replacement symlink.
+    pub fn download_file_matches(
+        directory: &File,
+        name: &Path,
+        expected: &File,
+    ) -> io::Result<bool> {
+        one_component(name)?;
+        let actual =
+            nix::sys::stat::fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW)
+                .map_err(io::Error::from)?;
+        let expected = nix::sys::stat::fstat(expected).map_err(io::Error::from)?;
+        Ok(expected.st_mode & nix::libc::S_IFMT == nix::libc::S_IFREG
+            && actual.st_mode & nix::libc::S_IFMT == nix::libc::S_IFREG
+            && actual.st_dev == expected.st_dev
+            && actual.st_ino == expected.st_ino)
+    }
+
+    /// Removes only a matching regular download in a freshly trusted parent.
+    /// Like other POSIX name operations, this excludes concurrent hostile writers
+    /// running as the same user or root between validation and unlink.
+    pub fn remove_download_file(directory: &File, name: &Path, expected: &File) -> io::Result<()> {
+        trusted_private_storage_ancestor(directory)?;
+        if !download_file_matches(directory, name, expected)? {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        remove_private_staging_file(directory, name)
+    }
+
     /// Opens a regular read/write file without following its final component.
     /// Creation never replaces an existing entry.
     pub fn open_private_file(directory: &File, name: &Path, create_new: bool) -> io::Result<File> {
@@ -1202,12 +1262,13 @@ mod imp {
 
 #[cfg(unix)]
 pub use imp::{
-    create_private_directory, current_user_home, current_user_id, is_current_user_only,
-    is_current_user_only_executable, make_private, make_private_directory,
-    open_directory_read_nofollow, open_directory_search_nofollow, open_file_nofollow,
-    open_private_file, preserve_security_metadata, remove_empty_private_directory,
-    remove_private_staging_file, rename_noreplace, reopen_directory_read, replace_private_file,
-    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
+    create_download_file, create_private_directory, current_user_home, current_user_id,
+    download_file_matches, is_current_user_only, is_current_user_only_executable, make_private,
+    make_private_directory, open_directory_read_nofollow, open_directory_search_nofollow,
+    open_download_parent, open_file_nofollow, open_private_file, preserve_security_metadata,
+    remove_download_file, remove_empty_private_directory, remove_private_staging_file,
+    rename_noreplace, reopen_directory_read, replace_private_file, secure_staging_parent,
+    security_metadata, security_metadata_matches, staging_parent_matches,
     trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
     SecurityMetadata, StagingParentSecurity,
 };
@@ -1231,6 +1292,80 @@ mod tests {
         process,
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    #[test]
+    fn download_parent_refuses_non_directory_and_fifo_without_opening_them() {
+        let directory = TemporaryDirectory::new();
+        let ordinary = directory.0.join("ordinary");
+        let fifo = directory.0.join("fifo");
+        fs::write(&ordinary, b"untouched").unwrap();
+        nix::unistd::mkfifo(
+            &fifo,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
+        for path in [&ordinary, &fifo] {
+            assert_eq!(
+                open_download_parent(path).unwrap_err().kind(),
+                std::io::ErrorKind::NotADirectory
+            );
+        }
+        assert_eq!(fs::read(&ordinary).unwrap(), b"untouched");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn download_creation_preserves_inherited_acl_and_ordinary_mode() {
+        let directory = TemporaryDirectory::new();
+        let parent = directory.open();
+        #[cfg(target_os = "linux")]
+        {
+            use xattr::FileExt;
+            parent
+                .set_xattr("system.posix_acl_default", &named_user_acl(65_534))
+                .unwrap();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let status = std::process::Command::new("chmod")
+                .args([
+                    "+a",
+                    "everyone allow add_file,file_inherit,directory_inherit,only_inherit",
+                ])
+                .arg(&directory.0)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        let baseline_path = directory.path("ordinary");
+        let baseline = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&baseline_path)
+            .unwrap();
+        let download = create_download_file(&parent, Path::new("download")).unwrap();
+        // Prove the fixture actually inherited an ACL, then compare the full
+        // ordinary security snapshot rather than assuming a particular umask.
+        #[cfg(target_os = "linux")]
+        {
+            use xattr::FileExt;
+            assert!(baseline
+                .get_xattr("system.posix_acl_access")
+                .unwrap()
+                .is_some());
+        }
+        #[cfg(target_os = "macos")]
+        assert!(!acl_lines(&baseline_path).is_empty());
+        assert_eq!(
+            security_metadata(&download).unwrap(),
+            security_metadata(&baseline).unwrap()
+        );
+        assert!(download_file_matches(&parent, Path::new("download"), &download).unwrap());
+        // ACL inheritance is a creation contract. This fixture grants no
+        // cleanup authority; parent trust is tested independently.
+        assert!(directory.path("download").exists());
+        assert!(baseline_path.exists());
+    }
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 

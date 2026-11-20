@@ -326,11 +326,27 @@ Uploads and downloads should use the same policy shape so the drawer can report
 truthful, symmetric states.
 
 Exclusive creation proves ownership only at creation. A later pathname can
-resolve to a replaced leaf or ancestor, and checking metadata before unlink
-does not remove that race. The current local and remote APIs therefore preserve
-failed/canceled partials and report their paths instead of deleting them.
-Interrupted destructive replacement also preserves recovery output and reports
-both uncertain paths; reporting releases the ledger for unrelated work.
+resolve to a replaced leaf or ancestor. Windows local downloads retain the exact
+created file handle. Unix local downloads retain the created file and its parent
+and remove only a matching regular leaf in a freshly trusted parent (root/current
+user ownership, no foreign write mode or permitting ACL). Creation uses ordinary
+0666 subject to umask and inherited ACLs; no user-folder mode or ACL is repaired.
+An unreadable/unprovable parent still permits an otherwise valid download, but
+cleanup preserves and reports its partial. Leaf substitution also refuses
+cleanup; ancestor replacement cleans only the retained original parent. POSIX
+validation plus unlink excludes concurrent hostile same-user/root writers; it
+is not atomic inode-conditional deletion against them.
+
+The creation-owned guard begins inside blocking work before fallible cloning or
+handoff. An abandoned result schedules cleanup without filesystem I/O in async
+Drop; its pending transfer waits for actual cleanup completion under the existing
+owner deadline. Before the existing local destructive remove/rename publication
+steps, a negative retained-source check refuses observed pathname substitution.
+It grants no new replacement authority or atomic publication guarantee.
+Interrupted destructive replacement always preserves recovery output and reports
+both uncertain paths, even when an exact handle remains. Remote output,
+unprovable Unix parents and crash/restart cleanup remain open; no suffix/age
+scavenging is introduced. Reporting releases the ledger for unrelated work.
 
 Closing the owner cancels connection, trust, browsing/read and transfer waits.
 Cleanup has a two-second grace, followed by non-waiting runtime retirement;
@@ -502,7 +518,7 @@ recursive folder deletion and trash remain outside this decision.
   `gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window`,
   `late_collision_preserves_and_reports_output_without_losing_any_decision`,
   `cancelled_copy_reports_preserved_output_and_keeps_cancelled_state`,
-  `live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state`,
+  `live_gui_copy_cancellation_cleans_owned_partial_without_losing_cancelled_state`,
   and `gui_sftp_preserved_output_notice_reports_a_recovery_path`.
   Backlog/history regressions include
   `gui_sftp_admitted_prestart_outcomes_enter_finished_history`,

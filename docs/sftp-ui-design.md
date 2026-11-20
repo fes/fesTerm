@@ -191,16 +191,24 @@ SFTP shutdown also interrupts an awaited command without consuming queued input.
 After dropping the interrupted operation and its file handles, cleanup gets at
 most **two seconds**, then teardown proceeds with an explicit incomplete-cleanup
 result. Exclusive creation acknowledges ownership at creation, not the current
-identity of a mutable local or remote pathname. A metadata check followed by
-unlink is not race-free. The current filesystem/SFTP APIs cannot establish safe
-conditional deletion on Unix or remote SFTP paths, so those canceled/failed
-partials are preserved and reported for manual inspection, even after
-acknowledged creation. Windows local downloads retain the exact exclusively
+identity of a mutable local or remote pathname. Unix local downloads retain the
+created file and parent, and remove only a matching regular leaf after a fresh
+parent trust check. Ordinary 0666 creation preserves umask/default-ACL semantics;
+no permissions or ACLs are repaired. Replaced leaves and unprovable parents are
+preserved and reported. A renamed ancestor cannot redirect cleanup away from
+the retained original parent; observed public-path substitution refuses the
+existing publication steps. This trusted-parent boundary excludes hostile
+same-user/root writers between POSIX validation and unlink; it is not atomic
+inode-conditional deletion against them. Remote SFTP partials remain preserved
+and reported even after acknowledged creation. Windows local downloads retain the exact exclusively
 created file handle with deletion access, retaining normal parent-inherited
 permissions. Pre-publication cleanup marks only that exact object for deletion;
 a replaced leaf or ancestor cannot redirect it. The blocking creation owns its
 cleanup guard before returning a result, so cancellation during that handoff
-requests exact-handle cleanup when the blocking call completes. Cleanup failure is
+requests exact-handle cleanup when the blocking call completes. Unix creation
+likewise owns its guard before fallible cloning/handoff; pending owner cleanup
+waits for actual abandoned-creation cleanup completion under the same deadline.
+Its async Drop schedules blocking work and performs no filesystem I/O. Cleanup failure is
 reported alongside the original copy failure or cancellation; cancellation
 remains cancellation. No cleanup operation follows a replaced ancestor or
 deletes a replacement leaf. Already-started blocking filesystem calls cannot

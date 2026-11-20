@@ -219,9 +219,14 @@ Diagnostics remain content-free:
 Owner shutdown interrupts an awaited command without consuming queued input.
 Cleanup and channel close have at most a two-second grace. Exclusive creation
 does not establish the current identity of a pathname: an ancestor or leaf can
-be replaced before cancellation. The current local-filesystem and SFTP APIs
-cannot perform race-free conditional deletion, so failed/canceled partial
-output is preserved and reported for inspection and manual cleanup. Reporting
+be replaced before cancellation. Shared local-download ownership follows
+[ADR 0029's partial-file boundary](0029-gui-sftp-file-manager.md#4-partial-file-handling):
+Windows retains the exact created handle, while Unix retains the file and parent
+and cleans only a matching leaf in a freshly trusted parent. Ordinary mode and
+inherited ACLs remain intact. Pending creation handoff waits for actual owned
+cleanup under the same deadline. Unprovable Unix ownership, remote SFTP partials
+and interrupted publication remain preserved and reported for manual inspection;
+POSIX cleanup excludes hostile same-user/root concurrent writers. Reporting
 releases the ledger so unrelated work can continue; successful transfers and
 explicit `rm`/overwrite refusal are unchanged.
 
@@ -287,7 +292,7 @@ correctness and easier to explain honestly in the UI.
   `interface_settings_parse_default_sftp_local_directory_additively`, and
   `lcd_changes_only_the_live_session_local_directory`. Owner-cancellation
   regressions include
-  `text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file`,
+  `text_sftp_shutdown_interrupts_a_stalled_download_and_cleans_its_owned_partial_file`,
   `text_sftp_runtime_reports_completion_without_waiting_for_blocking_io`,
   `failed_text_transfer_reports_original_error_and_preserved_output`,
   `cancellation_cleanup_preserves_a_replaced_local_leaf`, and the Unix-only

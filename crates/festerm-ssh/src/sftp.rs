@@ -22,6 +22,10 @@ use tokio::{
 #[path = "sftp_download_windows.rs"]
 mod windows_download;
 
+#[cfg(unix)]
+#[path = "sftp_download_unix.rs"]
+mod unix_download;
+
 const HELP_TEXT: &str = "\
 Supported commands:
   help
@@ -405,6 +409,10 @@ pub(crate) struct PartialFile {
     commit_destination: Option<SftpPath>,
     #[cfg(windows)]
     local_file: Option<std::fs::File>,
+    #[cfg(unix)]
+    local_file: Option<std::sync::Arc<unix_download::Binding>>,
+    #[cfg(unix)]
+    local_creation: Option<std::sync::Arc<unix_download::Completion>>,
 }
 
 struct RemotePlanningDirectory {
@@ -594,6 +602,10 @@ impl SftpSession {
             .as_mut()
             .expect("destination creation has a pending partial file")
             .owned = true;
+    }
+
+    pub(crate) async fn check_partial_path(&self, path: &SftpPath) -> Result<(), SftpSessionError> {
+        check_transfer_partial_path(&self.partial_file, path).await
     }
 
     pub(crate) fn forget_partial_file(&mut self, path: &SftpPath) {
@@ -1482,8 +1494,10 @@ pub(crate) fn begin_transfer_partial(
         path,
         owned: false,
         commit_destination: None,
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         local_file: None,
+        #[cfg(unix)]
+        local_creation: None,
     });
     Ok(())
 }
@@ -1532,14 +1546,57 @@ pub(crate) async fn cleanup_transfer_partial(
         .map_err(|error| local_error("remove partial file", &path, std::io::Error::other(error)))?
         .map_err(|error| local_error("remove partial file", &path, error));
     }
+    #[cfg(unix)]
+    {
+        if let Some(completion) = partial.local_creation {
+            return completion.wait().await;
+        }
+        if let Some(binding) = partial.local_file {
+            let path = partial.path.display();
+            return tokio::task::spawn_blocking(move || binding.cleanup())
+                .await
+                .map_err(|error| SftpSessionError::LocalOperationFailed {
+                    operation: "remove partial file",
+                    path,
+                    reason: error.to_string(),
+                })?;
+        }
+    }
     // Creation acknowledgement cannot prove what a mutable path names now.
     Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
         path: partial.path.display(),
     })
 }
 
+/// Checks only a matching tracked local source or its protected destination.
+/// This is a negative fence, not authority to publish or replace a file.
+pub(crate) async fn check_transfer_partial_path(
+    partial: &Option<PartialFile>,
+    path: &SftpPath,
+) -> Result<(), SftpSessionError> {
+    #[cfg(unix)]
+    if let Some(partial) = partial.as_ref().filter(|partial| {
+        &partial.path == path || partial.commit_destination.as_ref() == Some(path)
+    }) {
+        if let Some(binding) = &partial.local_file {
+            let binding = binding.clone();
+            let path = partial.path.display();
+            return tokio::task::spawn_blocking(move || binding.check_path())
+                .await
+                .map_err(|error| SftpSessionError::LocalOperationFailed {
+                    operation: "validate partial file",
+                    path,
+                    reason: error.to_string(),
+                })?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (partial, path);
+    Ok(())
+}
+
 /// Shared retained-handle creation for transfer transports. Ownership is
-/// recorded without suspension after the blocking Windows creation handoff.
+/// recorded without suspension after the blocking local creation handoff.
 pub(crate) async fn create_transfer_download_file(
     partial: &mut Option<PartialFile>,
     path: &Path,
@@ -1564,7 +1621,30 @@ pub(crate) async fn create_transfer_download_file(
         Ok::<_, SftpSessionError>(tokio::fs::File::from_std(writer))
     }
     .await;
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    let result = async {
+        let completion = std::sync::Arc::new(unix_download::Completion::default());
+        partial.as_mut().expect("pending download").local_creation = Some(completion.clone());
+        let owned_path = path.to_owned();
+        let creation = tokio::task::spawn_blocking(move || {
+            unix_download::Creation::create(&owned_path, completion)
+        })
+        .await
+        .map_err(|error| {
+            local_error(
+                "create destination file",
+                path,
+                std::io::Error::other(error),
+            )
+        })??;
+        let (writer, binding) = creation.into_files();
+        let pending = partial.as_mut().expect("pending download");
+        pending.local_file = Some(binding);
+        pending.local_creation = None;
+        Ok::<_, SftpSessionError>(tokio::fs::File::from_std(writer))
+    }
+    .await;
+    #[cfg(not(any(windows, unix)))]
     let result = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -2721,6 +2801,56 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unix_download_failure_preserves_original_error_and_reports_only_incomplete_cleanup() {
+        use std::os::unix::fs::PermissionsExt;
+        for trusted in [true, false] {
+            let root = unique_test_directory("unix-download-original-error");
+            create_directory(&root);
+            let path = root.join("part.bin");
+            test_runtime().block_on(async {
+                let mut partial = None;
+                begin_transfer_partial(&mut partial, SftpPath::local(path.clone())).unwrap();
+                let mut writer = create_transfer_download_file(&mut partial, &path)
+                    .await
+                    .unwrap();
+                writer.write_all(b"owned partial").await.unwrap();
+                writer.flush().await.unwrap();
+                drop(writer);
+                let (mut session, server) = partial_file_session(partial.take().unwrap()).await;
+                if !trusted {
+                    stdfs::set_permissions(&root, stdfs::Permissions::from_mode(0o777)).unwrap();
+                }
+                let original = SftpSessionError::RemoteOperationFailed {
+                    operation: "download",
+                    path: "/fixture/source".to_owned(),
+                    reason: "controlled source failure".to_owned(),
+                };
+                let returned = session.finish_failed_transfer(original.clone()).await;
+                if trusted {
+                    assert_eq!(returned, original);
+                    assert!(!path.exists());
+                } else {
+                    stdfs::set_permissions(&root, stdfs::Permissions::from_mode(0o700)).unwrap();
+                    assert_eq!(
+                        returned,
+                        SftpSessionError::TransferFailedWithIncompleteCleanup {
+                            operation_error: Box::new(original),
+                            cleanup_error: Box::new(
+                                SftpSessionError::PartialFileOwnershipUnconfirmed {
+                                    path: path.display().to_string(),
+                                }
+                            ),
+                        }
+                    );
+                    assert_eq!(stdfs::read(&path).unwrap(), b"owned partial");
+                }
+                server.abort();
+            });
+        }
+    }
+
     #[cfg(windows)]
     async fn windows_download_session(path: &Path) -> (SftpSession, tokio::task::JoinHandle<()>) {
         partial_file_session(PartialFile {
@@ -2901,8 +3031,10 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: false,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             assert!(matches!(
@@ -2925,8 +3057,10 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             assert!(matches!(
@@ -2953,8 +3087,10 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             let error = session
@@ -2987,8 +3123,10 @@ mod tests {
                 path: SftpPath::local(path.clone()),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             stdfs::rename(&path, &original).unwrap();
@@ -3023,8 +3161,10 @@ mod tests {
                 path: SftpPath::local(path),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             stdfs::rename(&selected, &original).unwrap();
@@ -3053,8 +3193,10 @@ mod tests {
                 path: SftpPath::remote("/fixture/partial.bin"),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             assert!(matches!(
@@ -3083,8 +3225,10 @@ mod tests {
                 path: path.clone(),
                 owned: true,
                 commit_destination: None,
-                #[cfg(windows)]
+                #[cfg(any(windows, unix))]
                 local_file: None,
+                #[cfg(unix)]
+                local_creation: None,
             })
             .await;
             session.protect_partial_commit(&path, &SftpPath::local(destination.clone()));

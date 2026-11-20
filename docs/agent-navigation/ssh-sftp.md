@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "32bd611d5549916d89f19a2373bbaf085b0641d9d8d81920cf187e04b800a130"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "8e7926a12be224680b55f4b11427d6de61b8741ca652220e3c5af653628eaae5"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,15 +46,19 @@ Use for: When remote browsing or copy operations need a bounded transfer queue, 
 - [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and the final commit.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
 - [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the existing planner, queue and local staging.
+- [`Creation`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Owns Unix creation/handoff cleanup with retained parent/file identity and ordinary permissions.
 
 Evidence:
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
 - [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf on Windows.
 - [`windows_download_retained_handle_prevents_ancestor_rename_until_cleanup`](../../crates/festerm-ssh/src/sftp.rs) — Windows refuses moving the open file’s ancestor; the same rename succeeds after cleanup.
+- [`unix_download_lost_creation_handoff_waits_for_actual_cleanup`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Waits for actual abandoned-creation cleanup.
+- [`unix_download_ancestor_replacement_cleans_retained_parent_only`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Cleans only the retained parent; refuses changed-path publication.
 
 Caveats:
 - Uncertain temporary ownership preserves the partial and reports recovery details.
+- Unix cleanup requires a matching regular file in a freshly trusted parent; unprovable parents, remote output and crash/restart recovery remain open. POSIX unlink excludes hostile same-user/root concurrent writers.
 - Remote names and listings are untrusted; validation occurs before any write.
 - A closed client turns future operations into Disconnected instead of continuing silently.
 
