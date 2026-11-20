@@ -5096,8 +5096,12 @@ nested coalition fields must not prevent a stopped observation or manufacture
 Running. Confirm normal Disable reaches durable Disabled through the existing
 runtime/native fences, capturing its first result before Refresh. Parser
 regressions cover nested states/PIDs, duplicate direct fields, malformed nesting
-and foreign/nested-only identity; the corrected matching GUI/retained-component
-lifecycle remains a separate native qualification.
+and foreign/nested-only identity. Fixtures derive host-native absolute paths
+from the temporary directory and verify a successful baseline before negative
+cases, so Windows path validation cannot mask parser rejection coverage. The
+original Windows Unix-path fixture refusal is retained; corrected Windows runtime
+coverage remains required. The matching GUI/retained-component lifecycle remains
+a separate native qualification.
 The Desktop Reconcile/Enable/Update/Uninstall async boundary retains its existing
 five-minute deadline. Deadline expiry requests cancellation and reports a distinct
 **timed out** failure, rather than claiming the operator cancelled. Refresh local

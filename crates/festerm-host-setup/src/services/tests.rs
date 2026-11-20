@@ -939,6 +939,12 @@ fn host_process_recovery_older_bundle_cannot_create_new_restart_authority() {
     assert!(manager.runner.state.borrow().calls.is_empty());
 }
 
+fn mac_observation_path(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join("festerm-macos-observation-fixture");
+    assert!(root.is_absolute());
+    root.join(name)
+}
+
 fn mac_observation_record() -> Registration {
     Registration {
         version: 4,
@@ -950,11 +956,11 @@ fn mac_observation_record() -> Registration {
         platform: Platform::Macos,
         user: "501".into(),
         resource: "fixture-service".into(),
-        executable: "/fixture/host executable".into(),
+        executable: mac_observation_path("host executable"),
         digest: "00".repeat(32),
         windows_managed: None,
         provenance: None,
-        state: "/fixture/state directory".into(),
+        state: mac_observation_path("state directory"),
         definition: String::new(),
         reservation: uuid::Uuid::new_v4().to_string(),
         native_expected: None,
@@ -968,8 +974,8 @@ fn mac_observation_record() -> Registration {
 
 fn mac_observation_text(record: &Registration, fields: &str) -> String {
     format!(
-        "gui/501/fixture-service = {{\n\tpath = /fixture/service.plist\n\tprogram = {}\n\targuments = {{\n\t\t{}\n\t\t{}\n\t\t--state-dir\n\t\t{}\n\t}}\n{fields}}}\n",
-        record.executable.display(), record.executable.display(),
+        "gui/501/fixture-service = {{\n\tpath = {}\n\tprogram = {}\n\targuments = {{\n\t\t{}\n\t\t{}\n\t\t--state-dir\n\t\t{}\n\t}}\n{fields}}}\n",
+        mac_observation_path("service.plist").display(), record.executable.display(), record.executable.display(),
         definitions::record_runner_verb(record), record.state.display(),
     )
 }
@@ -996,7 +1002,7 @@ fn native_service_macos_observation_ignores_nested_coalition_fields() {
         assert_eq!(
             definitions::mac_state(
                 text.as_bytes(),
-                Path::new("/fixture/service.plist"),
+                &mac_observation_path("service.plist"),
                 &record
             )
             .unwrap(),
@@ -1009,6 +1015,27 @@ fn native_service_macos_observation_ignores_nested_coalition_fields() {
 fn native_service_macos_observation_rejects_duplicate_direct_fields() {
     let record = mac_observation_record();
     let direct = "\tstate = running\n\tpid = 123\n\tlast exit code = 0\n";
+    assert_eq!(
+        definitions::mac_state(
+            mac_observation_text(&record, direct).as_bytes(),
+            &mac_observation_path("service.plist"),
+            &record
+        )
+        .unwrap(),
+        ProcessState::Running
+    );
+    let duplicate_path = format!(
+        "\tpath = {}\n",
+        mac_observation_path("service.plist").display()
+    );
+    let foreign_path = format!(
+        "\tpath = {}\n",
+        mac_observation_path("foreign-service.plist").display()
+    );
+    let foreign_program = format!(
+        "\tprogram = {}\n",
+        mac_observation_path("foreign-program").display()
+    );
     let duplicate_program = format!("\tprogram = {}\n", record.executable.display());
     let duplicate_arguments = format!(
         "\targuments = {{\n\t\t{}\n\t\t{}\n\t\t--state-dir\n\t\t{}\n\t}}\n",
@@ -1023,9 +1050,9 @@ fn native_service_macos_observation_rejects_duplicate_direct_fields() {
         "\tpid = 456\n",
         "\tlast exit code = 0\n",
         "\tlast exit code = 17\n",
-        "\tpath = /fixture/service.plist\n",
-        "\tpath = /foreign/service.plist\n",
-        "\tprogram = /foreign/program\n",
+        duplicate_path.as_str(),
+        foreign_path.as_str(),
+        foreign_program.as_str(),
         duplicate_program.as_str(),
         duplicate_arguments.as_str(),
     ] {
@@ -1033,7 +1060,7 @@ fn native_service_macos_observation_rejects_duplicate_direct_fields() {
         assert!(
             definitions::mac_state(
                 text.as_bytes(),
-                Path::new("/fixture/service.plist"),
+                &mac_observation_path("service.plist"),
                 &record
             )
             .is_err(),
@@ -1046,15 +1073,30 @@ fn native_service_macos_observation_rejects_duplicate_direct_fields() {
 fn native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting() {
     let record = mac_observation_record();
     let text = mac_observation_text(&record, "\tstate = not running\n\tlast exit code = 0\n");
-    let nested_identity = format!("gui/501/fixture-service = {{\n\tstate = not running\n\tforeign = {{\n\t\tpath = /fixture/service.plist\n\t\tprogram = {}\n\t\targuments = {{\n\t\t\t{}\n\t\t\t{}\n\t\t\t--state-dir\n\t\t\t{}\n\t\t}}\n\t}}\n}}\n", record.executable.display(), record.executable.display(), definitions::record_runner_verb(&record), record.state.display());
+    assert_eq!(
+        definitions::mac_state(
+            text.as_bytes(),
+            &mac_observation_path("service.plist"),
+            &record
+        )
+        .unwrap(),
+        ProcessState::Stopped
+    );
+    let nested_identity = format!("gui/501/fixture-service = {{\n\tstate = not running\n\tforeign = {{\n\t\tpath = {}\n\t\tprogram = {}\n\t\targuments = {{\n\t\t\t{}\n\t\t\t{}\n\t\t\t--state-dir\n\t\t\t{}\n\t\t}}\n\t}}\n}}\n", mac_observation_path("service.plist").display(), record.executable.display(), record.executable.display(), definitions::record_runner_verb(&record), record.state.display());
     for invalid in [
         text.replace(
-            "path = /fixture/service.plist",
-            "path = /foreign/service.plist",
+            &format!("path = {}", mac_observation_path("service.plist").display()),
+            &format!(
+                "path = {}",
+                mac_observation_path("foreign-service.plist").display()
+            ),
         ),
         text.replace(
-            "program = /fixture/host executable",
-            "program = /foreign/program",
+            &format!("program = {}", record.executable.display()),
+            &format!(
+                "program = {}",
+                mac_observation_path("foreign-program").display()
+            ),
         ),
         text.replace("\t\trun-desktop-managed\n", "\t\trun-managed\n"),
         text.trim_end().trim_end_matches('}').to_owned(),
@@ -1072,7 +1114,7 @@ fn native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting
         assert!(
             definitions::mac_state(
                 invalid.as_bytes(),
-                Path::new("/fixture/service.plist"),
+                &mac_observation_path("service.plist"),
                 &record
             )
             .is_err(),
@@ -1084,24 +1126,31 @@ fn native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting
 #[test]
 fn native_service_macos_observation_preserves_flat_fixture_format() {
     let record = mac_observation_record();
-    let flat = format!("path = /fixture/service.plist\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = waiting\n", record.executable.display(), record.executable.display(), definitions::record_runner_verb(&record), record.state.display());
+    let flat = format!(
+        "path = {}\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = waiting\n",
+        mac_observation_path("service.plist").display(),
+        record.executable.display(),
+        record.executable.display(),
+        definitions::record_runner_verb(&record),
+        record.state.display()
+    );
     assert_eq!(
         definitions::mac_state(
             flat.as_bytes(),
-            Path::new("/fixture/service.plist"),
+            &mac_observation_path("service.plist"),
             &record
         )
         .unwrap(),
         ProcessState::Stopped
     );
     let mut literal = record;
-    literal.executable = "/fixture/host = {".into();
-    literal.state = "/fixture/state {".into();
+    literal.executable = mac_observation_path("host = {");
+    literal.state = mac_observation_path("state {");
     let framed = mac_observation_text(&literal, "\tstate = not running\n\tlast exit code = 0\n");
     assert_eq!(
         definitions::mac_state(
             framed.as_bytes(),
-            Path::new("/fixture/service.plist"),
+            &mac_observation_path("service.plist"),
             &literal
         )
         .unwrap(),
