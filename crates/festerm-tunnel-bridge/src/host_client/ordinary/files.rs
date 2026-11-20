@@ -77,6 +77,10 @@ impl Files {
     pub fn host_info(&self) -> &OrdinaryHostInfo {
         &self.info
     }
+    /// Observed Open3 capability only; every mutation still rechecks authority.
+    pub fn delete_advertised(&self) -> bool {
+        self.client.delete_advertised()
+    }
     pub fn client(&mut self) -> &mut file_client::Client<FilesStream> {
         &mut self.client
     }
@@ -105,6 +109,53 @@ pub async fn open_files(
     request_cancel: &CancellationToken,
     pinned: Option<&HostScope>,
 ) -> Result<Option<Files>, FilesError> {
+    open_files_mode(
+        identity,
+        locator,
+        index,
+        budgets,
+        account_guard,
+        request_cancel,
+        pinned,
+        false,
+    )
+    .await
+}
+/// Explicit Open3 operation negotiation over the same ordinary Files route.
+/// Old helpers refuse; no downgrade, second account lookup or replay occurs.
+pub async fn open_files_reviewed(
+    identity: &Identity,
+    locator: &str,
+    index: OrdinaryKeyIndex,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    pinned: Option<&HostScope>,
+) -> Result<Option<Files>, FilesError> {
+    open_files_mode(
+        identity,
+        locator,
+        index,
+        budgets,
+        account_guard,
+        request_cancel,
+        pinned,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn open_files_mode(
+    identity: &Identity,
+    locator: &str,
+    index: OrdinaryKeyIndex,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    pinned: Option<&HostScope>,
+    reviewed: bool,
+) -> Result<Option<Files>, FilesError> {
     let Authenticated {
         stream,
         permit,
@@ -120,7 +171,20 @@ pub async fn open_files(
         StreamRole::Files,
     )
     .await?;
-    open_authenticated(stream, permit, info, account_guard, request_cancel, pinned).await
+    if reviewed {
+        open_authenticated_mode(
+            stream,
+            permit,
+            info,
+            account_guard,
+            request_cancel,
+            pinned,
+            true,
+        )
+        .await
+    } else {
+        open_authenticated(stream, permit, info, account_guard, request_cancel, pinned).await
+    }
 }
 
 pub(crate) async fn open_authenticated(
@@ -131,6 +195,27 @@ pub(crate) async fn open_authenticated(
     request_cancel: &CancellationToken,
     pinned: Option<&HostScope>,
 ) -> Result<Option<Files>, FilesError> {
+    open_authenticated_mode(
+        stream,
+        permit,
+        info,
+        account_guard,
+        request_cancel,
+        pinned,
+        false,
+    )
+    .await
+}
+
+async fn open_authenticated_mode(
+    stream: relay::ClientConnection,
+    permit: ConnectionPermit,
+    info: OrdinaryHostInfo,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    pinned: Option<&HostScope>,
+    reviewed: bool,
+) -> Result<Option<Files>, FilesError> {
     account_guard.check().map_err(Failure::from)?;
     let lifetime = account_guard.cancel.child_token();
     let stream = FilesStream {
@@ -140,8 +225,15 @@ pub(crate) async fn open_authenticated(
     let opened = tokio::select! { biased;
         _ = request_cancel.cancelled() => return Err(Failure::Control(Error::Cancelled).into()),
         _ = account_guard.cancel.cancelled() => return Err(Failure::Control(Error::Cancelled).into()),
-        result = file_client::Client::open_host_guarded(stream, &info.route.host.host,
-            &info.installation, pinned, account_guard.clone(), lifetime) => result?,
+        result = async {
+            if reviewed {
+                file_client::Client::open_host_guarded_reviewed(stream, &info.route.host.host,
+                    &info.installation, pinned, account_guard.clone(), lifetime).await
+            } else {
+                file_client::Client::open_host_guarded(stream, &info.route.host.host,
+                    &info.installation, pinned, account_guard.clone(), lifetime).await
+            }
+        } => result?,
     };
     account_guard.check().map_err(Failure::from)?;
     if request_cancel.is_cancelled() {

@@ -1666,6 +1666,66 @@ mod imp {
         Ok(file)
     }
 
+    /// Retains a reviewed ordinary directory for an exact move/delete. This
+    /// verifies kind/reparse/volume only; it does not require or rewrite a
+    /// private-staging DACL. The caller owns rooted-parent/consent admission.
+    pub fn open_reviewed_directory_for_move(directory: &File, name: &Path) -> io::Result<File> {
+        let file = open_relative(
+            directory,
+            name,
+            GENERIC_READ | DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+            ptr::null(),
+        )?;
+        let info = file_information(&file)?;
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || info.dwVolumeSerialNumber != file_information(directory)?.dwVolumeSerialNumber
+            || !file.metadata()?.is_dir()
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        Ok(file)
+    }
+
+    /// Kind-correct no-replace move of a retained ordinary reviewed directory.
+    /// Caller must verify its exact reviewed identity; no ACL repair occurs.
+    pub fn rename_reviewed_directory_noreplace(
+        source: &File,
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<()> {
+        if !source.metadata()?.is_dir()
+            || file_information(source)?.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        rename_file(source, directory, name, false)
+    }
+
+    /// Removes the exact retained, caller-reviewed file. Never resolves its
+    /// original public pathname or assumes private-staging ownership.
+    pub fn remove_reviewed_file(file: &File) -> io::Result<()> {
+        if !file.metadata()?.is_file()
+            || file_information(file)?.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        delete_directory_by_handle(file)
+    }
+
+    /// Native directory deletion refuses nonempty state atomically. The caller
+    /// must close its other retained handles before acknowledging completion.
+    pub fn remove_reviewed_empty_directory(file: &File) -> io::Result<()> {
+        if !file.metadata()?.is_dir()
+            || file_information(file)?.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        delete_directory_by_handle(file)
+    }
+
     /// Retains an exact owner-only directory with the access needed for a
     /// handle-relative no-replace archive. No reparse point is followed.
     pub fn open_private_directory_for_move(directory: &File, name: &Path) -> io::Result<File> {
@@ -3472,6 +3532,54 @@ mod imp {
         }
 
         #[test]
+        fn reviewed_ordinary_directory_move_and_delete_preserve_collision_and_refuse_new_child() {
+            let directory = TemporaryDirectory::new();
+            let parent = directory.handle();
+            fs::create_dir(directory.0.join("reviewed")).unwrap();
+            fs::create_dir(directory.0.join("foreign")).unwrap();
+            fs::write(directory.0.join("foreign/owned"), b"foreign bytes").unwrap();
+            fs::write(directory.0.join("file"), b"regular bytes").unwrap();
+            assert!(open_reviewed_directory_for_move(&parent, Path::new("file")).is_err());
+            let retained = open_directory_no_reparse(&parent, Path::new("reviewed")).unwrap();
+            let mover = open_reviewed_directory_for_move(&parent, Path::new("reviewed")).unwrap();
+            assert!(
+                remove_reviewed_file(&mover).is_err(),
+                "file removal cannot accept a directory"
+            );
+            assert!(
+                rename_reviewed_directory_noreplace(&mover, &parent, Path::new("foreign")).is_err()
+            );
+            assert!(same_file_identity(&retained, &mover).unwrap());
+            assert_eq!(
+                fs::read(directory.0.join("foreign/owned")).unwrap(),
+                b"foreign bytes"
+            );
+            rename_reviewed_directory_noreplace(&mover, &parent, Path::new("captured")).unwrap();
+            assert!(!directory.0.join("reviewed").exists());
+            fs::write(directory.0.join("captured/new-child"), b"new child bytes").unwrap();
+            assert_eq!(
+                remove_reviewed_empty_directory(&mover).unwrap_err().kind(),
+                io::ErrorKind::DirectoryNotEmpty
+            );
+            assert_eq!(
+                fs::read(directory.0.join("captured/new-child")).unwrap(),
+                b"new child bytes"
+            );
+            fs::remove_file(directory.0.join("captured/new-child")).unwrap();
+            remove_reviewed_empty_directory(&mover).unwrap();
+            drop((mover, retained));
+            assert!(!directory.0.join("captured").exists());
+            assert_eq!(
+                fs::read(directory.0.join("foreign/owned")).unwrap(),
+                b"foreign bytes"
+            );
+            assert_eq!(
+                fs::read(directory.0.join("file")).unwrap(),
+                b"regular bytes"
+            );
+        }
+
+        #[test]
         fn private_directory_archive_refuses_open_children_and_existing_target() {
             let directory = TemporaryDirectory::new();
             let parent = directory.handle();
@@ -3978,11 +4086,13 @@ pub use imp::{
     open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, open_file_read_write_no_reparse,
-    open_lock_no_reparse_without_delete_sharing, open_private_directory_for_move, opened_file_path,
-    remove_private_staging_file, rename_file_noreplace, rename_private_directory_noreplace,
-    replace_private_file, require_local_disk_root, restrict_default_dacl_to_current_user,
-    restrict_to_current_user, same_file_identity, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, system_directory, trusted_legacy_lock_file,
+    open_lock_no_reparse_without_delete_sharing, open_private_directory_for_move,
+    open_reviewed_directory_for_move, opened_file_path, remove_private_staging_file,
+    remove_reviewed_empty_directory, remove_reviewed_file, rename_file_noreplace,
+    rename_private_directory_noreplace, rename_reviewed_directory_noreplace, replace_private_file,
+    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
+    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
+    staging_parent_matches, system_directory, trusted_legacy_lock_file,
     trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
     StagingParentSecurity, UnsupportedSecurityMetadata,
 };

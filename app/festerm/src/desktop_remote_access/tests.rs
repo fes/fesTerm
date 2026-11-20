@@ -2357,6 +2357,7 @@ fn desktop_remote_access_old_draft_cannot_erase_protected_file_consent() {
     let old_draft = Draft::default().settings();
     let mut configured = old_draft.clone();
     configured.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        delete: false,
         root: root.path().to_path_buf(),
         write: false,
     });
@@ -2405,6 +2406,7 @@ fn desktop_remote_access_file_refresh_preserves_exact_consent_and_edited_draft()
                 unreachable!()
             };
             let policy = festerm_tunnel_bridge::file_protocol::Policy {
+                delete: false,
                 root: directory.path().join("Exact Folder"),
                 write,
             };
@@ -2465,6 +2467,7 @@ fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
     let context = egui::Context::default();
     let mut draft = controller.view.draft.clone();
     draft.files = FileAccessDraft {
+        delete: false,
         enabled: true,
         root: directory.path().join("Exact Folder"),
         write: true,
@@ -2494,6 +2497,7 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
         let before = controller.view.draft.clone();
         let mut draft = before.clone();
         draft.files = FileAccessDraft {
+            delete: false,
             enabled: true,
             root: directory.path().to_path_buf(),
             write: false,
@@ -2508,6 +2512,7 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
     })));
     controller.view.scope = Scope::Absent;
     controller.view.draft.files = FileAccessDraft {
+        delete: false,
         enabled: true,
         root: directory.path().to_path_buf(),
         write: false,
@@ -2536,7 +2541,7 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
 fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
     use egui_kittest::{kittest::Queryable, Harness};
     let directory = festerm_sessiond::private_storage::private_test_directory();
-    for write in [false, true] {
+    for (write, delete) in [(false, false), (true, false), (true, true)] {
         let root = directory.path().join("Reviewed Folder");
         let mut view = View {
             scope: Scope::Absent,
@@ -2545,6 +2550,7 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
             ..View::default()
         };
         view.draft.files = FileAccessDraft {
+            delete,
             enabled: true,
             root: root.clone(),
             write,
@@ -2564,6 +2570,40 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
         } else {
             "File permissions: Read only — browse and download"
         });
+        harness.get_by_label(if delete {
+            "Delete files and empty folders: On — permanent, reviewed individually"
+        } else {
+            "Delete files and empty folders: Off"
+        });
         harness.get_by_label("Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
     }
+}
+
+#[test]
+fn desktop_remote_access_delete_permission_is_separate_requires_write_and_survives_draft_roundtrip()
+{
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let mut draft = Draft::default();
+    draft.files.enabled = true;
+    draft.files.root = root.path().into();
+    draft.files.write = true;
+    assert!(draft.valid_files());
+    assert!(
+        !draft.settings().filesystem.unwrap().delete,
+        "old upload consent grants no deletion"
+    );
+    draft.files.delete = true;
+    assert!(draft.valid_files());
+    let settings = draft.settings();
+    assert!(settings.filesystem.as_ref().unwrap().delete);
+    let restored = FileAccessDraft::from_policy(settings.filesystem.as_ref());
+    assert_eq!(restored, draft.files);
+    draft.files.write = false;
+    assert!(!draft.valid_files());
+    assert!(
+        draft.files.delete,
+        "an invalid edited combination must not silently rewrite consent"
+    );
+    draft.files.delete = false;
+    assert!(draft.valid_files());
 }

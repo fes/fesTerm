@@ -513,6 +513,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         for root in &policy.roots {
             festerm_tunnel_bridge::filesystem::Filesystem::open(
                 &festerm_tunnel_bridge::file_protocol::Policy {
+                    delete: false,
                     root: root.clone(),
                     write: false,
                 },
@@ -963,6 +964,7 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     } else {
         file_root.map(|root| {
             Some(festerm_tunnel_bridge::file_protocol::Policy {
+                delete: false,
                 root,
                 write: file_write,
             })
@@ -2698,6 +2700,7 @@ mod tests {
         assert!(revocation.filesystem.is_none());
         let mut record = configured_fixture(old_executable());
         record.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            delete: false,
             root: root.clone(),
             write: true,
         });
@@ -3124,6 +3127,7 @@ mod tests {
         let mut record = configured_fixture(old_executable());
         record.runtime_root = runtime_path.clone();
         record.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            delete: false,
             root: state.clone(),
             write: true,
         });

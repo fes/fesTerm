@@ -25,6 +25,8 @@ pub enum Error {
     },
     /// The finish may have published. Never reconnect and replay it.
     UncertainFinish(Box<Error>),
+    /// The reviewed deletion may have completed. Never replay it.
+    UncertainDelete(Box<Error>),
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -37,6 +39,9 @@ impl fmt::Display for Error {
             Self::Transport(kind) => write!(f, "rooted file transport failed ({kind:?})"),
             Self::LocalIo(kind) => write!(f, "local transfer I/O failed ({kind:?})"),
             Self::Remote { code, .. } => write!(f, "rooted file operation refused ({code:?})"),
+            Self::UncertainDelete(cause) => {
+                write!(f, "delete result is uncertain; do not replay: {cause}")
+            }
             Self::UncertainFinish(cause) => write!(
                 f,
                 "upload publication is uncertain; do not replay finish: {cause}"
@@ -55,6 +60,7 @@ pub struct Handle {
     issued: u32,
 }
 enum State {
+    EntryReview,
     Directory,
     Read { path: String, size: u64 },
     Upload { size: u64, written: u64 },
@@ -72,6 +78,7 @@ pub struct Chunk {
 pub struct Client<S> {
     stream: Option<S>,
     capabilities: rpc::Capabilities,
+    operations: Option<rpc::OperationCapabilities>,
     next_id: u32,
     handles: HashMap<u32, (u32, State)>,
     connection: Arc<()>,
@@ -241,6 +248,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         Ok(Self {
             stream: Some(stream),
             capabilities,
+            operations: None,
             next_id: 0,
             handles: HashMap::new(),
             connection: Arc::new(()),
@@ -258,7 +266,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         installation: &festerm_host_protocol::HostId,
         cancel: CancellationToken,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
-        Self::open_host_checked(stream, host, installation, None, || Ok(()), cancel).await
+        Self::open_host_checked(
+            stream,
+            host,
+            installation,
+            None,
+            || Ok(()),
+            cancel,
+            rpc::HOST_VERSION,
+        )
+        .await
+    }
+
+    /// Explicit reviewed-operation negotiation; never falls back to Open2.
+    pub async fn open_host_reviewed(
+        stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        cancel: CancellationToken,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
+        Self::open_host_checked(
+            stream,
+            host,
+            installation,
+            None,
+            || Ok(()),
+            cancel,
+            rpc::HOST_REVIEWED_VERSION,
+        )
+        .await
     }
 
     #[cfg(feature = "host-routing")]
@@ -270,6 +306,48 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         guard: crate::host_client::ordinary::OrdinaryAccountGuard,
         cancel: CancellationToken,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
+        Self::open_host_guarded_version(
+            stream,
+            host,
+            installation,
+            pinned,
+            guard,
+            cancel,
+            rpc::HOST_VERSION,
+        )
+        .await
+    }
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn open_host_guarded_reviewed(
+        stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        pinned: Option<&rpc::HostScope>,
+        guard: crate::host_client::ordinary::OrdinaryAccountGuard,
+        cancel: CancellationToken,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
+        Self::open_host_guarded_version(
+            stream,
+            host,
+            installation,
+            pinned,
+            guard,
+            cancel,
+            rpc::HOST_REVIEWED_VERSION,
+        )
+        .await
+    }
+
+    #[cfg(feature = "host-routing")]
+    async fn open_host_guarded_version(
+        stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        pinned: Option<&rpc::HostScope>,
+        guard: crate::host_client::ordinary::OrdinaryAccountGuard,
+        cancel: CancellationToken,
+        version: u16,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
         let current = guard.clone();
         let opened = Self::open_host_checked(
             stream,
@@ -278,6 +356,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             pinned,
             move || current.check().map_err(|_| Error::Cancelled),
             cancel,
+            version,
         )
         .await?;
         Ok(opened.map(|(mut client, scope)| {
@@ -293,7 +372,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         pinned: Option<&rpc::HostScope>,
         current: impl Fn() -> Result<()>,
         cancel: CancellationToken,
+        version: u16,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
+        if !matches!(version, rpc::HOST_VERSION | rpc::HOST_REVIEWED_VERSION) {
+            return Err(Error::Invalid);
+        }
         current()?;
         let description = bounded(&cancel, async {
             let bytes = frame(&mut stream, rpc::HOST_DESCRIPTION, 4096).await?;
@@ -317,12 +400,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         let Some(caps) = description.filesystem else {
             return Ok(None);
         };
-        bounded(&cancel, async {
+        let operations = bounded(&cancel, async {
             write_frame(
                 &mut stream,
                 rpc::OPEN,
                 &json(&rpc::HostOpen {
-                    version: rpc::HOST_VERSION,
+                    version,
                     scope: description.scope.clone(),
                 })?,
             )
@@ -333,7 +416,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     result: Some(Reply::Ready { capabilities }),
                     error: None,
                     ..
-                } if capabilities == caps => Ok(()),
+                } if version == rpc::HOST_VERSION && capabilities == caps => Ok(None),
+                rpc::Response {
+                    result: Some(Reply::ReadyV3 { capabilities }),
+                    error: None,
+                    ..
+                } if version == rpc::HOST_REVIEWED_VERSION && capabilities.validate(&caps) => {
+                    Ok(Some(capabilities))
+                }
                 rpc::Response {
                     result: None,
                     error: Some(code),
@@ -352,6 +442,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             Self {
                 stream: Some(stream),
                 capabilities: caps,
+                operations,
                 next_id: 0,
                 handles: HashMap::new(),
                 connection: Arc::new(()),
@@ -365,6 +456,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     pub fn capabilities(&self) -> &rpc::Capabilities {
         &self.capabilities
     }
+    /// Observed operation capability only; never proof of current remote consent.
+    pub fn delete_advertised(&self) -> bool {
+        self.operations
+            .as_ref()
+            .is_some_and(|ops| ops.allows_delete())
+    }
+
     pub fn available(&self) -> bool {
         self.stream.is_some() && !self.cancel.is_cancelled()
     }
@@ -566,6 +664,71 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             _ => self.protocol(),
         }
     }
+    pub async fn review_entry(&mut self, value: &str) -> Result<(Handle, rpc::Metadata)> {
+        self.ready()?;
+        path(value)?;
+        if !self.delete_advertised() {
+            return Err(Error::Invalid);
+        }
+        self.capacity()?;
+        match self
+            .exchange(
+                Operation::ReviewEntry {
+                    path: value.into(),
+                    purpose: rpc::ReviewPurpose::Delete,
+                },
+                None,
+            )
+            .await?
+        {
+            (
+                Reply::EntryReview {
+                    handle,
+                    metadata: info,
+                },
+                None,
+            ) if matches!(info.kind, rpc::Kind::File | rpc::Kind::Directory)
+                && metadata(&info).is_ok() =>
+            {
+                let handle = self.insert(handle, State::EntryReview)?;
+                Ok((handle, info))
+            }
+            _ => self.protocol(),
+        }
+    }
+    /// Consumes one exact reviewed entry. Missing results are never replayed.
+    pub async fn delete_reviewed(&mut self, review: &Handle) -> Result<()> {
+        self.ready()?;
+        if !self.delete_advertised() || !matches!(self.state(review)?, State::EntryReview) {
+            return Err(Error::Invalid);
+        }
+        self.handles.remove(&review.id);
+        match self
+            .exchange(Operation::Delete { review: review.id }, None)
+            .await
+        {
+            Ok((Reply::Deleted, None)) => Ok(()),
+            Err(
+                error @ Error::Remote {
+                    code: rpc::ErrorCode::RecoveryRequired,
+                    ..
+                },
+            ) => {
+                self.cancel();
+                Err(Error::UncertainDelete(Box::new(error)))
+            }
+            Err(error @ Error::Remote { .. }) => Err(error),
+            Err(error) => {
+                self.cancel();
+                Err(Error::UncertainDelete(Box::new(error)))
+            }
+            _ => {
+                self.cancel();
+                Err(Error::UncertainDelete(Box::new(Error::Protocol)))
+            }
+        }
+    }
+
     pub async fn open_read(&mut self, value: &str) -> Result<(Handle, rpc::Metadata)> {
         path(value)?;
         self.capacity()?;
@@ -921,6 +1084,7 @@ mod tests {
     fn grant(write: bool) -> (std::path::PathBuf, FileService) {
         let root = crate::test_support::private_directory("festerm-rooted-client");
         let files = FileService::rooted(&rpc::Policy {
+            delete: false,
             root: root.clone(),
             write,
         })
@@ -1790,6 +1954,314 @@ mod tests {
             assert!(!client.available());
             stopped(server).await;
             assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    async fn reviewed_open(
+        peer: &mut DuplexStream,
+        scope: &rpc::HostScope,
+        operations: Vec<String>,
+    ) {
+        write_frame(
+            peer,
+            rpc::HOST_DESCRIPTION,
+            &json(&rpc::HostDescription {
+                version: rpc::HOST_VERSION,
+                scope: scope.clone(),
+                filesystem: Some(limits()),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let (kind, bytes) = crate::wire::read_frame(peer).await.unwrap();
+        assert_eq!(kind, rpc::OPEN);
+        let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(open.version, rpc::HOST_REVIEWED_VERSION);
+        assert_eq!(open.scope, *scope);
+        reply(
+            peer,
+            0,
+            Reply::ReadyV3 {
+                capabilities: rpc::OperationCapabilities {
+                    version: rpc::HOST_REVIEWED_VERSION,
+                    write: true,
+                    operations,
+                    chunk_limit: rpc::CHUNK_LIMIT,
+                    page_limit: rpc::PAGE_LIMIT,
+                    handle_limit: rpc::HANDLE_LIMIT,
+                },
+            },
+        )
+        .await;
+    }
+    fn reviewed_scope() -> rpc::HostScope {
+        rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        }
+    }
+    #[tokio::test]
+    async fn reviewed_client_unknown_optional_operations_grant_nothing_and_preserve_ping() {
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_open(&mut peer, &expected, vec!["future_optional".into()]).await;
+            let call = request(&mut peer).await;
+            assert!(matches!(call.operation, Operation::Ping {}));
+            reply(&mut peer, call.id, Reply::Pong).await;
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(!client.delete_advertised());
+        assert!(matches!(
+            client.review_entry("/file").await,
+            Err(Error::Invalid)
+        ));
+        client.ping().await.unwrap();
+        client.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn reviewed_client_refuses_duplicate_known_and_unbounded_capabilities_before_operations()
+    {
+        for operations in [
+            vec!["delete".into(), "delete".into()],
+            vec!["optional".into(); rpc::OPERATION_LIMIT + 1],
+            vec!["x".repeat(rpc::OPERATION_NAME_LIMIT + 1)],
+            vec!["bad\nname".into()],
+        ] {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                reviewed_open(&mut peer, &expected, operations).await;
+                let mut eof = [0];
+                assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+            });
+            assert!(matches!(
+                Client::open_host_reviewed(
+                    stream,
+                    &scope.host,
+                    &scope.installation,
+                    CancellationToken::new()
+                )
+                .await,
+                Err(Error::Protocol)
+            ));
+            tokio::time::timeout(std::time::Duration::from_secs(3), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn reviewed_client_delete_lost_result_is_terminal_without_replay() {
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_open(
+                &mut peer,
+                &expected,
+                vec!["future_optional".into(), "delete".into()],
+            )
+            .await;
+            let call = request(&mut peer).await;
+            assert!(matches!(
+                call.operation,
+                Operation::ReviewEntry {
+                    purpose: rpc::ReviewPurpose::Delete,
+                    ..
+                }
+            ));
+            reply(
+                &mut peer,
+                call.id,
+                Reply::EntryReview {
+                    handle: 1,
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "3".into(),
+                        modified_ms: None,
+                    },
+                },
+            )
+            .await;
+            let call = request(&mut peer).await;
+            assert!(matches!(call.operation, Operation::Delete { review: 1 }));
+            // The actual request was delivered; its reply is not observed.
+        });
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (review, _) = client.review_entry("/file").await.unwrap();
+        assert!(matches!(
+            client.delete_reviewed(&review).await,
+            Err(Error::UncertainDelete(_))
+        ));
+        assert!(!client.available());
+        assert!(client.delete_reviewed(&review).await.is_err());
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    fn native_reviewed_service(
+        mode: u16,
+        suppress_deleted_reply: bool,
+    ) -> (
+        std::path::PathBuf,
+        DuplexStream,
+        tokio::task::JoinHandle<io::Result<()>>,
+        rpc::HostScope,
+    ) {
+        let root = crate::test_support::private_directory("festerm-reviewed-native-wire");
+        std::fs::write(root.join("file"), b"owned source").unwrap();
+        let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
+            root: root.clone(),
+            write: true,
+            delete: true,
+        })
+        .unwrap();
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let observed = root.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            write_frame(
+                &mut peer,
+                rpc::HOST_DESCRIPTION,
+                &json(&rpc::HostDescription {
+                    version: rpc::HOST_VERSION,
+                    scope: expected.clone(),
+                    filesystem: Some(filesystem.capabilities()),
+                })
+                .unwrap(),
+            )
+            .await?;
+            let (kind, bytes) = crate::wire::read_frame(&mut peer).await?;
+            assert_eq!(kind, rpc::OPEN);
+            let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(open.version, mode);
+            assert_eq!(open.scope, expected);
+            let admission: crate::filesystem::Admission = Arc::new(move |stage| {
+                if suppress_deleted_reply
+                    && stage == crate::filesystem::AdmissionStage::Disclosure
+                    && !observed.join("file").exists()
+                {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+                Ok(())
+            });
+            if mode == rpc::HOST_REVIEWED_VERSION {
+                crate::filesystem::serve_authorized_reviewed(
+                    peer,
+                    filesystem,
+                    admission,
+                    CancellationToken::new(),
+                )
+                .await
+            } else {
+                crate::filesystem::serve_authorized(
+                    peer,
+                    filesystem,
+                    admission,
+                    CancellationToken::new(),
+                )
+                .await
+            }
+        });
+        (root, stream, server, scope)
+    }
+
+    #[tokio::test]
+    async fn reviewed_native_wire_open2_cannot_review_or_delete_even_with_protected_grant() {
+        let (root, stream, server, scope) = native_reviewed_service(rpc::HOST_VERSION, false);
+        let (mut client, _) = Client::open_host(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(client.capabilities().version, 1);
+        assert!(!client.delete_advertised());
+        for operation in [
+            Operation::ReviewEntry {
+                path: "/file".into(),
+                purpose: rpc::ReviewPurpose::Delete,
+            },
+            Operation::Delete { review: 1 },
+        ] {
+            assert!(matches!(
+                client.exchange(operation, None).await,
+                Err(Error::Remote {
+                    code: rpc::ErrorCode::Denied,
+                    ..
+                })
+            ));
+        }
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read(root.join("file")).unwrap(), b"owned source");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reviewed_native_wire_delete_commits_once_and_suppressed_reply_stays_unknown() {
+        for suppress_reply in [false, true] {
+            let (root, stream, server, scope) =
+                native_reviewed_service(rpc::HOST_REVIEWED_VERSION, suppress_reply);
+            let (mut client, _) = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(client.delete_advertised());
+            let (review, metadata) = client.review_entry("/file").await.unwrap();
+            assert_eq!(metadata.size, "12");
+            let result = client.delete_reviewed(&review).await;
+            if suppress_reply {
+                assert!(matches!(result, Err(Error::UncertainDelete(_))));
+                assert!(!client.available());
+            } else {
+                result.unwrap();
+                client.ping().await.unwrap();
+            }
+            assert!(!root.join("file").exists());
+            assert!(client.delete_reviewed(&review).await.is_err());
+            assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+            client.cancel();
+            stopped(server).await;
             std::fs::remove_dir_all(root).unwrap();
         }
     }

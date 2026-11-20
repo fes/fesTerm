@@ -1,7 +1,7 @@
 //! Ordinary Files worker behind the existing file-manager presentation and
 //! command queue. There is no terminal, daemon session or SFTP fallback.
 use super::*;
-use crate::app::host_files::{ConnectFiles, FilesEndpoint};
+use crate::app::host_files::{ConnectFiles, DeleteObservation, FilesEndpoint};
 use festerm_ssh::RemoteTransferEndpoint;
 use tokio_util::sync::CancellationToken;
 
@@ -13,8 +13,22 @@ pub(super) struct FilesSource {
     fingerprint: String,
     epoch: u64,
     binding: String,
+    pub(super) delete_advertised: bool,
 }
 impl FilesSource {
+    #[cfg(test)]
+    pub(super) fn reviewed_delete_fixture(delete_advertised: bool) -> Self {
+        Self {
+            host: "owned.use".into(),
+            port: 1,
+            account_id: 1,
+            fingerprint: "owned".into(),
+            epoch: 1,
+            binding: "owned-test-binding".into(),
+            delete_advertised,
+        }
+    }
+
     fn new(
         target: &HostFilesLaunchTarget,
         account_id: u64,
@@ -23,6 +37,7 @@ impl FilesSource {
         let scope = files.scope();
         let info = files.host_info();
         Ok(Self {
+            delete_advertised: files.delete_advertised(),
             host: target.locator.clone(),
             port: info.route.port,
             account_id,
@@ -105,6 +120,7 @@ async fn run_files_worker(
         reporter,
     } = owner;
     let mut transfers = None;
+    let delete_observation = DeleteObservation::default();
     let work = async {
         let result = match connect.await {
             Ok(connection) => {
@@ -113,10 +129,14 @@ async fn run_files_worker(
                     target.clone(),
                     connection,
                     commands,
-                    events.clone(),
-                    repaint.clone(),
-                    connection_scope.clone(),
+                    SftpWorkerNotifications {
+                        events: events.clone(),
+                        repaint: repaint.clone(),
+                        connection_scope: connection_scope.clone(),
+                        reporter: reporter.clone(),
+                    },
                     &mut transfers,
+                    &delete_observation,
                 )
                 .await;
                 lifetime.cancel();
@@ -137,6 +157,9 @@ async fn run_files_worker(
     };
     let _ = wait_for_sftp_tab_owner(work, &mut shutdown).await;
     connection_scope.retire();
+    if let Some(error) = delete_observation.interrupted() {
+        reporter.report_files(target.label.clone(), error, &repaint);
+    }
     if let Some(transfers) = transfers {
         if let Err(error) = transfers.shutdown().await {
             reporter.report_files(target.label, error, &repaint);
@@ -148,11 +171,16 @@ async fn files_operations(
     target: HostFilesLaunchTarget,
     connection: crate::app::host_files::FilesConnection,
     mut commands: tokio::sync::mpsc::Receiver<WorkerCommand>,
-    events: WorkerEventSender,
-    repaint: egui::Context,
-    scope: file_operations::ConnectionScope,
+    notifications: SftpWorkerNotifications,
     transfers: &mut Option<SftpTransferManager>,
+    delete_observation: &DeleteObservation,
 ) -> Result<(), String> {
+    let SftpWorkerNotifications {
+        events,
+        repaint,
+        connection_scope: scope,
+        reporter: _,
+    } = notifications;
     let source = FilesSource::new(&target, connection.account_id, &connection.browsing)?;
     let lifetime = connection.lifetime;
     let mut browsing = FilesEndpoint::new(connection.browsing, lifetime.clone());
@@ -182,9 +210,13 @@ async fn files_operations(
     liveness.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     liveness.reset();
     loop {
+        let review_stop = browsing.delete_review_stop();
         tokio::select! {
             biased;
             _ = lifetime.cancelled() => return Err("Files authority or tab lifetime ended. Reconnect explicitly after reviewing the account.".into()),
+            _ = async { match review_stop { Some(stop) => stop.cancelled().await, None => std::future::pending::<()>().await } } => {
+                browsing.cancel_delete_review().await.map_err(|error| error.to_string())?;
+            }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
                 match command {
@@ -203,6 +235,27 @@ async fn files_operations(
                                 let _ = events.send(WorkerEvent::MarkdownSnapshotLoaded { request_id, path, content, verified_host_key_fingerprint: source.fingerprint.clone() }).await; }
                             Err(error) => { let _ = events.send(WorkerEvent::MarkdownSnapshotFailed { request_id, summary: "Could not open this Files preview.".into(), details: error.to_string() }).await; }
                         }
+                    }
+                    WorkerCommand::PrepareReviewedDelete { request, id, stop } => {
+                        let result = match file_operations::reviewed_delete_paths(&request, &scope) {
+                            Ok(paths) => browsing.prepare_delete(&paths, stop.clone()).await.map_err(|error| error.to_string()),
+                            Err(error) => Err(error),
+                        };
+                        if result.is_ok() { browsing.check_current().map_err(|error| error.to_string())?; }
+                        if events.send(WorkerEvent::ReviewedDeletePrepared { request, id, result }).await.is_err() {
+                            stop.cancel();
+                            browsing.cancel_delete_review().await.map_err(|error| error.to_string())?;
+                            return Ok(());
+                        }
+                    }
+                    WorkerCommand::CommitReviewedDelete { request, batch } => {
+                        let outcome = if file_operations::reviewed_delete_paths(&request, &scope).is_ok() {
+                            browsing.commit_delete(batch, delete_observation).await
+                        } else {
+                            browsing.cancel_delete_review().await.map_err(|error| error.to_string())?;
+                            crate::app::host_files::DeleteOutcome { confirmed: 0, total: 0, failure: Some((false, "The Files connection changed; no deletion was sent.".into())) }
+                        };
+                        let _ = events.send(WorkerEvent::ReviewedDeleteFinished { request, outcome }).await;
                     }
                     WorkerCommand::FileOperation(request) => {
                         let result = if request.focus == PaneFocus::Local { file_operations::local(&request).await }

@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(feature = "experimental-dev-tunnels")]
+mod reviewed_delete;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(super) use reviewed_delete::paths as reviewed_delete_paths;
+
 /// A reconnect retires every outstanding remote review, including queued commands.
 #[derive(Clone, Debug, Default)]
 pub(super) struct ConnectionScope(Arc<Mutex<Arc<()>>>);
@@ -38,6 +43,8 @@ struct Draft {
     selection: BTreeSet<String>,
     focus_initial: bool,
     admission_error: Option<String>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    rooted_review: Option<reviewed_delete::Review>,
 }
 
 pub(super) struct State {
@@ -45,6 +52,8 @@ pub(super) struct State {
     pub(super) displayed: Arc<()>,
     draft: Option<Draft>,
     pub(super) pending: bool,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    preparing: Option<reviewed_delete::Preparation>,
 }
 
 impl Default for State {
@@ -56,6 +65,8 @@ impl Default for State {
             displayed,
             draft: None,
             pending: false,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            preparing: None,
         }
     }
 }
@@ -63,7 +74,14 @@ impl Default for State {
 impl State {
     #[cfg(feature = "experimental-dev-tunnels")]
     pub(super) fn clear_review(&mut self) {
-        self.draft = None;
+        if let Some(preparing) = self.preparing.take() {
+            preparing.stop.cancel();
+        }
+        if let Some(draft) = self.draft.take() {
+            if let Some(review) = draft.rooted_review {
+                review.stop.cancel();
+            }
+        }
     }
     pub(super) fn current_connection(&self) -> bool {
         self.connection.matches(&self.displayed)
@@ -71,19 +89,46 @@ impl State {
 }
 
 impl SftpFileManagerTab {
+    pub(super) fn file_operations_idle(&self) -> bool {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if self.file_operations.preparing.is_some() {
+            return false;
+        }
+        !self.file_operations.pending && self.file_operations.draft.is_none()
+    }
+    pub(super) fn remote_delete_available(&self) -> bool {
+        if matches!(self.launch_target, FileManagerLaunchTarget::Sftp(_)) {
+            return true;
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            !self.host_files_retired
+                && self
+                    .host_files_cancel
+                    .as_ref()
+                    .is_some_and(|token| !token.is_cancelled())
+                && self
+                    .files_source
+                    .as_ref()
+                    .is_some_and(|source| source.delete_advertised)
+        }
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        false
+    }
     pub(super) fn file_operation_open(&self) -> bool {
         self.file_operations.draft.is_some()
     }
 
     pub(super) fn review_file_operation(&mut self, focus: PaneFocus, delete: bool) {
+        #[cfg(feature = "experimental-dev-tunnels")]
         if delete
             && focus == PaneFocus::Remote
             && matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
         {
-            self.operation_error = Some((
-                "Remote delete is unavailable".into(),
-                "This Files permission supports uploads and new folders, not remote delete.".into(),
-            ));
+            self.prepare_rooted_delete();
+            return;
+        }
+        if delete && focus == PaneFocus::Remote && !self.remote_delete_available() {
             return;
         }
         if self.collision_dialog.is_some()
@@ -128,6 +173,8 @@ impl SftpFileManagerTab {
             selection,
             focus_initial: true,
             admission_error: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            rooted_review: None,
         });
     }
 
@@ -156,6 +203,15 @@ impl SftpFileManagerTab {
         ctx: &egui::Context,
         tab_id: crate::tabs::TabId,
     ) {
+        // A transfer can discover a collision while the asynchronous Files
+        // review is being prepared. Keep one foreground confirmation at a time;
+        // retained deletion handles remain bounded until Cancel/Confirm/retire.
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
+            && self.collision_dialog.is_some()
+        {
+            return;
+        }
         let Some(mut draft) = self.file_operations.draft.take() else {
             return;
         };
@@ -184,9 +240,16 @@ impl SftpFileManagerTab {
                         }
                     }
                     Operation::Delete(items) => {
-                        ui.label("This permanently removes the listed files or links and empty directories. There is no trash or undo. Non-empty directories are refused.");
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        let rooted = draft.rooted_review.is_some();
+                        #[cfg(not(feature = "experimental-dev-tunnels"))]
+                        let rooted = false;
+                        ui.label(if rooted { "This permanently removes the exact reviewed files and empty directories. Links and non-empty directories are refused. There is no trash or undo." } else { "This permanently removes the listed files or links and empty directories. There is no trash or undo. Non-empty directories are refused." });
                         ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                            for item in items { ui.label(item.path.display()); }
+                            for item in items {
+                                ui.label(item.path.display());
+                                if rooted { ui.label(format!("{} · {} · Modified {}", if item.file_type == SftpEntryType::Directory { "Folder" } else { "File" }, format_size(item.size), format_modified(item.modified_at))); }
+                            }
                         });
                     }
                 }
@@ -205,7 +268,17 @@ impl SftpFileManagerTab {
             });
         draft.focus_initial = false;
         if confirm && self.file_review_current(&draft) {
-            match self.submit_worker_command(WorkerCommand::FileOperation(draft.request.clone())) {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            let command = match &draft.rooted_review {
+                Some(review) => WorkerCommand::CommitReviewedDelete {
+                    request: draft.request.clone(),
+                    batch: review.batch,
+                },
+                None => WorkerCommand::FileOperation(draft.request.clone()),
+            };
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            let command = WorkerCommand::FileOperation(draft.request.clone());
+            match self.submit_worker_command(command) {
                 Ok(()) => {
                     self.file_operations.pending = true;
                     return;
@@ -215,6 +288,11 @@ impl SftpFileManagerTab {
         }
         if !cancel && !response.should_close() {
             self.file_operations.draft = Some(draft);
+        } else {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            if let Some(review) = draft.rooted_review {
+                review.stop.cancel();
+            }
         }
     }
 
@@ -446,7 +524,7 @@ mod tests {
         }
     }
 
-    fn action_tab(root: &Path) -> SftpFileManagerTab {
+    pub(super) fn action_tab(root: &Path) -> SftpFileManagerTab {
         fs::write(root.join("owned.txt"), "owned scratch").unwrap();
         SftpFileManagerTab::for_gallery(
             "Review target".into(),

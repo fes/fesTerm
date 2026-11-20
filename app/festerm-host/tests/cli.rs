@@ -32,6 +32,37 @@ fn host_file_capabilities_binary_is_static_and_has_no_state_directory_effects() 
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }
 
+#[test]
+fn host_delete_capabilities_probe_is_separate_static_and_refuses_extra_arguments() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["capabilities", "files-delete"])
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"schema\":1,\"host_files_delete_v3\":{}}}\n",
+            cfg!(feature = "owner-routing")
+        )
+        .as_bytes()
+    );
+    let state = root.path().join("must-not-create");
+    let refused = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["capabilities", "files-delete", "--state-dir"])
+        .arg(&state)
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    assert!(!state.exists());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
 #[cfg(feature = "owner-routing")]
 #[test]
 fn host_process_recovery_managed_entries_fail_closed_without_registration_and_status_is_history() {
@@ -478,6 +509,7 @@ fn headless_configure_cannot_erase_an_unreviewable_file_grant() {
             startup: Startup::Manual,
             ordinary_access: OrdinaryAccess::ProviderOwner,
             filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
+                delete: false,
                 root: root.path().to_path_buf(),
                 write: false,
             }),

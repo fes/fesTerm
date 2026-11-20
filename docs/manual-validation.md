@@ -294,6 +294,17 @@ reopen, correlated detach, replacement-generation refusal and occupied
 persistent-writer adoption. The composition now has bounded controlled native
 evidence, not actual-vault/provider/device or GUI acceptance.
 
+Attachment-kind discovery must continue to publish/retry while an admitted
+client is not draining output, and before accepting another client. The
+controlled backpressure regression preserves the live writer and output order;
+it does not make the registry takeover authority. Current macOS/Linux/Windows
+qualification must still require exact Local/Remote displacement attribution.
+The original #815 Ubuntu stale-Remote result and separate START registration
+timeout remain retained; the deterministic starvation correction does not
+establish either original cause. A failed controlled native START now projects
+only the existing bounded, typed startup journal (or unavailable evidence),
+alongside its original error; its registration deadline remains unchanged.
+
 Persistent takeover has two distinct controlled native oracles: an active
 writer must refuse a second non-takeover request before any pending takeover
 exists; an already-pending takeover must independently retain its ticket and
@@ -2634,8 +2645,9 @@ folder/permissions in foreground Enable review; edits require Disabled. Generic
 and headless surfaces still refuse implicit hidden-policy changes. The shared
 direct client connector is described below; top-level desktop/iOS file tabs
 remain a separate tranche.
-The owner's SFTP-style command set and create/delete UI remain queued, requiring
-explicit protocol/consent extensions beyond current v1 operations.
+The Desktop composition and separate reviewed-delete increment are described
+below. Rename, permissions, links and full SFTP-style parity remain queued;
+existing v1 write permission does not grant those operations.
 
 DT-05/DT-07 native acceptance remains pending: validate signed grant enable,
 Disable/review/Enable root and write-mode changes, disabled/read-only refusal,
@@ -2674,19 +2686,49 @@ source fixtures do not change existing native evidence or complete #778.
 
 ### Desktop Dev Tunnels Files client
 
-`DTFILES-01`–`03` / DT-07 cover the Desktop composition separately from the
+`DTFILES-01`–`04` / DT-07 cover the Desktop composition separately from the
 portable connector. Qualification remains pending: use signed owned hosts on
 Windows/macOS/Linux with no daemon session, then normal account/host selection,
 Off/read-only/write grants, both transfer directions, recursive bounded plans,
 mkdir, browsing-stream previews and exact reviewed replacement. Exercise
 create/Keep Both races, explicit Skip/cancel, owner-close while Finish is held,
 account/scope retirement, late completions and disconnected workspace restore.
-Do not retry an unobserved publication. Confirm that remote delete, rename and
-permissions are unavailable and old terminal/Control behavior is unchanged.
+Do not retry an unobserved publication. Confirm that remote delete is unavailable under an old write-only grant,
+rename and permissions remain unavailable, and old terminal/Control behavior is
+unchanged.
 Capture actual queue/error/read-only UI, keyboard/accessibility and narrow
 layouts; automated fixtures/builds are not packaged/native acceptance. Full
 remote command parity needs additional explicit consent/protocol work; Mobile
 and the wider #778 queue remain open.
+
+### Reviewed Desktop Files deletion
+
+DTFILES-04 / DT-05 / DT-07 native and packaged qualification remains pending.
+With owned roots only, verify the separate default-off delete toggle, read/write
+prerequisite, exact root/read/write/delete foreground review and Disabled-only
+changes. Existing write-only grants must not delete. The separate authenticated
+static helper feature probe must refuse unsupported helpers before setup/update
+effects; it proves compiled support, never a permission grant or endpoint readiness.
+
+On Windows/macOS/Linux select mixed regular files and empty folders (maximum 8).
+No confirmation appears until every exact entry/parent is retained; Busy or any
+partial-review failure closes all prepared handles and leaves transfers usable.
+Verify actual reviewed metadata and initially focused Cancel, cancellation during
+preparation, changed folder/selection/account refusal, and no late dialog after
+retirement. Confirm once, then inspect only reviewed objects removed, nonempty
+folders/new children refused atomically, links/reparse points refused and unrelated
+siblings preserved. Exercise changed public names, reserved-capture substitution,
+restore collisions, root/scope cutover and lost result after native removal.
+Retain confirmed count, unknown current target, untouched remainder and bounded
+virtual recovery locator separately; never replay an unobserved delete. Unix
+reserved captures/trusted parents are the namespace boundary, not an atomic
+identity-conditional unlink guarantee against arbitrary same-user OS writers.
+Native permissions and ACLs must not be repaired to pass a fixture. Confirm old
+Open2 clients still browse/transfer and cannot invoke deletion even when the host's
+new policy permits it. No automatic downgrade/reconnect/fallback is permitted.
+Portable/framed/rendered fixtures and Windows metadata compilation do not qualify
+native Windows execution, packaged UI, accessibility or usability. Full remote
+rename/chmod/link parity, larger/recursive delete and Mobile remain queued.
 
 ### SFTP owner cancellation
 

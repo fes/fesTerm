@@ -1511,7 +1511,24 @@
         "desktop_host_cached_resize_budget_failure_never_publishes_running_or_input",
         "selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop",
         "desktop_first_viewport_backpressure_precedes_immediate_input",
-        "desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size"
+        "desktop_first_viewport_sustained_backpressure_preserves_input_and_latest_size",
+        "reviewed_delete_removes_files_and_empty_directories_once_without_following_links",
+        "reviewed_delete_requires_separate_consent_and_open3_before_any_review",
+        "reviewed_delete_admission_bounds_handles_without_releasing_other_stream_charge",
+        "reviewed_delete_detects_public_name_change_before_capture_without_touching_foreign_entry",
+        "reviewed_delete_capture_substitution_and_restore_collision_preserve_foreign_names",
+        "reviewed_delete_new_directory_child_after_capture_refuses_and_restores_exact_folder",
+        "reviewed_delete_rechecks_parent_trust_without_repairing_changed_permissions",
+        "reviewed_client_unknown_optional_operations_grant_nothing_and_preserve_ping",
+        "reviewed_client_refuses_duplicate_known_and_unbounded_capabilities_before_operations",
+        "reviewed_client_delete_lost_result_is_terminal_without_replay",
+        "reviewed_native_wire_open2_cannot_review_or_delete_even_with_protected_grant",
+        "reviewed_native_wire_delete_commits_once_and_suppressed_reply_stays_unknown",
+        "reviewed_delete_consent_defaults_off_and_preserves_old_serialized_policy",
+        "reviewed_ordinary_directory_move_and_delete_preserve_collision_and_refuse_new_child",
+        "host_delete_probe_is_separate_strict_bounded_and_revalidates_stage",
+        "host_delete_capabilities_probe_is_separate_static_and_refuses_extra_arguments",
+        "desktop_remote_access_delete_permission_is_separate_requires_write_and_survives_draft_roundtrip"
       ],
       "manual_scenarios": [
         "DT-01",
@@ -1755,6 +1772,8 @@
         "pending_marker_order_rejects_duplicate_chunks_and_replayed_final_marker",
         "pending_marker_order_rejects_missing_chunks_and_missing_final_marker",
         "native_bridge_drains_exit_and_takeover_final_frames_before_success",
+        "native_startup_evidence_is_bounded_typed_and_read_only",
+        "attachment_publication_retries_while_client_output_is_backpressured",
         "invocation_rejects_attach_without_explicit_takeover",
         "closed_session_input_is_an_error_not_successful_detach",
         "bounded_line_reader_rejects_without_truncating_prefix",
@@ -7029,7 +7048,7 @@
     {
       "id": "desktop-dev-tunnels-files-session",
       "edges": [
-        "DTFILES-0[123]"
+        "DTFILES-0[1234]"
       ],
       "requirements": [
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
@@ -7059,7 +7078,17 @@
         "files_workspace_restore_is_disconnected_without_transport_and_keeps_files_kind",
         "files_remote_delete_stays_disabled_with_write_permission_and_mkdir_rechecks_scope",
         "files_queue_finish_creation_race_requires_fresh_review_without_replay",
-        "files_endpoint_transfer_planning_refuses_skipped_names_and_releases_directory"
+        "files_endpoint_transfer_planning_refuses_skipped_names_and_releases_directory",
+        "files_delete_partial_busy_closes_review_handles_and_preserves_channel",
+        "files_delete_cancelled_preparation_observes_and_closes_last_handle_without_delete",
+        "files_delete_exact_review_batch_reports_confirmed_unknown_and_untouched_without_replay",
+        "files_delete_dropped_mutation_retains_only_unknown_observation_and_never_replays",
+        "files_delete_returned_refusal_and_success_clear_owner_marker_and_keep_channel_live",
+        "files_delete_dialog_requires_all_prepared_handles_and_cancel_closes_review",
+        "files_delete_write_only_link_and_oversize_selections_cannot_prepare",
+        "files_delete_queued_review_after_account_retirement_is_not_disclosed_but_unknown_survives",
+        "files_delete_recovery_required_preserves_virtual_path_and_is_terminal_unknown",
+        "files_delete_prepared_review_waits_behind_existing_transfer_collision_dialog"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7067,7 +7096,7 @@
       "status": "partial",
       "prerequisites": [
         "Current-source native/provider Desktop Files discovery, browse/upload/download/mkdir/preview, exact replacement review, cancellation and account retirement remain unqualified; portable protocol and rendered fixtures do not replace these checks.",
-        "Windows/macOS/Linux local staging and cleanup qualification must retain existing SFTP ownership guarantees. Mobile Files and remote delete/rename/chmod remain separate follow-on work; rooted v1 write consent does not authorize destructive commands.",
+        "Windows/macOS/Linux native reviewed deletion/capture/restore and packaged default-off delete consent/UI remain unqualified; Windows GNU metadata checks are not native execution. Mobile Files and remote rename/chmod/link parity remain separate required work; old rooted v1 write consent never authorizes deletion.",
         "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending."
       ]
     }

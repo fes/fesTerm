@@ -135,7 +135,9 @@ async fn serve_inner(
     }
     let open: rpc::HostOpen = serde_json::from_slice(&bytes).map_err(|_| denied())?;
     open.scope.validate()?;
-    if open.version != rpc::HOST_VERSION || open.scope != captured.scope {
+    if !matches!(open.version, rpc::HOST_VERSION | rpc::HOST_REVIEWED_VERSION)
+        || open.scope != captured.scope
+    {
         return Err(denied());
     }
     let admission: filesystem::Admission = Arc::new(move |_| {
@@ -144,5 +146,9 @@ async fn serve_inner(
         }
         Ok(())
     });
-    filesystem::serve_authorized(stream, filesystem, admission, cancel).await
+    if open.version == rpc::HOST_REVIEWED_VERSION {
+        filesystem::serve_authorized_reviewed(stream, filesystem, admission, cancel).await
+    } else {
+        filesystem::serve_authorized(stream, filesystem, admission, cancel).await
+    }
 }

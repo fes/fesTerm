@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub(crate) mod files;
 mod ordinary_keys;
-pub use files::{open_files, Files, FilesError, FilesStream};
+pub use files::{open_files, open_files_reviewed, Files, FilesError, FilesStream};
 #[cfg(all(test, feature = "testing"))]
 #[path = "ordinary/ordinary_tests.rs"]
 mod tests;

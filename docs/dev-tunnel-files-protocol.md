@@ -3,9 +3,10 @@
 This is the host/client integration contract for ADR 0067. Host implementation
 lives in `festerm-tunnel-bridge`. Its portable `client` feature also exposes the
 sequential `file_client::Client` engine. Desktop composition uses ordinary
-`open_files` and the existing SFTP file-manager presentation and queue for browse,
-upload/download, mkdir and bounded read-only previews. Remote delete, rename and
-chmod are unavailable; rooted v1 write consent does not authorize them. Mobile
+`open_files_reviewed` (browsing/review) plus pinned `open_files` (transfers)
+and the existing SFTP file-manager presentation and queue for browse,
+upload/download, mkdir and bounded read-only previews. Reviewed deletion uses the separate Open3 extension below; rooted v1 write
+consent never authorizes deletion. Rename, links and chmod remain unavailable. Mobile
 integration and native/provider Desktop qualification remain pending. Portable
 Rust DTOs/constants are in `file_protocol.rs`. Do not send these operations as
 terminal input, invoke a remote shell, or fall back to SFTP/local files.
@@ -175,6 +176,68 @@ strict old-message compatibility, proof-role separation, no-daemon operation,
 exact-scope refusal, bounded admission and publication/cutover interleavings.
 Real signed HOST policy changes and desktop/iOS UI remain separate native gates.
 
+## Reviewed DELETE extension
+
+**Source implementation; native/packaged qualification pending.** Ordinary Files role2 and the initial kind34
+HOST description2/capabilities1 stay unchanged. Legacy rooted v1, HostOpen2 and
+its Ready/operation bytes stay unchanged; Open2 refuses the new operations even
+when protected delete consent exists. No new auth role/crypto domain is added.
+
+After the base greeting, explicit kind30 HostOpen3 echoes the same exact scope.
+Only this mode receives distinct kind32/ID0 ReadyV3:
+
+```json
+{"id":0,"result":{"type":"ready_v3","capabilities":{"version":3,"write":true,"operations":[],"chunk_limit":65536,"page_limit":64,"handle_limit":8}}}
+```
+
+ReadyV3 uses a bounded explicit `operations:["delete"]` list, not a new policy
+language: at most 16 names, each 1–32 UTF-8 bytes without control characters.
+Unknown optional names are ignored and grant nothing; duplicate known names
+refuse. Only implemented, explicitly consented operations are advertised.
+Common write/limit fields must match the greeting and existing bounds. Open2
+accepts only old Ready; Open3 only ReadyV3. Wrong-mode replies refuse before any
+operation. Delete requires protected delete=true and write=true; upgrading grants
+nothing. New clients may require Open3; old helpers refuse it before mutation.
+No automatic downgrade/reconnect/fallback/replay. An unframed close/timeout is
+unavailable negotiation, not proof of old-helper/off/absence.
+
+Proposed strict operations, retaining existing frame/ID/path/JSON limits:
+
+```json
+{"id":1,"operation":{"op":"review_entry","path":"/notes.txt","purpose":"delete"}}
+{"id":2,"operation":{"op":"delete","review":1}}
+```
+
+Review returns `entry_review`, a handle and actual File/Directory metadata,
+retaining native identity/rooted parent/type/change stamp. Each purpose-bound
+review occupies one existing handle slot; Close releases it, Delete consumes
+its valid token once. Foreign/stale/wrong-purpose tokens cannot consume another
+review. Only regular files and empty directories qualify; links/reparse refuse
+without following them. Native removal rechecks emptiness and returns
+`not_empty` for new children. Observed success returns `deleted`.
+
+Fresh request/disclosure/publication admission surrounds exact capture,
+verification and removal. Pre-removal refusal restores without replacing a
+concurrent entry; failed restore retains the capture and uses existing
+`recovery_required`/validated bounded virtual path. Never unlink a foreign
+replacement at observable boundaries. Unix relies on the trusted reserved-capture
+namespace, not identity-atomic unlink against arbitrary same-user OS writers.
+Missing/dropped/suppressed results are terminal unknown, no replay
+or inferred success/rollback; existing native-job charges outlive async timeout.
+
+Protected delete defaults false/omit-false and requires write, full Disabled-only
+foreground consent and fresh Enable epoch. Existing static `capabilities` stays
+byte-identical; separate `capabilities files-delete` returns strict schema1 plus
+`host_files_delete_v3` boolean before setup/update effects, with existing bounded
+authenticated read-only probing. This proves compiled support, not permission.
+
+Desktop prepares no more than eight direct children, all-or-no-dialog, with
+worker-owned handles; Busy preserves transfers and Cancel closes all reviews.
+Confirm runs sequentially, stops at first non-success and reports confirmed,
+unknown and untouched entries separately. See [ADR 0067](adr/0067-rooted-dev-tunnel-host-filesystem.md)
+for native primitive gaps and required evidence. Rename/chmod, links, recursive
+or oversized-batch delete, Mobile and full CLI parity remain queued.
+
 ## Portable client engine
 
 `file_client::Client` consumes an already host-key-verified **separate legacy
@@ -300,5 +363,7 @@ consume the OS account's disk quota; there is no RAM-sized whole-file limit.
 This is not isolation from hostile code already running as the same OS user,
 administrator/root, or external filesystem changes by those principals.
 Symlink/reparse traversal and foreign-writable directory parents refuse.
-No delete, general rename, chmod, execution or remote content persistence in
-ordinary fesTerm configuration/workspaces is introduced.
+Legacy rooted-v1/Open2 grants introduce no delete, general rename, chmod or
+execution. Separately consented Open3 reviewed deletion is specified above;
+general rename/chmod remain unavailable. Remote content is never persisted in
+ordinary fesTerm configuration/workspaces.

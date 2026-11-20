@@ -1,16 +1,16 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "cb84c93735f3465421535fc576963af9cf83bb01f51d7239c239942c81ec336d"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "47faff1b54f88176e5d9de6922067ab091d070edf4aafdee1e111081211d53b9"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the desktop shell, window lifecycle, pane rendering, and screen-driven host/session workflows for fesTerm.
+Owns the desktop shell, windows, panes and host/session screens.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## Startup flow
 
-Use for: Booting the app and reopening saved windows or user-authenticated sessions
+Use for: Startup and restored windows/sessions
 
 - [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native window startup.
 - [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns all windows and cross-window policy.
@@ -26,7 +26,7 @@ Caveats:
 
 ## Frame loop
 
-Use for: Processing each frame, close requests, and focused pane rendering
+Use for: Frames, close requests and focused rendering
 
 - [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry.
 - [`ui_content`](../../app/festerm/src/app.rs) — Builds chrome, overlays, and the active pane surface.
@@ -41,7 +41,7 @@ Caveats:
 
 ## Screen routing
 
-Use for: Opening profile and settings forms and dispatching typed actions
+Use for: Profiles, settings and typed actions
 
 - [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect or save dispatch flow.
 - [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, keyboard bindings, and automation preferences.
@@ -57,10 +57,10 @@ Caveats:
 
 ## Host access
 
-Use for: Ordinary host discovery, inventory, attachment, and reviewed creation
+Use for: Host discovery, inventory, attach and creation
 
 - [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review.
-- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Remotes review includes exact folder and write consent.
+- [`show`](../../app/festerm/src/desktop_remote_access/view.rs) — Reviews exact folder/read/write/delete consent.
 
 Evidence:
 - [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry.
@@ -71,7 +71,7 @@ Caveats:
 
 ## Lifecycle diagnostics
 
-Use for: Application exit recovery and historical host failure evidence
+Use for: Exit recovery and host failure history
 
 - [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook.
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context.
@@ -90,12 +90,13 @@ Use for: Local/SFTP actions and ordinary Dev Tunnels Files.
 
 - [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory and selection.
 - [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Retires stale remote reviews.
-- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Uses the shared file-manager queue with two scope-pinned Files streams.
+- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, two pinned streams and bounded unknown outcomes.
+- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — At most eight exact worker-owned reviews before confirmation.
 
 Evidence:
-- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks production dialog geometry.
-- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Refuses queued listings/reviews while preserving terminal outcomes.
+- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks dialog geometry.
+- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Fences late disclosures; retains terminal outcomes.
 
 Caveats:
-- Local/SFTP delete is permanent and nonrecursive. Rooted v1 Files has no remote delete, rename or chmod.
+- Local/SFTP delete is nonrecursive. Open2 write grants no delete; Open3 needs separate consent and exact review. Rename/chmod/links remain unavailable.
 - Files restore is disconnected; native/provider and GUI qualification remain pending.

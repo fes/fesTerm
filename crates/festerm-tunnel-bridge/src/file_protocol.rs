@@ -18,6 +18,11 @@ pub const HANDLE_LIMIT: usize = 8;
 pub struct Policy {
     pub root: std::path::PathBuf,
     pub write: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub delete: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl std::fmt::Debug for Policy {
@@ -25,6 +30,7 @@ impl std::fmt::Debug for Policy {
         f.debug_struct("Policy")
             .field("root", &"[private folder]")
             .field("write", &self.write)
+            .field("delete", &self.delete)
             .finish()
     }
 }
@@ -32,7 +38,8 @@ impl Policy {
     /// Portable shape only. Native admission separately opens and verifies the
     /// root and ancestors without following links or repairing permissions.
     pub fn validate(&self) -> std::io::Result<()> {
-        if !self.root.is_absolute()
+        if self.delete && !self.write
+            || !self.root.is_absolute()
             || self.root.to_str().is_none_or(|p| p.len() > 4096)
             || self
                 .root
@@ -92,6 +99,86 @@ pub struct Capabilities {
     pub handle_limit: usize,
 }
 
+/// Explicit HOST opening mode. Legacy/Open2 greetings and replies stay v1.
+pub const HOST_REVIEWED_VERSION: u16 = 3;
+pub const OPERATION_LIMIT: usize = 16;
+pub const OPERATION_NAME_LIMIT: usize = 32;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationCapabilities {
+    pub version: u16,
+    pub write: bool,
+    #[serde(deserialize_with = "bounded_operations")]
+    pub operations: Vec<String>,
+    pub chunk_limit: usize,
+    pub page_limit: u16,
+    pub handle_limit: usize,
+}
+fn bounded_operations<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Vec<String>, D::Error> {
+    struct Names;
+    impl<'de> serde::de::Visitor<'de> for Names {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a bounded list of optional operation names")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut names = Vec::new();
+            while let Some(name) = seq.next_element::<String>()? {
+                if names.len() == OPERATION_LIMIT
+                    || name.is_empty()
+                    || name.len() > OPERATION_NAME_LIMIT
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(serde::de::Error::custom(
+                        "operation names exceed their bound",
+                    ));
+                }
+                names.push(name);
+            }
+            Ok(names)
+        }
+    }
+    decoder.deserialize_seq(Names)
+}
+impl OperationCapabilities {
+    /// Unknown optional names are inert; protected policy remains strictly typed.
+    pub fn allows_delete(&self) -> bool {
+        self.operations.iter().any(|name| name == "delete")
+    }
+    pub fn validate(&self, base: &Capabilities) -> bool {
+        self.version == HOST_REVIEWED_VERSION
+            && self.write == base.write
+            && self.chunk_limit == base.chunk_limit
+            && self.page_limit == base.page_limit
+            && self.handle_limit == base.handle_limit
+            && self.operations.len() <= OPERATION_LIMIT
+            && self.operations.iter().all(|name| {
+                !name.is_empty()
+                    && name.len() <= OPERATION_NAME_LIMIT
+                    && !name.chars().any(char::is_control)
+            })
+            && self
+                .operations
+                .iter()
+                .filter(|name| name.as_str() == "delete")
+                .count()
+                <= 1
+            && (!self.allows_delete() || self.write)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewPurpose {
+    Delete,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Open {
@@ -117,6 +204,13 @@ pub struct Request {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    ReviewEntry {
+        path: String,
+        purpose: ReviewPurpose,
+    },
+    Delete {
+        review: u32,
+    },
     Stat {
         path: String,
     },
@@ -183,6 +277,14 @@ pub struct Entry {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
+    ReadyV3 {
+        capabilities: OperationCapabilities,
+    },
+    EntryReview {
+        handle: u32,
+        metadata: Metadata,
+    },
+    Deleted,
     Ready {
         capabilities: Capabilities,
     },
@@ -231,6 +333,7 @@ pub enum ErrorCode {
     Busy,
     Io,
     RecoveryRequired,
+    NotEmpty,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -319,6 +422,7 @@ mod tests {
             assert!(invalid.validate().is_err());
         }
         let policy = Policy {
+            delete: false,
             root: std::env::temp_dir().join("canary-private-root"),
             write: false,
         };
@@ -346,5 +450,34 @@ mod tests {
         .is_err());
         assert!(crate::protocol::validate_length(DATA, CHUNK_LIMIT + 5).is_err());
         assert!(crate::protocol::validate_length(REQUEST, JSON_LIMIT + 1).is_err());
+    }
+    #[test]
+    fn reviewed_delete_consent_defaults_off_and_preserves_old_serialized_policy() {
+        let root = std::env::temp_dir().join("reviewed-delete-canary");
+        let legacy = serde_json::json!({"root": root, "write": true});
+        let decoded: Policy = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(!decoded.delete);
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), legacy);
+        let mut approved = decoded;
+        approved.delete = true;
+        approved.validate().unwrap();
+        approved.write = false;
+        assert!(approved.validate().is_err());
+        let mut unknown = serde_json::to_value(approved).unwrap();
+        unknown["operations"] = serde_json::json!(["delete"]);
+        assert!(serde_json::from_value::<Policy>(unknown).is_err());
+        assert_eq!(
+            serde_json::to_string(&Result::Ready {
+                capabilities: Capabilities {
+                    version: 1,
+                    write: true,
+                    chunk_limit: CHUNK_LIMIT,
+                    page_limit: PAGE_LIMIT,
+                    handle_limit: HANDLE_LIMIT,
+                }
+            })
+            .unwrap(),
+            r#"{"type":"ready","capabilities":{"version":1,"write":true,"chunk_limit":65536,"page_limit":64,"handle_limit":8}}"#
+        );
     }
 }

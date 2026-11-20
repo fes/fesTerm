@@ -17,6 +17,10 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 
+#[path = "host_files/reviewed_delete.rs"]
+mod reviewed_delete;
+pub(crate) use reviewed_delete::{DeleteObservation, DeleteOutcome};
+
 pub(crate) struct FilesEndpoint<S> {
     client: Client<S>,
     lifetime: CancellationToken,
@@ -25,6 +29,7 @@ pub(crate) struct FilesEndpoint<S> {
     in_flight_upload: Option<(uuid::Uuid, String)>,
     directory: Option<(u64, Handle, String)>,
     review: Option<(u64, Handle, String)>,
+    delete_review: Option<reviewed_delete::PreparedDelete>,
 }
 impl FilesEndpoint<FilesStream> {
     pub(crate) fn new(files: Files, lifetime: CancellationToken) -> Self {
@@ -36,6 +41,7 @@ impl FilesEndpoint<FilesStream> {
             in_flight_upload: None,
             directory: None,
             review: None,
+            delete_review: None,
         }
     }
 }
@@ -519,7 +525,7 @@ impl super::FesTermApp {
     ) {
         use festerm_tunnel_bridge::host_client::{
             self,
-            ordinary::{open_files, OrdinaryKeyIndex},
+            ordinary::{open_files, open_files_reviewed, OrdinaryKeyIndex},
         };
         use festerm_tunnel_client::{host_control::ConnectionPermit, service};
         if !context.input(|input| input.focused) {
@@ -625,7 +631,7 @@ impl super::FesTermApp {
             );
             let index = OrdinaryKeyIndex::native()
                 .map_err(|error| super::host_browser::RequestFailure::from(error.message()))?;
-            let browsing = open_files(
+            let browsing = open_files_reviewed(
                 &identity,
                 &locator,
                 index.clone(),
@@ -768,6 +774,7 @@ mod tests {
             in_flight_upload: None,
             directory: None,
             review: None,
+            delete_review: None,
         }
     }
     async fn joined(task: tokio::task::JoinHandle<()>) {
@@ -1365,6 +1372,349 @@ mod tests {
         ));
         assert!(endpoint.client.available());
         endpoint.client.cancel();
+        joined(server).await;
+    }
+    fn reviewed_scope() -> rpc::HostScope {
+        rpc::HostScope {
+            host: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".parse().unwrap(),
+            installation: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".parse().unwrap(),
+            epoch: "7".into(),
+        }
+    }
+    async fn reviewed_handshake(peer: &mut DuplexStream) {
+        let scope = reviewed_scope();
+        write_frame(
+            peer,
+            rpc::HOST_DESCRIPTION,
+            &serde_json::to_vec(&rpc::HostDescription {
+                version: rpc::HOST_VERSION,
+                scope: scope.clone(),
+                filesystem: Some(limits()),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let (kind, bytes) = read_frame(peer).await.unwrap();
+        assert_eq!(kind, rpc::OPEN);
+        let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(open.version, rpc::HOST_REVIEWED_VERSION);
+        assert_eq!(open.scope, scope);
+        reply(
+            peer,
+            0,
+            Some(rpc::Result::ReadyV3 {
+                capabilities: rpc::OperationCapabilities {
+                    version: rpc::HOST_REVIEWED_VERSION,
+                    write: true,
+                    operations: vec!["delete".into()],
+                    chunk_limit: rpc::CHUNK_LIMIT,
+                    page_limit: rpc::PAGE_LIMIT,
+                    handle_limit: rpc::HANDLE_LIMIT,
+                },
+            }),
+            None,
+        )
+        .await;
+    }
+    async fn reviewed_endpoint(stream: DuplexStream) -> FilesEndpoint<DuplexStream> {
+        let lifetime = CancellationToken::new();
+        let (client, _) = Client::open_host_reviewed(
+            stream,
+            &reviewed_scope().host,
+            &reviewed_scope().installation,
+            lifetime.clone(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        FilesEndpoint {
+            client,
+            lifetime,
+            next: 1,
+            generation: uuid::Uuid::nil(),
+            in_flight_upload: None,
+            directory: None,
+            review: None,
+            delete_review: None,
+        }
+    }
+    async fn reviewed_reply(peer: &mut DuplexStream, id: u32, handle: u32, directory: bool) {
+        reply(
+            peer,
+            id,
+            Some(rpc::Result::EntryReview {
+                handle,
+                metadata: rpc::Metadata {
+                    kind: if directory {
+                        rpc::Kind::Directory
+                    } else {
+                        rpc::Kind::File
+                    },
+                    size: if directory { "0" } else { "13" }.into(),
+                    modified_ms: Some("1".into()),
+                },
+            }),
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn files_delete_partial_busy_closes_review_handles_and_preserves_channel() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            let first = request(&mut peer).await;
+            assert!(
+                matches!(first.operation, rpc::Operation::ReviewEntry { ref path, purpose: rpc::ReviewPurpose::Delete } if path == "/one")
+            );
+            reviewed_reply(&mut peer, first.id, 41, false).await;
+            let second = request(&mut peer).await;
+            assert!(matches!(
+                second.operation,
+                rpc::Operation::ReviewEntry { .. }
+            ));
+            reply(&mut peer, second.id, None, Some(rpc::ErrorCode::Busy)).await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 41 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        assert!(endpoint
+            .prepare_delete(&["/one".into(), "/two".into()], CancellationToken::new())
+            .await
+            .is_err());
+        assert!(endpoint.delete_review.is_none());
+        endpoint.ping().await.unwrap();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_delete_cancelled_preparation_observes_and_closes_last_handle_without_delete() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let stop = CancellationToken::new();
+        let server_stop = stop.clone();
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            let call = request(&mut peer).await;
+            server_stop.cancel();
+            reviewed_reply(&mut peer, call.id, 7, false).await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 7 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        assert!(endpoint
+            .prepare_delete(&["/one".into(), "/never-opened".into()], stop)
+            .await
+            .is_err());
+        assert!(endpoint.delete_review.is_none());
+        endpoint.ping().await.unwrap();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_delete_exact_review_batch_reports_confirmed_unknown_and_untouched_without_replay(
+    ) {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            for (index, path) in ["/file", "/empty", "/untouched"].into_iter().enumerate() {
+                let call = request(&mut peer).await;
+                assert!(
+                    matches!(call.operation, rpc::Operation::ReviewEntry { path: ref actual, .. } if actual == path)
+                );
+                reviewed_reply(&mut peer, call.id, 60 + index as u32, index == 1).await;
+            }
+            let first = request(&mut peer).await;
+            assert!(matches!(
+                first.operation,
+                rpc::Operation::Delete { review: 60 }
+            ));
+            reply(&mut peer, first.id, Some(rpc::Result::Deleted), None).await;
+            let second = request(&mut peer).await;
+            assert!(matches!(
+                second.operation,
+                rpc::Operation::Delete { review: 61 }
+            ));
+            // Suppress the already-received second mutation result. No third
+            // delete or replay may be attempted after this transport closure.
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        let (id, items) = endpoint
+            .prepare_delete(
+                &["/file".into(), "/empty".into(), "/untouched".into()],
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(items[0].size, Some(13));
+        assert_eq!(items[1].file_type, SftpEntryType::Directory);
+        let observer = DeleteObservation::default();
+        let outcome = endpoint.commit_delete(id, &observer).await;
+        assert_eq!((outcome.confirmed, outcome.total), (1, 3));
+        assert!(outcome.failure.unwrap().0);
+        assert!(
+            observer.interrupted().is_none(),
+            "returned unknown clears the owner-drop marker"
+        );
+        assert!(endpoint.delete_review.is_none());
+        assert!(!endpoint.client.available());
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_delete_dropped_mutation_retains_only_unknown_observation_and_never_replays() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            let review = request(&mut peer).await;
+            reviewed_reply(&mut peer, review.id, 81, false).await;
+            let delete = request(&mut peer).await;
+            assert!(matches!(
+                delete.operation,
+                rpc::Operation::Delete { review: 81 }
+            ));
+            seen.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        let (id, _) = endpoint
+            .prepare_delete(&["/owned".into()], CancellationToken::new())
+            .await
+            .unwrap();
+        let observer = DeleteObservation::default();
+        {
+            let mutation = endpoint.commit_delete(id, &observer);
+            tokio::pin!(mutation);
+            tokio::select! { _ = received => {}, _ = &mut mutation => panic!("withheld result must remain pending") }
+        }
+        assert!(!endpoint.client.available());
+        assert!(matches!(
+            observer.interrupted(),
+            Some(SftpSessionError::PublicationUncertain { .. })
+        ));
+        assert!(observer.interrupted().is_none());
+        joined(server).await;
+    }
+    #[tokio::test]
+    async fn files_delete_returned_refusal_and_success_clear_owner_marker_and_keep_channel_live() {
+        for refuse in [false, true] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                reviewed_handshake(&mut peer).await;
+                for index in 0..2 {
+                    let call = request(&mut peer).await;
+                    reviewed_reply(&mut peer, call.id, 90 + index, index == 1).await;
+                }
+                let first = request(&mut peer).await;
+                assert!(matches!(
+                    first.operation,
+                    rpc::Operation::Delete { review: 90 }
+                ));
+                if refuse {
+                    reply(&mut peer, first.id, None, Some(rpc::ErrorCode::Conflict)).await;
+                } else {
+                    reply(&mut peer, first.id, Some(rpc::Result::Deleted), None).await;
+                }
+                let second = request(&mut peer).await;
+                if refuse {
+                    assert!(matches!(
+                        second.operation,
+                        rpc::Operation::Close { handle: 91 }
+                    ));
+                    reply(&mut peer, second.id, Some(rpc::Result::Closed), None).await;
+                } else {
+                    assert!(matches!(
+                        second.operation,
+                        rpc::Operation::Delete { review: 91 }
+                    ));
+                    reply(&mut peer, second.id, Some(rpc::Result::Deleted), None).await;
+                }
+                let ping = request(&mut peer).await;
+                assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+                reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            });
+            let mut endpoint = reviewed_endpoint(stream).await;
+            let (id, _) = endpoint
+                .prepare_delete(&["/file".into(), "/empty".into()], CancellationToken::new())
+                .await
+                .unwrap();
+            let observer = DeleteObservation::default();
+            let outcome = endpoint.commit_delete(id, &observer).await;
+            assert_eq!(outcome.total, 2);
+            if refuse {
+                assert_eq!(outcome.confirmed, 0);
+                assert!(
+                    !outcome.failure.unwrap().0,
+                    "fully received Conflict is a known refusal"
+                );
+            } else {
+                assert_eq!(outcome.confirmed, 2);
+                assert!(outcome.failure.is_none());
+            }
+            assert!(observer.interrupted().is_none());
+            assert!(endpoint.delete_review.is_none());
+            endpoint.ping().await.unwrap();
+            joined(server).await;
+        }
+    }
+    #[tokio::test]
+    async fn files_delete_recovery_required_preserves_virtual_path_and_is_terminal_unknown() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            let call = request(&mut peer).await;
+            reviewed_reply(&mut peer, call.id, 22, false).await;
+            let delete = request(&mut peer).await;
+            assert!(matches!(
+                delete.operation,
+                rpc::Operation::Delete { review: 22 }
+            ));
+            write_frame(
+                &mut peer,
+                rpc::RESPONSE,
+                &serde_json::to_vec(&rpc::Response {
+                    id: delete.id,
+                    result: None,
+                    error: Some(rpc::ErrorCode::RecoveryRequired),
+                    recovery_path: Some("/folder/.festerm-transfer-delete-owned".into()),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        let (id, _) = endpoint
+            .prepare_delete(&["/target".into()], CancellationToken::new())
+            .await
+            .unwrap();
+        let observer = DeleteObservation::default();
+        let outcome = endpoint.commit_delete(id, &observer).await;
+        assert_eq!((outcome.confirmed, outcome.total), (0, 1));
+        let (unknown, reason) = outcome.failure.unwrap();
+        assert!(unknown);
+        assert!(reason.contains("/folder/.festerm-transfer-delete-owned"));
+        assert!(!endpoint.client.available());
+        assert!(observer.interrupted().is_none());
         joined(server).await;
     }
 }

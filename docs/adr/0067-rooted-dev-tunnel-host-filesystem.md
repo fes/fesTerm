@@ -21,9 +21,10 @@ Publish portable wire types and an integration contract in
 `docs/dev-tunnel-files-protocol.md`. Directory recursion belongs to clients:
 hosts expose bounded enumeration, metadata, chunked read/write, mkdir and close.
 Delete, arbitrary rename, links, permission editing and reconnect replay are
-not part of the current v1 grant. The owner's SFTP-style command set and
-create/delete UI remain queued goals; additional operations require an explicit
-protocol/consent extension rather than silently expanding this grant.
+not part of the current v1 grant. The reviewed DELETE amendment below adds
+separate consent and negotiation for files/empty folders only. Rename, links,
+permission editing and full command parity remain queued; additional operations
+require explicit consent/protocol extensions rather than expanding the v1 grant.
 
 All access is default off. For the legacy managed bridge, `--file-root` grants
 rooted reads and enumeration;
@@ -166,9 +167,9 @@ block Files, while aggregate client and authentication-frame byte budgets still
 apply. These are shared client primitives, not desktop/iOS file-tab integration
 or provider/native qualification.
 
-Top-level desktop/iOS file tabs and reuse of SFTP
-pane/transfer presentation follow separately; unsupported delete/rename/chmod
-actions remain unavailable. Restore such tabs disconnected, never with live authority.
+Desktop Files tabs reuse the SFTP pane/transfer presentation and restore
+disconnected, never with live authority. The amendment below adds separately
+reviewed delete; rename/chmod/link actions and Mobile integration remain queued.
 
 ### Revocation and publication cutover
 
@@ -254,23 +255,110 @@ without publishing an apparently complete truncated listing. Browsing reports
 skipped unsafe names; recursive transfer planning refuses skipped names rather
 than reporting an incomplete folder copy as complete.
 
-This v1 client supports browsing, upload/download, mkdir and bounded read-only
-previews. Remote delete, arbitrary rename and permission changes remain
-unsupported; write consent does not authorize them. Full command parity needs
-a separate protocol/capability/protected-consent extension. Mobile integration,
+The original rooted-v1/Open2 client supports browsing, upload/download, mkdir
+and bounded read-only previews. Its write consent never authorizes delete,
+arbitrary rename or permission changes. The [reviewed DELETE amendment](#reviewed-delete-amendment)
+adds separately negotiated deletion; full command parity still needs additional
+explicit protocol/capability/protected-consent extensions. Mobile integration,
 provider/native service qualification and packaged GUI/accessibility evidence
 remain separate gates; this increment does not complete #778.
+
+## Reviewed DELETE amendment
+
+**Source implementation; native/packaged qualification pending.** Add ordinary HOST deletion
+of regular files and empty directories. Links/reparse points, recursive delete,
+rename, chmod, Mobile and full CLI parity remain queued; no full-parity claim.
+
+Add protected `Policy.delete`, default false/omit-false, with `delete => write`
+validation. Old `{root,write}` records remain byte-compatible and never gain
+delete. Changing consent uses confirmed Disable, exact full foreground Desktop
+root/read/write/delete review, and the existing atomic ticket/epoch/CAS path.
+Unrelated edits preserve consent; write cannot be disabled while retaining a
+latent delete flag. Generic/headless enable cannot introduce this permission.
+
+Preserve legacy rooted v1 and HOST description2/capabilities1, Open2 and Ready
+bytes. Open3 follows the unchanged base greeting and selects distinct ReadyV3
+operation capabilities with a bounded explicit `operations:["delete"]` list
+(maximum 16 names of 1–32 bytes, no controls). Unknown optional names grant
+nothing and are ignored; duplicate known names refuse. Protected consent stays
+strictly typed, with unknown consent fields refused. This accommodates the next
+rename/chmod increments without another opening revision. Ordinary Files
+role2/crypto remain unchanged. Open2
+refuses ReviewEntry/Delete even when policy.delete is true. New clients may
+require Open3: no downgrade, reconnect, fallback or replay. Unframed refusal is
+unavailable negotiation, not proof of an old helper, disabled grant or absence.
+
+Keep `festerm-host capabilities` schema1/output unchanged. Add only the static
+`capabilities files-delete` probe: schema1/`host_files_delete_v3` boolean, with no
+state/vault/service/manager access. Reviewed delete consent requires this feature
+on the authenticated TrustedStage before setup/update effects, through existing
+bounded read-only execution and pre/post revalidation/cancel/scope fences. A
+compiled-support boolean is neither consent nor readiness.
+
+`ReviewEntry {path,purpose:delete}` retains the exact no-follow object, rooted
+parent, type and change stamp before confirmation. Each token consumes one of
+the existing eight handle slots. Prepare at most eight selected direct children;
+reserve admission first, close all partial tokens on any Busy/error/cancel, and
+show no dialog until all reviews succeed. The worker owns handles; UI carries
+only scoped batch ID/actual metadata. Busy never cancels live transfers. Cancel
+closes every review. No hidden continuation of oversized selections.
+
+`Delete {review}` consumes its valid token once. Revalidate identity/current
+policy, capture into a reserved name without replacement, then verify captured
+identity/post-capture stamp. Recheck publication admission/cancel and directory
+emptiness before removal. Restore without replacement on refusal; preserve
+foreign entries and return virtual-only RecoveryRequired if restore fails.
+Native empty-directory removal must atomically refuse a newly nonempty folder.
+Process confirmed selections sequentially, stop on first non-success, close
+unused tokens, and distinguish confirmed/unknown/untouched entries. Lost/dropped
+results are terminal unknown, never replayed. Existing native-job charges persist
+until actual completion; safe restoration after cutover grants no new deletion.
+Retirement blocks queued disclosures/reviews/remote refresh while preserving
+actual progress and terminal outcomes.
+
+Concrete implementation seams (proposed names):
+
+- `file_protocol.rs`/`file_client.rs`: separate ReadyV3/capabilities, typed
+  ReviewEntry/Delete/Deleted and `not_empty`; explicit Open3 entry and typed
+  uncertain mutation result. Keep v1 serialization and existing bounds exact.
+- `host_files.rs`/ordinary connector: negotiated mode in the existing Files
+  route/engine, same root pool/scope/account guards; no new auth or operation loop.
+- `filesystem.rs`: `ReviewedEntry` beside existing handles; reuse capture,
+  identity, no-replace restore and RecoveryRequired. Existing `stamp`/`Expected`
+  are regular-file-only: add a directory-specific identity/change/empty check.
+- Native security crates: Windows currently uses FILE_NON_DIRECTORY_FILE for
+  file moves; add narrow no-follow directory review/move handles and kind-correct
+  empty-directory removal. Do not misuse private-staging ACL contracts or repair
+  permissions. Unix removes the verified service-owned capture, never the
+  unchecked original path. This is not identity-atomic unlink against arbitrary
+  same-user OS writers between verification and syscall; reserved captures and
+  trusted parents are the naming boundary. Test substitution at observable
+  boundaries and restore collisions. Native race qualification remains mandatory.
+- `lifecycle.rs`, Desktop Remote access, `services/trusted.rs` and host CLI:
+  protected consent and feature probe. Existing file-operation worker/dialog:
+  prepare/confirm/cancel plus typed completion; previews serialize on browsing,
+  transfers keep their separate stream and existing planner/queue.
+
+Automated coverage: old-wire/default-false compatibility, Open2 refusal,
+old-helper refusal, partial-review cleanup/Busy preservation, object substitution,
+new directory children, capture/restore collisions, cutover, unknown/no-replay and
+queued-dialog retirement. Native Windows/macOS/Linux capture/removal and packaged
+consent/UI remain separate gates; automated coverage does not provide native or
+packaged acceptance.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** ADR 0053's host filesystem grant now
-  includes explicitly rooted enumeration and writes. Terminal ownership,
+  includes explicitly rooted enumeration/writes and separately consented Open3
+  one-shot deletion of reviewed files/empty folders. Terminal ownership,
   host verification, generation pins, secret boundaries and bounded queues
   remain unchanged.
 - **GUI/action edges affected:** `TUNNEL-01`, `TUNNEL-03`, `TUNNEL-05`;
-  plus `DTFILES-01`–`DTFILES-03` for the Desktop client composition; Mobile remains separate.
+  plus `DTFILES-01`–`DTFILES-04` for the Desktop client composition and `HOST-04`
+  for exact read/write/delete consent; Mobile remains separate.
 - **Automated tests required:** rooted traversal/listing/transfer/overwrite and
-  cleanup tests, stream negotiation/frame bounds, legacy discovery, portable
+  cleanup tests, reviewed delete identity/capture/restore and unknown/no-replay,
+  separate default-off consent/helper probe, stream negotiation/frame bounds, legacy discovery, portable
   client-only dependency checks and managed policy migration/revocation tests.
 - **Native/manual evidence required:** DT-05 signed host enable/disable and
   cross-platform filesystem conflict qualification; DT-07 physical iOS and

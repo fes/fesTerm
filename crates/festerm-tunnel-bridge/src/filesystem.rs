@@ -20,11 +20,15 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod reviewed_delete;
+use reviewed_delete::ReviewedEntry;
+
 const RESERVED: &str = ".festerm-transfer-";
 
 pub struct Filesystem {
     root: Dir,
     write: bool,
+    delete: bool,
     slots: Arc<Semaphore>,
 }
 
@@ -38,6 +42,7 @@ fn trusted(directory: &Dir) -> io::Result<()> {
 
 impl Filesystem {
     pub fn open(policy: &rpc::Policy) -> io::Result<Arc<Self>> {
+        policy.validate()?;
         let mut components = policy.root.components();
         #[cfg(unix)]
         let mut directory = {
@@ -75,6 +80,7 @@ impl Filesystem {
         Ok(Arc::new(Self {
             root: directory,
             write: policy.write,
+            delete: policy.delete,
             slots: Arc::new(Semaphore::new(2)),
         }))
     }
@@ -86,6 +92,22 @@ impl Filesystem {
             chunk_limit: rpc::CHUNK_LIMIT,
             page_limit: rpc::PAGE_LIMIT,
             handle_limit: rpc::HANDLE_LIMIT,
+        }
+    }
+
+    fn operation_capabilities(&self) -> rpc::OperationCapabilities {
+        let base = self.capabilities();
+        rpc::OperationCapabilities {
+            version: rpc::HOST_REVIEWED_VERSION,
+            write: base.write,
+            operations: if self.write && self.delete {
+                vec!["delete".into()]
+            } else {
+                Vec::new()
+            },
+            chunk_limit: base.chunk_limit,
+            page_limit: base.page_limit,
+            handle_limit: base.handle_limit,
         }
     }
 
@@ -189,8 +211,15 @@ struct Stamp {
 }
 
 fn stamp(file: &File) -> io::Result<Stamp> {
+    stamp_kind(file, false)
+}
+fn stamp_kind(file: &File, directory: bool) -> io::Result<Stamp> {
     let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    if if directory {
+        !metadata.is_dir()
+    } else {
+        !metadata.is_file()
+    } {
         return Err(invalid());
     }
     #[cfg(unix)]
@@ -201,7 +230,7 @@ fn stamp(file: &File) -> io::Result<Stamp> {
     #[cfg(windows)]
     let changed = i128::from(festerm_windows_security::file_change_time(file)?);
     Ok(Stamp {
-        length: metadata.len(),
+        length: if directory { 0 } else { metadata.len() },
         modified: metadata.modified()?,
         changed,
     })
@@ -263,6 +292,7 @@ impl Drop for Upload {
 }
 
 enum Handle {
+    EntryReview(ReviewedEntry),
     Read {
         path: String,
         file: File,
@@ -311,6 +341,7 @@ pub(crate) enum AdmissionStage {
 pub(crate) type Admission = Arc<dyn Fn(AdmissionStage) -> io::Result<()> + Send + Sync>;
 
 struct Session {
+    reviewed_operations: bool,
     admission: Admission,
     filesystem: Arc<Filesystem>,
     handles: HashMap<u32, Handle>,
@@ -339,6 +370,39 @@ impl Session {
             return Err(ErrorCode::Denied.into());
         }
         let reply = match operation {
+            Operation::ReviewEntry {
+                path,
+                purpose: rpc::ReviewPurpose::Delete,
+            } => {
+                if !self.reviewed_operations || !self.filesystem.delete || !self.filesystem.write {
+                    return Err(ErrorCode::Denied.into());
+                }
+                // Session is exclusively held by this native job: reserve the
+                // existing slot before opening any retained review objects.
+                if self.handles.len() >= rpc::HANDLE_LIMIT {
+                    return Err(ErrorCode::Busy.into());
+                }
+                let review = reviewed_delete::review(&self.filesystem, &path)?;
+                let info = metadata(&review.file)?;
+                let handle = self.insert(Handle::EntryReview(review))?;
+                Reply::EntryReview {
+                    handle,
+                    metadata: info,
+                }
+            }
+            Operation::Delete { review } => {
+                if !self.reviewed_operations || !self.filesystem.delete || !self.filesystem.write {
+                    return Err(ErrorCode::Denied.into());
+                }
+                if !matches!(self.handles.get(&review), Some(Handle::EntryReview(_))) {
+                    return Err(ErrorCode::Invalid.into());
+                }
+                let Some(Handle::EntryReview(entry)) = self.handles.remove(&review) else {
+                    unreachable!()
+                };
+                reviewed_delete::remove(entry, &self.admission, cancel)?;
+                Reply::Deleted
+            }
             Operation::Ping {} => Reply::Pong,
             Operation::Close { handle } => {
                 self.handles.remove(&handle).ok_or(ErrorCode::Invalid)?;
@@ -691,10 +755,28 @@ pub async fn serve(
 }
 
 pub(crate) async fn serve_authorized(
+    stream: impl AsyncRead + AsyncWrite + Unpin,
+    filesystem: Arc<Filesystem>,
+    admission: Admission,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    serve_authorized_mode(stream, filesystem, admission, cancel, false).await
+}
+#[cfg(any(feature = "host-routing", test))]
+pub(crate) async fn serve_authorized_reviewed(
+    stream: impl AsyncRead + AsyncWrite + Unpin,
+    filesystem: Arc<Filesystem>,
+    admission: Admission,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    serve_authorized_mode(stream, filesystem, admission, cancel, true).await
+}
+async fn serve_authorized_mode(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
     filesystem: Arc<Filesystem>,
     admission: Admission,
     cancel: CancellationToken,
+    reviewed_operations: bool,
 ) -> io::Result<()> {
     // A file close retires only this stream. Global shutdown propagates down
     // through the child; stream retirement must never cancel the HOST parent.
@@ -721,14 +803,21 @@ pub(crate) async fn serve_authorized(
     .map_err(|_| invalid())??;
     let ready = rpc::Response {
         id: 0,
-        result: Some(Reply::Ready {
-            capabilities: filesystem.capabilities(),
+        result: Some(if reviewed_operations {
+            Reply::ReadyV3 {
+                capabilities: filesystem.operation_capabilities(),
+            }
+        } else {
+            Reply::Ready {
+                capabilities: filesystem.capabilities(),
+            }
         }),
         error: None,
         recovery_path: None,
     };
     write_frame(&mut stream, rpc::RESPONSE, &serde_json::to_vec(&ready)?).await?;
     let state = Arc::new(Mutex::new(Session {
+        reviewed_operations,
         admission: admission.clone(),
         filesystem,
         handles: HashMap::new(),
@@ -820,6 +909,7 @@ mod tests {
     fn session(write: bool) -> (std::path::PathBuf, Session) {
         let path = crate::test_support::private_directory("festerm-rooted-files");
         let filesystem = Filesystem::open(&rpc::Policy {
+            delete: false,
             root: path.clone(),
             write,
         })
@@ -828,6 +918,7 @@ mod tests {
         (
             path,
             Session {
+                reviewed_operations: false,
                 admission: Arc::new(|_| Ok(())),
                 filesystem,
                 handles: HashMap::new(),
@@ -1140,6 +1231,7 @@ mod tests {
         use crate::{files::FileService, protocol, transport};
         let path = crate::test_support::private_directory("festerm-files-wire");
         let files = FileService::rooted(&rpc::Policy {
+            delete: false,
             root: path.clone(),
             write: true,
         })
