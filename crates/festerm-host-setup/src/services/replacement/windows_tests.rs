@@ -142,6 +142,7 @@ impl Fixture {
                 &root.path().join("state"),
                 Origin::Headless,
                 Settings {
+                    filesystem: None,
                     ordinary_access: Default::default(),
                     friendly_name: "Windows update model".into(),
                     allow_creation: false,
@@ -880,6 +881,7 @@ fn desktop_worker_update_fixture() -> Fixture {
             &root.path().join("state"),
             Origin::Desktop,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "Desktop worker update model".into(),
                 allow_creation: false,

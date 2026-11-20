@@ -669,6 +669,7 @@ pub enum RunFailure {
     AuthenticatedBundleRequired,
     CurrentOwnerConsentRequired,
     DaemonBoundaryUnavailable,
+    FilePolicyUnavailable,
     RelayUnavailable,
     InstallationBusy,
     ConsentChanged,
@@ -1109,12 +1110,47 @@ async fn run_admitted(
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
         .map_err(|_| refused("host.runtime_daemon_boundary_unavailable"))?;
+    let runtime = if expected.settings.filesystem.is_some() {
+        record.failure = Some(RunFailure::FilePolicyUnavailable);
+        let files = festerm_tunnel_bridge::file_protocol::HostPolicy {
+            scope: festerm_tunnel_bridge::file_protocol::HostScope {
+                host: festerm_host_protocol::HostId::try_from(
+                    expected
+                        .binding
+                        .as_ref()
+                        .ok_or_else(|| refused("The current host identity is unavailable."))?
+                        .host_id
+                        .clone(),
+                )
+                .map_err(io::Error::from)?,
+                installation: festerm_host_protocol::HostId::try_from(
+                    expected.installation.clone(),
+                )
+                .map_err(io::Error::from)?,
+                epoch: expected.epoch.to_string(),
+            },
+            filesystem: expected.settings.filesystem.clone(),
+        };
+        let runtime_policy = policy.clone();
+        let preparing = tokio::task::spawn_blocking(move || {
+            HostRuntime::new(sessions, runtime_policy).with_filesystem(files)
+        });
+        tokio::select! { biased;
+            _ = cancel.cancelled() => return Ok(()),
+            result = tokio::time::timeout(Duration::from_secs(30), preparing) => {
+                result.map_err(|_| refused("host.filesystem_preparation_timed_out"))?
+                    .map_err(|_| refused("host.filesystem_preparation_failed"))??
+            }
+        }
+    } else {
+        HostRuntime::new(sessions, policy.clone())
+    };
     let host = RunningHost {
         store: &store,
         state,
         expected,
         stage,
-        runtime: Arc::new(HostRuntime::new(sessions, policy.clone())),
+        runtime: Arc::new(runtime),
         policy,
     };
     let shutdown = cancel.child_token();
@@ -1899,6 +1935,7 @@ mod tests {
                 &root.path().join("host"),
                 Origin::Headless,
                 Settings {
+                    filesystem: None,
                     ordinary_access: Default::default(),
                     friendly_name: "Runtime fixture".into(),
                     startup,

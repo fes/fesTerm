@@ -76,6 +76,7 @@ fn host_name_label(host_name: &std::ffi::OsStr) -> String {
 impl Draft {
     fn settings(&self) -> Settings {
         Settings {
+            filesystem: None,
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
             ordinary_access: self.ordinary_access,
@@ -239,6 +240,7 @@ pub enum Failure {
     RefreshFirst,
     ScopeChanged,
     PrivateStorage,
+    FileAccessReview,
     SignedBundle,
     BundleNotPublished,
     AcquisitionUnavailable,
@@ -278,6 +280,9 @@ impl Failure {
             Self::CloudUncertain => "Host setup could not finish. Review Recovery before retrying.",
             Self::Reconciliation => "Cleanup is incomplete. Keep access off and review Recovery.",
             Self::PrivateStorage => "Protected host storage is unavailable. Review Recovery.",
+            Self::FileAccessReview => {
+                "File access needs its own consent review. Current settings were retained."
+            }
             Self::PlatformPrerequisite => {
                 "Host setup is not qualified for this startup policy or platform."
             }
@@ -300,6 +305,7 @@ impl Failure {
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
+            Self::FileAccessReview => "This screen cannot review the configured file folder and permissions. Remote access was not enabled and the existing file policy was retained.",
             Self::SignedBundle => "This build's authenticated native host bundle was refused. Changed bytes, invalid signatures and unsupported publishers are not installed. No older or unsigned fallback is attempted.",
             Self::BundleNotPublished => "The exact current-version native host bundle is not published. Genuine schema-2 release assets remain unqualified. Nothing is installed; retry explicitly after publication. No older/latest/schema-1 fallback.",
             Self::AcquisitionUnavailable => "Authenticated bundle acquisition is unavailable or exceeded its bounded deadline. Nothing is installed; retry explicitly. No automatic manual-path, older-version or unsigned fallback.",

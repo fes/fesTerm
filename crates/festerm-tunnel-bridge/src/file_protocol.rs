@@ -13,14 +13,76 @@ pub const JSON_LIMIT: usize = 64 * 1024;
 pub const PAGE_LIMIT: u16 = 64;
 pub const HANDLE_LIMIT: usize = 8;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub root: std::path::PathBuf,
     pub write: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+impl std::fmt::Debug for Policy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Policy")
+            .field("root", &"[private folder]")
+            .field("write", &self.write)
+            .finish()
+    }
+}
+impl Policy {
+    /// Portable shape only. Native admission separately opens and verifies the
+    /// root and ancestors without following links or repairing permissions.
+    pub fn validate(&self) -> std::io::Result<()> {
+        if !self.root.is_absolute()
+            || self.root.to_str().is_none_or(|p| p.len() > 4096)
+            || self
+                .root
+                .components()
+                .any(|p| matches!(p, std::path::Component::ParentDir))
+        {
+            return Err(crate::protocol::invalid());
+        }
+        Ok(())
+    }
+}
+
+pub const HOST_VERSION: u16 = 2;
+pub const HOST_DESCRIPTION: u8 = 34;
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostScope {
+    pub host: festerm_host_protocol::HostId,
+    pub installation: festerm_host_protocol::HostId,
+    pub epoch: String,
+}
+impl HostScope {
+    pub fn validate(&self) -> std::io::Result<()> {
+        if decimal(&self.epoch).is_none_or(|epoch| epoch == 0) {
+            return Err(crate::protocol::invalid());
+        }
+        Ok(())
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostDescription {
+    pub version: u16,
+    pub scope: HostScope,
+    pub filesystem: Option<Capabilities>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostOpen {
+    pub version: u16,
+    pub scope: HostScope,
+}
+/// Current protected facts, never a serialized client credential or session grant.
+#[derive(Clone, Eq, PartialEq)]
+pub struct HostPolicy {
+    pub scope: HostScope,
+    pub filesystem: Option<Policy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
     pub version: u16,
@@ -226,6 +288,47 @@ pub fn decimal(value: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_files_opening_is_strict_and_keeps_legacy_messages_separate() {
+        let scope = HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        };
+        let new = serde_json::to_value(HostOpen {
+            version: HOST_VERSION,
+            scope: scope.clone(),
+        })
+        .unwrap();
+        assert!(serde_json::from_value::<Open>(new.clone()).is_err());
+        let legacy = serde_json::to_value(Open {
+            version: VERSION,
+            target: Target {
+                name: "legacy".into(),
+                pid: 1,
+                generation: "1".into(),
+            },
+        })
+        .unwrap();
+        assert_eq!(legacy.as_object().unwrap().len(), 2);
+        assert!(serde_json::from_value::<HostOpen>(legacy).is_err());
+        for epoch in ["0", "01", "-1", "18446744073709551616"] {
+            let mut invalid = scope.clone();
+            invalid.epoch = epoch.into();
+            assert!(invalid.validate().is_err());
+        }
+        let policy = Policy {
+            root: std::env::temp_dir().join("canary-private-root"),
+            write: false,
+        };
+        assert!(!format!("{policy:?}").contains("canary-private-root"));
+        let mut unknown = serde_json::to_value(policy).unwrap();
+        unknown["future"] = true.into();
+        assert!(serde_json::from_value::<Policy>(unknown).is_err());
+        assert!(crate::protocol::validate_length(HOST_DESCRIPTION, 4096).is_ok());
+        assert!(crate::protocol::validate_length(HOST_DESCRIPTION, 4097).is_err());
+    }
 
     #[test]
     fn file_requests_refuse_ambiguous_sizes_unknown_fields_and_oversized_frames() {

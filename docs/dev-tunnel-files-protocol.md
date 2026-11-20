@@ -7,7 +7,7 @@ integration remain separate. Portable Rust DTOs/constants are in `file_protocol.
 operations as terminal input, invoke a remote shell, or fall back to SFTP/local
 files. No desktop/iOS file-manager integration is claimed by this host PR.
 
-## Authorization and existing installations
+## Legacy rooted authorization and existing installations
 
 Everything is default off. On either a new installation or an existing host:
 
@@ -88,6 +88,90 @@ All JSON field names/types and enum spellings are defined by the portable DTOs.
 Unknown fields/operations and malformed framing refuse. Each frame/read/job has
 a 30-second deadline. `ping` can keep an otherwise idle stream alive.
 
+## HOST Files opening amendment (reviewed contract)
+
+This architecture-reviewed server extension has separate source and native
+acceptance gates. It does not describe qualified deployed HOST support.
+The preceding discovery/opening and installer switches remain the legacy
+session-bound contract; they are not HOST settings or a HOST fallback.
+
+HOST uses existing ordinary-v1 authentication on its verified provider route.
+Add only role `files`, signed byte `2`, to `StreamRole`; existing `control`/`terminal`
+and bytes `0`/`1`, proof domain, challenge fields and accepted/denied envelopes
+stay unchanged. Ordinary dispatch uses the signed role, with no extra role byte.
+Advanced enrolled-owner byte `2` refuses. The protected HOST settings must be
+ProviderOwner with an explicitly configured filesystem grant to open file
+operations. An authenticated ordinary Files probe may learn that files are off.
+Unknown-role rejection/closure on an older host never means files are enabled
+or absent, and never authorizes a different transport. No fields are added to
+strict existing HOST terminal/control capability responses.
+
+After ordinary Accepted, switch to the existing rooted framing (one kind byte,
+four-byte big-endian length). The host sends new kind **34 HOST_FILES_DESCRIPTION**
+frame (at most 4096 bytes), strict JSON:
+
+```json
+{"version":2,"scope":{"host":"11111111-1111-4111-8111-111111111111","installation":"22222222-2222-4222-8222-222222222222","epoch":"29"},"filesystem":{"version":1,"write":false,"chunk_limit":65536,"page_limit":64,"handle_limit":8}}
+```
+
+`host`/`installation` use the existing validated HOST ID representations. `epoch`
+is a canonical nonzero decimal u64 string taken from current lifecycle
+`Snapshot.epoch`, not `OrdinaryHostInfo.policy_epoch` (enrollment revision) and
+not `SessionPolicy.host_epoch`'s request namespace. The scope must match the
+actual authenticated host route and installation. Keep account, absolute root,
+credentials and daemon/session identifiers out of this message. `filesystem:null`
+confirms off for this scope and the host closes after the greeting; a connection
+failure or missing/malformed greeting does not confirm off.
+
+With non-null capabilities, the client sends kind **30 OPEN**, strict JSON at
+most 4096 bytes, on that same stream:
+
+```json
+{"version":2,"scope":{"host":"11111111-1111-4111-8111-111111111111","installation":"22222222-2222-4222-8222-222222222222","epoch":"29"}}
+```
+
+All three scope fields must exactly match both greeting and current protected
+serving scope, and ordinary authorization must still hold. Version 1 or a legacy
+`target` field refuses; no PID/session lookup is permitted. A stale/denied opening
+may receive existing kind 32 `{"id":0,"error":"denied"}` and then closure;
+malformed/unsupported openings close. On success, send the **unchanged** rooted
+v1 kind-32 ready response (ID 0), whose capabilities must match the greeting.
+Subsequent kinds 31/32/33, operation schemas, increasing request IDs, handles,
+chunk/page limits, errors and timeouts remain exactly rooted v1. HOST opening
+version 2 is not a change to legacy discovery version 2 or rooted operation
+version 1. Kind 34 is legal only after authenticated Files-role dispatch; neither
+legacy discovery nor Control/Terminal streams receive it.
+
+The HOST server factors the existing rooted operation loop behind this opening
+rather than manufacturing a legacy `Target`. Its single shared rooted service
+uses one existing two-stream pool across all clients of that exact protected
+scope and retains native-job permits until work actually ends. Prepared roots
+cannot be rebound to a newer lifecycle scope even when the root path is equal. Client opening is a distinct entry to the
+same bounded operation engine, preserving legacy `Client::open` behavior.
+Handles never cross stream/scope boundaries. There is no automatic reconnect,
+resume, finish replay or scope refresh within an existing stream.
+
+Protected HOST consent is `Settings.filesystem`, off by default and omitted when
+off; enabled is the existing strict `{root,write}` policy in protected storage.
+Root/write/off changes follow confirmed Disable, Disabled-only configuration
+and newly reviewed Enable. Ordinary Disable alone preserves configured settings.
+Existing Desktop/headless surfaces without file-consent review refuse an existing
+nonempty policy rather than silently erasing or re-enabling it; typed protected
+configuration is only the server primitive, not completed user-facing setup.
+The Files stream rechecks current protected scope/policy for each native request
+and reply/data disclosure, plus a final admission before upload publication.
+Unknown/busy/revoked scope closes/refuses, never reuses a cached grant. See
+[ADR 0067's cutover rule](adr/0067-rooted-dev-tunnel-host-filesystem.md#revocation-and-publication-cutover):
+work/disclosure already admitted before cutover can finish afterward. Leases are
+not held over native or network I/O, Disable cannot undo an OS operation, and a
+lost/suppressed finish response remains an unknown publication outcome. Existing
+safe cleanup/restore may run after cutover; it cannot authorize another write.
+
+Implementation acceptance requires the finite tests listed in ADR 0067, including
+strict old-message compatibility, proof-role separation, no-daemon operation,
+exact-scope refusal, bounded admission and publication/cutover interleavings.
+Real signed HOST policy changes and desktop/iOS UI remain separate native gates.
+
 ## Portable client engine
 
 `file_client::Client` consumes an already host-key-verified **separate legacy
@@ -95,8 +179,10 @@ bridge stream** and an exact target. Discovery consumes its own stream and
 checks that same target; disabled grants return no filesystem capabilities.
 The engine does not acquire credentials, connect to a relay, authenticate an
 ordinary HOST role, attach a terminal, launch a tab or authorize a local path.
-It adds no wire operations or grant. Ordinary HOST file-stream authentication
-and top-level desktop/iOS entry points are still missing.
+It adds no file operation or grant. `Client::open_host` is the separate opening
+for an already ordinary-Files-authenticated HOST stream, validating the host and
+installation plus the server's lifecycle scope before echoing it. Account/relay
+client composition and top-level desktop/iOS entry points remain separate.
 
 The client exposes bounded directory pages, stat/read handles, streamed
 uploads/downloads, mkdir, ping and explicit close. Handles are bound to their

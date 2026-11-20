@@ -2611,12 +2611,36 @@ separate PS-02/07/10 evidence.
 | FD-05 | In the GUI SFTP file manager (issue #137): drag selected item(s) between the local and remote panes and confirm the same transfer requests the toolbar/rail buttons would queue are enqueued; drag files from Finder/Explorer onto the remote pane and confirm they upload into its current directory; drag files from Finder/Explorer onto the local pane and confirm the drop is rejected with a factual notice; attempt to drag a remote item out to Finder/Explorer/Desktop and confirm the current, documented limitation (no native OS drag-out; use the transfer buttons to download first). | Native functional + usability | Payload plumbing, enqueue rules, and connection/writability gating are automated; the native Finder/Explorer drag gesture itself (both directions) remains manual |
 | FD-06 | In the GUI SFTP file manager's local pane only, right-click a single item and a multi-selection, choose "Reveal in Finder"/"Show in File Explorer"/"Open Containing Folder", and confirm the OS file manager opens focused on the expected item (single selection) or the first selected item (multi-selection); confirm the action is absent from the remote pane's context menu. | Native functional | Per-platform command construction is automated; actually observing the OS file manager focus/selection remains manual |
 
+### Ordinary HOST rooted files server
+
+The reviewed ADR 0067 HOST Files role is a bounded server/protected-consent
+increment. Source fixtures cover distinct signed role 2, host/installation/
+lifecycle scope, off/read-only grants, current-policy cutover and shared native
+job bounds without selecting a daemon session. The typed configure/Enable path
+retains exact consent and ordinary Disable preserves it. Existing Desktop and
+headless surfaces cannot review a nonempty file policy and must refuse to erase
+or re-enable it implicitly. Foreground root/read-write review, account/relay
+client composition and top-level desktop/iOS file tabs remain next tranches.
+The owner's SFTP-style command set and create/delete UI remain queued, requiring
+explicit protocol/consent extensions beyond current v1 operations.
+
+DT-05/DT-07 native acceptance remains pending: validate signed grant enable,
+Disable/review/Enable root and write-mode changes, disabled/read-only refusal,
+no session/terminal ownership effects, and in-flight publication whose response
+is lost at cutover. Already admitted OS work can finish after revocation; retain
+unknown publication/recovery evidence and never replay finish or infer rollback.
+Exercise Windows reparse/Unix link boundaries and filesystem stalls with owned
+fixtures when native resource admission permits. These source tests do not
+qualify deployed helpers, packaged UI, accessibility or crash recovery.
+Protected owner status/settings JSON can contain the private root; keep it out
+of published qualification artifacts and retain only finite outcomes/public scope.
+
 ### Rooted Dev Tunnels client engine
 
 The ADR 0067 portable client is a protocol-only prerequisite for #778 file
 transfer. Its duplex fixtures use the legacy rooted bridge and perform no
-terminal admission. Real relay, ordinary HOST file-role/grant integration,
-signed native grant/revocation, top-level desktop/iOS file-manager entry and
+terminal admission. Real relay and ordinary HOST client composition, signed native file-role/
+grant/revocation qualification, top-level desktop/iOS file-manager entry and
 local staging/publication qualification remain pending. Before marking DT-07
 client integration accepted, validate those separate boundaries with owned
 roots, including cancellation and uncertain publication without replay. These

@@ -1236,6 +1236,7 @@ pub(crate) mod tests {
             &root.path().join("installation"),
             origin,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "owner fixture".into(),
                 allow_creation: false,
@@ -2184,6 +2185,7 @@ pub(crate) mod tests {
             &root.path().join("desktop"),
             Origin::Desktop,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "desktop".into(),
                 allow_creation: false,

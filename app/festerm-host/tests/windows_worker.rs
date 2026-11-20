@@ -85,6 +85,7 @@ public class OwnedSetupProbe {
         &managed_state,
         festerm_host_setup::lifecycle::Origin::Desktop,
         festerm_host_setup::lifecycle::Settings {
+            filesystem: None,
             friendly_name: "windowless refusal fixture".into(),
             allow_creation: false,
             startup: festerm_host_setup::lifecycle::Startup::Manual,

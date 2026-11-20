@@ -302,11 +302,20 @@ impl From<ErrorCode> for Failure {
 }
 type Outcome<T> = std::result::Result<T, Failure>;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum AdmissionStage {
+    Request,
+    Disclosure,
+    Publication,
+}
+pub(crate) type Admission = Arc<dyn Fn(AdmissionStage) -> io::Result<()> + Send + Sync>;
+
 struct Session {
+    admission: Admission,
     filesystem: Arc<Filesystem>,
     handles: HashMap<u32, Handle>,
     next: u32,
-    _permit: OwnedSemaphorePermit,
+    _permit: Arc<OwnedSemaphorePermit>,
 }
 
 impl Session {
@@ -566,6 +575,9 @@ impl Session {
                     return Err(ErrorCode::Invalid.into());
                 }
                 upload.file.sync_all()?;
+                // Final publication admission is distinct from the request job.
+                // The callback releases protected policy before native commit.
+                (self.admission)(AdmissionStage::Publication)?;
                 finish(&mut upload, cancel)?;
                 Reply::Finished {
                     size: upload.size.to_string(),
@@ -660,7 +672,7 @@ impl Drop for CancelOnDrop {
 }
 
 pub async fn serve(
-    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    stream: impl AsyncRead + AsyncWrite + Unpin,
     filesystem: Arc<Filesystem>,
     expected: Target,
     bytes: &[u8],
@@ -669,11 +681,44 @@ pub async fn serve(
     if open.version != rpc::VERSION || open.target != expected {
         return Err(invalid());
     }
-    let permit = filesystem
-        .slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| invalid())?;
+    serve_authorized(
+        stream,
+        filesystem,
+        Arc::new(|_| Ok(())),
+        CancellationToken::new(),
+    )
+    .await
+}
+
+pub(crate) async fn serve_authorized(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    filesystem: Arc<Filesystem>,
+    admission: Admission,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    // A file close retires only this stream. Global shutdown propagates down
+    // through the child; stream retirement must never cancel the HOST parent.
+    let cancel = cancel.child_token();
+    let _guard = CancelOnDrop(cancel.clone());
+    let permit = Arc::new(
+        filesystem
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| invalid())?,
+    );
+    let disclose = admission.clone();
+    let charge = permit.clone();
+    tokio::time::timeout(
+        DEADLINE,
+        tokio::task::spawn_blocking(move || {
+            let _charge = charge;
+            disclose(AdmissionStage::Disclosure)
+        }),
+    )
+    .await
+    .map_err(|_| invalid())?
+    .map_err(|_| invalid())??;
     let ready = rpc::Response {
         id: 0,
         result: Some(Reply::Ready {
@@ -684,13 +729,12 @@ pub async fn serve(
     };
     write_frame(&mut stream, rpc::RESPONSE, &serde_json::to_vec(&ready)?).await?;
     let state = Arc::new(Mutex::new(Session {
+        admission: admission.clone(),
         filesystem,
         handles: HashMap::new(),
         next: 0,
         _permit: permit,
     }));
-    let cancel = CancellationToken::new();
-    let _guard = CancelOnDrop(cancel.clone());
     let mut previous = 0;
     loop {
         let (kind, bytes) = tokio::time::timeout(DEADLINE, read_client_frame(&mut stream))
@@ -723,16 +767,22 @@ pub async fn serve(
         };
         let session = state.clone();
         let token = cancel.clone();
+        let admission = admission.clone();
         let job = tokio::task::spawn_blocking(move || {
-            session
+            admission(AdmissionStage::Request)?;
+            let result = session
                 .lock()
-                .map_err(|_| Failure::from(ErrorCode::Io))?
-                .execute(request.operation, data, &token)
+                .map_err(|_| Failure::from(ErrorCode::Io))
+                .and_then(|mut session| session.execute(request.operation, data, &token));
+            // Admission of this concrete disclosure precedes releasing its
+            // result to async framing. No lease crosses filesystem/network I/O.
+            admission(AdmissionStage::Disclosure)?;
+            Ok::<_, io::Error>(result)
         });
         let result = tokio::time::timeout(DEADLINE, job)
             .await
             .map_err(|_| invalid())?
-            .map_err(|_| invalid())?;
+            .map_err(|_| invalid())??;
         let (response, data) = match result {
             Ok((result, data)) => (
                 rpc::Response {
@@ -778,10 +828,11 @@ mod tests {
         (
             path,
             Session {
+                admission: Arc::new(|_| Ok(())),
                 filesystem,
                 handles: HashMap::new(),
                 next: 0,
-                _permit: permit,
+                _permit: Arc::new(permit),
             },
         )
     }
@@ -1285,6 +1336,220 @@ mod tests {
         assert_eq!(response.id, id);
         assert!(response.error.is_none(), "{:?}", response.error);
         response.result.unwrap()
+    }
+
+    #[test]
+    fn rooted_publication_has_a_fresh_admission_before_any_replacement_capture() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for allowed in [false, true] {
+            let (path, mut session) = session(true);
+            std::fs::write(path.join("target"), b"old").unwrap();
+            let expected = handle(run(
+                &mut session,
+                Operation::OpenRead {
+                    path: "/target".into(),
+                },
+            ));
+            let upload = handle(run(
+                &mut session,
+                Operation::BeginUpload {
+                    path: "/target".into(),
+                    size: "3".into(),
+                    expected: Some(expected),
+                },
+            ));
+            session
+                .execute(
+                    Operation::Write {
+                        handle: upload,
+                        offset: "0".into(),
+                        length: 3,
+                    },
+                    b"new".to_vec(),
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            let cutover = Arc::new(AtomicBool::new(false));
+            let observed = cutover.clone();
+            session.admission = Arc::new(move |stage| {
+                assert!(stage == AdmissionStage::Publication);
+                // Models cutover immediately after this final admission. The
+                // already admitted native sequence may still complete.
+                observed.store(true, Ordering::SeqCst);
+                if allowed {
+                    Ok(())
+                } else {
+                    Err(io::ErrorKind::PermissionDenied.into())
+                }
+            });
+            let result = session.execute(
+                Operation::FinishUpload { handle: upload },
+                Vec::new(),
+                &CancellationToken::new(),
+            );
+            assert!(cutover.load(Ordering::SeqCst));
+            if allowed {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.unwrap_err().code, ErrorCode::Denied);
+            }
+            assert_eq!(
+                std::fs::read(path.join("target")).unwrap(),
+                if allowed { b"new" } else { b"old" }
+            );
+            drop(session);
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_cutover_suppresses_disclosure_and_preserves_already_admitted_publication() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for publication in [false, true] {
+            let (path, fixture) = session(true);
+            let filesystem = fixture.filesystem.clone();
+            drop(fixture);
+            std::fs::write(path.join("source"), b"source").unwrap();
+            let revoked = Arc::new(AtomicBool::new(false));
+            let changed = revoked.clone();
+            let admission: Admission = Arc::new(move |stage| {
+                if stage == AdmissionStage::Disclosure && changed.load(Ordering::SeqCst) {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+                if stage
+                    == if publication {
+                        AdmissionStage::Publication
+                    } else {
+                        AdmissionStage::Request
+                    }
+                {
+                    changed.store(true, Ordering::SeqCst);
+                }
+                Ok(())
+            });
+            let (mut client, server) = tokio::io::duplex(8192);
+            let worker = tokio::spawn(serve_authorized(
+                server,
+                filesystem.clone(),
+                admission,
+                CancellationToken::new(),
+            ));
+            let (kind, _) = crate::wire::read_frame(&mut client).await.unwrap();
+            assert_eq!(kind, rpc::RESPONSE); // already validated opening seam
+            let (id, operation) = if publication {
+                let upload = handle(
+                    exchange(
+                        &mut client,
+                        1,
+                        Operation::BeginUpload {
+                            path: "/published".into(),
+                            size: "1".into(),
+                            expected: None,
+                        },
+                        None,
+                    )
+                    .await,
+                );
+                exchange(
+                    &mut client,
+                    2,
+                    Operation::Write {
+                        handle: upload,
+                        offset: "0".into(),
+                        length: 1,
+                    },
+                    Some(b"x"),
+                )
+                .await;
+                (3, Operation::FinishUpload { handle: upload })
+            } else {
+                (
+                    1,
+                    Operation::Stat {
+                        path: "/source".into(),
+                    },
+                )
+            };
+            write_frame(
+                &mut client,
+                rpc::REQUEST,
+                &serde_json::to_vec(&rpc::Request { id, operation }).unwrap(),
+            )
+            .await
+            .unwrap();
+            assert!(
+                crate::wire::read_frame(&mut client).await.is_err(),
+                "revoked disclosure cannot publish a success reply"
+            );
+            assert!(worker.await.unwrap().is_err());
+            assert!(revoked.load(Ordering::SeqCst));
+            if publication {
+                assert_eq!(std::fs::read(path.join("published")).unwrap(), b"x");
+            } else {
+                assert!(!path.join("published").exists());
+            }
+            assert_eq!(std::fs::read(path.join("source")).unwrap(), b"source");
+            assert_eq!(filesystem.slots.available_permits(), 2);
+            drop(filesystem);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_abandoned_native_admission_retains_its_shared_stream_permit() {
+        let (path, fixture) = session(true);
+        let filesystem = fixture.filesystem.clone();
+        drop(fixture);
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        let started = Mutex::new(Some(started));
+        let (release, released) = std::sync::mpsc::channel();
+        let released = Mutex::new(released);
+        let admission: Admission = Arc::new(move |stage| {
+            if stage == AdmissionStage::Request {
+                started.lock().unwrap().take().unwrap().send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+            }
+            Ok(())
+        });
+        let (mut client, server) = tokio::io::duplex(8192);
+        let worker = tokio::spawn(serve_authorized(
+            server,
+            filesystem.clone(),
+            admission,
+            CancellationToken::new(),
+        ));
+        crate::wire::read_frame(&mut client).await.unwrap();
+        write_frame(
+            &mut client,
+            rpc::REQUEST,
+            &serde_json::to_vec(&rpc::Request {
+                id: 1,
+                operation: Operation::Ping {},
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        waiting.await.unwrap();
+        worker.abort();
+        let _ = worker.await;
+        assert_eq!(filesystem.slots.available_permits(), 1);
+        let other = filesystem.slots.clone().try_acquire_owned().unwrap();
+        assert_eq!(filesystem.slots.available_permits(), 0);
+        release.send(()).unwrap();
+        let finished = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            filesystem.slots.clone().acquire_owned(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(finished);
+        drop(other);
+        assert_eq!(filesystem.slots.available_permits(), 2);
+        drop(filesystem);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[cfg(windows)]

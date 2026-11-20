@@ -245,6 +245,77 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             cancel,
         })
     }
+    /// Only after ordinary Files-role authentication on the actual verified
+    /// channel. No discovery, proof, credentials or terminal fallback occurs.
+    /// None confirms the authenticated scope has files disabled.
+    pub async fn open_host(
+        mut stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        cancel: CancellationToken,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
+        let description = bounded(&cancel, async {
+            let bytes = frame(&mut stream, rpc::HOST_DESCRIPTION, 4096).await?;
+            let description: rpc::HostDescription =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+            if description.version != rpc::HOST_VERSION
+                || &description.scope.host != host
+                || &description.scope.installation != installation
+                || description.scope.validate().is_err()
+            {
+                return Err(Error::Protocol);
+            }
+            if let Some(caps) = &description.filesystem {
+                capabilities(caps)?;
+            }
+            Ok(description)
+        })
+        .await?;
+        let Some(caps) = description.filesystem else {
+            return Ok(None);
+        };
+        bounded(&cancel, async {
+            write_frame(
+                &mut stream,
+                rpc::OPEN,
+                &json(&rpc::HostOpen {
+                    version: rpc::HOST_VERSION,
+                    scope: description.scope.clone(),
+                })?,
+            )
+            .await
+            .map_err(transport)?;
+            match response(&mut stream, 0).await? {
+                rpc::Response {
+                    result: Some(Reply::Ready { capabilities }),
+                    error: None,
+                    ..
+                } if capabilities == caps => Ok(()),
+                rpc::Response {
+                    result: None,
+                    error: Some(code),
+                    recovery_path,
+                    ..
+                } => Err(Error::Remote {
+                    code,
+                    recovery_path,
+                }),
+                _ => Err(Error::Protocol),
+            }
+        })
+        .await?;
+        Ok(Some((
+            Self {
+                stream: Some(stream),
+                capabilities: caps,
+                next_id: 0,
+                handles: HashMap::new(),
+                connection: Arc::new(()),
+                cancel,
+            },
+            description.scope,
+        )))
+    }
     pub fn capabilities(&self) -> &rpc::Capabilities {
         &self.capabilities
     }

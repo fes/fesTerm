@@ -528,6 +528,24 @@ impl SessionScope {
     pub(crate) fn principal(&self) -> &PrincipalId {
         &self.principal
     }
+    /// Authentication/liveness only; this admits no session or filesystem
+    /// operation. Each caller must separately check its protected grant.
+    #[cfg(all(feature = "host-routing", feature = "relay"))]
+    pub(crate) fn authorize_connection(
+        &self,
+        current: &SessionPolicy,
+    ) -> Result<(), ContractError> {
+        if !self.active.load(Ordering::Acquire)
+            || !current.remote_access
+            || self.host != current.host
+            || self.principal != current.principal
+            || self.host_epoch != current.host_epoch
+            || self.grant_epoch != current.grant_epoch
+        {
+            return Err(ContractError::Denied);
+        }
+        Ok(())
+    }
     pub(crate) fn authorize(
         &self,
         current: &SessionPolicy,

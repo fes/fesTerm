@@ -1334,6 +1334,7 @@ impl NativeRuntimeFixture {
         let role_label = match &role {
             StreamRole::Control => "control",
             StreamRole::Terminal => "terminal",
+            StreamRole::Files => "files",
         };
         self.servers.push(tokio::spawn(async move {
             let result = runtime.serve_stream(stream, CancellationToken::new()).await;
@@ -3114,6 +3115,7 @@ fn ordinary_policy(fixture: &Fixture) -> crate::ordinary_auth::OrdinaryPolicy {
             policy_epoch: fixture.policy.grant_epoch,
         },
         session: fixture.policy.clone(),
+        files: None,
         denied_keys: Vec::new(),
     }
 }
@@ -3123,7 +3125,15 @@ async fn ordinary_encrypted_handshake_observes_each_connection_without_admin_key
     use crate::ordinary_auth::OrdinaryDeviceKey;
     use std::sync::atomic::Ordering::SeqCst;
     let fixture = Fixture::new();
-    let policy = ordinary_policy(&fixture);
+    let mut policy = ordinary_policy(&fixture);
+    policy.files = Some(crate::file_protocol::HostPolicy {
+        scope: crate::file_protocol::HostScope {
+            host: policy.host_info.route.host.host.clone(),
+            installation: policy.host_info.installation.clone(),
+            epoch: "1".into(),
+        },
+        filesystem: None,
+    });
     let source = Arc::new(OrdinaryFixturePolicy {
         policy: std::sync::Mutex::new(policy.clone()),
         observations: 0.into(),
@@ -3132,7 +3142,7 @@ async fn ordinary_encrypted_handshake_observes_each_connection_without_admin_key
     let sessions =
         SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
     let runtime = Arc::new(HostRuntime::new(sessions, source.clone()));
-    for role in [StreamRole::Control, StreamRole::Terminal] {
+    for role in [StreamRole::Control, StreamRole::Terminal, StreamRole::Files] {
         let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
             fixture.ssh_key.clone(),
             policy.host_info.route.clone(),
@@ -3172,15 +3182,26 @@ async fn ordinary_encrypted_handshake_observes_each_connection_without_admin_key
             OperationId::new(),
             Request::List { cursor: None },
         );
-        assert!(authority
-            .authorize(
-                host_control::PolicyView::Ordinary(&policy),
-                &request,
-                Epoch::new(1).unwrap(),
-                None
-            )
-            .is_ok());
+        assert_eq!(
+            authority
+                .authorize(
+                    host_control::PolicyView::Ordinary(&policy),
+                    &request,
+                    Epoch::new(1).unwrap(),
+                    None
+                )
+                .is_ok(),
+            role != StreamRole::Files
+        );
+        let host_control::ConnectionAuthority::Ordinary(capability) = &authority else {
+            unreachable!()
+        };
+        assert_eq!(
+            capability.authorize_files(&policy).is_ok(),
+            role == StreamRole::Files
+        );
         drop(guard);
+        assert!(capability.authorize_files(&policy).is_err());
         assert!(authority
             .authorize(
                 host_control::PolicyView::Ordinary(&policy),
@@ -3191,7 +3212,7 @@ async fn ordinary_encrypted_handshake_observes_each_connection_without_admin_key
             .is_err());
         ssh.abort();
     }
-    assert_eq!(source.observations.load(SeqCst), 2);
+    assert_eq!(source.observations.load(SeqCst), 3);
 }
 
 #[tokio::test]
@@ -4045,4 +4066,513 @@ async fn ordinary_stale_readiness_refuses_typed_then_fresh_preparation_admits_on
         new_ssh.abort();
     }
     ssh.abort();
+}
+
+struct FilesFixture {
+    source: Arc<OrdinaryFixturePolicy>,
+    runtime: Arc<HostRuntime<OrdinaryFixturePolicy>>,
+    root: PathBuf,
+    daemon: PathBuf,
+    // Drop runtime/root handles before the owning directory fixture.
+    fixture: Fixture,
+}
+impl FilesFixture {
+    fn new(write: Option<bool>) -> Self {
+        let fixture = Fixture::new();
+        let root = fixture.root.join("files");
+        std::fs::create_dir(&root).unwrap();
+        let file_policy = write.map(|write| crate::file_protocol::Policy {
+            root: root.clone(),
+            write,
+        });
+        let mut policy = ordinary_policy(&fixture);
+        policy.session.capabilities = Capabilities::default();
+        policy.files = Some(crate::file_protocol::HostPolicy {
+            scope: crate::file_protocol::HostScope {
+                host: policy.host_info.route.host.host.clone(),
+                installation: policy.host_info.installation.clone(),
+                epoch: "1".into(),
+            },
+            filesystem: file_policy.clone(),
+        });
+        let source = Arc::new(OrdinaryFixturePolicy {
+            policy: std::sync::Mutex::new(policy),
+            observations: 0.into(),
+            refuse_observation: false.into(),
+        });
+        let daemon = fixture.root.join("unavailable-daemon");
+        let sessions =
+            SessionControl::with_helper(&daemon, &std::env::current_exe().unwrap()).unwrap();
+        // Any session transaction would encounter an invalid lock/journal. The
+        // file service must work independently and leave both canaries intact.
+        std::fs::create_dir(daemon.join("host-sessions.lock")).unwrap();
+        std::fs::write(daemon.join("host-sessions.json"), b"not a session journal").unwrap();
+        let prepared = source.policy.lock().unwrap().files.clone().unwrap();
+        let runtime = Arc::new(
+            HostRuntime::new(sessions, source.clone())
+                .with_filesystem(prepared)
+                .unwrap(),
+        );
+        Self {
+            fixture,
+            source,
+            runtime,
+            root,
+            daemon,
+        }
+    }
+    async fn connect(
+        &self,
+        role: StreamRole,
+    ) -> (
+        ClientConnection,
+        ConnectionPermit,
+        tokio::task::JoinHandle<Result<(), Error>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        self.connect_with_cancel(role, CancellationToken::new())
+            .await
+    }
+    async fn connect_with_cancel(
+        &self,
+        role: StreamRole,
+        shutdown: CancellationToken,
+    ) -> (
+        ClientConnection,
+        ConnectionPermit,
+        tokio::task::JoinHandle<Result<(), Error>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use crate::ordinary_auth::OrdinaryDeviceKey;
+        let route = self.source.policy.lock().unwrap().host_info.route.clone();
+        let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            self.fixture.ssh_key.clone(),
+            route.clone(),
+        )
+        .await;
+        let host = self.runtime.clone();
+        let server = tokio::spawn(async move { host.serve_stream(stream, shutdown).await });
+        let expected = route.clone();
+        let (client, permit, _) = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            role,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[39; 32]).prove(stream, &expected, challenge, role)
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+        (client, permit, server, ssh)
+    }
+    fn scope(&self) -> crate::file_protocol::HostScope {
+        self.source
+            .policy
+            .lock()
+            .unwrap()
+            .files
+            .as_ref()
+            .unwrap()
+            .scope
+            .clone()
+    }
+    fn assert_no_session_effect(&self) {
+        assert!(self.daemon.join("host-sessions.lock").is_dir());
+        assert_eq!(
+            std::fs::read(self.daemon.join("host-sessions.json")).unwrap(),
+            b"not a session journal"
+        );
+        assert!(!self.daemon.join("sessions.json").exists());
+    }
+}
+
+#[tokio::test]
+async fn host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency() {
+    use crate::file_client::Client;
+    use festerm_host_protocol::{
+        Resource, MAX_ATTACHMENTS, MAX_CONTROL_OPERATIONS, MAX_PENDING_CREATES, MAX_SESSIONS,
+    };
+    let fixture = FilesFixture::new(Some(true));
+    let limits = [
+        (Resource::Control, MAX_CONTROL_OPERATIONS),
+        (Resource::Attachment, MAX_ATTACHMENTS),
+        (Resource::Session, MAX_SESSIONS),
+        (Resource::PendingCreate, MAX_PENDING_CREATES),
+    ];
+    let mut held = Vec::new();
+    for (resource, maximum) in limits {
+        for _ in 0..maximum {
+            held.push(fixture.runtime.budgets.reserve(resource, 1).unwrap());
+        }
+        assert!(matches!(
+            fixture.runtime.budgets.reserve(resource, 1),
+            Err(ContractError::Busy)
+        ));
+    }
+    std::fs::write(fixture.root.join("source"), b"rooted file bytes").unwrap();
+    let (stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+    let scope = fixture.scope();
+    let (mut client, returned) = Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(returned, scope);
+    let mut sink = Vec::new();
+    client.download("/source", &mut sink).await.unwrap();
+    assert_eq!(sink, b"rooted file bytes");
+    client.mkdir("/folder").await.unwrap();
+    let mut source = &b"uploaded bytes"[..];
+    client
+        .upload("/folder/new", 14, None, &mut source)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(fixture.root.join("folder/new")).unwrap(),
+        b"uploaded bytes"
+    );
+    fixture.assert_no_session_effect();
+    client.cancel();
+    assert!(tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    fixture.assert_no_session_effect();
+    ssh.abort();
+}
+
+#[tokio::test]
+async fn host_files_disabled_readonly_and_scope_mismatches_fail_without_terminal_fallback() {
+    use crate::{file_client::Client, file_protocol as rpc};
+    let off = FilesFixture::new(None);
+    let (stream, _permit, server, ssh) = off.connect(StreamRole::Files).await;
+    let scope = off.scope();
+    assert!(Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new()
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert!(server.await.unwrap().is_ok());
+    off.assert_no_session_effect();
+    ssh.abort();
+    let fixture = FilesFixture::new(Some(false));
+    for mismatch in ["host", "installation", "epoch", "legacy"] {
+        let (mut stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+        let (kind, bytes) = crate::wire::read_frame(&mut stream).await.unwrap();
+        assert_eq!(kind, rpc::HOST_DESCRIPTION);
+        let description: rpc::HostDescription = serde_json::from_slice(&bytes).unwrap();
+        assert!(!description.filesystem.unwrap().write);
+        let mut scope = description.scope;
+        match mismatch {
+            "host" => scope.host = Default::default(),
+            "installation" => scope.installation = Default::default(),
+            "epoch" => scope.epoch = "2".into(),
+            _ => {}
+        }
+        let mut open = serde_json::to_value(rpc::HostOpen {
+            version: rpc::HOST_VERSION,
+            scope,
+        })
+        .unwrap();
+        if mismatch == "legacy" {
+            open["target"] = serde_json::json!({"name":"fake","pid":1,"generation":"1"});
+        }
+        crate::wire::write_frame(&mut stream, rpc::OPEN, &serde_json::to_vec(&open).unwrap())
+            .await
+            .unwrap();
+        assert!(crate::wire::read_frame(&mut stream).await.is_err());
+        assert!(server.await.unwrap().is_err());
+        fixture.assert_no_session_effect();
+        ssh.abort();
+    }
+    // Send a raw write request so client-side presentation cannot hide a
+    // missing server read-only check.
+    let (mut stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+    let (_, bytes) = crate::wire::read_frame(&mut stream).await.unwrap();
+    let description: rpc::HostDescription = serde_json::from_slice(&bytes).unwrap();
+    crate::wire::write_frame(
+        &mut stream,
+        rpc::OPEN,
+        &serde_json::to_vec(&rpc::HostOpen {
+            version: rpc::HOST_VERSION,
+            scope: description.scope,
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let (kind, _) = crate::wire::read_frame(&mut stream).await.unwrap();
+    assert_eq!(kind, rpc::RESPONSE);
+    crate::wire::write_frame(
+        &mut stream,
+        rpc::REQUEST,
+        &serde_json::to_vec(&rpc::Request {
+            id: 1,
+            operation: rpc::Operation::BeginUpload {
+                path: "/denied".into(),
+                size: "0".into(),
+                expected: None,
+            },
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let (_, bytes) = crate::wire::read_frame(&mut stream).await.unwrap();
+    let response: rpc::Response = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response.error, Some(rpc::ErrorCode::Denied));
+    drop(stream);
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    assert!(!fixture.root.join("denied").exists());
+}
+
+#[tokio::test]
+async fn host_files_current_grant_change_closes_before_new_request_or_finish() {
+    use crate::file_client::{Client, Error as FileError};
+    for change in ["off", "write", "root", "epoch", "device"] {
+        let fixture = FilesFixture::new(Some(true));
+        let (stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+        let scope = fixture.scope();
+        let (mut client, _) = Client::open_host(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let upload = client
+            .begin_upload("/not-published", 1, None)
+            .await
+            .unwrap();
+        client.write(&upload, b"x").await.unwrap();
+        {
+            let mut policy = fixture.source.policy.lock().unwrap();
+            match change {
+                "off" => policy.files.as_mut().unwrap().filesystem = None,
+                "write" => {
+                    policy
+                        .files
+                        .as_mut()
+                        .unwrap()
+                        .filesystem
+                        .as_mut()
+                        .unwrap()
+                        .write = false
+                }
+                "root" => {
+                    policy
+                        .files
+                        .as_mut()
+                        .unwrap()
+                        .filesystem
+                        .as_mut()
+                        .unwrap()
+                        .root = fixture.fixture.root.clone()
+                }
+                "epoch" => policy.files.as_mut().unwrap().scope.epoch = "2".into(),
+                _ => policy.denied_keys.push(
+                    crate::ordinary_auth::OrdinaryDeviceKey::from_seed(&[39; 32]).public_key(),
+                ),
+            }
+        }
+        assert!(matches!(
+            client.finish_upload(&upload).await,
+            Err(FileError::UncertainFinish(_))
+        ));
+        assert!(!client.available());
+        assert!(server.await.unwrap().is_err());
+        assert!(!fixture.root.join("not-published").exists());
+        assert_eq!(std::fs::read_dir(&fixture.root).unwrap().count(), 0);
+        fixture.assert_no_session_effect();
+        ssh.abort();
+        if change == "epoch" {
+            // Even a fresh proof cannot rebind an old runtime's retained root
+            // and pool to a newer lifecycle scope with the same root string.
+            let (stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+            let scope = fixture.scope();
+            assert!(Client::open_host(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new()
+            )
+            .await
+            .is_err());
+            assert!(server.await.unwrap().is_err());
+            ssh.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn host_files_share_two_stream_slots_across_authenticated_connections() {
+    use crate::file_client::Client;
+    let fixture = FilesFixture::new(Some(true));
+    let scope = fixture.scope();
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let (stream, permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+        let (client, _) = Client::open_host(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        held.push((client, permit, server, ssh));
+    }
+    let (stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+    assert!(Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new()
+    )
+    .await
+    .is_err());
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    for (mut client, _permit, server, ssh) in held {
+        client.cancel();
+        assert!(server.await.unwrap().is_err());
+        ssh.abort();
+    }
+    let (stream, _permit, server, ssh) = fixture.connect(StreamRole::Files).await;
+    let (mut client, _) = Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    client.ping().await.unwrap();
+    client.cancel();
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    fixture.assert_no_session_effect();
+}
+
+#[tokio::test]
+async fn host_files_advanced_owner_and_control_proofs_cannot_select_files_authority() {
+    let fixture = Fixture::new();
+    let (client, stream, ssh) = fixture.pair().await;
+    let runtime = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let (mut client, _permit) = fixture.authenticate(client, StreamRole::Files).await;
+    assert!(crate::wire::read_frame(&mut client).await.is_err());
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    let ordinary = FilesFixture::new(Some(true));
+    let (mut client, _permit, server, ssh) = ordinary.connect(StreamRole::Control).await;
+    // Ordinary dispatch follows the signed role, never this unsigned byte.
+    client.write_u8(2).await.unwrap();
+    crate::wire::write_frame(
+        &mut client,
+        crate::file_protocol::OPEN,
+        &serde_json::to_vec(&crate::file_protocol::HostOpen {
+            version: crate::file_protocol::HOST_VERSION,
+            scope: ordinary.scope(),
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(crate::wire::read_frame(&mut client).await.is_err());
+    assert!(server.await.unwrap().is_err());
+    ordinary.assert_no_session_effect();
+    ssh.abort();
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum OldRole {
+        Control,
+        Terminal,
+    }
+    assert!(serde_json::from_str::<OldRole>("\"files\"").is_err());
+    assert_eq!(
+        serde_json::to_string(&StreamRole::Control).unwrap(),
+        "\"control\""
+    );
+    assert_eq!(
+        serde_json::to_string(&StreamRole::Terminal).unwrap(),
+        "\"terminal\""
+    );
+}
+
+#[tokio::test]
+async fn host_files_close_isolated_from_parent_and_sibling_but_global_shutdown_propagates() {
+    use crate::file_client::Client;
+    let fixture = FilesFixture::new(Some(false));
+    let parent = CancellationToken::new();
+    let scope = fixture.scope();
+    let (stream, _first_permit, first_server, first_ssh) = fixture
+        .connect_with_cancel(StreamRole::Files, parent.clone())
+        .await;
+    let (mut first, _) = Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let (stream, _second_permit, second_server, second_ssh) = fixture
+        .connect_with_cancel(StreamRole::Files, parent.clone())
+        .await;
+    let (mut second, _) = Client::open_host(
+        stream,
+        &scope.host,
+        &scope.installation,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    first.cancel();
+    assert!(tokio::time::timeout(Duration::from_secs(3), first_server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    let parent_survived = !parent.is_cancelled();
+    let sibling_survived = second.ping().await.is_ok();
+    // Drain both owned streams before assertions, including the failing baseline.
+    parent.cancel();
+    assert!(tokio::time::timeout(Duration::from_secs(3), second_server)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(second.ping().await.is_err());
+    first_ssh.abort();
+    second_ssh.abort();
+    fixture.assert_no_session_effect();
+    assert!(
+        parent_survived,
+        "closing one Files stream must not cancel the HOST parent"
+    );
+    assert!(
+        sibling_survived,
+        "closing one Files stream must not retire its sibling"
+    );
 }

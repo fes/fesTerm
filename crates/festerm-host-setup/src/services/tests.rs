@@ -335,6 +335,7 @@ impl CommandRunner for FakeRunner {
 
 fn settings() -> Settings {
     Settings {
+        filesystem: None,
         ordinary_access: Default::default(),
         friendly_name: "Native fixture".into(),
         allow_creation: false,

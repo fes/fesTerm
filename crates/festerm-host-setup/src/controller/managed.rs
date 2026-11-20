@@ -277,6 +277,7 @@ mod tests {
             &root.join("state"),
             Origin::Headless,
             Settings {
+                filesystem: None,
                 ordinary_access: Default::default(),
                 friendly_name: "managed fixture".into(),
                 allow_creation: false,

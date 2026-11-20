@@ -253,6 +253,7 @@ mod tests {
             &state,
             Origin::Desktop,
             Settings {
+                filesystem: None,
                 ordinary_access: OrdinaryAccess::ProviderOwner,
                 friendly_name: "local fixture".into(),
                 allow_creation: false,
