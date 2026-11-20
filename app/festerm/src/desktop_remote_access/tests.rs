@@ -2294,6 +2294,34 @@ fn desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmati
         .get_by_label("Update host…")
         .accesskit_node()
         .is_disabled());
+
+    // A retained committed update is history, including after a later Disable.
+    // It must not be presented as the result of the current operation.
+    harness.state_mut().0.scope = update_fixture_scope();
+    harness.state_mut().0.release.as_mut().unwrap().replacement =
+        Some(festerm_host_setup::services::ReplacementReport {
+            operation: "historical-update".into(),
+            from_version: "0.0.1".into(),
+            to_version: festerm_host_setup::VERSION.into(),
+            state: festerm_host_setup::services::ReplacementState::Committed,
+            previous_provenance: None,
+            candidate_provenance: None,
+            candidate_executable: PathBuf::from("fixture-host"),
+            candidate_bundle_sha256: "a".repeat(64),
+            meaning: "Recorded update history only.",
+        });
+    harness.state_mut().1 = None;
+    harness.run();
+    let disabled_notice = "Remote access is disabled. Enable it separately when ready.";
+    harness.get_by_label(disabled_notice);
+    assert!(harness
+        .query_by_label("Host updated. Enable remote access separately when ready.")
+        .is_none());
+    assert!(harness.state().1.is_none());
+    harness.state_mut().0.scope = provisioned_scope();
+    harness.run();
+    assert!(harness.query_by_label(disabled_notice).is_none());
+    assert!(harness.state().1.is_none());
 }
 
 #[test]

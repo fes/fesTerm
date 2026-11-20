@@ -94,7 +94,7 @@ pub(crate) fn show(
                     if update.state
                         == festerm_host_setup::services::ReplacementState::Committed =>
                 {
-                    Some("Host updated. Enable remote access separately when ready.")
+                    Some("Remote access is disabled. Enable it separately when ready.")
                 }
                 _ => None,
             }

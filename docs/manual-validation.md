@@ -5687,6 +5687,10 @@ Do not repeat Enable or Start to manufacture an observation failure.
 Portable held-lock and controller regressions automate the unavailable-read,
 cancellation and changed-scope branches; the ordinary native workflow remains
 separate. The original Linux mismatch's precise boundary remains unproved.
+The disabled summary must describe the current Disabled phase even when an
+older committed host update remains in history; it must not announce a new
+update after Disable. The rendered update-state regression covers this copy
+and verifies it disappears after Enable without dispatching an action.
 
 HOSTSETUP-01 / HOST-04 / HOST-05: with a shared persistent shell and private
 profile present, disable access normally, review Enable with only generic
