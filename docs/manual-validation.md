@@ -2631,8 +2631,9 @@ job bounds without selecting a daemon session. The typed configure/Enable path
 retains exact consent and ordinary Disable preserves it. Desktop Settings now
 offers default-off explicit folder/read-only/write consent and shows the exact
 folder/permissions in foreground Enable review; edits require Disabled. Generic
-and headless surfaces still refuse implicit hidden-policy changes. Account/relay
-client composition and top-level desktop/iOS file tabs remain next tranches.
+and headless surfaces still refuse implicit hidden-policy changes. The shared
+direct client connector is described below; top-level desktop/iOS file tabs
+remain a separate tranche.
 The owner's SFTP-style command set and create/delete UI remain queued, requiring
 explicit protocol/consent extensions beyond current v1 operations.
 
@@ -2657,9 +2658,14 @@ of published qualification artifacts and retain only finite outcomes/public scop
 
 ### Rooted Dev Tunnels client engine
 
-The ADR 0067 portable client is a protocol-only prerequisite for #778 file
-transfer. Its duplex fixtures use the legacy rooted bridge and perform no
-terminal admission. Real relay and ordinary HOST client composition, signed native file-role/
+The ADR 0067 portable client and shared ordinary Files connector are bounded
+prerequisites for #778 file transfer. Duplex fixtures cover the file engine;
+actual SSH fixtures inject a provider route and exercise direct Files proof,
+fresh lifecycle scope, Off/read-only, stale/pinned scope, account cancellation,
+sibling isolation and aggregate permits without daemon/Control inventory.
+Scripted account cutover prevents upload chunks/finish and preserves uncertain
+late finish without replay. These fixtures do not authenticate with the real
+provider or native vault. Real relay/provider and signed native file-role/
 grant/revocation qualification, top-level desktop/iOS file-manager entry and
 local staging/publication qualification remain pending. Before marking DT-07
 client integration accepted, validate those separate boundaries with owned

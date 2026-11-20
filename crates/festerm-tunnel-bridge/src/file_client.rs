@@ -1,5 +1,5 @@
-//! Sequential rooted-file client for an already verified, separate legacy
-//! bridge stream (ADR 0067). This does not authenticate HOST roles or attach a
+//! Sequential rooted-file client for an already verified, separate legacy or
+//! HOST file stream (ADR 0067). This does not authenticate HOST roles or attach a
 //! terminal. Callers own local staging/publication and explicit replacement consent.
 use crate::{
     file_protocol::{self as rpc, Operation, Result as Reply},
@@ -76,6 +76,8 @@ pub struct Client<S> {
     handles: HashMap<u32, (u32, State)>,
     connection: Arc<()>,
     cancel: CancellationToken,
+    #[cfg(feature = "host-routing")]
+    host_guard: Option<crate::host_client::ordinary::OrdinaryAccountGuard>,
 }
 
 async fn bounded<T>(
@@ -243,17 +245,56 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             handles: HashMap::new(),
             connection: Arc::new(()),
             cancel,
+            #[cfg(feature = "host-routing")]
+            host_guard: None,
         })
     }
     /// Only after ordinary Files-role authentication on the actual verified
     /// channel. No discovery, proof, credentials or terminal fallback occurs.
     /// None confirms the authenticated scope has files disabled.
     pub async fn open_host(
-        mut stream: S,
+        stream: S,
         host: &festerm_host_protocol::HostId,
         installation: &festerm_host_protocol::HostId,
         cancel: CancellationToken,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
+        Self::open_host_checked(stream, host, installation, None, || Ok(()), cancel).await
+    }
+
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn open_host_guarded(
+        stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        pinned: Option<&rpc::HostScope>,
+        guard: crate::host_client::ordinary::OrdinaryAccountGuard,
+        cancel: CancellationToken,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
+        let current = guard.clone();
+        let opened = Self::open_host_checked(
+            stream,
+            host,
+            installation,
+            pinned,
+            move || current.check().map_err(|_| Error::Cancelled),
+            cancel,
+        )
+        .await?;
+        Ok(opened.map(|(mut client, scope)| {
+            client.host_guard = Some(guard);
+            (client, scope)
+        }))
+    }
+
+    async fn open_host_checked(
+        mut stream: S,
+        host: &festerm_host_protocol::HostId,
+        installation: &festerm_host_protocol::HostId,
+        pinned: Option<&rpc::HostScope>,
+        current: impl Fn() -> Result<()>,
+        cancel: CancellationToken,
+    ) -> Result<Option<(Self, rpc::HostScope)>> {
+        current()?;
         let description = bounded(&cancel, async {
             let bytes = frame(&mut stream, rpc::HOST_DESCRIPTION, 4096).await?;
             let description: rpc::HostDescription =
@@ -262,6 +303,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 || &description.scope.host != host
                 || &description.scope.installation != installation
                 || description.scope.validate().is_err()
+                || pinned.is_some_and(|expected| expected != &description.scope)
             {
                 return Err(Error::Protocol);
             }
@@ -271,6 +313,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             Ok(description)
         })
         .await?;
+        current()?;
         let Some(caps) = description.filesystem else {
             return Ok(None);
         };
@@ -304,6 +347,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             }
         })
         .await?;
+        current()?;
         Ok(Some((
             Self {
                 stream: Some(stream),
@@ -312,6 +356,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 handles: HashMap::new(),
                 connection: Arc::new(()),
                 cancel,
+                #[cfg(feature = "host-routing")]
+                host_guard: None,
             },
             description.scope,
         )))
@@ -327,7 +373,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         self.stream = None;
         self.handles.clear();
     }
+    #[cfg(feature = "host-routing")]
+    pub(crate) fn check_current(&mut self) -> Result<()> {
+        self.ready()
+    }
     fn ready(&mut self) -> Result<()> {
+        #[cfg(feature = "host-routing")]
+        if self
+            .host_guard
+            .as_ref()
+            .is_some_and(|guard| guard.check().is_err())
+        {
+            self.cancel();
+            return Err(Error::Cancelled);
+        }
         if self.cancel.is_cancelled() {
             self.stream = None;
             return Err(Error::Cancelled);
@@ -412,6 +471,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         })
         .await?;
         self.stream = Some(stream);
+        self.ready()?; // account/current-scope fence before disclosing the reply
         match received {
             (
                 rpc::Response {
@@ -712,6 +772,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     transfer.client.capabilities.chunk_limit as u32,
                 )
                 .await?;
+            transfer.client.ready()?;
             bounded(&transfer.client.cancel, async {
                 sink.write_all(&chunk.bytes)
                     .await
@@ -724,12 +785,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             }
         }
         transfer.client.close(&handle).await?;
+        transfer.client.ready()?;
         bounded(&transfer.client.cancel, async {
             sink.flush()
                 .await
                 .map_err(|error| Error::LocalIo(error.kind()))
         })
         .await?;
+        transfer.client.ready()?;
         transfer.finish();
         Ok(size)
     }
@@ -750,6 +813,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         let mut bytes = vec![0; transfer.client.capabilities.chunk_limit];
         let mut offset = 0;
         while offset < size {
+            transfer.client.ready()?;
             let length = (size - offset).min(bytes.len() as u64) as usize;
             let read = bounded(&transfer.client.cancel, async {
                 source
@@ -763,6 +827,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             }
             offset = transfer.client.write(&handle, &bytes[..read]).await?;
         }
+        transfer.client.ready()?;
         let extra = bounded(&transfer.client.cancel, async {
             source
                 .read(&mut bytes[..1])
@@ -888,6 +953,175 @@ mod tests {
             },
         )
         .await;
+    }
+
+    #[cfg(feature = "host-routing")]
+    async fn scripted_host_open(stream: &mut DuplexStream, scope: &rpc::HostScope) {
+        write_frame(
+            stream,
+            rpc::HOST_DESCRIPTION,
+            &json(&rpc::HostDescription {
+                version: rpc::HOST_VERSION,
+                scope: scope.clone(),
+                filesystem: Some(limits()),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let (kind, bytes) = crate::wire::read_frame(stream).await.unwrap();
+        assert_eq!(kind, rpc::OPEN);
+        let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(open.scope, *scope);
+        reply(
+            stream,
+            0,
+            Reply::Ready {
+                capabilities: limits(),
+            },
+        )
+        .await;
+    }
+
+    #[cfg(feature = "host-routing")]
+    #[tokio::test]
+    async fn ordinary_files_client_account_cutover_prevents_upload_chunks_and_finish() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct CutoverRead {
+            current: Arc<AtomicBool>,
+            eof: bool,
+            delivered: bool,
+        }
+        impl AsyncRead for CutoverRead {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                buffer: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                if !self.delivered {
+                    buffer.put_slice(b"x");
+                    self.delivered = true;
+                    if !self.eof {
+                        self.current.store(false, Ordering::SeqCst);
+                    }
+                } else {
+                    self.current.store(false, Ordering::SeqCst);
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        for after_chunk in [false, true] {
+            let scope = rpc::HostScope {
+                host: Default::default(),
+                installation: Default::default(),
+                epoch: "29".into(),
+            };
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_host_open(&mut peer, &expected).await;
+                let begin = request(&mut peer).await;
+                assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+                reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+                if after_chunk {
+                    let write = request(&mut peer).await;
+                    assert!(matches!(write.operation, Operation::Write { .. }));
+                    let (kind, _) = crate::wire::read_frame(&mut peer).await.unwrap();
+                    assert_eq!(kind, rpc::DATA);
+                    reply(&mut peer, write.id, Reply::Written { offset: "1".into() }).await;
+                }
+                // Never another chunk or FinishUpload after account loss.
+                assert!(crate::wire::read_frame(&mut peer).await.is_err());
+            });
+            let current = Arc::new(AtomicBool::new(true));
+            let checked = current.clone();
+            let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+                CancellationToken::new(),
+                Arc::new(move || {
+                    if checked.load(Ordering::SeqCst) {
+                        Ok(())
+                    } else {
+                        Err(festerm_host_protocol::ContractError::Stale)
+                    }
+                }),
+            );
+            let (mut client, _) = Client::open_host_guarded(
+                stream,
+                &scope.host,
+                &scope.installation,
+                None,
+                guard,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let mut source = CutoverRead {
+                current,
+                eof: after_chunk,
+                delivered: false,
+            };
+            assert!(matches!(
+                client.upload("/private", 1, None, &mut source).await,
+                Err(Error::Cancelled)
+            ));
+            assert!(!client.available());
+            server.await.unwrap();
+        }
+    }
+
+    #[cfg(feature = "host-routing")]
+    #[tokio::test]
+    async fn ordinary_files_client_late_account_cutover_keeps_finish_uncertain_without_replay() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let scope = rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        };
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let current = Arc::new(AtomicBool::new(true));
+        let changed = current.clone();
+        let server = tokio::spawn(async move {
+            scripted_host_open(&mut peer, &expected).await;
+            let begin = request(&mut peer).await;
+            reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+            let finish = request(&mut peer).await;
+            assert!(matches!(finish.operation, Operation::FinishUpload { .. }));
+            changed.store(false, Ordering::SeqCst);
+            reply(&mut peer, finish.id, Reply::Finished { size: "0".into() }).await;
+            assert!(crate::wire::read_frame(&mut peer).await.is_err());
+        });
+        let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+            CancellationToken::new(),
+            Arc::new(move || {
+                if current.load(Ordering::SeqCst) {
+                    Ok(())
+                } else {
+                    Err(festerm_host_protocol::ContractError::Stale)
+                }
+            }),
+        );
+        let (mut client, _) = Client::open_host_guarded(
+            stream,
+            &scope.host,
+            &scope.installation,
+            None,
+            guard,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let handle = client.begin_upload("/empty", 0, None).await.unwrap();
+        assert!(matches!(
+            client.finish_upload(&handle).await,
+            Err(Error::UncertainFinish(_))
+        ));
+        assert!(client.finish_upload(&handle).await.is_err());
+        assert!(!client.available());
+        server.await.unwrap();
     }
 
     #[tokio::test]
