@@ -604,6 +604,35 @@ impl SftpSession {
             .owned = true;
     }
 
+    async fn open_upload_file(
+        &mut self,
+        remote_path: &str,
+    ) -> Result<russh_sftp::client::fs::File, SftpSessionError> {
+        self.client
+            .open_with_flags(
+                remote_path.to_owned(),
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|error| {
+                use russh_sftp::{client::error::Error, protocol::StatusCode};
+                // A lost reply may follow server-side creation. Keep the
+                // unconfirmed ledger, without claiming ownership or removing
+                // anything. Generic Failure is not a rollback guarantee.
+                if matches!(
+                    &error,
+                    Error::Status(status)
+                        if matches!(status.status_code,
+                            StatusCode::NoSuchFile
+                                | StatusCode::PermissionDenied
+                                | StatusCode::OpUnsupported)
+                ) {
+                    self.partial_file = None;
+                }
+                remote_error("upload", remote_path, error)
+            })
+    }
+
     pub(crate) async fn check_partial_path(&self, path: &SftpPath) -> Result<(), SftpSessionError> {
         check_transfer_partial_path(&self.partial_file, path).await
     }
@@ -1074,17 +1103,10 @@ impl SftpSession {
         }
 
         self.begin_partial_file(SftpPath::remote(remote_path.clone()))?;
-        let mut remote_file = self
-            .client
-            .open_with_flags(
-                remote_path.clone(),
-                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
-            )
-            .await
-            .map_err(|error| {
-                self.partial_file = None;
-                remote_error("upload", &remote_path, error)
-            })?;
+        let mut remote_file = match self.open_upload_file(&remote_path).await {
+            Ok(file) => file,
+            Err(error) => return Err(self.finish_failed_transfer(error).await),
+        };
         self.confirm_partial_file();
 
         let transfer_result = async {
@@ -1385,17 +1407,7 @@ impl SftpSession {
             .await
             .map_err(|error| local_error("open source file", local_path, error))?;
         self.begin_partial_file(SftpPath::remote(remote_path.to_owned()))?;
-        let mut remote_file = self
-            .client
-            .open_with_flags(
-                remote_path.to_owned(),
-                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
-            )
-            .await
-            .map_err(|error| {
-                self.partial_file = None;
-                remote_error("upload", remote_path, error)
-            })?;
+        let mut remote_file = self.open_upload_file(remote_path).await?;
         self.confirm_partial_file();
 
         let transfer_result = async {
@@ -2780,6 +2792,292 @@ mod tests {
         fn unimplemented(&self) -> Self::Error {
             russh_sftp::protocol::StatusCode::OpUnsupported
         }
+    }
+
+    #[derive(Clone, Copy)]
+    enum UploadOpenReply {
+        Lost,
+        CreatedFailure,
+        Refused(russh_sftp::protocol::StatusCode),
+    }
+
+    struct UploadOpenServer {
+        root: PathBuf,
+        reply: UploadOpenReply,
+        created: Arc<tokio::sync::Notify>,
+        removals: Arc<AtomicUsize>,
+    }
+
+    impl russh_sftp::server::Handler for UploadOpenServer {
+        type Error = russh_sftp::protocol::StatusCode;
+
+        fn unimplemented(&self) -> Self::Error {
+            Self::Error::OpUnsupported
+        }
+
+        async fn stat(
+            &mut self,
+            id: u32,
+            path: String,
+        ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+            let permissions = if path == "/" {
+                0o040755
+            } else {
+                return Err(Self::Error::NoSuchFile);
+            };
+            Ok(russh_sftp::protocol::Attrs {
+                id,
+                attrs: russh_sftp::protocol::FileAttributes {
+                    permissions: Some(permissions),
+                    ..Default::default()
+                },
+            })
+        }
+
+        async fn open(
+            &mut self,
+            _id: u32,
+            filename: String,
+            flags: OpenFlags,
+            _attrs: russh_sftp::protocol::FileAttributes,
+        ) -> Result<russh_sftp::protocol::Handle, Self::Error> {
+            assert!(matches!(
+                filename.as_str(),
+                "/target.bin" | "/source.bin.festerm-part"
+            ));
+            assert_eq!(
+                flags.bits(),
+                (OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE).bits()
+            );
+            if let UploadOpenReply::Refused(status) = self.reply {
+                return Err(status);
+            }
+            let mut file = stdfs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(self.root.join(filename.trim_start_matches('/')))
+                .unwrap();
+            std::io::Write::write_all(&mut file, b"created before OPEN reply").unwrap();
+            self.created.notify_one();
+            match self.reply {
+                UploadOpenReply::Lost => std::future::pending().await,
+                UploadOpenReply::CreatedFailure => Err(Self::Error::Failure),
+                UploadOpenReply::Refused(_) => unreachable!(),
+            }
+        }
+
+        async fn remove(
+            &mut self,
+            _id: u32,
+            _filename: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            self.removals.fetch_add(1, Ordering::AcqRel);
+            Err(Self::Error::OpUnsupported)
+        }
+    }
+
+    async fn upload_open_session(
+        root: &Path,
+        reply: UploadOpenReply,
+    ) -> (
+        SftpSession,
+        tokio::task::JoinHandle<()>,
+        Arc<AtomicUsize>,
+        Arc<tokio::sync::Notify>,
+    ) {
+        let (client, server) = tokio::io::duplex(16_384);
+        let removals = Arc::new(AtomicUsize::new(0));
+        let created = Arc::new(tokio::sync::Notify::new());
+        let server = tokio::spawn(russh_sftp::server::run(
+            server,
+            UploadOpenServer {
+                root: root.to_owned(),
+                reply,
+                created: created.clone(),
+                removals: removals.clone(),
+            },
+        ));
+        let client = RusshSftpSession::new(client).await.unwrap();
+        client.set_timeout(1);
+        (
+            SftpSession {
+                client,
+                remote_working_directory: "/".to_owned(),
+                local_working_directory: root.to_owned(),
+                closed: false,
+                partial_file: None,
+                runtime_keepalive: None,
+            },
+            server,
+            removals,
+            created,
+        )
+    }
+
+    async fn check_upload_open_outcome(batch: bool, reply: UploadOpenReply) {
+        use crate::sftp_transfer::{SftpTransferEvent, SftpTransferManager, SftpTransferRequest};
+        let root = unique_test_directory("upload-open");
+        create_directory(&root);
+        let source = root.join("source.bin");
+        stdfs::write(&source, b"upload source").unwrap();
+        let sentinel = root.join("source.bin.festerm-part-unrelated");
+        stdfs::write(&sentinel, b"unrelated output").unwrap();
+        let (mut session, server, removals, _) = upload_open_session(&root, reply).await;
+        let uncertain = !matches!(reply, UploadOpenReply::Refused(_));
+        let remote_path = if batch {
+            "/source.bin.festerm-part"
+        } else {
+            "/target.bin"
+        };
+        if batch {
+            let mut manager = SftpTransferManager::new(session);
+            let batch = manager
+                .enqueue_batch(vec![SftpTransferRequest::new(
+                    SftpPath::local(&source),
+                    SftpPath::remote("/"),
+                )
+                .unwrap()])
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut reported = false;
+                let mut failed = false;
+                loop {
+                    match manager.recv_event().await.unwrap() {
+                        SftpTransferEvent::CleanupIncomplete { error } => {
+                            assert!(!reported);
+                            assert!(matches!(error, SftpSessionError::PartialFileOwnershipUnconfirmed { path } if path == remote_path));
+                            reported = true;
+                        }
+                        SftpTransferEvent::ItemFailed { reason, transfer_id, .. } => {
+                            assert_eq!(transfer_id, batch.transfer_ids[0]);
+                            assert_eq!(reported, uncertain, "uncertainty must precede the original failure");
+                            assert!(reason.contains("upload"));
+                            assert!(!reason.contains("ownership"), "primary failure must remain primary");
+                            failed = true;
+                        }
+                        SftpTransferEvent::ItemCompleted { .. } | SftpTransferEvent::ItemCancelled { .. } => panic!("failed OPEN cannot succeed or become cancellation"),
+                        SftpTransferEvent::BatchFinished { .. } => { assert!(failed); break; }
+                        _ => {}
+                    }
+                }
+            }).await.expect("upload OPEN must produce a bounded terminal result");
+            manager.shutdown().await.unwrap();
+        } else {
+            let error = session
+                .put(source.to_str().unwrap(), Some(remote_path))
+                .await
+                .unwrap_err();
+            if uncertain {
+                let SftpSessionError::TransferFailedWithIncompleteCleanup {
+                    operation_error,
+                    cleanup_error,
+                } = error
+                else {
+                    panic!("OPEN uncertainty must remain visible with original error")
+                };
+                assert!(matches!(
+                    *operation_error,
+                    SftpSessionError::RemoteOperationFailed {
+                        operation: "upload",
+                        ..
+                    }
+                ));
+                assert!(
+                    matches!(*cleanup_error, SftpSessionError::PartialFileOwnershipUnconfirmed { path } if path == remote_path)
+                );
+            } else {
+                assert!(matches!(
+                    error,
+                    SftpSessionError::RemoteOperationFailed {
+                        operation: "upload",
+                        ..
+                    }
+                ));
+            }
+            assert!(session.partial_file.is_none());
+        }
+        let partial = root.join(remote_path.trim_start_matches('/'));
+        if uncertain {
+            assert_eq!(stdfs::read(partial).unwrap(), b"created before OPEN reply");
+        } else {
+            assert!(
+                !partial.exists(),
+                "definitive refusal creates no owned output"
+            );
+        }
+        assert_eq!(stdfs::read(sentinel).unwrap(), b"unrelated output");
+        assert_eq!(
+            removals.load(Ordering::Acquire),
+            0,
+            "no pathname deletion is authorized"
+        );
+        server.abort();
+        let _ = server.await;
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn single_upload_lost_open_reply_reports_uncertainty_with_primary_error() {
+        test_runtime().block_on(check_upload_open_outcome(false, UploadOpenReply::Lost));
+    }
+
+    #[test]
+    fn batch_upload_lost_open_reply_reports_uncertainty_before_primary_failure() {
+        test_runtime().block_on(check_upload_open_outcome(true, UploadOpenReply::Lost));
+    }
+
+    #[test]
+    fn upload_open_generic_failure_is_not_creation_rollback_proof() {
+        test_runtime().block_on(async {
+            for batch in [false, true] {
+                check_upload_open_outcome(batch, UploadOpenReply::CreatedFailure).await;
+            }
+        });
+    }
+
+    #[test]
+    fn upload_open_definitive_refusals_never_claim_owned_output() {
+        use russh_sftp::protocol::StatusCode;
+        test_runtime().block_on(async {
+            for status in [
+                StatusCode::NoSuchFile,
+                StatusCode::PermissionDenied,
+                StatusCode::OpUnsupported,
+            ] {
+                for batch in [false, true] {
+                    check_upload_open_outcome(batch, UploadOpenReply::Refused(status)).await;
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn upload_open_cancel_keeps_unconfirmed_creation_for_owner_cleanup() {
+        test_runtime().block_on(async {
+            let root = unique_test_directory("cancel-upload-open");
+            create_directory(&root);
+            let source = root.join("source.bin");
+            stdfs::write(&source, b"upload source").unwrap();
+            let (mut session, server, removals, created) = upload_open_session(&root, UploadOpenReply::Lost).await;
+            {
+                let upload = session.put(source.to_str().unwrap(), Some("/target.bin"));
+                tokio::pin!(upload);
+                tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    tokio::select! {
+                        _ = &mut upload => panic!("OPEN reply must still be pending"),
+                        _ = created.notified() => {}
+                    }
+                }).await.unwrap();
+            }
+            assert!(!session.partial_file.as_ref().unwrap().owned);
+            assert!(matches!(session.cleanup_interrupted_transfer().await,
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { path }) if path == "/target.bin"));
+            assert_eq!(stdfs::read(root.join("target.bin")).unwrap(), b"created before OPEN reply");
+            assert_eq!(removals.load(Ordering::Acquire), 0);
+            server.abort();
+            let _ = server.await;
+            stdfs::remove_dir_all(root).unwrap();
+        });
     }
 
     async fn partial_file_session(
