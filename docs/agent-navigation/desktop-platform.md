@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "caa42c1a01af15c9b9f519deb05d049251cd7d3a5a094c92b8f1395be7a17879"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "53e6ecf932defd65d704726ababae2455d050dcdb7736ddc9586bf51b08af61c"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration and packaging: native app installation gating, macOS document/menu hooks, real-window smoke verification, and platform wake/privacy signals.
+Desktop platform integration and packaging owns native installer gating, macOS app hooks, real-window smoke verification, and platform wake/privacy signaling.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -66,15 +66,8 @@ Use for: A platform needs to wake or revoke consent when the machine resumes or 
 Evidence:
 - [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Confirms Windows resume broadcast classification
 - [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — Ignores suspend and keeps only resume edges
-- [`real_gnome_screen_shield_revokes_consent`](../../crates/festerm-linux-power/src/privacy/gnome.rs) — Proves GNOME lock-screen consent loss
 
 Caveats:
 - Wake logic treats resume as wake and ignores suspend; it does not generalize to network changes.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
-
-## Native recovery qualification
-
-- [`validation/dev-tunnels/linux-client-windows-native.json`](../../validation/dev-tunnels/linux-client-windows-native.json) — Pins both Linux-client/Windows-server policy cases, Copilot grids and post-TUI recovery; combined-release qualification remains separate.
-- [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
-- [`docs/manual-validation.md`](../manual-validation.md) — HOST-04 requires attributed Enable/backend-state comparison; held-lock and projection regressions automate observation-failure branches.
