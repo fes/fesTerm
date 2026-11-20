@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,10 +12,11 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: Which HOST marker is selected without legacy bridge fallback?
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects only HOST markers and rejects legacy bridge fallback.
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Explicit HOST-only selection, never legacy bridge fallback
+- [`select_labeled`](../../crates/festerm-tunnel-client/src/service.rs) — Filters tunnels by exact host marker and rejects ambiguity
 
 Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels.
+- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels
 
 Caveats:
 - Inventory rows are metadata only; they are not live daemon proof.
@@ -25,11 +26,12 @@ Caveats:
 
 Use for: How are Dev Box and project inventories bounded before presentation?
 
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns sign-in, worker loop, and tab lifecycle.
+- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns sign-in, worker loop, and tab lifecycle
+- [`EnterpriseInventory`](../../app/festerm/src/enterprise.rs) — Applies row and byte caps before display
 
 Evidence:
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab.
-- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Caps rows and bytes before showing inventory.
+- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab
+- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Caps rows and bytes before showing inventory
 
 Caveats:
 - Worker results are generation-scoped; stale results cannot mutate a new tab.
@@ -39,11 +41,12 @@ Caveats:
 
 Use for: What portable recipe fields survive import and export?
 
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust decisions, and grants.
-- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports or exports recipe metadata.
+- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust decisions, and grants
+- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports or exports recipe metadata
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes.
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes
+- [`resume_only_round_trips_without_changing_exact_generation_or_legacy_defaults`](../../crates/festerm-client-recipes/tests/recipes.rs) — Preserves exact generation and legacy defaults
 
 Caveats:
 - Portable metadata is intentionally public-only.
@@ -53,10 +56,11 @@ Caveats:
 
 Use for: How is HOST file access granted without terminal or daemon authority?
 
-- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Keeps filesystem root and policy for explicit consent reuse.
+- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Keeps filesystem root and policy for explicit consent reuse
+- [`serve`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Authorizes current policy before any file operation
 
 Evidence:
-- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files access works without session admission or daemon dependency.
+- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files access works without session admission or daemon dependency
 
 Caveats:
 - Prepared roots do not grant hidden authority; every use revalidates scope.
@@ -66,10 +70,11 @@ Caveats:
 
 Use for: Which lifecycle state or action distinguishes close, cancel, and failure?
 
-- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close transitions.
+- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close transitions
+- [`PowerShellAction`](../../app/festerm/src/powershell.rs) — Separates connect, run, cancel, and close commands
 
 Evidence:
-- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure remains distinct from a successful exit.
+- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure stays distinct from a successful exit
 
 Caveats:
 - Stale worker generations cannot mutate the current state.
@@ -79,14 +84,13 @@ Caveats:
 
 Use for: What record and consent prevent untrusted host replacement?
 
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; it grants no replacement authority.
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
-- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Noninteractive local owner-admission evidence; no state writes or HOST-ready claim.
+- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority
+- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions
+- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Local owner-admission evidence without state writes or ready claim
 
 Evidence:
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update.
+- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update
 
 Caveats:
-- Containment retries preserve receipts without mutating live service state.
 - Helper gate checks reject unsupported or foreign capabilities before consent.
-- Owner diagnostics grant no credential, retry or serving authority.
+- Owner diagnostics grant no credential, retry, or serving authority.

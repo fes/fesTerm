@@ -1,56 +1,55 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "d28a184425cb01067d22e6bff42a24e7be51bcf1a4dc4a3f4e23bc5afd1506b2"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9528af75985150736efdefcaceb1aebc2cda4de07f63947669992a18d40b8f4d"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries.
+Owns validated configuration, workspace metadata, and native secret storage boundaries for current-user app state.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
 ## Config startup
 
-Use for: Config selection and startup persistence.
+Use for: Which config source wins, and how does startup keep native writes private and reload-safe?
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses explicit override or native config path and keeps it private.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses explicit override or native config path without exposing source details.
 - [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private startup loader and save gate for automatic config writes.
 
 Evidence:
-- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Proves the override wins before the native config location.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Shows private native-directory creation and round-trip save behavior.
+- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Override wins before native config location.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Creates only the native directory and round-trips a workspace save.
 
 Caveats:
-- Diagnostics avoid exposing the selected path or source TOML.
-- Unknown or busy writes latch the save gate until restart.
-- The selected path is intentionally inaccessible outside this module.
+- Diagnostics intentionally hide the selected path and source TOML.
+- Busy or unknown writes latch the save gate until restart.
+- The selected path is only usable inside this startup module.
 
 ## Config schema
 
-Use for: Validated config and workspace metadata.
+Use for: What config data is valid and what workspace metadata is allowed to persist?
 
 - [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML document for profiles, workspace, settings, and accounts.
 - [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Metadata-only restore state with tab and window validation.
-- [`DevTunnelFilesProfileConfiguration`](../../crates/festerm-config/src/profiles.rs) — Files destination/account metadata; restore grants no connection or credential authority.
 
 Evidence:
-- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks Files schema and exact restored tab kind.
-- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Confirms workspace validation and profile-reference checks.
+- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Confirms workspace validation and profile reference checks.
+- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks Files schema keeps only metadata and exact restored tab kind.
 
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
 - Profile IDs and workspace tab profile_id references must stay unique and valid.
-- Config files store metadata, never session content or secret bytes.
+- Config stores metadata, not session content or secret bytes.
 
 ## Secret boundary
 
-Use for: Native credential and opaque-reference custody.
+Use for: How are opaque native secret references stored without persisting secret material?
 
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than password or token data.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Opaque native-store reference wrapper, never plain password or token data.
 - [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
 
 Evidence:
-- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Shows config persists only the opaque reference and keeps the value opaque.
-- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Proves persisted references are canonical, random, and opaque.
+- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Persists only the opaque reference and round-trips it unchanged.
+- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Generated references are canonical, random, and opaque.
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
@@ -71,17 +70,4 @@ Evidence:
 Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
 - Configuration and workspace files contain metadata, never credential or terminal content.
-- Successful file creation alone does not prove private ownership or safe publication.
-
-## Windows starter context
-
-Use for: Hosted successor routing.
-
-- [`same_start_context`](../../crates/festerm-windows-security/src/lib.rs) — Matches user, logon, session, integrity and elevation.
-- [`verify_successor`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Bounds the same-image successor lifetime.
-
-Evidence:
-- [`unicode_environment_safearray_preserves_drive_entries_and_wide_values`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Preserves drive entries and UTF-16.
-
-Caveats:
-- Context equality and WMI PIDs confer no creation consent, session or termination authority.
+- Successful creation alone does not prove private ownership or safe publication.
