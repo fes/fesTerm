@@ -1,6 +1,53 @@
 //! Fresh native reads with no unlock, prompt, initialization, or fallback path.
 use super::*;
 
+#[cfg(target_os = "macos")]
+struct HeadlessKeychainFence;
+#[cfg(target_os = "macos")]
+static HEADLESS_FENCE: std::sync::OnceLock<HeadlessKeychainFence> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+pub(super) fn initialize_headless_keychain() -> Result<(), SecretStoreError> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    install_headless_fence(
+        || {
+            let guard = SecKeychain::disable_user_interaction()
+                .map_err(|_| SecretStoreError::LockedOrUnavailable)?;
+            // Drop would re-enable process UI. This dedicated worker keeps the
+            // fence for its whole lifetime, including failed startup/cleanup.
+            std::mem::forget(guard);
+            Ok(())
+        },
+        || {
+            SecKeychain::user_interaction_allowed()
+                .map_err(|_| SecretStoreError::LockedOrUnavailable)
+        },
+    )?;
+    let _ = HEADLESS_FENCE.set(HeadlessKeychainFence);
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn install_headless_fence(
+    set: impl FnOnce() -> Result<(), SecretStoreError>,
+    read: impl FnOnce() -> Result<bool, SecretStoreError>,
+) -> Result<(), SecretStoreError> {
+    set()?;
+    match read()? {
+        false => Ok(()),
+        true => Err(SecretStoreError::LockedOrUnavailable),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn headless_keychain_fenced() -> bool {
+    HEADLESS_FENCE.get().is_some()
+        && matches!(
+            security_framework::os::macos::keychain::SecKeychain::user_interaction_allowed(),
+            Ok(false)
+        )
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn mac_results(results: Vec<Option<Vec<u8>>>) -> Result<SecretBytes, SecretStoreError> {
     let mut selected = None;
@@ -93,6 +140,66 @@ fn unlocked_result<T>(
     Ok(secret)
 }
 
+#[cfg(any(
+    all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ),
+    test
+))]
+fn unlocked_update<T>(
+    locked: usize,
+    mut unlocked: Vec<T>,
+    write: impl FnOnce(T) -> Result<(), SecretStoreError>,
+) -> Result<(), SecretStoreError> {
+    if locked != 0 {
+        return Err(SecretStoreError::LockedOrUnavailable);
+    }
+    if unlocked.is_empty() {
+        return Err(SecretStoreError::Missing);
+    }
+    if unlocked.len() != 1 {
+        return Err(SecretStoreError::BackendFailure);
+    }
+    write(unlocked.remove(0))
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+pub(super) fn update(
+    reference: &SecretReference,
+    secret: &SecretBytes,
+) -> Result<(), SecretStoreError> {
+    use secret_service::{blocking::SecretService, EncryptionType};
+    fn error(e: secret_service::Error) -> SecretStoreError {
+        match e {
+            secret_service::Error::Locked
+            | secret_service::Error::Prompt
+            | secret_service::Error::Unavailable => SecretStoreError::LockedOrUnavailable,
+            secret_service::Error::NoResult => SecretStoreError::Missing,
+            _ => SecretStoreError::BackendFailure,
+        }
+    }
+    check_size(secret)?;
+    let service = SecretService::connect(EncryptionType::Dh).map_err(error)?;
+    let account = reference.account_name();
+    let found = service
+        .search_items(HashMap::from([
+            ("service", SERVICE_NAMESPACE),
+            ("username", account.as_str()),
+        ]))
+        .map_err(error)?;
+    // Retain exactly the searched unlocked item. SetSecret has no prompt
+    // output; a lock/deletion race refuses, never Unlock/CreateItem/Prompt.
+    unlocked_update(found.locked.len(), found.unlocked, |item| {
+        item.ensure_unlocked().map_err(error)?;
+        item.set_secret(secret.as_slice(), "text/plain")
+            .map_err(error)
+    })
+}
+
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
@@ -126,6 +233,67 @@ pub(super) fn get(reference: &SecretReference) -> Result<SecretBytes, SecretStor
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn headless_fence_requires_successful_set_and_false_readback() {
+        let reads = std::cell::Cell::new(0);
+        assert_eq!(
+            install_headless_fence(
+                || Err(SecretStoreError::BackendFailure),
+                || {
+                    reads.set(1);
+                    Ok(false)
+                }
+            ),
+            Err(SecretStoreError::BackendFailure)
+        );
+        assert_eq!(reads.get(), 0);
+        assert_eq!(
+            install_headless_fence(|| Ok(()), || Ok(true)),
+            Err(SecretStoreError::LockedOrUnavailable)
+        );
+        assert_eq!(
+            install_headless_fence(|| Ok(()), || Err(SecretStoreError::BackendFailure)),
+            Err(SecretStoreError::BackendFailure)
+        );
+        assert_eq!(install_headless_fence(|| Ok(()), || Ok(false)), Ok(()));
+    }
+    #[test]
+    fn noninteractive_update_requires_one_unlocked_item_and_never_retries() {
+        for (locked, unlocked, expected) in [
+            (1, vec![], SecretStoreError::LockedOrUnavailable),
+            (1, vec![1], SecretStoreError::LockedOrUnavailable),
+            (0, vec![], SecretStoreError::Missing),
+            (0, vec![1, 2], SecretStoreError::BackendFailure),
+        ] {
+            assert_eq!(
+                unlocked_update(locked, unlocked, |_| panic!(
+                    "no update/create/unlock allowed"
+                )),
+                Err(expected)
+            );
+        }
+        let calls = std::cell::Cell::new(0);
+        for error in [
+            SecretStoreError::LockedOrUnavailable,
+            SecretStoreError::Missing,
+        ] {
+            assert_eq!(
+                unlocked_update(0, vec![1], |_| {
+                    calls.set(calls.get() + 1);
+                    Err(error)
+                }),
+                Err(error)
+            );
+        }
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            unlocked_update(0, vec![1], |item| {
+                assert_eq!(item, 1);
+                Ok(())
+            }),
+            Ok(())
+        );
+    }
     #[test]
     fn locked_missing_and_ambiguous_searches_never_read_or_unlock() {
         for (locked, unlocked, error) in [

@@ -1158,6 +1158,16 @@ Large-text test preference are explicit. All 21 server actors and protected
 records survived. This does not close the full iOS workflow case, in-place
 Copilot resize, touchscreen input, accessibility or combined-release gates.
 
+DT-05 also requires long-lived ordinary readiness renewal in the same protected
+run without disconnecting a healthy relay. Verify unchanged creation policy,
+binding and durable generations; replacement must refuse changed/revoked scope,
+cancelled work and failed native credential persistence. No keychain prompts or
+interactive fallback are permitted. Retain the original error before Refresh;
+an expired prepared observer may refuse admission briefly until replacement.
+This new renewal gate is **UNRUN** natively; prior unchanged-file-digest refusals
+do not prove credential expiry or a root cause. Existing lifetime and no-replay
+checks remain required.
+
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a
 screen or configured right margin, including wrap retained in an inactive
 alternate buffer. The core regression tests automate acceptance of these valid

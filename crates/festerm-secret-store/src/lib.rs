@@ -181,6 +181,18 @@ pub trait SecretStore: Send + Sync {
         secret: &SecretBytes,
     ) -> Result<(), SecretStoreError>;
 
+    /// Updates an existing opaque reference without unlocking or presenting UI.
+    /// Unknown backends refuse; never falls back to an interactive operation.
+    /// Native read/write is not compare-and-swap; callers retain their existing
+    /// per-reference serialization and must not replay an uncertain update.
+    fn update_noninteractive(
+        &self,
+        _reference: &SecretReference,
+        _secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        Err(SecretStoreError::Unsupported)
+    }
+
     /// Deletes a secret, returning whether it was present.
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError>;
 }
@@ -293,6 +305,14 @@ impl SecretStore for MemorySecretStore {
             .ok_or(SecretStoreError::Missing)?;
         *existing = SecretBytes::copy_from_slice(secret.as_slice());
         Ok(())
+    }
+
+    fn update_noninteractive(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        self.update(reference, secret)
     }
 
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError> {
@@ -461,6 +481,57 @@ impl SecretStore for NativeSecretStore {
             .map_err(map_keyring_error)
     }
 
+    fn update_noninteractive(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        check_size(secret)?;
+        if !self.noninteractive_native {
+            return Err(SecretStoreError::Unsupported);
+        }
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SecretStoreError::BackendFailure)?;
+        #[cfg(target_os = "macos")]
+        if !noninteractive::headless_keychain_fenced() {
+            return Err(SecretStoreError::Unsupported);
+        }
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            // On macOS the dedicated process fence above disables all keychain
+            // interaction; foreground callers have no proof and refuse.
+            // This known generic WinCred backend calls no CredUI API. As with
+            // update(), existence-read then write is not an OS atomic replace:
+            // an external deletion race can recreate this same reference.
+            let entry = self.entry(reference)?;
+            entry.get_secret().map_err(map_keyring_error)?.zeroize();
+            entry
+                .set_secret(secret.as_slice())
+                .map_err(map_keyring_error)
+        }
+        #[cfg(all(
+            unix,
+            not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+        ))]
+        {
+            noninteractive::update(reference, secret)
+        }
+        #[cfg(not(any(
+            windows,
+            target_os = "macos",
+            all(
+                unix,
+                not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+            )
+        )))]
+        {
+            let _ = reference;
+            Err(SecretStoreError::Unsupported)
+        }
+    }
+
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError> {
         let _operation = self
             .operation_lock
@@ -533,6 +604,15 @@ fn map_platform_failure(_: &keyring_core::error::PlatformError) -> SecretStoreEr
     test
 ))]
 mod noninteractive;
+
+/// Permanently disables Keychain UI in this dedicated headless process.
+/// Call only from the actual HOST serving command before threads/runtime/vault
+/// initialization. Foreground GUI/setup/operator routes must never call this.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn initialize_headless_keychain() -> Result<(), SecretStoreError> {
+    noninteractive::initialize_headless_keychain()
+}
 
 /// Creates the target's native secret store.
 ///
@@ -623,6 +703,37 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noninteractive_update_retains_existing_reference_and_refuses_missing_or_oversize() {
+        let store = MemorySecretStore::default();
+        let reference = store.put(&SecretBytes::copy_from_slice(b"old")).unwrap();
+        store
+            .update_noninteractive(&reference, &SecretBytes::copy_from_slice(b"new"))
+            .unwrap();
+        store
+            .get_noninteractive(&reference)
+            .unwrap()
+            .with_bytes(|bytes| assert_eq!(bytes, b"new"));
+        assert_eq!(
+            store.update_noninteractive(
+                &SecretReference::generate(),
+                &SecretBytes::copy_from_slice(b"new")
+            ),
+            Err(SecretStoreError::Missing)
+        );
+        assert_eq!(
+            store.update_noninteractive(
+                &reference,
+                &SecretBytes::copy_from_slice(&vec![0; MAX_SECRET_BYTES + 1])
+            ),
+            Err(SecretStoreError::TooLarge)
+        );
+        store
+            .get_noninteractive(&reference)
+            .unwrap()
+            .with_bytes(|bytes| assert_eq!(bytes, b"new"));
+    }
     use static_assertions::assert_not_impl_any;
 
     assert_not_impl_any!(SecretBytes: Clone, std::fmt::Debug, serde::Serialize);
@@ -649,11 +760,25 @@ mod tests {
             InteractiveOnly.get_noninteractive(&SecretReference::generate()),
             Err(SecretStoreError::Unsupported)
         ));
+        assert_eq!(
+            InteractiveOnly.update_noninteractive(
+                &SecretReference::generate(),
+                &SecretBytes::copy_from_slice(b"never stored")
+            ),
+            Err(SecretStoreError::Unsupported)
+        );
         let unknown = mock_backed_store();
         assert!(matches!(
             unknown.get_noninteractive(&SecretReference::generate()),
             Err(SecretStoreError::Unsupported)
         ));
+        assert_eq!(
+            unknown.update_noninteractive(
+                &SecretReference::generate(),
+                &SecretBytes::copy_from_slice(b"never stored")
+            ),
+            Err(SecretStoreError::Unsupported)
+        );
     }
 
     #[test]

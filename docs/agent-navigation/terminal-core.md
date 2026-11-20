@@ -81,3 +81,5 @@ Evidence:
 
 Caveats:
 - Core tests do not establish the cause of an older running daemon's native recovery failure.
+
+Allocation regression: [`character_input_avoids_temporary_allocations`](../../crates/festerm-core/tests/character_input_allocations.rs) runs its process-wide counter in a single-thread entrypoint; Cargo and nextest retain the named test, two character cases, positive control and unchanged event allocation bound.

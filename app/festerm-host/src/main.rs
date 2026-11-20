@@ -98,6 +98,20 @@ impl std::fmt::Display for ManualCleanupRequired {
 #[cfg(feature = "owner-routing")]
 impl std::error::Error for ManualCleanupRequired {}
 
+#[cfg(any(target_os = "macos", test))]
+fn initialize_serving_store(
+    command: &str,
+    initialize: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    if matches!(
+        command,
+        "run" | "run-desktop" | "run-managed" | "run-desktop-managed"
+    ) {
+        initialize()?;
+    }
+    Ok(())
+}
+
 fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let mut args = args.into_iter();
     let command = args.next().ok_or_else(invalid)?;
@@ -559,6 +573,11 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             } else {
                 Origin::Headless
             };
+            #[cfg(target_os = "macos")]
+            initialize_serving_store(
+                command,
+                festerm_host_setup::cloud::initialize_headless_account_store,
+            )?;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -794,9 +813,12 @@ async fn with_shutdown<T>(
     tokio::select! {
         result = &mut work => result,
         signal = shutdown_signal() => {
-            signal?;
             cancel.cancel();
-            work.await
+            // Even signal-registration failure must retain/drain owned native
+            // work before the serving context and runtime lease are dropped.
+            let result = work.await;
+            signal?;
+            result
         }
     }
 }
@@ -1074,6 +1096,30 @@ fn diagnostic(error: &io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses() {
+        for command in [
+            "setup",
+            "configure",
+            "status",
+            "disable",
+            "update",
+            "run-status",
+            "run-desktop-status",
+        ] {
+            initialize_serving_store(command, || {
+                panic!("foreground route must not change Keychain UI")
+            })
+            .unwrap();
+        }
+        for command in ["run", "run-desktop", "run-managed", "run-desktop-managed"] {
+            assert!(initialize_serving_store(command, || Err(io::Error::other(
+                "fixture fence failure"
+            )))
+            .is_err());
+        }
+    }
 
     #[test]
     fn headless_run_exit_retries_only_typed_login_proof_and_preserves_diagnostics() {

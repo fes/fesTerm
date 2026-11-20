@@ -70,12 +70,28 @@ impl Failure {
             },
             _ => "not-recorded",
         };
+        let refusal = match error {
+            Error::Refused(reason) => match reason {
+                festerm_host_protocol::Refusal::Denied => "denied",
+                festerm_host_protocol::Refusal::Offline => "offline",
+                festerm_host_protocol::Refusal::Unknown => "unknown",
+                festerm_host_protocol::Refusal::Busy => "busy",
+                festerm_host_protocol::Refusal::Incompatible => "incompatible",
+                festerm_host_protocol::Refusal::Stale => "stale",
+                festerm_host_protocol::Refusal::RecipeConflict => "recipe-conflict",
+                festerm_host_protocol::Refusal::Revoked => "revoked",
+                festerm_host_protocol::Refusal::OutcomeUncertain => "outcome-uncertain",
+                festerm_host_protocol::Refusal::Unsupported => "unsupported",
+            },
+            _ => "not-recorded",
+        };
         format!(
-            "{} Attachment stage: {}; category: {}; I/O kind: {}.",
+            "{} Attachment stage: {}; category: {}; I/O kind: {}; refusal: {}.",
             self.message(),
             stage.label(),
             category,
-            kind
+            kind,
+            refusal
         )
     }
 }
@@ -128,6 +144,31 @@ mod tests {
                 );
             }
         }
+        for (reason, label) in [
+            (festerm_host_protocol::Refusal::Denied, "denied"),
+            (festerm_host_protocol::Refusal::Offline, "offline"),
+            (festerm_host_protocol::Refusal::Unknown, "unknown"),
+            (festerm_host_protocol::Refusal::Busy, "busy"),
+            (festerm_host_protocol::Refusal::Incompatible, "incompatible"),
+            (festerm_host_protocol::Refusal::Stale, "stale"),
+            (
+                festerm_host_protocol::Refusal::RecipeConflict,
+                "recipe-conflict",
+            ),
+            (festerm_host_protocol::Refusal::Revoked, "revoked"),
+            (
+                festerm_host_protocol::Refusal::OutcomeUncertain,
+                "outcome-uncertain",
+            ),
+            (festerm_host_protocol::Refusal::Unsupported, "unsupported"),
+        ] {
+            let original = Failure::Control(Error::Refused(reason));
+            let diagnostic = original.at_attach_stage(AttachStage::Snapshot);
+            assert_eq!(diagnostic.message(), original.message());
+            assert!(diagnostic
+                .terminal_message()
+                .contains(&format!("refusal: {label}.")));
+        }
         let error = Error::from(std::io::Error::other(
             "ghp_secret https://credential.invalid/private",
         ));
@@ -135,6 +176,7 @@ mod tests {
             .at_attach_stage(AttachStage::Relay)
             .terminal_message();
         assert!(message.contains("I/O kind: other"));
+        assert!(message.contains("refusal: not-recorded."));
         assert!(!message.contains("ghp_") && !message.contains("credential.invalid"));
         assert_eq!(
             Failure::Control(error).message(),
