@@ -5711,6 +5711,19 @@ client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
 
+HOST-03 attachment cleanup waits at most the existing one-second committed-lease
+contention budget, in clipped 5 ms steps, only to acquire the exact generation's
+lease after a failed native attachment. Reads and publication are not replayed;
+only the matching uncommitted pending ticket can be cleared. Committed/foreign
+tickets and old writer, temporary lease/epoch, grant and grace remain protected.
+Exhaustion still reports OutcomeUncertain; successful cleanup retains the existing
+Busy result rather than claiming attachment success. Deterministic held-lease,
+coordinated-release and non-contention fixtures cover this boundary. Native
+temporary cancellation/takeover evidence remains required on the actual helper.
+The original PR805 macOS failure is retained separately from its unchanged local
+pass; this cleanup robustness change does not identify the daemon admission
+refusal's original cause or qualify an older running helper.
+
 
 ### HOST-04/HOST-05/HOST-06 Windows Desktop managed execution revision6
 
