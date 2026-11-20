@@ -1124,6 +1124,18 @@ reference. This qualifies the runtime packaging fix, not the full item-8 policy/
 SDK matrix or physical-pixel identity. Old inbox-backed daemons remain unchanged;
 the prior missing-reply evidence is retained separately.
 
+The [Linux-client/Windows-server native record](../validation/dev-tunnels/linux-client-windows-native.json)
+retains the accepted pinned creation-OFF 0.17.14 and creation-ON 0.17.15
+cohorts. The latter includes
+SDK creation/idempotency, normal saved AttachOnly reconnect before and after
+real Copilot/resize, and fresh 74×19 / 79×20 query, environment and semantic
+visual pairs. These are separately pinned composed cohorts; combined-release
+qualification remains pending. The original DSR cursor fixture mismatch and
+changed CLS control are retained, as are the open #800 recovery, #795
+natural-renewal and #803 Linux lifecycle-UI limits. No final-release status
+is inferred. The matrix now has four accepted pinned
+functional cases, four partial cases and sixteen unstarted cases.
+
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a
 screen or configured right margin, including wrap retained in an inactive
 alternate buffer. The core regression tests automate acceptance of these valid
@@ -5713,6 +5725,19 @@ tests validate collection, privacy and restoration only; they do not establish
 client/server capability parity or native visual acceptance. Windows console
 collection, matched-grid paired screenshots and all native comparisons remain
 required. The optional aggregate runners expose a dedicated explicit probe mode.
+
+HOST-03 attachment cleanup waits at most the existing one-second committed-lease
+contention budget, in clipped 5 ms steps, only to acquire the exact generation's
+lease after a failed native attachment. Reads and publication are not replayed;
+only the matching uncommitted pending ticket can be cleared. Committed/foreign
+tickets and old writer, temporary lease/epoch, grant and grace remain protected.
+Exhaustion still reports OutcomeUncertain; successful cleanup retains the existing
+Busy result rather than claiming attachment success. Deterministic held-lease,
+coordinated-release and non-contention fixtures cover this boundary. Native
+temporary cancellation/takeover evidence remains required on the actual helper.
+The original PR805 macOS failure is retained separately from its unchanged local
+pass; this cleanup robustness change does not identify the daemon admission
+refusal's original cause or qualify an older running helper.
 
 
 ### HOST-04/HOST-05/HOST-06 Windows Desktop managed execution revision6

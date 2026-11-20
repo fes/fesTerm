@@ -311,17 +311,66 @@ mod attach_diagnostic_tests {
     #[test]
     fn failed_native_attach_unwind_contention_preserves_committed_writer_and_exact_pending_ticket()
     {
-        assert_failed_native_attach_unwind(Lifetime::Persistent {});
+        assert_failed_native_attach_unwind(Lifetime::Persistent {}, false);
     }
 
     #[test]
     fn failed_native_attach_unwind_preserves_temporary_ownership_and_exact_pending_ticket() {
-        assert_failed_native_attach_unwind(Lifetime::Temporary {
-            reconnect_grace_seconds: 60,
-        });
+        assert_failed_native_attach_unwind(
+            Lifetime::Temporary {
+                reconnect_grace_seconds: 60,
+            },
+            false,
+        );
     }
 
-    fn assert_failed_native_attach_unwind(lifetime: Lifetime) {
+    #[test]
+    fn failed_native_attach_unwind_clears_only_its_reservation_after_coordinated_release() {
+        for lifetime in [
+            Lifetime::Persistent {},
+            Lifetime::Temporary {
+                reconnect_grace_seconds: 60,
+            },
+        ] {
+            assert_failed_native_attach_unwind(lifetime, true);
+        }
+    }
+
+    #[test]
+    fn failed_native_attach_unwind_noncontention_and_read_failures_are_not_retried() {
+        let directory = storage::private_test_directory();
+        let root = directory.path();
+        let generation = GenerationId::new(1).unwrap();
+        let ticket = OperationId::new();
+        let before_count = std::fs::read_dir(root).unwrap().count();
+        let attempt = || {
+            SessionControl::unwind_attachment_until(
+                root,
+                generation,
+                &ticket,
+                Instant::now() + COMMITTED_LEASE_CONTENTION,
+                true,
+                || panic!("only acquisition contention may be retried"),
+            )
+        };
+        // A missing lock is an acquisition error, not lock contention.
+        assert_eq!(attempt(), Err(ControlError::CommittedButNotPublished));
+        assert_eq!(std::fs::read_dir(root).unwrap().count(), before_count);
+        let guard = LeaseGuard::reserve(root, generation).unwrap();
+        let private = storage::private_directory(root, false).unwrap();
+        storage::replace_private(&private, Path::new("host-daemon-1.json"), b"invalid").unwrap();
+        drop(guard);
+        // Once acquired, a corrupt read remains final; it is never repaired.
+        assert_eq!(attempt(), Err(ControlError::CommittedButNotPublished));
+        assert_eq!(
+            storage::read_private(&private, Path::new("host-daemon-1.json"), 4096)
+                .unwrap()
+                .as_slice(),
+            b"invalid"
+        );
+    }
+
+    fn assert_failed_native_attach_unwind(lifetime: Lifetime, release_during_wait: bool) {
         let directory = storage::private_test_directory();
         let root = directory.path();
         let storage_directory = storage::private_directory(root, false).unwrap();
@@ -418,7 +467,34 @@ mod attach_diagnostic_tests {
             before
         );
         drop(guard);
-        SessionControl::unwind_attachment(root, generation, &ticket, true).unwrap();
+        if release_during_wait {
+            let mut held = Some(LeaseGuard::acquire(root, generation).unwrap());
+            let mut contentions = 0;
+            SessionControl::unwind_attachment_until(
+                root,
+                generation,
+                &ticket,
+                Instant::now() + COMMITTED_LEASE_CONTENTION,
+                true,
+                || {
+                    // Release only after the real acquisition reports
+                    // contention, checking the still-locked bytes first.
+                    contentions += 1;
+                    assert_eq!(contentions, 1);
+                    assert_eq!(
+                        storage::read_private(&storage_directory, name, 4096).unwrap(),
+                        before
+                    );
+                    SessionControl::committed(&old, &held.as_ref().unwrap().read().unwrap())
+                        .unwrap();
+                    drop(held.take());
+                },
+            )
+            .unwrap();
+            assert_eq!(contentions, 1);
+        } else {
+            SessionControl::unwind_attachment(root, generation, &ticket, true).unwrap();
+        }
         let guard = LeaseGuard::acquire(root, generation).unwrap();
         let cleared = guard.read().unwrap();
         assert!(cleared.pending.is_none());
@@ -2974,7 +3050,41 @@ impl SessionControl {
         ticket: &OperationId,
         #[cfg(any(test, feature = "test-support"))] diagnose: bool,
     ) -> Result<(), ControlError> {
-        let acquired = LeaseGuard::acquire(root, generation);
+        Self::unwind_attachment_until(
+            root,
+            generation,
+            ticket,
+            Instant::now() + COMMITTED_LEASE_CONTENTION,
+            #[cfg(any(test, feature = "test-support"))]
+            diagnose,
+            #[cfg(test)]
+            || {},
+        )
+    }
+
+    fn unwind_attachment_until(
+        root: &Path,
+        generation: GenerationId,
+        ticket: &OperationId,
+        deadline: Instant,
+        #[cfg(any(test, feature = "test-support"))] diagnose: bool,
+        #[cfg(test)] mut on_contention: impl FnMut(),
+    ) -> Result<(), ControlError> {
+        // A reservation may exist already. Wait only for its observation lock;
+        // never replay native attachment, lease reads or a publication effect.
+        let acquired = loop {
+            match LeaseGuard::acquire(root, generation) {
+                Err(error) if crate::lock_is_contended(&error) && Instant::now() < deadline => {
+                    #[cfg(test)]
+                    on_contention();
+                    std::thread::sleep(
+                        Duration::from_millis(5)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                outcome => break outcome,
+            }
+        };
         #[cfg(any(test, feature = "test-support"))]
         if let Err(error) = &acquired {
             AttachFailureDiagnostic::UnwindAcquire(error).report(diagnose);

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-agent", "sources": "0db53476444c1962f0034be0496abd4006ffc34332043f8c09c8937e2521525e"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "caa42c1a01af15c9b9f519deb05d049251cd7d3a5a094c92b8f1395be7a17879"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -75,5 +75,6 @@ Caveats:
 
 ## Native recovery qualification
 
+- [`validation/dev-tunnels/linux-client-windows-native.json`](../../validation/dev-tunnels/linux-client-windows-native.json) — Pins both Linux-client/Windows-server policy cases, Copilot grids and post-TUI recovery; combined-release qualification remains separate.
 - [`docs/manual-validation.md`](../manual-validation.md) — DT-02 retains local/remote pending-wrap checks with newly built daemons; source tests do not qualify older running helpers.
 - [`docs/manual-validation.md`](../manual-validation.md) — HOST-04 requires attributed Enable/backend-state comparison; held-lock and projection regressions automate observation-failure branches.
