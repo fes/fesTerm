@@ -12,6 +12,7 @@ use std::{
 
 use festerm_core::{
     ColorScheme, Dimensions, Terminal, TerminalSemantics, MAX_RECORDING_SCROLLBACK_BYTES,
+    MAX_STRING_BYTES,
 };
 use festerm_recording::{
     ArtifactEvent, ArtifactReader, Completion, FinishReason, Pacing, Playback, PlaybackPlan,
@@ -524,10 +525,21 @@ fn ordinary_visible_unicode_is_preserved_in_the_initial_checkpoint() {
 #[test]
 fn partial_preconsent_sequences_refuse_start_without_creating_a_source() {
     let directory = private_dir();
-    let mut terminal = terminal(20, 2);
-    terminal.ingest(b"\x1b]2;PRIVATE-PENDING");
-    assert!(Recorder::start(directory.path(), &[&terminal], || {}).is_err());
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    for (prefix, oversize) in [
+        (b"\x1b]2;PRIVATE-PENDING".as_slice(), false),
+        (b"\x1b_G", true),
+        (b"\x1bP0;1q", true),
+    ] {
+        let mut terminal = terminal(20, 2);
+        terminal.ingest(prefix);
+        if oversize {
+            terminal.ingest(&vec![b'X'; MAX_STRING_BYTES * 2]);
+            assert!(Recorder::start(directory.path(), &[&terminal], || {}).is_err());
+            terminal.ingest(b"\x1b");
+        }
+        assert!(Recorder::start(directory.path(), &[&terminal], || {}).is_err());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
 }
 
 #[test]
@@ -743,18 +755,26 @@ fn new_recordings_preserve_each_streams_terminal_semantics() {
     let mut legacy = terminal(20, 2);
     legacy.set_semantics(TerminalSemantics::Legacy);
     let mut current = terminal(20, 2);
-    let (mut recorder, streams, ready) = start(directory.path(), &[&legacy, &current]);
-    for (stream, terminal) in streams.iter().zip([&mut legacy, &mut current]) {
-        recorder
-            .ingest_output(*stream, terminal, b"old\x1bcnew")
-            .unwrap();
+    current.set_semantics(TerminalSemantics::Current);
+    let mut safe = terminal(20, 2);
+    let (mut recorder, streams, ready) = start(directory.path(), &[&legacy, &current, &safe]);
+    let payload = vec![b'X'; MAX_STRING_BYTES - 1];
+    for (stream, terminal) in streams.iter().zip([&mut legacy, &mut current, &mut safe]) {
+        for bytes in [
+            b"old\x1bcnew\x1bPq".as_slice(),
+            &payload,
+            b"TAIL\x1b",
+            b"\\Z",
+        ] {
+            recorder.ingest_output(*stream, terminal, bytes).unwrap();
+        }
     }
     recorder.stop(FinishReason::User).unwrap();
     let bytes = fs::read(completed_path(completion(&mut recorder, ready))).unwrap();
     assert_eq!(&bytes[..8], b"FSTREC3\0");
 
     let mut reader = ArtifactReader::new(Cursor::new(&bytes)).unwrap();
-    let mut terminals = [None, None];
+    let mut terminals = [None, None, None];
     while let Some(event) = reader.next_event().unwrap() {
         match event {
             ArtifactEvent::Started {
@@ -774,22 +794,18 @@ fn new_recordings_preserve_each_streams_terminal_semantics() {
             _ => panic!("unexpected recording event"),
         }
     }
-    assert_eq!(
-        terminals[0].as_ref().unwrap().semantics(),
-        TerminalSemantics::Legacy
-    );
-    assert_eq!(
-        terminals[0].as_ref().unwrap().row_text(0).unwrap().trim(),
-        "oldnew"
-    );
-    assert_eq!(
-        terminals[1].as_ref().unwrap().semantics(),
-        TerminalSemantics::Current
-    );
-    assert_eq!(
-        terminals[1].as_ref().unwrap().row_text(0).unwrap().trim(),
-        "new"
-    );
+    for (index, (semantics, expected)) in [
+        (TerminalSemantics::Legacy, "oldnewTAILZ"),
+        (TerminalSemantics::Current, "newTAILZ"),
+        (TerminalSemantics::SafeFraming, "newZ"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let replay = terminals[index].as_ref().unwrap();
+        assert_eq!(replay.semantics(), semantics);
+        assert_eq!(replay.row_text(0).unwrap().trim(), expected);
+    }
 }
 
 #[test]

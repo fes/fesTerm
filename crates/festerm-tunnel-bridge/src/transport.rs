@@ -228,32 +228,107 @@ async fn client_session(
     client: Option<ClientId>,
     observation: crate::observation_client::ObservationDriver,
 ) -> io::Result<()> {
-    let mut connection = tokio::time::timeout(DEADLINE, relay::connect(&destination, &token))
-        .await
-        .map_err(|_| invalid())??;
+    let file_access = FileAccess {
+        read: destination.file_read,
+        windows_paths: destination.path_style == crate::files::PathStyle::Windows,
+    };
+    let target = destination.target.clone();
+    let (destination, credential) = (&destination, &token);
+    let (mut connection, schema, capabilities) = negotiate_client(
+        move || async move {
+            tokio::time::timeout(DEADLINE, relay::connect(destination, credential))
+                .await
+                .map_err(|_| invalid())?
+        },
+        relay_stream,
+        client_hello(&target, file_access, takeover, client),
+        &output,
+    )
+    .await?;
     observation.fence_expiry(connection.observation_expiry);
     drop(token);
     let observation_binding = connection.observation_binding();
-    tokio::spawn(observation.run(observation_binding, destination.target.clone()));
-    client_io_with_files(
+    tokio::spawn(observation.run(observation_binding, target));
+    client_io_negotiated(
         &mut connection.stream,
-        destination.target,
+        schema,
+        &capabilities,
         commands,
         output,
         files,
-        FileAccess {
-            read: destination.file_read,
-            windows_paths: destination.path_style == crate::files::PathStyle::Windows,
-        },
-        takeover,
-        client,
+        file_access,
     )
     .await
 }
 
+fn relay_stream(
+    connection: &mut relay::ClientConnection,
+) -> &mut russh::ChannelStream<russh::client::Msg> {
+    &mut connection.stream
+}
+
+fn client_hello(
+    target: &Target,
+    files: FileAccess,
+    takeover: bool,
+    client: Option<ClientId>,
+) -> impl Fn(u16) -> Hello + '_ {
+    move |snapshot_schema| Hello {
+        takeover,
+        files,
+        version: VERSION,
+        snapshot_schema,
+        target: target.clone(),
+        client: client.clone(),
+    }
+}
+
+/// Sends `Hello` on a fresh connection per [`HELLO_SNAPSHOT_SCHEMAS`] entry
+/// until a host admits one, returning the connection, the negotiated schema
+/// and the host's capabilities. Only a pre-admission `INCOMPATIBLE` retries.
+async fn negotiate_client<T, S, C, F>(
+    mut connect: C,
+    stream: fn(&mut T) -> &mut S,
+    hello: impl Fn(u16) -> Hello,
+    output: &flume::Sender<ValidatedOutput>,
+) -> io::Result<(T, u16, Vec<u8>)>
+where
+    C: FnMut() -> F,
+    F: std::future::Future<Output = io::Result<T>>,
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut schemas = HELLO_SNAPSHOT_SCHEMAS.into_iter().peekable();
+    while let Some(schema) = schemas.next() {
+        let mut connection = connect().await?;
+        let hello = serde_json::to_vec(&hello(schema)).map_err(|_| invalid())?;
+        write_frame(stream(&mut connection), HELLO, &hello).await?;
+        let (kind, capabilities) =
+            tokio::time::timeout(DEADLINE, read_frame(stream(&mut connection)))
+                .await
+                .map_err(|_| invalid())??;
+        if kind == INCOMPATIBLE && schemas.peek().is_some() {
+            continue;
+        }
+        if kind == REFUSED || kind == INCOMPATIBLE {
+            let _ = output
+                .send_async(ValidatedOutput::Failure(
+                    "The host refused the attachment or uses an incompatible bridge protocol; verify the session and update both devices.",
+                ))
+                .await;
+            return Err(invalid());
+        }
+        if kind != CAPABILITIES {
+            return Err(invalid());
+        }
+        return Ok((connection, schema, capabilities));
+    }
+    Err(invalid())
+}
+
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 async fn client_io_with_files(
-    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    stream: impl AsyncRead + AsyncWrite + Unpin,
     target: Target,
     commands: flume::Receiver<Vec<u8>>,
     output: flume::Sender<ValidatedOutput>,
@@ -262,29 +337,69 @@ async fn client_io_with_files(
     takeover: bool,
     client: Option<ClientId>,
 ) -> io::Result<()> {
-    let hello = serde_json::to_vec(&Hello {
-        takeover,
-        files: file_access,
-        version: VERSION,
-        snapshot_schema: SNAPSHOT_SCHEMA_VERSION,
+    let mut streams = [stream].into_iter();
+    client_io_connecting(
+        move || std::future::ready(streams.next().ok_or_else(invalid)),
         target,
+        commands,
+        output,
+        files,
+        file_access,
+        takeover,
         client,
-    })
-    .map_err(|_| invalid())?;
-    write_frame(&mut stream, HELLO, &hello).await?;
-    let (kind, capabilities) = tokio::time::timeout(DEADLINE, read_frame(&mut stream))
-        .await
-        .map_err(|_| invalid())??;
-    if kind == REFUSED || kind == INCOMPATIBLE {
-        let _ = output
-            .send_async(ValidatedOutput::Failure(
-                "The host refused the attachment or uses an incompatible bridge protocol; verify the session and update both devices.",
-            ))
-            .await;
-        return Err(invalid());
+    )
+    .await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn client_io_connecting<S, C, F>(
+    connect: C,
+    target: Target,
+    commands: flume::Receiver<Vec<u8>>,
+    output: flume::Sender<ValidatedOutput>,
+    files: flume::Receiver<FileCall>,
+    file_access: FileAccess,
+    takeover: bool,
+    client: Option<ClientId>,
+) -> io::Result<()>
+where
+    C: FnMut() -> F,
+    F: std::future::Future<Output = io::Result<S>>,
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    fn identity<S>(stream: &mut S) -> &mut S {
+        stream
     }
-    if kind != CAPABILITIES
-        || capabilities.len() != 2
+    let (mut stream, schema, capabilities) = negotiate_client(
+        connect,
+        identity,
+        client_hello(&target, file_access, takeover, client),
+        &output,
+    )
+    .await?;
+    client_io_negotiated(
+        &mut stream,
+        schema,
+        &capabilities,
+        commands,
+        output,
+        files,
+        file_access,
+    )
+    .await
+}
+
+async fn client_io_negotiated(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    schema: u16,
+    capabilities: &[u8],
+    commands: flume::Receiver<Vec<u8>>,
+    output: flume::Sender<ValidatedOutput>,
+    files: flume::Receiver<FileCall>,
+    file_access: FileAccess,
+) -> io::Result<()> {
+    if capabilities.len() != 2
         || capabilities[0] != u8::from(file_access.read)
         || (file_access.read && capabilities[1] != u8::from(file_access.windows_paths))
         || capabilities[1] > 1
@@ -305,7 +420,7 @@ async fn client_io_with_files(
     if kind != SNAPSHOT {
         return Err(invalid());
     }
-    let terminal = decode_snapshot(&bytes)?;
+    let terminal = decode_snapshot_for_schema(&bytes, schema)?;
     drop(bytes);
     let snapshot = festerm_sessiond::encode_recovery_snapshot_with_limit(&terminal, SNAPSHOT_LIMIT)
         .map_err(|_| invalid())?;
@@ -618,7 +733,10 @@ pub async fn serve_with_reclaim(
         return Err(invalid());
     }
     let hello: Hello = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if hello.version != VERSION || hello.snapshot_schema != SNAPSHOT_SCHEMA_VERSION {
+    if hello.version != VERSION
+        || !(PREVIOUS_SNAPSHOT_SCHEMA_VERSION..=SNAPSHOT_SCHEMA_VERSION)
+            .contains(&hello.snapshot_schema)
+    {
         write_frame(&mut stream, INCOMPATIBLE, &[]).await?;
         return Err(io::Error::other("daemon.hello_incompatible"));
     }
@@ -637,7 +755,10 @@ pub async fn serve_with_reclaim(
             .client
             .as_ref()
             .is_some_and(|client| holder.is(client));
-    let takeover = (takeover && hello.takeover) || reclaim;
+    // A previous-schema peer can still be refused once the terminal is
+    // recovered, so it never displaces the current holder first.
+    let takeover = hello.snapshot_schema >= SNAPSHOT_SCHEMA_VERSION
+        && ((takeover && hello.takeover) || reclaim);
     let displacement_probe = selected.clone();
     let file_read_admitted = hello.files.read;
     write_frame(
@@ -707,6 +828,11 @@ pub async fn serve_with_reclaim(
     })
     .await
     .map_err(|_| invalid())??;
+    if !snapshot_fits_schema(&terminal, hello.snapshot_schema) {
+        drop(terminal);
+        write_frame(&mut stream, INCOMPATIBLE, &[]).await?;
+        return Err(io::Error::other("daemon.hello_incompatible"));
+    }
     let snapshot = encode_snapshot(&terminal)?;
     drop(terminal);
     write_frame(&mut stream, SNAPSHOT, &snapshot).await?;
@@ -907,13 +1033,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn previous_schema_peers_never_receive_safe_framing_snapshots() {
+        use festerm_core::TerminalSemantics;
+        let mut terminal =
+            festerm_core::Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        for (semantics, previous) in [
+            (TerminalSemantics::Legacy, true),
+            (TerminalSemantics::Current, true),
+            (TerminalSemantics::SafeFraming, false),
+        ] {
+            terminal.set_semantics(semantics);
+            assert_eq!(
+                snapshot_fits_schema(&terminal, PREVIOUS_SNAPSHOT_SCHEMA_VERSION),
+                previous
+            );
+            assert!(snapshot_fits_schema(&terminal, SNAPSHOT_SCHEMA_VERSION));
+        }
+    }
+
     #[tokio::test]
     async fn bridge_refuses_incompatible_hello_before_daemon_admission() {
         for (version, schema, generation, response) in [
             (1, 3, "9", INCOMPATIBLE),
             (VERSION + 1, SNAPSHOT_SCHEMA_VERSION, "9", INCOMPATIBLE),
-            (VERSION, 3, "9", INCOMPATIBLE),
+            (
+                VERSION,
+                PREVIOUS_SNAPSHOT_SCHEMA_VERSION - 1,
+                "9",
+                INCOMPATIBLE,
+            ),
+            (VERSION, SNAPSHOT_SCHEMA_VERSION + 1, "9", INCOMPATIBLE),
             (VERSION, SNAPSHOT_SCHEMA_VERSION, "wrong", REFUSED),
+            // A previous-schema peer passes negotiation and reaches targeting.
+            (VERSION, PREVIOUS_SNAPSHOT_SCHEMA_VERSION, "wrong", REFUSED),
         ] {
             let (mut client, host) = tokio::io::duplex(8192);
             let selected = NativeSessionIdentity {
@@ -939,6 +1092,91 @@ mod tests {
             write_frame(&mut client, HELLO, &hello).await.unwrap();
             assert_eq!(read_frame(&mut client).await.unwrap(), (response, vec![]));
             assert!(task.await.unwrap().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn client_retries_the_previous_schema_once_and_never_accepts_a_downgraded_safe_framing_snapshot(
+    ) {
+        use festerm_core::{
+            Dimensions, Terminal,
+            TerminalSemantics::{Current, SafeFraming},
+        };
+        // (first reply, second-attempt snapshot, accepted)
+        for (first, second, accepted) in [
+            (INCOMPATIBLE, Some(Current), true),
+            (INCOMPATIBLE, Some(SafeFraming), false),
+            (INCOMPATIBLE, None, false),
+            (REFUSED, None, false),
+        ] {
+            let (clients, hosts): (Vec<_>, Vec<_>) =
+                (0..2).map(|_| tokio::io::duplex(1 << 16)).unzip();
+            let host = tokio::spawn(async move {
+                let mut schemas = Vec::new();
+                let mut retained = Vec::new();
+                for (attempt, mut host) in hosts.into_iter().enumerate() {
+                    let (kind, bytes) = read_frame(&mut host).await.unwrap();
+                    assert_eq!(kind, HELLO);
+                    schemas.push(
+                        serde_json::from_slice::<Hello>(&bytes)
+                            .unwrap()
+                            .snapshot_schema,
+                    );
+                    match (attempt, second) {
+                        (0, _) => write_frame(&mut host, first, &[]).await.unwrap(),
+                        (_, Some(semantics)) => {
+                            let mut terminal =
+                                Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+                            terminal.set_semantics(semantics);
+                            terminal.ingest(b"older host");
+                            write_frame(&mut host, CAPABILITIES, &[0, 0]).await.unwrap();
+                            write_frame(&mut host, SNAPSHOT, &encode_snapshot(&terminal).unwrap())
+                                .await
+                                .unwrap();
+                        }
+                        (_, None) => write_frame(&mut host, INCOMPATIBLE, &[]).await.unwrap(),
+                    }
+                    retained.push(host);
+                    if first != INCOMPATIBLE {
+                        break;
+                    }
+                }
+                (schemas, retained)
+            });
+            let (_input, commands) = flume::bounded(QUEUE);
+            let (output, events) = flume::bounded(QUEUE);
+            let (_file_tx, file_rx) = flume::bounded(1);
+            let mut clients = clients.into_iter();
+            let client = tokio::spawn(client_io_connecting(
+                move || std::future::ready(clients.next().ok_or_else(invalid)),
+                Target {
+                    name: "test-owned".into(),
+                    pid: 7,
+                    generation: "9".into(),
+                },
+                commands,
+                output,
+                file_rx,
+                FileAccess::default(),
+                false,
+                None,
+            ));
+            let (schemas, _retained) = host.await.unwrap();
+            if first == INCOMPATIBLE {
+                assert_eq!(schemas, HELLO_SNAPSHOT_SCHEMAS);
+            } else {
+                assert_eq!(schemas, [SNAPSHOT_SCHEMA_VERSION]);
+            }
+            let event = tokio::time::timeout(Duration::from_secs(3), events.recv_async())
+                .await
+                .unwrap();
+            if accepted {
+                assert!(matches!(event, Ok(ValidatedOutput::Bytes(_))));
+                client.abort();
+            } else {
+                assert!(client.await.unwrap().is_err());
+                assert!(!matches!(event, Ok(ValidatedOutput::Bytes(_))));
+            }
         }
     }
 
