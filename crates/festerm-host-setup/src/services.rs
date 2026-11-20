@@ -955,7 +955,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         self.require_start_credentials_with(&enrollment)
     }
 
-    #[cfg(any(test, not(all(feature = "cloud", feature = "host-runtime"))))]
+    #[cfg(any(all(test, unix), not(all(feature = "cloud", feature = "host-runtime"))))]
     fn require_start_credentials_with(
         &self,
         enrollment: &crate::enrollment::OwnerEnrollment<'_>,
