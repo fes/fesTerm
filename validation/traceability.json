@@ -2881,7 +2881,12 @@
         "a_restored_window_keeps_the_geometry_it_was_restored_at",
         "a_restored_workspace_reopens_the_first_window_where_it_was_left",
         "without_saved_geometry_the_first_window_opens_at_the_default_size",
-        "a_workspace_round_trips_the_primary_windows_geometry"
+        "a_workspace_round_trips_the_primary_windows_geometry",
+        "window_edge_cursor_survives_the_complete_app_frame_and_respects_viewport_guards",
+        "window_resize_cursor_preserves_overlapping_real_close_control_ownership",
+        "window_resize_cursor_native_decorations_preserve_interiors_and_small_geometry",
+        "window_resize_border_keeps_undecorated_drag_and_native_gesture_ownership_separate",
+        "window_resize_cursor_keeps_owned_edges_over_background_and_disabled_controls"
       ],
       "manual_scenarios": [
         "NP-01",
@@ -2891,7 +2896,8 @@
       "status": "partial",
       "prerequisites": [
         "native update apply, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent",
-        "scripts/tests/test_run_macos_development.py and opt-in scripts/run-macos-development.py --check cover only development environment/identity and Launcher-only Quit; signed-package and live-session teardown evidence remains required"
+        "scripts/tests/test_run_macos_development.py and opt-in scripts/run-macos-development.py --check cover only development environment/identity and Launcher-only Quit; signed-package and live-session teardown evidence remains required",
+        "Actual Windows/macOS/Linux OS cursor shape/precedence and native resize/control/DPI behavior remain pending; final egui PlatformOutput tests do not qualify native cursor rectangles or prove the observed native OS cursor failure\u2019s cause."
       ]
     },
     {

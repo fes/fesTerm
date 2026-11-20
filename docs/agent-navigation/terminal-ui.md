@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "d31f6ee682327343cfba4917d8285dd63a215e64ff8be0b08c481429887a6424"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "682e5d957570e3f25e8161d8b1456899525d1f5574c04def2d92cc33921314a0"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -70,3 +70,17 @@ Caveats:
 - A frame only uses the optimized software path when callback and format checks pass.
 - Software painting must stay transparent to terminal state and app ownership.
 - Opaque replacements must not disturb local focus, selection, or input routing.
+
+## Desktop resize cursors
+
+Use for: Window-edge cursor output and resize/control ownership.
+
+- [`handle_resize_border`](../../crates/festerm-ui-egui/src/chrome.rs) — Existing undecorated resize gestures; native macOS gestures stay native.
+- [`set_resize_border_cursor`](../../crates/festerm-ui-egui/src/chrome.rs) — Final-frame feedback yields to click-owning controls; native decorations use thin edge strips.
+
+Evidence:
+- [`window_resize_cursor_preserves_overlapping_real_close_control_ownership`](../../crates/festerm-ui-egui/src/chrome.rs) — Real Close overlap preserves its cursor/click.
+- [`window_edge_cursor_survives_the_complete_app_frame_and_respects_viewport_guards`](../../app/festerm/src/app.rs) — Final PlatformOutput covers eight directions and viewport guards.
+
+Caveats:
+- Headless output does not qualify actual OS cursor rectangles, native dragging or DPI.
