@@ -1886,6 +1886,14 @@ fn session_client_loop<R: Read + Send + 'static>(
                 let _ = observer.send(ClientLoopEvent::ClientAttached);
             }
         }
+        // Discovery is observation only, but its publication must not wait for
+        // client admission or output drainage. A stalled reader can otherwise
+        // hide an already committed takeover (and starve failed-write retries).
+        report_attach_state_change(
+            active.as_ref().map(|client| client.kind),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
@@ -1902,6 +1910,9 @@ fn session_client_loop<R: Read + Send + 'static>(
         }
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if pending.is_pending() {
+            if let Some(observer) = observer.as_ref() {
+                let _ = observer.send(ClientLoopEvent::OutputBackpressured);
+            }
             thread::sleep(CLIENT_POLL_INTERVAL);
             continue;
         }
@@ -2048,6 +2059,8 @@ enum ClientLoopEvent {
     #[cfg(unix)]
     ClientAttached,
     OutputBuffered,
+    #[cfg(unix)]
+    OutputBackpressured,
 }
 
 fn attachment_reporter(name: String, pid: u32) -> impl FnMut(Option<AttachKind>) -> bool {
@@ -2166,6 +2179,14 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             break Err(error);
         }
         poll_replacement(&mut active, &mut retired_clients, &mut pending);
+        // Discovery is observation only, but its publication must not wait for
+        // client admission or output drainage. A stalled reader can otherwise
+        // hide an already committed takeover (and starve failed-write retries).
+        report_attach_state_change(
+            active.as_ref().map(|client| client.kind),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         // Accept before checking backpressure so a stalled client can be replaced.
         if let Err(error) = accept_windows_clients(
             &accept_rx,
@@ -8691,6 +8712,86 @@ mod tests {
         // A nonblocking socket would fail immediately instead of waiting.
         assert!(started.elapsed() >= CLIENT_POLL_INTERVAL / 2);
         let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_publication_retries_while_client_output_is_backpressured() {
+        struct ChannelReader {
+            chunks: mpsc::Receiver<Vec<u8>>,
+            current: io::Cursor<Vec<u8>>,
+        }
+        impl Read for ChannelReader {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                let count = self.current.read(output)?;
+                if count != 0 {
+                    return Ok(count);
+                }
+                match self.chunks.recv() {
+                    Ok(chunk) => {
+                        self.current = io::Cursor::new(chunk);
+                        self.current.read(output)
+                    }
+                    Err(_) => Ok(0),
+                }
+            }
+        }
+
+        let directory = unique_test_directory("attach-backpressure");
+        fs::create_dir_all(&directory).unwrap();
+        let socket = directory.join("session.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (output, chunks) = mpsc::channel();
+        let (events, observed) = mpsc::channel();
+        let (published, publications) = mpsc::channel();
+        let allow_publication = Arc::new(AtomicBool::new(false));
+        let allowed = Arc::clone(&allow_publication);
+        let service = thread::spawn(move || {
+            let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            session_client_loop(
+                listener,
+                ChannelReader {
+                    chunks,
+                    current: io::Cursor::new(Vec::new()),
+                },
+                Some(events),
+                |_| Ok(()),
+                || {},
+                move |kind| {
+                    if allowed.load(Ordering::Acquire) {
+                        let _ = published.send(kind);
+                        true
+                    } else {
+                        false
+                    }
+                },
+                &mut terminal,
+            )
+        });
+        let mut client = connect_admitted_test_client(&socket);
+        let _ = read_recovery_terminal(&mut client);
+        acknowledge_recovery(&mut client);
+        // More than the socket and bounded output queue can absorb, with no
+        // terminal text or further client reads after recovery adoption.
+        output.send(vec![0; 2 * 1024 * 1024]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let backpressured = loop {
+            match observed.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(ClientLoopEvent::OutputBackpressured) => break true,
+                Ok(_) => {}
+                Err(_) => break false,
+            }
+        };
+        allow_publication.store(true, Ordering::Release);
+        let publication = publications.recv_timeout(Duration::from_secs(1));
+        // Release owned workers before asserting, including the failing case.
+        drop(client);
+        drop(output);
+        let finished = service.join().unwrap();
+        let _ = fs::remove_dir_all(directory);
+        assert!(backpressured, "fixture never reached output backpressure");
+        assert_eq!(publication.unwrap(), Some(AttachKind::Local));
+        finished.unwrap();
     }
 
     #[test]

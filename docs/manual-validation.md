@@ -294,6 +294,17 @@ reopen, correlated detach, replacement-generation refusal and occupied
 persistent-writer adoption. The composition now has bounded controlled native
 evidence, not actual-vault/provider/device or GUI acceptance.
 
+Attachment-kind discovery must continue to publish/retry while an admitted
+client is not draining output, and before accepting another client. The
+controlled backpressure regression preserves the live writer and output order;
+it does not make the registry takeover authority. Current macOS/Linux/Windows
+qualification must still require exact Local/Remote displacement attribution.
+The original #815 Ubuntu stale-Remote result and separate START registration
+timeout remain retained; the deterministic starvation correction does not
+establish either original cause. A failed controlled native START now projects
+only the existing bounded, typed startup journal (or unavailable evidence),
+alongside its original error; its registration deadline remains unchanged.
+
 Persistent takeover has two distinct controlled native oracles: an active
 writer must refuse a second non-takeover request before any pending takeover
 exists; an already-pending takeover must independently retain its ticket and

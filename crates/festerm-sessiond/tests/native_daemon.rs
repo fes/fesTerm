@@ -2768,7 +2768,81 @@ fn launch_session_with_scrollback(
         command.arg("--arg").arg(argument);
     }
     let output = run_start_command(command);
-    assert_success("start", &output);
+    assert!(
+        output.status.success(),
+        "start failed: {}; startup journal: {:?}",
+        String::from_utf8_lossy(&output.stderr),
+        native_startup_evidence(runtime_root, name),
+    );
+}
+
+/// Failure-only projection of the existing finite diagnostic journal. Opening
+/// the validated private directory never creates/repairs it, and no registry,
+/// shell arguments or terminal bytes enter this output.
+#[cfg(unix)]
+fn native_startup_evidence(
+    runtime_root: &Path,
+    name: &str,
+) -> Option<Vec<festerm_sessiond::lifecycle::Entry>> {
+    festerm_ssh::PersistentSessionName::new(name).ok()?;
+    let directory = festerm_sessiond::private_storage::private_directory(
+        &runtime_registry_root(runtime_root).join("lifecycle"),
+        false,
+    )
+    .ok()?;
+    let bytes = festerm_sessiond::private_storage::read_private(
+        &directory,
+        Path::new(&format!("{name}.json")),
+        32 * 1024,
+    )
+    .ok()?;
+    let entries: Vec<festerm_sessiond::lifecycle::Entry> = serde_json::from_slice(&bytes).ok()?;
+    (entries.len() <= 64).then_some(entries)
+}
+
+#[cfg(unix)]
+#[test]
+fn native_startup_evidence_is_bounded_typed_and_read_only() {
+    let runtime = short_runtime_root("startup-evidence");
+    let registry = runtime_registry_root(&runtime);
+    assert!(native_startup_evidence(&runtime, "public-startup").is_none());
+    assert!(!registry.exists(), "missing evidence must not create state");
+    festerm_sessiond::prepare_native_runtime(&registry).unwrap();
+    festerm_sessiond::lifecycle::record_actor(
+        &registry,
+        "public-startup",
+        7,
+        11,
+        festerm_sessiond::lifecycle::Event::Failure {
+            stage: festerm_sessiond::lifecycle::FailureStage::ShellSpawn,
+            os_code: Some(5),
+            recovery: None,
+        },
+    )
+    .unwrap();
+    let journal = registry.join("lifecycle/public-startup.json");
+    let original = fs::read(&journal).unwrap();
+    let evidence = native_startup_evidence(&runtime, "public-startup").unwrap();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].pid, 7);
+    assert_eq!(evidence[0].generation, 11);
+    assert!(matches!(
+        evidence[0].event,
+        festerm_sessiond::lifecycle::Event::Failure {
+            stage: festerm_sessiond::lifecycle::FailureStage::ShellSpawn,
+            ..
+        }
+    ));
+    assert_eq!(fs::read(&journal).unwrap(), original);
+    assert!(native_startup_evidence(&runtime, "../private-canary").is_none());
+    fs::write(&journal, b"private-canary-argv-terminal-not-json").unwrap();
+    assert!(native_startup_evidence(&runtime, "public-startup").is_none());
+    fs::write(&journal, vec![b'x'; 32 * 1024 + 1]).unwrap();
+    assert!(native_startup_evidence(&runtime, "public-startup").is_none());
+    let oversized = serde_json::to_vec(&vec![evidence[0].clone(); 65]).unwrap();
+    fs::write(&journal, oversized).unwrap();
+    assert!(native_startup_evidence(&runtime, "public-startup").is_none());
+    fs::remove_dir_all(runtime).unwrap();
 }
 
 fn run_start_command(mut command: Command) -> Output {

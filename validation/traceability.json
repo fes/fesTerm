@@ -1772,6 +1772,8 @@
         "pending_marker_order_rejects_duplicate_chunks_and_replayed_final_marker",
         "pending_marker_order_rejects_missing_chunks_and_missing_final_marker",
         "native_bridge_drains_exit_and_takeover_final_frames_before_success",
+        "native_startup_evidence_is_bounded_typed_and_read_only",
+        "attachment_publication_retries_while_client_output_is_backpressured",
         "invocation_rejects_attach_without_explicit_takeover",
         "closed_session_input_is_an_error_not_successful_detach",
         "bounded_line_reader_rejects_without_truncating_prefix",
