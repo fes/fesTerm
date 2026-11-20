@@ -1,4 +1,6 @@
 //! Bounded presentation-only inference; the grid remains the source of truth.
+use festerm_core::ContentPosition;
+
 use crate::{
     normalize_selection_position,
     selection::{collect_bounded_text, TextWork},
@@ -41,16 +43,25 @@ pub(crate) struct SmartSelection {
 
 impl SmartSelection {
     pub fn text(&self, snapshot: TerminalSnapshot<'_>) -> Option<String> {
-        self.text_impl(snapshot, usize::MAX, false)
+        self.text_with_occlusion(snapshot, &mut |_| false)
+    }
+
+    pub(crate) fn text_with_occlusion(
+        &self,
+        snapshot: TerminalSnapshot<'_>,
+        occluded: &mut dyn FnMut(ContentPosition) -> bool,
+    ) -> Option<String> {
+        self.text_impl(snapshot, usize::MAX, false, occluded)
             .expect("smart selected text fits in a String")
     }
 
-    pub fn text_with_limit(
+    pub(crate) fn text_with_limit_and_occlusion(
         &self,
         snapshot: TerminalSnapshot<'_>,
         max_bytes: usize,
+        occluded: &mut dyn FnMut(ContentPosition) -> bool,
     ) -> Result<Option<String>, SelectedTextError> {
-        self.text_impl(snapshot, max_bytes, true)
+        self.text_impl(snapshot, max_bytes, true, occluded)
     }
 
     fn text_impl(
@@ -58,6 +69,7 @@ impl SmartSelection {
         snapshot: TerminalSnapshot<'_>,
         max_bytes: usize,
         limited_work: bool,
+        occluded: &mut dyn FnMut(ContentPosition) -> bool,
     ) -> Result<Option<String>, SelectedTextError> {
         if snapshot.dimensions() != self.dimensions
             || snapshot.screen_generation() != self.screen_generation
@@ -106,7 +118,21 @@ impl SmartSelection {
                         append("\n")?;
                     }
                 }
-                append(&row.text)?;
+                for column in row.first..=row.last {
+                    work.charge(1)?;
+                    if occluded(ContentPosition {
+                        column,
+                        absolute_row: row.row,
+                    }) {
+                        continue;
+                    }
+                    let fragment = match snapshot.absolute_cell(column, row.row) {
+                        Some(cell) if !cell.is_continuation() => cell.text(),
+                        Some(_) => continue,
+                        None => " ",
+                    };
+                    append(fragment)?;
+                }
             }
             Ok(Some(()))
         })
@@ -173,6 +199,7 @@ fn prose_continues(
     upper_y: usize,
     lower: &Row,
     gaps: bool,
+    occluded: &mut dyn FnMut(CellPosition) -> bool,
 ) -> bool {
     if upper.marker_text == Some(lower.indent) {
         return true;
@@ -193,7 +220,15 @@ fn prose_continues(
             return false;
         };
         y = previous;
-        let Some(candidate) = row(snapshot, y, None, gaps, &mut budget, &mut byte_budget) else {
+        let Some(candidate) = row(
+            snapshot,
+            y,
+            None,
+            gaps,
+            &mut budget,
+            &mut byte_budget,
+            occluded,
+        ) else {
             return false;
         };
         if candidate.bounded {
@@ -250,6 +285,7 @@ fn record_anchor(
     snapshot: TerminalSnapshot<'_>,
     hit_y: usize,
     hit: &Row,
+    occluded: &mut dyn FnMut(CellPosition) -> bool,
 ) -> Option<(usize, usize)> {
     let mut budget = MAX_CELLS;
     let mut byte_budget = MAX_BYTES;
@@ -263,7 +299,15 @@ fn record_anchor(
         if budget < columns {
             break;
         }
-        let Some(candidate) = row(snapshot, y, None, false, &mut budget, &mut byte_budget) else {
+        let Some(candidate) = row(
+            snapshot,
+            y,
+            None,
+            false,
+            &mut budget,
+            &mut byte_budget,
+            occluded,
+        ) else {
             if byte_budget == 0 {
                 break;
             }
@@ -291,10 +335,12 @@ fn row(
     gaps: bool,
     budget: &mut usize,
     byte_budget: &mut usize,
+    occluded: &mut dyn FnMut(CellPosition) -> bool,
 ) -> Option<Row> {
     let width = snapshot.dimensions().columns();
     let mut cells = Vec::new();
     let mut backgrounds = Vec::new();
+    let mut occluded_cells = Vec::new();
     for column in 0..width {
         *budget = budget.checked_sub(1)?;
         let cell = snapshot.cell(column, y);
@@ -307,13 +353,18 @@ fn row(
         if !cell.is_some_and(|cell| cell.is_continuation()) {
             cells.push((column, text.to_owned()));
             backgrounds.push(cell.map(|cell| cell.background()));
+            occluded_cells.push(occluded(CellPosition { column, row: y }));
         }
     }
     let hit = match x {
         Some(x) => cells.iter().rposition(|(column, _)| *column <= x)?,
-        None => cells.iter().position(|(_, text)| !text.trim().is_empty())?,
+        None => cells
+            .iter()
+            .enumerate()
+            .find(|(index, (_, text))| !occluded_cells[*index] && !text.trim().is_empty())
+            .map(|(index, _)| index)?,
     };
-    if border(&cells[hit].1) || cells[hit].1.trim().is_empty() {
+    if occluded_cells[hit] || border(&cells[hit].1) || cells[hit].1.trim().is_empty() {
         return None;
     }
     let mut edge = cells.len();
@@ -330,7 +381,7 @@ fn row(
     let mut index = 0;
     while index < edge {
         let start = index;
-        let separator = if border(&cells[index].1) {
+        let separator = if occluded_cells[index] || border(&cells[index].1) {
             index += 1;
             true
         } else if cells[index].1.trim().is_empty() {
@@ -391,13 +442,23 @@ fn row(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn infer(
     snapshot: TerminalSnapshot<'_>,
     hit: CellPosition,
     scope: SmartSelectionScope,
 ) -> Option<SmartSelection> {
+    infer_with_occlusion(snapshot, hit, scope, &mut |_| false)
+}
+
+pub(crate) fn infer_with_occlusion(
+    snapshot: TerminalSnapshot<'_>,
+    hit: CellPosition,
+    scope: SmartSelectionScope,
+    occluded: &mut dyn FnMut(CellPosition) -> bool,
+) -> Option<SmartSelection> {
     let hit = normalize_selection_position(snapshot, hit)?;
-    if snapshot.dimensions().columns() > MAX_CELLS {
+    if occluded(hit) || snapshot.dimensions().columns() > MAX_CELLS {
         return None;
     }
     let mut budget = MAX_CELLS;
@@ -409,10 +470,11 @@ pub(crate) fn infer(
         true,
         &mut budget,
         &mut byte_budget,
+        occluded,
     )?;
     let mut anchor = None;
     if !center.bounded {
-        anchor = record_anchor(snapshot, hit.row, &center);
+        anchor = record_anchor(snapshot, hit.row, &center, occluded);
     } else if let Some(open) = row(
         snapshot,
         hit.row,
@@ -420,11 +482,12 @@ pub(crate) fn infer(
         false,
         &mut budget,
         &mut byte_budget,
+        occluded,
     )
     .filter(|open| !open.bounded)
     {
         // A gap-split row inside a marker-led message is prose, not panes.
-        anchor = record_anchor(snapshot, hit.row, &open).filter(|(y, _)| *y != hit.row);
+        anchor = record_anchor(snapshot, hit.row, &open, occluded).filter(|(y, _)| *y != hit.row);
         if anchor.is_some() {
             center = open;
         }
@@ -468,9 +531,15 @@ pub(crate) fn infer(
                 if budget < snapshot.dimensions().columns() {
                     return None;
                 }
-                let Some(mut candidate) =
-                    row(snapshot, y, None, gaps, &mut budget, &mut byte_budget)
-                else {
+                let Some(mut candidate) = row(
+                    snapshot,
+                    y,
+                    None,
+                    gaps,
+                    &mut budget,
+                    &mut byte_budget,
+                    occluded,
+                ) else {
                     if byte_budget == 0 {
                         return None;
                     }
@@ -488,7 +557,7 @@ pub(crate) fn infer(
                 };
                 let prose = !wrapped
                     && pending == 0
-                    && prose_continues(snapshot, upper, upper_y, lower, gaps);
+                    && prose_continues(snapshot, upper, upper_y, lower, gaps, occluded);
                 if candidate.bounded
                     || (!wrapped
                         && !prose

@@ -28,7 +28,10 @@ use crate::{
         GridPaint,
     },
     selection::Selection,
-    selection::{selection_text, selection_text_with_limit, SelectedTextError},
+    selection::{
+        selection_text, selection_text_with_limit, selection_text_with_limit_and_occlusion,
+        selection_text_with_occlusion, SelectedTextError,
+    },
     TerminalSnapshot, DEFAULT_FOREGROUND,
 };
 
@@ -141,6 +144,32 @@ pub enum TerminalHistoryAction {
     SaveAs,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalImageExportAction {
+    Copy,
+    Save,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalImageExportRequest {
+    action: TerminalImageExportAction,
+    image: festerm_core::kitty::KittyImage,
+}
+
+impl TerminalImageExportRequest {
+    pub const fn action(&self) -> TerminalImageExportAction {
+        self.action
+    }
+
+    pub fn image(&self) -> &festerm_core::kitty::KittyImage {
+        &self.image
+    }
+
+    pub fn into_image(self) -> festerm_core::kitty::KittyImage {
+        self.image
+    }
+}
+
 /// Diagnostics captured by the UI path without recording terminal content.
 #[derive(Clone, Debug, Default)]
 pub struct FrameDiagnostics {
@@ -149,6 +178,9 @@ pub struct FrameDiagnostics {
     /// egui. This does not measure GPU presentation or pixels on screen.
     pub input_to_paint_submission: Option<Duration>,
     pub calculated_dimensions: Option<festerm_core::Dimensions>,
+    /// Point-space cell size measured for the latest laid-out frame, so a
+    /// host can derive device-pixel geometry without re-measuring fonts.
+    pub cell_metrics: Option<CellMetrics>,
     pub grid_rect: Option<egui::Rect>,
     pub dirty_rows: usize,
     pub retained_rows_reused: usize,
@@ -206,6 +238,7 @@ pub struct TerminalView {
     context_link: Option<Arc<str>>,
     context_target: Option<TerminalContextTarget>,
     context_text: Option<TerminalContextText>,
+    context_image: Option<festerm_core::kitty::KittyImage>,
     next_context_generation: u64,
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
     file_link_context: Option<(u64, bool)>,
@@ -228,6 +261,7 @@ pub struct TerminalView {
     pending_link_requests: VecDeque<Arc<str>>,
     pending_context_action_request: bool,
     pending_history_actions: VecDeque<TerminalHistoryAction>,
+    pending_image_export_requests: VecDeque<TerminalImageExportRequest>,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
     /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
@@ -240,6 +274,8 @@ pub struct TerminalView {
     /// under (`1.0`, `-1.0`, or `0.0` before the first event), used to
     /// detect a direction reversal above.
     scroll_fraction_sign: f32,
+    last_layout: Option<GridLayout>,
+    last_pixels_per_point: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -436,6 +472,56 @@ fn publish_accessible_rows(
     }
 }
 
+/// Publishes visible Kitty placements as bounded, hover-only image labels.
+fn publish_accessible_images(
+    ui: &mut Ui,
+    viewport_id: egui::Id,
+    layout: GridLayout,
+    snapshot: TerminalSnapshot<'_>,
+) {
+    if snapshot.kitty_placements().is_empty()
+        || ui
+            .ctx()
+            .accesskit_node_builder(viewport_id, |node| {
+                node.set_role(egui::accesskit::Role::Terminal)
+            })
+            .is_none()
+    {
+        return;
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let viewport_offset_rows = snapshot.viewport_offset_rows();
+    let alternate_screen = snapshot.modes().alternate_screen();
+    let images_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("terminal-accessible-images")
+            .max_rect(layout.rect),
+    );
+    let images = snapshot.kitty_images();
+    for (index, placement) in snapshot.kitty_placements().iter().take(256).enumerate() {
+        let Some(image) = images.iter().find(|img| img.id == placement.image_id) else {
+            continue;
+        };
+        let Some((clipped, _)) = crate::kitty_graphics::placement_geometry(
+            layout,
+            viewport_offset_rows,
+            alternate_screen,
+            ppp,
+            placement,
+            image,
+        ) else {
+            continue;
+        };
+        images_ui
+            .interact(
+                clipped,
+                viewport_id.with(("accessible-image", index)),
+                Sense::hover(),
+            )
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, "image"));
+    }
+}
+
 fn jump_to_latest_rect(viewport: Rect) -> Rect {
     Rect::from_min_size(
         egui::pos2(viewport.right() - 116.0, viewport.bottom() - 34.0),
@@ -460,14 +546,54 @@ enum SecondaryGestureOwnership {
 }
 
 impl TerminalView {
+    /// Sets the render-side texture cache budget for inline terminal graphics.
+    pub fn set_graphics_texture_budget_bytes(&mut self, bytes: usize) {
+        self.glyphs.kitty.set_budget_bytes(bytes);
+    }
+
+    /// Binds a shared, fixed render-side graphics reservation pool.
+    pub fn set_graphics_reservation(
+        &mut self,
+        reservation: crate::kitty_graphics::KittyGraphicsReservation,
+    ) {
+        self.glyphs.kitty.set_reservation(reservation);
+    }
+
+    /// Number of times a Kitty image was decoded into the render cache.
+    pub fn kitty_decode_count(&self) -> usize {
+        self.glyphs.kitty.decode_count()
+    }
+
+    fn build_kitty_occlusion_map(
+        &self,
+        snapshot: TerminalSnapshot<'_>,
+    ) -> crate::kitty_graphics::KittyCellOcclusionMap {
+        let Some(layout) = self.last_layout else {
+            return crate::kitty_graphics::KittyCellOcclusionMap::default();
+        };
+        let ppp = self.last_pixels_per_point.unwrap_or(1.0);
+        crate::kitty_graphics::KittyCellOcclusionMap::build(
+            &self.glyphs.kitty,
+            snapshot,
+            layout,
+            ppp,
+        )
+    }
+
     fn request_smart_selection(
         &mut self,
         snapshot: TerminalSnapshot<'_>,
         hit: Option<CellPosition>,
         scope: crate::SmartSelectionScope,
     ) {
+        let map = self.build_kitty_occlusion_map(snapshot);
         let selected = !self.pointer.pressed.iter().any(|pressed| *pressed)
-            && hit.is_some_and(|hit| self.selection.infer_smart(snapshot, hit, scope));
+            && hit.is_some_and(|hit| {
+                self.selection
+                    .infer_smart_with_occlusion(snapshot, hit, scope, &mut |cell| {
+                        map.is_occluded(cell)
+                    })
+            });
         if selected {
             self.clear_smart_selection_feedback();
         } else {
@@ -538,10 +664,14 @@ impl TerminalView {
         if let Some(copy) = &self.rectangle_copy {
             return copy.selected_text(&self.cache);
         }
-        selection_text(
-            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
-            &self.selection,
-        )
+        let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+        let map = self.build_kitty_occlusion_map(snapshot);
+        if map.is_empty() {
+            return selection_text(snapshot, &self.selection);
+        }
+        selection_text_with_occlusion(snapshot, &self.selection, &mut |content| {
+            map.is_content_occluded(content)
+        })
     }
 
     /// Returns the complete normal, smart, or frozen rectangle selection.
@@ -560,10 +690,16 @@ impl TerminalView {
         if let Some(copy) = &self.rectangle_copy {
             return copy.selected_text_with_limit(&self.cache, max_bytes);
         }
-        selection_text_with_limit(
-            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+        let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+        let map = self.build_kitty_occlusion_map(snapshot);
+        if map.is_empty() {
+            return selection_text_with_limit(snapshot, &self.selection, max_bytes);
+        }
+        selection_text_with_limit_and_occlusion(
+            snapshot,
             &self.selection,
             max_bytes,
+            &mut |content| map.is_content_occluded(content),
         )
     }
 
@@ -612,8 +748,13 @@ impl TerminalView {
         }
         self.history.sync(terminal);
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
-        let copy =
-            RectangleCopy::capture(snapshot, trim_trailing_spaces, RECTANGLE_COPY_MAX_BYTES)?;
+        let map = self.build_kitty_occlusion_map(snapshot);
+        let copy = RectangleCopy::capture_with_occlusion(
+            snapshot,
+            trim_trailing_spaces,
+            RECTANGLE_COPY_MAX_BYTES,
+            &mut |cell| map.is_occluded(cell),
+        )?;
         self.cache = TerminalRenderCache::default();
         self.cache.update(snapshot, &[]);
         self.selection.clear();
@@ -627,11 +768,13 @@ impl TerminalView {
         self.context_link = None;
         self.context_target = None;
         self.context_text = None;
+        self.context_image = None;
         self.rectangle_copy = Some(copy);
         self.full_redraw_requested = true;
         self.context_link = None;
         self.context_target = None;
         self.context_text = None;
+        self.context_image = None;
         self.request_focus_on_next_frame();
         Ok(())
     }
@@ -652,6 +795,7 @@ impl TerminalView {
             self.context_link = None;
             self.context_target = None;
             self.context_text = None;
+            self.context_image = None;
             self.pending_context_action_request = false;
             self.pending_link_requests.clear();
             self.clear_smart_selection_feedback();
@@ -787,6 +931,7 @@ impl TerminalView {
         self.scrollbar_dragging = false;
         self.context_link = None;
         self.context_target = None;
+        self.context_image = None;
         self.has_requested_initial_focus = false;
         self.keyboard.focus_out_if_owned()
     }
@@ -820,6 +965,7 @@ impl TerminalView {
             self.context_link = None;
             self.context_target = None;
             self.context_text = None;
+            self.context_image = None;
             self.file_link_context = next;
         }
     }
@@ -847,6 +993,10 @@ impl TerminalView {
     /// from the command palette.
     pub fn take_history_actions(&mut self) -> Vec<TerminalHistoryAction> {
         self.pending_history_actions.drain(..).collect()
+    }
+
+    pub fn take_image_export_requests(&mut self) -> Vec<TerminalImageExportRequest> {
+        self.pending_image_export_requests.drain(..).collect()
     }
 
     /// Scrolls history so a terminal-search match becomes visible, used by
@@ -1094,6 +1244,7 @@ impl TerminalView {
         let Some(metrics) = CellMetrics::new(glyph.size().x, glyph.size().y) else {
             return;
         };
+        self.diagnostics.cell_metrics = Some(metrics);
         let available = ui.available_size_before_wrap();
         let viewport = ViewSize {
             width: available.x,
@@ -1154,6 +1305,9 @@ impl TerminalView {
             dimensions: vp_layout.dimensions,
             metrics,
         };
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        self.last_layout = Some(layout);
+        self.last_pixels_per_point = Some(pixels_per_point);
         let mouse_reporting = options.keyboard_input_enabled
             && !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
 
@@ -1465,9 +1619,21 @@ impl TerminalView {
         if !ui.input(|input| input.pointer.primary_down()) && !has_command_release {
             self.primary_link_gesture = None;
         }
+        self.glyphs
+            .kitty
+            .prepare_frame(link_snapshot, layout, pixels_per_point);
         if let Some(link) = ui
             .input(|input| input.pointer.hover_pos())
             .filter(|position| vp_layout.viewport.contains(*position))
+            .filter(|position| {
+                !crate::kitty_graphics::is_point_occluded_by_above_text(
+                    &self.glyphs.kitty,
+                    link_snapshot,
+                    layout,
+                    pixels_per_point,
+                    *position,
+                )
+            })
             .and_then(|position| {
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
             })
@@ -1500,6 +1666,15 @@ impl TerminalView {
                     if !modifiers.command || !vp_layout.viewport.contains(*pos) {
                         return true;
                     }
+                    if crate::kitty_graphics::is_point_occluded_by_above_text(
+                        &self.glyphs.kitty,
+                        link_snapshot,
+                        layout,
+                        pixels_per_point,
+                        *pos,
+                    ) {
+                        return true;
+                    }
                     let Some(cell) =
                         cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, *pos)
                     else {
@@ -1523,8 +1698,22 @@ impl TerminalView {
                 };
                 if modifiers.command
                     && vp_layout.viewport.contains(*pos)
+                    && !crate::kitty_graphics::is_point_occluded_by_above_text(
+                        &self.glyphs.kitty,
+                        link_snapshot,
+                        layout,
+                        pixels_per_point,
+                        *pos,
+                    )
                     && cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, *pos)
                         == Some(pressed_cell)
+                    && link_snapshot
+                        .cell(pressed_cell.column, pressed_cell.row)
+                        .and_then(|cell| cell.hyperlink_target())
+                        .as_ref()
+                        == Some(&link)
+                    && (local_file_links
+                        || festerm_core::local_file_hyperlink_path(&link).is_none())
                 {
                     self.pending_link_requests.push_back(link);
                 }
@@ -1633,18 +1822,35 @@ impl TerminalView {
             self.context_text = None;
             let snapshot =
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
-            self.context_target =
+            self.context_image =
+                self.glyphs
+                    .kitty
+                    .image_at_point(snapshot, layout, pixels_per_point, position);
+            let occluded = crate::kitty_graphics::is_point_occluded_by_above_text(
+                &self.glyphs.kitty,
+                snapshot,
+                layout,
+                pixels_per_point,
+                position,
+            );
+            self.context_target = if occluded {
+                None
+            } else {
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
                     .and_then(|cell| snapshot.content_position(cell))
                     .map(|content_position| TerminalContextTarget {
                         content_position,
                         generation: self.next_context_generation,
-                    });
+                    })
+            };
             self.next_context_generation = self.next_context_generation.saturating_add(1);
-            self.context_link =
+            self.context_link = if occluded {
+                None
+            } else {
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
                     .and_then(|cell| snapshot.cell(cell.column, cell.row))
-                    .and_then(|cell| cell.hyperlink_target());
+                    .and_then(|cell| cell.hyperlink_target())
+            };
         }
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let smart_hit = self.context_target.and_then(|target| {
@@ -1807,10 +2013,16 @@ impl TerminalView {
         if let Some(scope) = smart_request {
             self.request_smart_selection(snapshot, self.smart_keyboard_hit.or(keyboard_hit), scope);
         }
-        let selected_text = selection_text(
-            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
-            &self.selection,
-        )
+        let context_snapshot =
+            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+        let context_map = self.build_kitty_occlusion_map(context_snapshot);
+        let selected_text = if context_map.is_empty() {
+            selection_text(context_snapshot, &self.selection)
+        } else {
+            selection_text_with_occlusion(context_snapshot, &self.selection, &mut |content| {
+                context_map.is_content_occluded(content)
+            })
+        }
         .filter(|text| !text.is_empty());
         let show_history_actions = options.history_snapshot_actions && selected_text.is_none();
         let show_find = options.terminal_input_enabled;
@@ -1820,7 +2032,8 @@ impl TerminalView {
                 || selected_text.is_some()
                 || options.paste_available
                 || show_find
-                || show_history_actions);
+                || show_history_actions
+                || self.context_image.is_some());
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
@@ -1830,7 +2043,29 @@ impl TerminalView {
                     options.context_menu_action.is_some() || self.context_link.is_some(),
                 );
                 let mut rendered_items = false;
+                if let Some(image) = self.context_image.clone() {
+                    if ui.button("Copy image").clicked() {
+                        self.pending_image_export_requests
+                            .push_back(TerminalImageExportRequest {
+                                action: TerminalImageExportAction::Copy,
+                                image: image.clone(),
+                            });
+                        ui.close();
+                    }
+                    if ui.button("Save image…").clicked() {
+                        self.pending_image_export_requests
+                            .push_back(TerminalImageExportRequest {
+                                action: TerminalImageExportAction::Save,
+                                image: image.clone(),
+                            });
+                        ui.close();
+                    }
+                    rendered_items = true;
+                }
                 if let Some(text) = selected_text.clone() {
+                    if rendered_items {
+                        ui.separator();
+                    }
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(text);
                         self.selection.clear();
@@ -1936,6 +2171,7 @@ impl TerminalView {
             self.context_link = None;
             self.context_target = None;
             self.context_text = None;
+            self.context_image = None;
         }
         if options.defer_paste_to_application {
             // `response.has_focus()`/`clicked()` each read the egui context
@@ -1972,6 +2208,7 @@ impl TerminalView {
                 viewport_offset_rows: self.history.offset_rows,
                 scroll_speed_multiplier: options.scroll_speed_multiplier,
                 persistent_keyboard_focus: options.persistent_keyboard_focus,
+                kitty: Some(&mut self.glyphs.kitty),
             },
             sink,
             InputSuppression {
@@ -2029,6 +2266,7 @@ impl TerminalView {
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
             );
         }
+        publish_accessible_images(ui, response.id, layout, snapshot);
         if let Some(target) = self.smart_keyboard_hit {
             let rect = Rect::from_min_size(
                 layout.rect.min
@@ -2350,7 +2588,14 @@ impl TerminalView {
         let status = copy.status();
         let bounds = copy.bounds();
         if let Some(pos) = context_release {
-            let hit = cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, pos);
+            self.context_image = self.glyphs.kitty.image_at_point(
+                TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+                layout,
+                ui.ctx().pixels_per_point(),
+                pos,
+            );
+            let hit = cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, pos)
+                .filter(|position| !copy.is_cell_occluded(*position));
             self.context_text = hit.and_then(|position| copy.context_text(&self.cache, position));
             self.context_target =
                 self.context_text
@@ -2384,6 +2629,7 @@ impl TerminalView {
                 viewport_offset_rows: self.history.offset_rows,
                 scroll_speed_multiplier: options.scroll_speed_multiplier,
                 persistent_keyboard_focus: options.persistent_keyboard_focus,
+                kitty: None,
             },
             sink,
             InputSuppression {
@@ -2402,6 +2648,25 @@ impl TerminalView {
                     ui,
                     options.context_menu_action.is_some() || self.context_link.is_some(),
                 );
+                if let Some(image) = self.context_image.clone() {
+                    if ui.button("Copy image").clicked() {
+                        self.pending_image_export_requests
+                            .push_back(TerminalImageExportRequest {
+                                action: TerminalImageExportAction::Copy,
+                                image: image.clone(),
+                            });
+                        ui.close();
+                    }
+                    if ui.button("Save image…").clicked() {
+                        self.pending_image_export_requests
+                            .push_back(TerminalImageExportRequest {
+                                action: TerminalImageExportAction::Save,
+                                image,
+                            });
+                        ui.close();
+                    }
+                    ui.separator();
+                }
                 if ui.button("Copy").clicked() {
                     copied = Some(
                         self.rectangle_copy
@@ -2430,6 +2695,7 @@ impl TerminalView {
             self.context_link = None;
             self.context_target = None;
             self.context_text = None;
+            self.context_image = None;
         }
         let painter = ui.painter().with_clip_rect(viewport);
         let stats = paint_grid(
@@ -3230,6 +3496,7 @@ mod tests {
     use super::*;
     use egui::Vec2;
     use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_core::kitty::{KittyConfig, KittyGeometry, KittyPngValidator, MAX_RGBA_BYTES};
     use festerm_core::{Dimensions, Terminal};
 
     #[derive(Default)]
@@ -3244,6 +3511,35 @@ mod tests {
     fn terminal(columns: usize, rows: usize) -> Terminal {
         Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
             .expect("test terminal allocation")
+    }
+
+    fn graphics_terminal() -> Terminal {
+        let mut terminal = terminal(80, 24);
+        terminal
+            .enable_kitty_graphics(KittyConfig {
+                rgba_budget: MAX_RGBA_BYTES,
+                png_validator: Some(KittyPngValidator::new(crate::validate_kitty_png)),
+            })
+            .unwrap();
+        terminal
+            .set_kitty_geometry(KittyGeometry::new(10, 20))
+            .unwrap();
+        terminal
+    }
+
+    fn place_graphics_image(terminal: &mut Terminal, rgba: &[u8]) {
+        terminal
+            .set_kitty_geometry(KittyGeometry::new(10, 20))
+            .unwrap();
+        let encoded = if rgba == [255, 0, 0, 255] {
+            "/wAA/w=="
+        } else {
+            "AAAAAA=="
+        };
+        terminal.ingest(
+            format!("\x1b_Ga=T,f=32,s=1,v=1,i=1,z=0,c=1,r=1,C=1,q=2;{encoded}\x1b\\").as_bytes(),
+        );
+        assert_eq!(terminal.kitty_images().len(), 1);
     }
 
     struct HeadlessViewState {
@@ -6932,6 +7228,118 @@ mod tests {
         assert!(harness.query_by_label("Copy").is_some());
         assert!(harness.state().view.selection().range().is_some());
         assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_copies_and_saves_the_hit_kitty_image_only() {
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+        }
+        let state = State {
+            terminal: graphics_terminal(),
+            view: TerminalView::default(),
+            sink: Sink::default(),
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        place_graphics_image(&mut harness.state_mut().terminal, &[255, 0, 0, 255]);
+        harness.run();
+        let grid = harness.state().view.diagnostics().grid_rect.unwrap();
+        let hit = grid.left_top() + egui::vec2(5.0, 5.0);
+        let snapshot = TerminalSnapshot::from_terminal(&harness.state().terminal);
+        assert_eq!(snapshot.kitty_placements().len(), 1);
+        assert!(harness
+            .state()
+            .view
+            .glyphs
+            .kitty
+            .image_at_point(
+                snapshot,
+                harness.state().view.last_layout.unwrap(),
+                harness.state().view.last_pixels_per_point.unwrap(),
+                hit,
+            )
+            .is_some());
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: hit,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Copy image").is_some());
+        assert!(harness.query_by_label("Save image…").is_some());
+
+        harness.get_by_label("Copy image").click();
+        harness.run();
+        let copy = harness.state_mut().view.take_image_export_requests();
+        assert_eq!(copy.len(), 1);
+        assert_eq!(copy[0].action(), TerminalImageExportAction::Copy);
+        assert_eq!((copy[0].image().width, copy[0].image().height), (1, 1));
+
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: hit,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        harness.get_by_label("Save image…").click();
+        harness.run();
+        let save = harness.state_mut().view.take_image_export_requests();
+        assert_eq!(save.len(), 1);
+        assert_eq!(save[0].action(), TerminalImageExportAction::Save);
+        assert_eq!((save[0].image().width, save[0].image().height), (1, 1));
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn transparent_kitty_pixel_does_not_offer_image_export() {
+        let state = HeadlessViewState::with_terminal(graphics_terminal());
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        place_graphics_image(&mut harness.state_mut().terminal, &[0, 0, 0, 0]);
+        harness.run();
+        let hit = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(5.0, 5.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: hit,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Copy image").is_none());
+        assert!(harness.query_by_label("Save image…").is_none());
+        assert!(harness.query_by_label("Paste").is_some());
     }
 
     #[test]

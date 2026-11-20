@@ -498,7 +498,7 @@ fn native_capabilities_json_is_exact_and_read_only() {
                 "maximum": festerm_sessiond::PROTOCOL_VERSION
             },
             "recovery_snapshot_schema": {
-                "supported_versions": [2, 3, festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
+                "supported_versions": [2, 3, 4, festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
             },
             "remote_attachment": true
         })
@@ -990,7 +990,7 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     assert!(terminal_contains(&premature_snapshot, b"READY"));
     assert_eq!(
         premature_snapshot.semantics(),
-        festerm_core::TerminalSemantics::Current
+        festerm_core::TerminalSemantics::SafeFraming
     );
     let still_attached =
         festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
