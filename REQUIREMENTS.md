@@ -462,7 +462,10 @@ The following are not committed initial-release requirements:
 
 - Pixel-perfect compatibility with a particular terminal product.
 - Complete complex-script shaping in the first terminal-core milestone.
-- Kitty graphics, sixel, or another inline graphics protocol.
+- Kitty graphics, Sixel, or another inline graphics protocol. ADR 0089 proposes
+  a staged architecture but does not enable or accept either protocol: direct
+  Kitty is the first candidate slice, while Sixel and recovery/recording
+  integration remain separately gated.
 - Tmux-like built-in multiplexing.
 - A stable plugin API.
 - A stable scripting API.

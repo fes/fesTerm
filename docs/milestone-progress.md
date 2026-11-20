@@ -15767,3 +15767,22 @@ vocabulary: Terminal, Keyboard (default keyboard, split and haptics merged),
 Security (App lock and Trusted hosts), Dev Tunnels, Recording and About, which
 now holds the offline demo. No defaults changed. Each of these behaviours is
 covered by a focused test.
+
+## Bounding inline terminal graphics before enabling them
+
+Research into the Kitty Graphics Protocol and Sixel found that the difficult
+part is not decoding pixels. The protocol-visible state — capability replies,
+image identity, cursor movement, placement lifetime, erasure, recording and
+durable reattachment — must remain deterministic across the parser, renderer
+and any authoritative session mirror. Current DCS framing also returns to
+Ground at the 4096-byte ceiling, which could expose the tail of a graphics
+payload as terminal text.
+
+ADR 0089 therefore proposes separating framing safety from product enablement. The first
+architecture phase would fix bounded APC/DCS synchronization. The next eligible
+slice is default-off Kitty direct transport on a non-recorded, non-recovering
+local PTY, with a pixel-geometry prerequisite and synchronous protocol
+decision barrier. Sixel, Kitty file/temp/shared-memory transports, image
+recovery, recording, scrollback retention, animation, placeholders and relative
+placements remain deferred. This allows real-client research without turning
+renderer-only image work into a second terminal authority.
