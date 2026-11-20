@@ -4,13 +4,13 @@
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the shared document registry, editor/viewer routing, Markdown parsing/rendering, and syntax-bound document state.
+This domain owns the shared text registry, editor and Markdown tab routing, and the read-only syntax/highlighting pipeline that turns source text into viewable content.
 
 Canonical docs: [docs/text-editor-design.md](../../docs/text-editor-design.md), [docs/markdown-viewer-design.md](../../docs/markdown-viewer-design.md)
 
 ## Shared documents
 
-Use for: Opening, reusing, or refreshing a file across tabs and splits
+Use for: Use when opening, reusing, or refreshing a file across tabs and splits
 
 - [`TextDocument`](../../crates/festerm-document/src/text.rs) — shared mutable buffer, dirty/save revision, and undo state
 - [`DocumentRegistry`](../../app/festerm/src/documents.rs) — deduplicates open files by origin and tracks reload/save state
@@ -26,7 +26,7 @@ Caveats:
 
 ## Editor routing
 
-Use for: Opening a local text file or issuing save, refresh, preview, and split commands
+Use for: Use when opening a local text file or issuing save, refresh, preview, and split commands
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — app-level document intent including open, save, refresh, and preview actions
 - [`TextEditorTab`](../../app/festerm/src/text_editor.rs) — view state binds to the shared document while keeping caret and scroll private
@@ -42,10 +42,10 @@ Caveats:
 
 ## Markdown load
 
-Use for: Opening local or remote Markdown and deciding whether to preview or open as a standalone viewer
+Use for: Use when opening local or remote Markdown and deciding whether to preview or open as a standalone viewer
 
-- [`MarkdownLoader`](../../crates/festerm-markdown/src/lib.rs) — reads bounded bytes, validates UTF-8/binary/size, and parses a read-only snapshot
-- [`MarkdownViewerTab`](../../app/festerm/src/markdown_viewer.rs) — tab owns source identity, preview/source modes, file state, and remote/local load results
+- [`MarkdownLoader`](../../crates/festerm-markdown/src/lib.rs) — reads bounded bytes, validates UTF-8 and binary bounds, and parses a read-only snapshot
+- [`MarkdownViewerTab`](../../app/festerm/src/markdown_viewer.rs) — tab owns source identity, preview/source modes, and remote/local load results
 
 Evidence:
 - [`open_remote_parses_in_memory_bytes_without_touching_disk`](../../app/festerm/src/markdown_viewer.rs) — remote Markdown loads from verified bytes without a temp file
@@ -58,7 +58,7 @@ Caveats:
 
 ## Highlighting
 
-Use for: Building syntax spans and rendering previews with fenced code, tables, and viewport-scoped ranges
+Use for: Use when building syntax spans and rendering previews with fenced code, tables, and viewport-scoped ranges
 
 - [`DocumentSyntax`](../../crates/festerm-syntax/src/lib.rs) — language detection, Tree-sitter reparse on revision, and viewport-scoped span queries
 - [`MarkdownViewerTab`](../../app/festerm/src/markdown_viewer.rs) — preview renderer keeps source spans exact while managing table and code layout state

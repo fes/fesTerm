@@ -1,92 +1,58 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "cf802c69c6677e5f6d9545b5715e1397ef666a73c40a6b657cdb71e648706ae6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8f065d1535cfffad3d2d253d6f01fdd4dab2ebf57b0b23a01262ae0978d03d6e"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns HOST discovery, enterprise inventory, portable recipe metadata, rooted file consent, PowerShell lifecycle, and host replacement trust boundaries.
+Portable tunnel bridge discovery, attachment, and validated transport for host-backed dev tunnels and PowerShell sessions.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host Discovery
+## Host discovery
 
-Use for: Which HOST marker is selected without legacy bridge fallback?
+Use for: Which bridge host description is accepted without opening daemon IPC or issuing a live attachment?
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects only HOST markers and rejects legacy bridge fallback.
-
-Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge fallback and ambiguous host labels.
-
-Caveats:
-- Inventory rows are metadata only; they are not live daemon proof.
-- Foreign generations are ignored.
-
-## Enterprise Inventory
-
-Use for: How are Dev Box and project inventories bounded before presentation?
-
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Owns sign-in, worker loop, and tab lifecycle.
+- [`discover_stream`](../../crates/festerm-tunnel-bridge/src/wire.rs) — read-only host description handshake over the bridge stream
+- [`serve_with_files`](../../crates/festerm-tunnel-bridge/src/transport.rs) — advertises target identity, file consent, and endpoint metadata
 
 Evidence:
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale worker data cannot repopulate a new tab.
-- [`output_bounds_limit_large_inventory`](../../app/festerm/src/enterprise.rs) — Caps rows and bytes before showing inventory.
+- [`bridge_discovery_is_bounded_read_only_and_never_opens_daemon_ipc`](../../crates/festerm-tunnel-bridge/src/transport.rs) — proves discovery is bounded and read-only
+- [`bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission`](../../crates/festerm-tunnel-bridge/src/transport.rs) — proves invalid host descriptions are rejected before admission
 
 Caveats:
-- Worker results are generation-scoped; stale results cannot mutate a new tab.
-- Inventory rows and bytes are bounded before presentation.
+- Discovery validates target generation and endpoint identity but is not live daemon proof.
+- Foreign or incompatible peers are rejected before any attachment or IPC is opened.
 
-## Recipe Metadata
+## Tunnel attach
 
-Use for: What portable recipe fields survive import and export?
+Use for: How does a client negotiate a session hello, snapshot, and reclaim before adoption?
 
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust decisions, and grants.
-- [`RecipeBook`](../../crates/festerm-client-recipes/src/model.rs) — Validates, deduplicates, and imports or exports recipe metadata.
+- [`Hello`](../../crates/festerm-tunnel-bridge/src/protocol.rs) — request payload: target, schema, takeover, optional client id
+- [`Description`](../../crates/festerm-tunnel-bridge/src/protocol.rs) — host response: target, files, reclaim, and takeover state
+- [`establish_negotiated`](../../crates/festerm-tunnel-bridge/src/mobile.rs) — retries previous snapshot schema once on a fresh stream
+- [`TunnelSession`](../../crates/festerm-tunnel-bridge/src/mobile.rs) — adopts the recovered terminal and drives session lifecycle and output
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch metadata and four behavior modes.
+- [`establish_negotiated_retries_the_previous_schema_on_a_fresh_stream`](../../crates/festerm-tunnel-bridge/src/mobile.rs) — proves schema fallback and SafeFraming guardrail
+- [`remote_snapshot_roundtrips_and_rejects_malformed_and_oversized_state`](../../crates/festerm-tunnel-bridge/src/protocol.rs) — proves snapshots are validated, bounded, and not replayed after adoption
 
 Caveats:
-- Portable metadata is intentionally public-only.
-- Legacy defaults and attach generation semantics stay distinct.
+- A host older than SafeFraming is retried once, but the previous schema never gets a SafeFraming snapshot.
+- Malformed snapshots or incompatible hellos fail the handshake before a session is adopted.
 
-## Rooted Files
+## Bridge transport
 
-Use for: How is HOST file access granted without terminal or daemon authority?
+Use for: How are input, output, and file requests bounded on the validated bridge session?
 
-- [`Prepared`](../../crates/festerm-tunnel-bridge/src/host_files.rs) — Keeps filesystem root and policy for explicit consent reuse.
+- [`start_client_with_takeover`](../../crates/festerm-tunnel-bridge/src/transport.rs) — creates validated transport, session, and optional file requestor
+- [`client_io_with_files`](../../crates/festerm-tunnel-bridge/src/transport.rs) — handles Hello, snapshot, file reads, and terminal I/O
+- [`ValidatedStream`](../../crates/festerm-tunnel-bridge/src/transport.rs) — bounded queue and cancellation without retry on dropped transport
+- [`FileAccess`](../../crates/festerm-tunnel-bridge/src/protocol.rs) — explicit file consent flags and path style gating
 
 Evidence:
-- [`host_files_role_uses_explicit_grant_with_no_session_admission_or_daemon_dependency`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Files access works without session admission or daemon dependency.
+- [`remote_session_adopts_before_live_output_and_never_owns_query_replies`](../../crates/festerm-tunnel-bridge/src/transport.rs) — proves file reads stay separate from terminal output and adoption is gated
+- [`saturated_transport_is_bounded_and_drop_cancels_without_retry`](../../crates/festerm-tunnel-bridge/src/transport.rs) — proves queue saturation is bounded and drop cancels the session transport
 
 Caveats:
-- Prepared roots do not grant hidden authority; every use revalidates scope.
-- A recreated stream cannot inherit terminal or daemon permissions by accident.
-
-## PowerShell Lifecycle
-
-Use for: Which lifecycle state or action distinguishes close, cancel, and failure?
-
-- [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, connection, runtime, failure, and close transitions.
-
-Evidence:
-- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — Close failure remains distinct from a successful exit.
-
-Caveats:
-- Stale worker generations cannot mutate the current state.
-- Close and cancel remain separate lifecycle commands.
-
-## Host Replacement
-
-Use for: What record and consent prevent untrusted host replacement?
-
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; it grants no replacement authority.
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Binds local consent to reviewed identity and permissions.
-- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Noninteractive local owner-admission evidence; no state writes or HOST-ready claim.
-
-Evidence:
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks identity, grants, and helper provenance on update.
-
-Caveats:
-- Containment retries preserve receipts without mutating live service state.
-- Helper gate checks reject unsupported or foreign capabilities before consent.
-- Owner diagnostics grant no credential, retry or serving authority.
+- Frame direction and size are checked before allocation; wrong-direction or oversized packets are rejected.
+- A file result cannot satisfy another request or be mistaken for terminal output.
