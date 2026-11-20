@@ -1,36 +1,36 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "878b7e23c8983dfa9f1f4a4b26729754bad2ecf43e72e9ea0c3a6637067f23f4"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "39869b0a37e8eb8cd1e5bf94699cc4f0f2cccbdf72a69cd62e7d502daeead864"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns validated configuration and workspace metadata, opaque native credential references, and current-user private file and process security boundaries.
+This domain owns validated configuration and workspace metadata, opaque native credential references, and user-private file and process security boundaries for safe persistence.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
 ## Config startup
 
-Use for: Choosing the active config source and persisting automatic startup saves safely.
+Use for: Choose the active config source and persist automatic workspace and settings saves safely.
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Selects the env override or native config path without exposing it.
-- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private startup loader and save gate for automatic config writes.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses the env override or native path without exposing the value.
+- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private startup loader and save gate for auto writes.
 
 Evidence:
 - [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — The override wins before the native config directory.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — It creates only the missing native directory and reloads cleanly.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Only the missing native directory is created and reloads stay clean.
 
 Caveats:
-- Diagnostics intentionally hide the selected file path and TOML.
+- Diagnostics hide the selected file path and TOML.
 - Unknown or busy writes latch the save gate until restart.
-- The selected path is intentionally inaccessible outside this module.
+- The selected source is intentionally private to this module.
 
 ## Config schema
 
-Use for: Validating configuration and workspace persistence without secret or runtime state.
+Use for: Validate saved configuration, workspace metadata, and settings without secret or runtime state.
 
-- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML schema covering profiles, workspace, settings, and accounts.
+- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML schema for profiles, workspace, settings, and accounts.
 - [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Metadata-only restore state with tab and window validation.
-- [`DevTunnelFilesProfileConfiguration`](../../crates/festerm-config/src/profiles.rs) — Files destination metadata; it grants no connection or credential authority.
+- [`InterfaceSettings`](../../crates/festerm-config/src/settings.rs) — Persisted UI behavior and terminal defaults, not live session state.
 
 Evidence:
 - [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Workspace validation and profile reference checks are enforced.
@@ -43,7 +43,7 @@ Caveats:
 
 ## Secret boundary
 
-Use for: Persisting credentials and opaque IDs outside config while keeping secret bytes native-only.
+Use for: Persist credential references in config while keeping secret bytes only inside the native store.
 
 - [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than the secret itself.
 - [`SecretReference`](../../crates/festerm-secret-store/src/lib.rs) — Canonical UUIDv4 secret identifier stored in config metadata.
@@ -60,7 +60,7 @@ Caveats:
 
 ## File security
 
-Use for: Making config directories and save payloads private before publication on Unix or Windows.
+Use for: Make config directories and save payloads private before publication on Unix or Windows.
 
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Ensures a directory is owned and restricted to the current user.
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a file with a current-user-only DACL and verified publication flow.
@@ -72,16 +72,4 @@ Evidence:
 Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
 - Configuration and workspace files contain metadata, never credential or terminal content.
-
-## Starter context
-
-Use for: Comparing process identity and startup provenance before a Windows successor is trusted.
-
-- [`same_start_context`](../../crates/festerm-windows-security/src/lib.rs) — Matches user, logon, session, integrity, and elevation before reusing startup state.
-- [`verify_successor`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Bounds the same-image successor lifetime and startup context.
-
-Evidence:
-- [`unicode_environment_safearray_preserves_drive_entries_and_wide_values`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — It preserves drive entries and wide UTF-16 environment values.
-
-Caveats:
-- Context equality and WMI PIDs confer no creation consent, session, or termination authority.
+- File-security helpers are about publication safety, not connection authority.

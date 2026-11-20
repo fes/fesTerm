@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-javascript-session"
-version = "0.17.7"
+version = "0.17.14"
 dependencies = [
  "festerm-automation-js",
  "festerm-session",

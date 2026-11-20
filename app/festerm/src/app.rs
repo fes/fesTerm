@@ -9011,10 +9011,12 @@ impl FesTermApp {
 
 #[cfg(test)]
 impl FesTermApp {
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_for_test(&self) -> &AppState {
         &self.state
     }
 
+    #[cfg(feature = "javascript-program-dev")]
     pub(crate) fn state_mut_for_test(&mut self) -> &mut AppState {
         &mut self.state
     }
@@ -15398,7 +15400,7 @@ mod tests {
         let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
         let mut harness = editor_harness(app);
 
-        harness.get_by_label("Save As").click();
+        harness.get_by_label("Save As\u{2026}").click();
         harness.run();
 
         assert!(
@@ -16397,7 +16399,7 @@ mod tests {
             assert_eq!(harness.state().state.active(), snapshot_tab);
             assert_eq!(harness.state().state.active_document(), Some(document));
             assert_eq!(active_document_text(harness.state()), expected);
-            harness.get_by_label("Save As").click();
+            harness.get_by_label("Save As\u{2026}").click();
             harness.run();
             assert!(harness.state().overlays.save_as_picker.is_some());
             harness.get_by_label("Cancel").click();
@@ -20418,9 +20420,42 @@ mod tests {
                 "development — Local · festerm-inspector-test-command-that-does-not-exist",
             )
             .click();
-        harness.step();
-        harness.run();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            harness.run();
+            let failed = harness
+                .state()
+                .state
+                .session_tab(harness.state().state.active())
+                .is_some_and(|session| session.controller.start_error().is_some());
+            if failed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "local inspector fixture did not report its intentional start failure"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         harness
+    }
+
+    fn open_session_inspector(harness: &mut Harness<'static, FesTermApp>) {
+        harness.get_by_label("More actions").click_accesskit();
+        harness.run();
+        harness.get_by_label("Session inspector").click_accesskit();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            harness.run();
+            if harness.state().state.inspector_open() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Session inspector did not open from the chrome action"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[test]
@@ -20810,10 +20845,7 @@ mod tests {
     fn capture_session_inspector_for_mockup_review() {
         let output_path = std::env::temp_dir().join("festerm-gui-review");
         let mut harness = failed_local_profile_harness();
-        harness.get_by_label("More actions").click();
-        harness.run();
-        harness.get_by_label("Session inspector").click();
-        harness.run();
+        open_session_inspector(&mut harness);
         harness.snapshot_options(
             "festerm-session-inspector-actual",
             &SnapshotOptions::default().output_path(output_path),
@@ -20911,10 +20943,7 @@ mod tests {
             _ => panic!("the configured profile must produce a session surface"),
         };
 
-        harness.get_by_label("More actions").click();
-        harness.run();
-        harness.get_by_label("Session inspector").click();
-        harness.run();
+        open_session_inspector(&mut harness);
 
         assert!(harness.state().state.inspector_open());
         harness.get_by_label("Session Inspector");
@@ -20934,10 +20963,7 @@ mod tests {
     #[test]
     fn inspector_consumes_the_first_uncovered_terminal_click() {
         let mut harness = failed_local_profile_harness();
-        harness.get_by_label("More actions").click();
-        harness.run();
-        harness.get_by_label("Session inspector").click();
-        harness.run();
+        open_session_inspector(&mut harness);
 
         // An interaction inside the foreground panel must not hit the
         // click-catcher beneath it.

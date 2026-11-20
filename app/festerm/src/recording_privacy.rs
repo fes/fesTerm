@@ -1,8 +1,8 @@
 use std::{
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
+        Arc, Mutex,
     },
     thread,
 };
