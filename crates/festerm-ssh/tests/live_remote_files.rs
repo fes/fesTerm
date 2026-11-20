@@ -657,7 +657,7 @@ fn cancelling_gui_connect_wait_closes_the_dedicated_transport_thread() {
 }
 
 #[test]
-fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file() {
+fn text_sftp_shutdown_interrupts_a_stalled_download_and_cleans_its_owned_partial_file() {
     let (server, port, activity) =
         start_server(SubsystemBehavior::StallFileReads, ShellBehavior::Quiet);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -700,7 +700,10 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file
         session.shutdown(Duration::from_secs(5)).unwrap(),
         ShutdownResult::Stopped
     );
-    assert_eq!(directory.join("cancelled.bin").exists(), !cfg!(windows));
+    assert_eq!(
+        directory.join("cancelled.bin").exists(),
+        !cfg!(any(windows, unix))
+    );
     let mut cleanup_reported = false;
     while let Ok(event) = session.try_recv_event() {
         if let SessionEvent::Error(error) = event {
@@ -710,20 +713,20 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file
     }
     assert_eq!(
         cleanup_reported,
-        !cfg!(windows),
-        "Unix preservation must be reported; Windows exact-handle cleanup must complete"
+        !cfg!(any(windows, unix)),
+        "retained ownership must confirm cleanup on Unix and Windows"
     );
     server
         .connection_closed
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     std::fs::remove_file(directory.join("cancelled.bin")).unwrap();
     std::fs::remove_dir(&directory).unwrap();
 }
 
 #[test]
-fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state() {
+fn live_gui_copy_cancellation_cleans_owned_partial_without_losing_cancelled_state() {
     let (server, port, _activity) =
         start_server(SubsystemBehavior::ControlledFileReads, ShellBehavior::Quiet);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -789,7 +792,7 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
                         reported = true;
                     }
                     SftpTransferEvent::ItemCancelled { .. } => {
-                        assert_eq!(reported, !cfg!(windows));
+                        assert_eq!(reported, !cfg!(any(windows, unix)));
                         cancelled = true;
                     }
                     SftpTransferEvent::ItemFailed { reason, .. } => {
@@ -799,7 +802,7 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
                         panic!("controlled copy must not finish before cancellation");
                     }
                     SftpTransferEvent::BatchFinished { .. } => {
-                        assert_eq!(reported, !cfg!(windows));
+                        assert_eq!(reported, !cfg!(any(windows, unix)));
                         assert!(cancelled);
                         break;
                     }
@@ -816,12 +819,12 @@ fn live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_st
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
     assert!(!destination.exists());
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     assert!(
         !partial.exists(),
-        "exact owned Windows partial must be removed"
+        "exact owned local partial must be removed"
     );
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     {
         let retained = std::fs::read(&partial).unwrap();
         assert!(!retained.is_empty() && retained.len() < CONTROLLED_CONTENT_BYTES);

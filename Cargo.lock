@@ -2999,6 +2999,7 @@ version = "0.17.14"
 dependencies = [
  "festerm-secret-store",
  "festerm-session",
+ "festerm-unix-security",
  "festerm-windows-security",
  "russh",
  "russh-sftp",
