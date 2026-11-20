@@ -1,0 +1,156 @@
+{
+  "record_version": 1,
+  "status": "accepted scoped native capability/environment and Copilot visual pair",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "server": "Windows",
+    "client": "iOS Simulator"
+  },
+  "creation_policy": "ON; existing session only in this record",
+  "case_complete": false,
+  "matrix_complete": false,
+  "captured_utc": "2026-11-20T04:23:41.825947+00:00",
+  "grid": {
+    "columns": 44,
+    "rows": 34
+  },
+  "sources": {
+    "iOS": {
+      "source": "981e4c92e448e0558dc36edd4c914e16db715516",
+      "workspace_version": "0.17.14",
+      "bundle_display_version": "0.1.0",
+      "executable_sha256": "b58574725ae472736a3a14035e4b1c8f11c600da83260b327cc3706e3004782b",
+      "runtime": "iPhone 18 Pro Simulator / iOS 27.2; no physical-device claim"
+    },
+    "Windows_local": {
+      "source": "8281078a9fdc29c79ebcb9dfaed62245ab7f3c44",
+      "version": "0.17.15",
+      "executable_sha256": "1842afc5245c790b452cc1ed6209a269ef20c48ab3af9b78364c59851c616eb2"
+    },
+    "Windows_signed_HOST_and_daemon": {
+      "source": "1046b6abf907a98161e2f26a0b8dc440886cd761",
+      "version": "0.17.15",
+      "Windows_archive_sha256": "b8b26cacb777400610714809ffda05505eeddbeba3357f18078521108ba06cbc",
+      "offline_authentication_receipt_sha256": "07afea372be3da76c6c36df968c533c3df95d6e8ab2cf083b7a389504a3248f2",
+      "later_core_fixes_deployed": false
+    }
+  },
+  "source_limit": "Mixed pinned artifacts. Terminal UI/mobile/host-client/session-controller source paths match between local GUI and iOS sources; core differs in recovery-snapshot pending-wrap validation and added tests. This is not combined-release or binary equivalence.",
+  "geometry": {
+    "iOS": {
+      "screenshot_pixels": [
+        1206,
+        2622
+      ],
+      "terminal_text_preset": "Large / 14 points",
+      "keyboard_at_capture": "Built-in; XCTest text input, no touchscreen-key acceptance claim"
+    },
+    "Windows_local": {
+      "screenshot_pixels": [
+        1280,
+        960
+      ],
+      "client_origin_pixels": [
+        0,
+        1
+      ],
+      "client_size_pixels": [
+        458,
+        888
+      ],
+      "dpi": 192,
+      "terminal_font_points": 8,
+      "terminal_unobscured": true,
+      "footer_overlaps_taskbar": true
+    }
+  },
+  "controls": {
+    "Copilot": {
+      "version": "1.0.112",
+      "sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62",
+      "arguments": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "state": "Fresh unauthenticated process and empty prompt after one-session folder trust; no login or model request"
+    },
+    "collector_sha256": "d8f556bbf0828acb23c8be14dec18c8911b6e5f8dde723fcc4d8d0944de50abf",
+    "working_directory": "C:/Users/evidence/.ft-item8-win-copilot-reference-r1",
+    "query_precondition": "CLS on both sides; exact fixed collector command and exclusive result path per side"
+  },
+  "capability_comparison": {
+    "result": "PASS",
+    "comparison": "All raw JSON fields equal except role case label and elapsed_ms; no reply/value normalization",
+    "query_families": 10,
+    "replies_per_family": 1,
+    "grid_stable": true,
+    "terminal_restored": true,
+    "worker_drained": true,
+    "environment_equal": true
+  },
+  "visual_review": {
+    "result": "PASS scoped semantic comparison by root agent viewing original screenshots",
+    "matches": [
+      "header and logo",
+      "MCP-zero message and wrapping",
+      "login notice",
+      "working directory and execution environment",
+      "empty input prompt",
+      "manual-approval footer",
+      "colors and glyph layout"
+    ],
+    "pixel_identity": false,
+    "native_limits": "Font scale, DPI, antialiasing and cursor animation differ; no raster-equality or physical-input/accessibility claim."
+  },
+  "session": {
+    "logical": "f1e7fed2-cd4d-4a5c-aa52-f8b0fd2da0fb",
+    "generation": "1795131831019572417",
+    "HOST_epoch": 38,
+    "HOST_run": "cd522b8a-2db0-4bcb-9d1d-fe948d9505ce"
+  },
+  "preservation": {
+    "all21_server_actors_and_full7_records_task_and_HOST_worker": "PASS exact after remote app exit",
+    "detached": true,
+    "final_lease_revision": 30,
+    "final_writer_epoch": 19,
+    "new_durable_session_created": false,
+    "profiles_and_account_metadata_unchanged": true
+  },
+  "cleanup": {
+    "local_Copilot": "Normal Ctrl+C twice returned to CMD; owned frontend/ephemeral shell drained. Frontend exit-code 0 itself was not retained.",
+    "remote_Copilot": "Only exact owned child terminated; normal CLI exit was not achieved. App termination and Simulator shutdown each returned 0.",
+    "control_limit": "Local second cutoff task reported a receipt-name collision after drain; independent actor/job absence confirmed. No all-control-tasks-pass claim.",
+    "preference_delta": "Normal to Large remains in dedicated test app; Hold symbols restored, Auto unchanged. Restore original Normal through UI at campaign end.",
+    "first_results": "Earlier custom-keyboard XCTest focus refusal, stale-TUI prefix command failure and before-input cleanup-budget refusals retained privately; no unexplained product-cause or normal-exit claim."
+  },
+  "remaining": [
+    "Full creation-ON and OFF policy/advertised-private/session-creation workflows",
+    "Saved attach-only profile and mobile background/foreground qualification",
+    "Touchscreen software-key input and accessibility",
+    "Copilot in-place resize and other client/server directions",
+    "Final combined-release qualification"
+  ],
+  "original_artifacts": {
+    "ios-capabilities.json": {
+      "bytes": 1189,
+      "sha256": "272287d30809417d09fba3cbb03db21d532b599dc696717038e9a82008d23bdc"
+    },
+    "local-capabilities.json": {
+      "bytes": 1189,
+      "sha256": "a8e459553663fa09d47b26ddf1dfbbc59403879bb4f91ea41c0394d48e635680"
+    },
+    "ios-copilot.png": {
+      "bytes": 235554,
+      "sha256": "93670d2412cb3ff5f76a0d2c2a3d069dff931d6453eeb83d23f71483dfa4979f"
+    },
+    "local-copilot.png": {
+      "bytes": 1003242,
+      "sha256": "f077dbd5f232dce4962974a8b863b118311de7393540037b89445d9dfef4e97e"
+    }
+  },
+  "private_acceptance": {
+    "basename": "PAIRED44x34-AGGREGATE.json",
+    "sha256": "37f7a03787196af79cab8b9a050fd5861cdebf70cabe5a6b07969cc456b0611f",
+    "scope": "Raw owned-process/control evidence retained locally; credentials and vault contents are not published"
+  }
+}
