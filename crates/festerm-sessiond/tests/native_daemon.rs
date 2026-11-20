@@ -343,7 +343,7 @@ fn native_windows_wmi_owned_launcher_fixture() {
     assert!(!created.recreated);
     let receipt = serde_json::json!({"pid":created.identity.pid,"generation":created.target.generation.get().to_string()});
     let directory = festerm_sessiond::private_storage::private_directory(&root, false).unwrap();
-    festerm_sessiond::private_storage::write_new_private(
+    festerm_tunnel_bridge::setup_storage::publish_new_private(
         &directory,
         Path::new("fixture-ready.json"),
         &serde_json::to_vec(&receipt).unwrap(),
