@@ -65,7 +65,9 @@ integration has focused regression and controlled native-helper coverage. The
 and [Linux-client/Windows-server](validation/dev-tunnels/linux-client-windows-native.json)
 records cover both creation policies and matched-grid Copilot comparisons.
 These four accepted cases use pinned cohorts; the full 24-case matrix and
-combined-release qualification remain incomplete. Explicit
+combined-release qualification remain incomplete. A separate
+[iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
+qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
 creation keeps its issued action after an uncertain result, with no replacement
 create, automatic enrollment or legacy fallback. This is not stage-6 completion.
 The opt-in mobile client has a protected native-vault original-action checkpoint:
