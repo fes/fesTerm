@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "32bd611d5549916d89f19a2373bbaf085b0641d9d8d81920cf187e04b800a130"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "f4355fbcc1012f8a4ff7f2e69f496b56992051b9de97991f0634364215e7279f"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,12 @@ Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
 Use for: When an SSH host fingerprint must be accepted or rejected before shell or SFTP work continues.
 
-- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns the worker thread, trust gates, and session lifecycle for SSH.
+- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns worker thread, trust gates, and lifecycle for SSH sessions.
 - [`HostTrustDecision`](../../crates/festerm-ssh/src/lib.rs) — User response enum for reject, accept once, and persist.
 
 Evidence:
 - [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Host-key prompt arrives before password, matching ssh ordering.
-- [`controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Rejected key change stops recovery instead of continuing.
+- [`controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Rejected key changes stop recovery instead of continuing.
 
 Caveats:
 - Trust is keyed by canonical host and port, so mismatches are easy to miss.
@@ -32,10 +32,11 @@ Use for: When the app opens a GUI-backed SFTP session and must pause for trust w
 - [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh SFTP client and working-directory state.
 
 Evidence:
-- [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Connected remote reads succeed with verified, bounded results.
+- [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads succeed with exact bytes and honest max-length bounds.
+- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The session sees host trust before password prompts in ssh order.
 
 Caveats:
-- The connect task uses a dedicated runtime so russh dispatch is not killed by a throw-away runtime.
+- Connect uses a dedicated runtime so russh dispatch is not killed by a throw-away runtime.
 - Dropping the completion cancels the connect attempt and tears down the owned thread.
 - Interactive auth is intentionally unsupported; GUI SFTP must supply explicit credentials.
 
@@ -43,15 +44,12 @@ Caveats:
 
 Use for: When remote browsing or copy operations need a bounded transfer queue, collision resolution, and event reporting.
 
-- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and the final commit.
+- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, progress events, batch state, and final commit.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
-- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the existing planner, queue and local staging.
 
 Evidence:
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
-- [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf on Windows.
-- [`windows_download_retained_handle_prevents_ancestor_rename_until_cleanup`](../../crates/festerm-ssh/src/sftp.rs) — Windows refuses moving the open file’s ancestor; the same rename succeeds after cleanup.
 
 Caveats:
 - Uncertain temporary ownership preserves the partial and reports recovery details.
@@ -63,7 +61,7 @@ Caveats:
 Use for: When the GUI opens an SFTP tab, resolves trust prompts, and turns remote file reads into app pane operations.
 
 - [`connect_remote_session`](../../app/festerm/src/sftp_file_manager.rs) — Bridges profile auth and host-key resolution into the GUI SFTP session.
-- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs) — Binds remote reads to verified endpoint identity and transport generation.
+- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs) — Binds reads to verified endpoint identity and transport generation.
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.
