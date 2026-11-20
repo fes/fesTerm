@@ -524,6 +524,15 @@ terminal permanently with an unterminated `OSC`, and because `ESC c` would be
 swallowed along with everything else, not even a reset would recover it. A
 screenful of garbage is recoverable; a silently dead terminal is not.
 
+This remains the ordinary-string behavior at the time of this note. ADR 0089
+proposes a stricter graphics-subtype state: once a bounded parser recognizes a
+Kitty APC or Sixel DCS, overflow releases retained payload and discards in
+constant memory through ST, CAN/SUB or a fresh ESC. It must not return to Ground
+merely because its byte budget was exhausted and thereby print the remainder of
+an image payload. That exception is not implemented merely by accepting the
+ADR; it requires the protocol-specific state, replay/schema adapter and
+regression fixtures named there.
+
 What the bound must still guarantee, and what is asserted, is that a truncated
 payload is never *acted on* - no half-read title is applied - and that the
 terminal is usable immediately afterwards.
