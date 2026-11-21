@@ -1336,10 +1336,16 @@ mod tests {
                 ..
             }
         ));
-        assert!(matches!(
-            TransactionalSaveStore::open_test(root.directory(), program, universe, SlotId::new()),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock
-        ));
+        match TransactionalSaveStore::open_test(root.directory(), program, universe, SlotId::new())
+        {
+            Err(error) => assert!(
+                festerm_sessiond::lock_is_contended(&error),
+                "unexpected competing writer refusal: kind={:?}, raw_os_error={:?}",
+                error.kind(),
+                error.raw_os_error(),
+            ),
+            Ok(_) => panic!("a competing writer was admitted"),
+        }
 
         private_storage::write_new_private(&store.directory, &store.save_name(), b"{broken")
             .unwrap();
