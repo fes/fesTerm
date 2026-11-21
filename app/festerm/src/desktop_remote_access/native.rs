@@ -15,6 +15,228 @@ mod sharing;
 
 pub(super) struct Native;
 
+// Foreground completion evidence only; no runtime reservation or new authority.
+#[derive(Clone, Copy)]
+enum CompletionBoundary {
+    Report,
+    ServiceContext,
+    ServiceStage,
+    ServiceStart,
+    FinalScope,
+}
+impl CompletionBoundary {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Report => "report",
+            Self::ServiceContext => "service_context",
+            Self::ServiceStage => "service_stage",
+            Self::ServiceStart => "service_start",
+            Self::FinalScope => "final_scope",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CompletionOutcome {
+    Begin,
+    Ok,
+    Error,
+}
+impl CompletionOutcome {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Begin => "begin",
+            Self::Ok => "ok",
+            Self::Error => "error",
+        }
+    }
+}
+
+fn completion_failure_code(error: Failure) -> &'static str {
+    match error {
+        Failure::Busy => "busy",
+        Failure::Observation { .. } => "observation",
+        Failure::Cancelled => "cancelled",
+        Failure::Timeout => "timeout",
+        Failure::RefreshFirst => "refresh_first",
+        Failure::ScopeChanged => "scope_changed",
+        Failure::PrivateStorage => "private_storage",
+        Failure::FileAccessReview => "file_access_review",
+        Failure::FileHelperUnsupported => "file_helper_unsupported",
+        Failure::SignedBundle => "signed_bundle",
+        Failure::BundleNotPublished => "bundle_not_published",
+        Failure::AcquisitionUnavailable => "acquisition_unavailable",
+        Failure::NativeVault => "native_vault",
+        Failure::SignIn => "sign_in",
+        Failure::OwnerApproval => "owner_approval",
+        Failure::PlatformPrerequisite => "platform_prerequisite",
+        Failure::Reconciliation => "reconciliation",
+        Failure::ShareCapability => "share_capability",
+        Failure::SessionChanged => "session_changed",
+        Failure::NoNativeObservation => "no_native_observation",
+        Failure::UpdateBlocked => "update_blocked",
+        Failure::UpdateIncomplete => "update_incomplete",
+        Failure::InvalidDraft => "invalid_draft",
+        Failure::CloudUncertain => "cloud_uncertain",
+    }
+}
+fn completion_kind(kind: io::ErrorKind) -> &'static str {
+    match kind {
+        io::ErrorKind::NotFound => "missing",
+        io::ErrorKind::PermissionDenied => "permission_denied",
+        io::ErrorKind::WouldBlock => "busy",
+        io::ErrorKind::TimedOut => "timed_out",
+        io::ErrorKind::Interrupted => "interrupted",
+        io::ErrorKind::InvalidData => "invalid_data",
+        io::ErrorKind::InvalidInput => "invalid_input",
+        io::ErrorKind::Unsupported => "unsupported",
+        io::ErrorKind::AlreadyExists => "already_exists",
+        _ => "unclassified",
+    }
+}
+#[derive(Clone, Copy)]
+enum CompletionReason {
+    NativeOperationFailed,
+    NativeTimeout,
+    StartNotObservedRunning,
+    ExecutableChanged,
+    AuthenticatedBundleChanged,
+    StagedArtifactMismatch,
+    Unknown,
+}
+impl CompletionReason {
+    fn from_error(error: &io::Error) -> Self {
+        // Exact known static errors only. Never emit or classify arbitrary text
+        // by substring, or walk a possibly credential-bearing source chain.
+        match error.to_string().as_str() {
+            "host.service_native_operation_failed" => Self::NativeOperationFailed,
+            "host.service_native_timeout" => Self::NativeTimeout,
+            "host.service_start_not_observed_running" => Self::StartNotObservedRunning,
+            "host.service_executable_changed" => Self::ExecutableChanged,
+            "host.service_authenticated_bundle_changed" => Self::AuthenticatedBundleChanged,
+            "host.staged_artifact_mismatch" => Self::StagedArtifactMismatch,
+            _ => Self::Unknown,
+        }
+    }
+    fn code(self) -> &'static str {
+        match self {
+            Self::NativeOperationFailed => "native_operation_failed",
+            Self::NativeTimeout => "native_timeout",
+            Self::StartNotObservedRunning => "start_not_observed_running",
+            Self::ExecutableChanged => "executable_changed",
+            Self::AuthenticatedBundleChanged => "authenticated_bundle_changed",
+            Self::StagedArtifactMismatch => "staged_artifact_mismatch",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+struct CompletionError {
+    kind: Option<io::ErrorKind>,
+    os: Option<i32>,
+    reason: Option<CompletionReason>,
+    failure: Failure,
+}
+fn completion_event(
+    root: &Path,
+    epoch: u64,
+    boundary: CompletionBoundary,
+    outcome: CompletionOutcome,
+    error: Option<CompletionError>,
+) {
+    let os = error
+        .as_ref()
+        .and_then(|error| error.os)
+        .map_or_else(|| "none".to_owned(), |code| code.to_string());
+    festerm_tunnel_bridge::worker_log::WorkerLog::new(root).event(
+        "host.enable_completion",
+        &[
+            ("epoch", &epoch.to_string()),
+            ("stage", boundary.code()),
+            ("outcome", outcome.code()),
+            (
+                "kind",
+                error
+                    .as_ref()
+                    .and_then(|error| error.kind)
+                    .map_or("none", completion_kind),
+            ),
+            (
+                "failure",
+                error
+                    .as_ref()
+                    .map_or("none", |error| completion_failure_code(error.failure)),
+            ),
+            ("os", &os),
+            (
+                "reason",
+                error
+                    .as_ref()
+                    .and_then(|error| error.reason)
+                    .map_or("none", CompletionReason::code),
+            ),
+        ],
+    );
+}
+fn completion_io<T>(
+    root: &Path,
+    epoch: u64,
+    boundary: CompletionBoundary,
+    observation: ObservationBoundary,
+    operation: impl FnOnce() -> io::Result<T>,
+) -> Result<T, Failure> {
+    completion_event(root, epoch, boundary, CompletionOutcome::Begin, None);
+    match operation() {
+        Ok(value) => {
+            completion_event(root, epoch, boundary, CompletionOutcome::Ok, None);
+            Ok(value)
+        }
+        Err(error) => {
+            let kind = error.kind();
+            let os = error.raw_os_error();
+            let reason = CompletionReason::from_error(&error);
+            let failure = observation_failure(error, observation);
+            completion_event(
+                root,
+                epoch,
+                boundary,
+                CompletionOutcome::Error,
+                Some(CompletionError {
+                    kind: Some(kind),
+                    os,
+                    reason: Some(reason),
+                    failure,
+                }),
+            );
+            Err(failure)
+        }
+    }
+}
+fn completion_report(
+    root: &Path,
+    epoch: u64,
+    operation: impl FnOnce() -> Result<Report, Failure>,
+) -> Result<Report, Failure> {
+    let boundary = CompletionBoundary::Report;
+    completion_event(root, epoch, boundary, CompletionOutcome::Begin, None);
+    let result = operation();
+    match &result {
+        Ok(_) => completion_event(root, epoch, boundary, CompletionOutcome::Ok, None),
+        Err(error) => completion_event(
+            root,
+            epoch,
+            boundary,
+            CompletionOutcome::Error,
+            Some(CompletionError {
+                kind: None,
+                os: None,
+                reason: None,
+                failure: *error,
+            }),
+        ),
+    }
+    result
+}
+
 fn acquisition_failure(error: HostBundleError) -> Failure {
     match error {
         HostBundleError::Cancelled => Failure::Cancelled,
@@ -668,17 +890,20 @@ impl Native {
                 if cancel.is_cancelled() {
                     return Err(Failure::Cancelled);
                 }
-                let mut result = match report(Some(store), &request.root) {
-                    Ok(report) => report,
-                    Err(error @ Failure::Observation { .. }) => {
-                        return Ok(Report {
-                            setup_complete: true,
-                            failure: Some(error),
-                            ..Report::default()
-                        });
-                    }
-                    Err(error) => return Err(error),
-                };
+                let mut result =
+                    match completion_report(&request.root, setup.native_registration.epoch, || {
+                        report(Some(store), &request.root)
+                    }) {
+                        Ok(report) => report,
+                        Err(error @ Failure::Observation { .. }) => {
+                            return Ok(Report {
+                                setup_complete: true,
+                                failure: Some(error),
+                                ..Report::default()
+                            });
+                        }
+                        Err(error) => return Err(error),
+                    };
                 let Scope::Present(snapshot) = result.scope.clone() else {
                     return Err(Failure::ScopeChanged);
                 };
@@ -697,20 +922,34 @@ impl Native {
                             }
                             // Normal Enable is consent to listen now. The independent
                             // sign-in startup preference controls future OS logins.
-                            let services =
-                                Services::current_user(store, &request.root).map_err(|error| {
-                                    observation_failure(error, ObservationBoundary::ServiceContext)
-                                })?;
-                            let stage = services.reopen_stage(snapshot.epoch).map_err(|error| {
-                                observation_failure(error, ObservationBoundary::ServiceStage)
-                            })?;
-                            let observation =
-                                services.start(&stage, snapshot.epoch).map_err(|error| {
-                                    observation_failure(error, ObservationBoundary::ServiceStart)
-                                })?;
-                            if store.snapshot().map_err(|error| {
-                                observation_failure(error, ObservationBoundary::FinalScope)
-                            })? != *snapshot
+                            let services = completion_io(
+                                &request.root,
+                                snapshot.epoch,
+                                CompletionBoundary::ServiceContext,
+                                ObservationBoundary::ServiceContext,
+                                || Services::current_user(store, &request.root),
+                            )?;
+                            let stage = completion_io(
+                                &request.root,
+                                snapshot.epoch,
+                                CompletionBoundary::ServiceStage,
+                                ObservationBoundary::ServiceStage,
+                                || services.reopen_stage(snapshot.epoch),
+                            )?;
+                            let observation = completion_io(
+                                &request.root,
+                                snapshot.epoch,
+                                CompletionBoundary::ServiceStart,
+                                ObservationBoundary::ServiceStart,
+                                || services.start(&stage, snapshot.epoch),
+                            )?;
+                            if completion_io(
+                                &request.root,
+                                snapshot.epoch,
+                                CompletionBoundary::FinalScope,
+                                ObservationBoundary::FinalScope,
+                                || store.snapshot(),
+                            )? != *snapshot
                             {
                                 return Err(Failure::ScopeChanged);
                             }

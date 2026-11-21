@@ -2529,6 +2529,28 @@ Callbacks do not reacquire the installation lease. Logging is best effort and
 old runtime-history readers skip these lines; there is no new authority, retry,
 UI readiness claim or diagnosis of the retained #816 native failure.
 
+The app records post-registration completion through the separate bounded
+`host.enable_completion` line kind: protected report, service context, signed
+stage reopening, start and final scope. Closed stage/outcome/I/O-kind/failure
+labels, optional numeric OS code and a small exact-static-reason allowlist
+preserve existing failure mapping, cancellation, fences and call order. The new
+reason classification uses exact literals only; unknown text is never retained.
+The existing failure mapping, including its substring classification, is unchanged.
+No run is invented, owner noninteractive reads are unchanged, and no raw error
+or resource/credential identifier is logged. These observations distinguish
+boundaries without turning their success into serving authority or readiness.
+
+Start credential checks have separate bounded `host.start_credentials` events,
+with `initial`/`before_mutation` correlation. Provider-owner calls additionally
+reuse the finite owner observer as `host.owner_start_noninteractive`; this
+identifies the existing NI API path, not a guarantee of native prompt behavior.
+OwnerOnly getter behavior is unchanged. The existing native timeout has an
+exact closed reason code. The operation lease still starts the same 15-second
+absolute deadline before credentials: no reset, extra allowance, retry, global
+GUI UI fence or permission change is introduced. A deterministic start fixture
+expires that inherited deadline in either credential check and proves the next
+native request refuses before manager effects. It does not explain R4 by itself.
+
 The separate `owner-readiness --state-dir PATH --origin desktop|headless` helper command opens
 only existing selected native-vault state and uses the current noninteractive
 snapshot plus the same consent predicate. Its bounded schema-1 reply explicitly

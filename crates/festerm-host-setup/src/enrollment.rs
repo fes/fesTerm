@@ -60,6 +60,12 @@ pub(crate) enum OwnerAdmissionStage {
         feature = "native-services"
     ))]
     NativeRegistration,
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    StartCredentials,
 }
 impl OwnerAdmissionStage {
     #[cfg(all(
@@ -80,6 +86,7 @@ impl OwnerAdmissionStage {
             Self::PolicyPublish => "policy_publish",
             Self::Initialization => "initialization",
             Self::NativeRegistration => "native_registration",
+            Self::StartCredentials => "start_credentials",
             Self::Consent => "consent",
         }
     }
