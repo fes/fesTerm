@@ -6233,3 +6233,18 @@ finished Disabled at the same epoch. That failure is retained and its cause is
 unproved. The new stop-race fixture does not establish that historical cause.
 A signed current-source native Disable/Enable check, including retained shell
 identity and fresh remote I/O, remains required before qualifying this fix.
+
+### Attachment publication policy contention
+
+DT-05 / HOST-03: while a first frontend is active, connect a second persistent
+session on the same host and verify its snapshot precedes activation/input.
+Transient contention during the final protected policy read must preserve the
+single pending native attachment and recheck fresh authority within the existing
+one-second bound. Sustained contention, changed authority or cancellation must
+remain uncertain without replaying native attachment, creating a replacement or
+stopping either shell. Keep both actor/generation identities and fresh I/O.
+
+A controlled real-daemon regression reproduces the original post-native `Busy`
+publication refusal and verifies snapshot adoption with one actor/generation;
+portable tests cover guard retention, final refusals and budget exhaustion.
+This is not installed GUI/provider/vault acceptance or a full matrix result.

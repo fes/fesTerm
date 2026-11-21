@@ -3008,3 +3008,21 @@ Validation impact: deterministic service fixtures cover the absent-job race and
 changed scope, ownership, definition and observation refusals. The original
 signed Mac Disable failure remains causally unproved; current-source native
 lifecycle/I/O qualification remains in the manual registry.
+
+### Fresh publication admission after native attachment
+
+A native attachment may already be connected when its final protected policy
+acquisition encounters `Busy`. Reacquire only that fresh source/policy admission
+within the existing one-second committed-contention budget. Keep the original
+journal transaction, target, ticket and captured admission fence; every successful
+read must revalidate current authority. Never repeat the lease reservation,
+native connection, snapshot adoption or input. Denial, stale/revoked authority,
+cancellation, storage errors and exhausted contention retain the original
+committed-but-not-published outcome. A successful guard remains held through
+pending-attachment publication.
+
+Validation impact: a real daemon regression forces contention at the second,
+post-native admission, then requires one unchanged actor/generation and actual
+snapshot adoption. Pure tests cover guard retention, fresh final refusal and
+expired budgets. The first macOS CI failure remains recorded; controlled native
+fixtures do not qualify provider/vault/GUI remoting or the full client matrix.
