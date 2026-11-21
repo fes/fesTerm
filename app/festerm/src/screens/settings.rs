@@ -64,6 +64,10 @@ pub(crate) struct SettingsViewModel {
     pub scroll_speed: ScrollSpeedPreference,
     pub rectangle_copy_trim_trailing_spaces: bool,
     pub scrollback_limit: ScrollbackLimitPreference,
+    pub inline_graphics: bool,
+    /// Open sessions with inline graphics on; see
+    /// `AppState::inline_graphics_sessions`.
+    pub inline_graphics_sessions: usize,
     pub image_memory_budget: ImageMemoryBudgetPreference,
     pub image_memory_over_budget: bool,
     pub quick_switch_overlay: bool,
@@ -227,6 +231,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         scroll_speed,
         rectangle_copy_trim_trailing_spaces,
         scrollback_limit,
+        inline_graphics,
+        inline_graphics_sessions,
         image_memory_budget,
         image_memory_over_budget,
         quick_switch_overlay,
@@ -584,6 +590,14 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 customize_local_shell,
                             ) {
                                 command = Some(AppCommand::ToggleCustomizeLocalShell);
+                            }
+                            if inline_graphics_setting_row(
+                                ui,
+                                crate::inline_graphics::BUILD,
+                                inline_graphics,
+                                inline_graphics_sessions,
+                            ) {
+                                command = Some(AppCommand::ToggleInlineGraphics);
                             }
                             ui.add_space(SETTINGS_CARD_GAP);
                             settings_group_label(ui, "New Session tab");
@@ -3031,6 +3045,49 @@ fn settings_drill_in_row(
     response
 }
 
+const INLINE_GRAPHICS_TITLE: &str = "Inline graphics (developer preview)";
+
+fn inline_graphics_description(platform_supported: bool, sessions: usize) -> String {
+    let scope = if platform_supported {
+        "Developer builds only; unfinished and off by default. New local shell \
+         sessions on macOS and Linux accept a subset of the Kitty graphics \
+         protocol; shipped builds never enable or advertise it. Eligibility is fixed when a session starts: persistent, multiplexer, \
+         SSH, serial, tunnel, PowerShell and recorded sessions are refused, and \
+         recording refuses an eligible session."
+    } else {
+        "Developer builds only; unavailable on this platform. Only macOS and \
+         Linux local shells can be eligible."
+    };
+    let status = match sessions {
+        0 => "No open session has it on.".to_owned(),
+        1 => "1 open session has it on and cannot be recorded.".to_owned(),
+        count => format!("{count} open sessions have it on and cannot be recorded."),
+    };
+    format!("{scope} {status}")
+}
+
+/// ADR 0089 §9: Phase 1 is an unadvertised developer slice, so shipped
+/// builds never show the setting, and unsupported platforms show it inert.
+/// Returns whether the enabled switch was clicked.
+fn inline_graphics_setting_row(
+    ui: &mut Ui,
+    build: crate::inline_graphics::InlineGraphicsBuild,
+    enabled: bool,
+    sessions: usize,
+) -> bool {
+    if !build.developer_preview {
+        return false;
+    }
+    settings_row_separator(ui);
+    settings_toggle_row_enabled(
+        ui,
+        INLINE_GRAPHICS_TITLE,
+        &inline_graphics_description(build.platform_supported, sessions),
+        enabled,
+        build.platform_supported,
+    )
+}
+
 /// One labeled on/off preference row: a fixed title and state-independent
 /// description on the left, and a pill-shaped toggle switch on the right
 /// (`docs/images/gui-mockups/settings.png`) - replacing a plain text button
@@ -3465,6 +3522,8 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            inline_graphics: false,
+                            inline_graphics_sessions: 0,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,
                             quick_switch_overlay: false,
@@ -5482,6 +5541,98 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_inline_graphics_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        let build = crate::inline_graphics::BUILD;
+        if !build.developer_preview {
+            assert!(harness.query_by_label(INLINE_GRAPHICS_TITLE).is_none());
+            return;
+        }
+        let toggle =
+            harness.get_by_role_and_label(accesskit::Role::CheckBox, INLINE_GRAPHICS_TITLE);
+        assert_eq!(
+            toggle.accesskit_node().toggled(),
+            Some(accesskit::Toggled::False)
+        );
+        // Unsupported preview platforms (Windows) keep the row visible but inert.
+        assert_eq!(
+            toggle.accesskit_node().is_disabled(),
+            !build.platform_supported
+        );
+        toggle.click();
+        harness.run();
+
+        assert_eq!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::ToggleInlineGraphics)
+            ),
+            build.platform_supported
+        );
+    }
+
+    #[test]
+    fn inline_graphics_row_is_hidden_in_release_inert_when_unsupported_and_toggles_when_supported()
+    {
+        use crate::inline_graphics::InlineGraphicsBuild;
+        for (build, shown) in [
+            (
+                InlineGraphicsBuild {
+                    platform_supported: true,
+                    developer_preview: false,
+                },
+                false,
+            ),
+            (
+                InlineGraphicsBuild {
+                    platform_supported: false,
+                    developer_preview: true,
+                },
+                true,
+            ),
+            (
+                InlineGraphicsBuild {
+                    platform_supported: true,
+                    developer_preview: true,
+                },
+                true,
+            ),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(520.0, 400.0))
+                .build_ui_state(
+                    move |ui, clicks: &mut usize| {
+                        if inline_graphics_setting_row(ui, build, false, 0) {
+                            *clicks += 1;
+                        }
+                    },
+                    0,
+                );
+            harness.run();
+            let Some(toggle) =
+                harness.query_by_role_and_label(accesskit::Role::CheckBox, INLINE_GRAPHICS_TITLE)
+            else {
+                assert!(!shown, "{build:?}");
+                continue;
+            };
+            assert!(shown, "{build:?}");
+            assert_eq!(
+                toggle.accesskit_node().is_disabled(),
+                !build.platform_supported
+            );
+            toggle.click();
+            harness.run();
+            assert_eq!(
+                *harness.state(),
+                usize::from(build.platform_supported),
+                "{build:?}"
+            );
+        }
+    }
+
+    #[test]
     fn settings_auto_applies_default_sftp_local_directory_edits() {
         let mut harness = settings_harness();
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -5935,6 +6086,8 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            inline_graphics: false,
+                            inline_graphics_sessions: 0,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,
                             quick_switch_overlay: false,

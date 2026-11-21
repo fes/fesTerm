@@ -200,14 +200,15 @@ class QualityWorkflowSplitTests(unittest.TestCase):
         )
         self.assertIn("if: matrix.os != 'windows-latest'", workspace)
         self.assertIn(
-            "cargo nextest run --workspace --profile ci",
+            "cargo nextest run --workspace --features festerm/javascript-program-dev --profile ci",
             workspace,
         )
-        self.assertIn("cargo test --workspace --doc", workspace)
+        self.assertIn("cargo test --workspace --features festerm/javascript-program-dev --doc", workspace)
         self.assertIn(
-            r".\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')",
+            r".\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace', '--features', 'festerm/javascript-program-dev')",
             workspace,
         )
+        self.assertIn("cargo clippy --workspace --all-targets --features festerm/javascript-program-dev -- -D warnings", workspace)
         self.assertNotIn("run: cargo test --workspace", workspace)
         nextest_config = (WORKFLOWS.parents[1] / ".config/nextest.toml").read_text(
             encoding="utf-8"

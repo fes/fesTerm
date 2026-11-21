@@ -243,8 +243,11 @@ Required for the first meaningful compatibility milestone:
 These require separate design decisions and are not implied by the xterm baseline:
 
 - Kitty keyboard protocol.
-- Kitty graphics.
-- Sixel or another inline graphics protocol.
+- Kitty graphics: architecture proposed in ADR 0089; direct-only, default-off
+  local-PTY enablement remains unimplemented and unqualified.
+- Sixel or another inline graphics protocol: remains deferred until a Sixel
+  compatibility profile and the ADR 0089 recovery, recording and geometry
+  prerequisites are accepted.
 - Shell integration sequences.
 - Semantic prompt or command zones.
 - Terminal notifications.

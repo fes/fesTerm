@@ -155,6 +155,13 @@ pub struct InterfaceSettings {
         skip_serializing_if = "ImageMemoryBudgetPreference::is_default"
     )]
     image_memory_budget: ImageMemoryBudgetPreference,
+    /// Whether newly created sessions may be considered for bounded inline
+    /// terminal graphics (ADR 0089). Off by default. Eligibility is still
+    /// decided once per session at creation and is limited to in-process
+    /// local PTY sessions on macOS and Linux; this preference never changes
+    /// an existing session.
+    #[serde(default, skip_serializing_if = "is_false")]
+    inline_graphics: bool,
     /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) temporarily overlays each eligible chip's quick-switch
     /// number in place of its usual status presentation (feature request
@@ -260,6 +267,7 @@ impl InterfaceSettings {
         rectangle_copy_trim_trailing_spaces: true,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
         image_memory_budget: ImageMemoryBudgetPreference::MiB512,
+        inline_graphics: false,
         quick_switch_overlay: true,
         compact_launcher_grid: true,
         legacy_pulse_new_output_dot: (),
@@ -385,6 +393,13 @@ impl InterfaceSettings {
         self
     }
 
+    /// Sets whether newly created sessions may be considered for inline
+    /// terminal graphics (ADR 0089).
+    pub const fn with_inline_graphics(mut self, enabled: bool) -> Self {
+        self.inline_graphics = enabled;
+        self
+    }
+
     /// Sets whether holding the quick-switch modifier overlays chip numbers
     /// (feature request #69).
     pub const fn with_quick_switch_overlay(mut self, quick_switch_overlay: bool) -> Self {
@@ -504,6 +519,10 @@ impl InterfaceSettings {
 
     pub const fn image_memory_budget(&self) -> ImageMemoryBudgetPreference {
         self.image_memory_budget
+    }
+
+    pub const fn inline_graphics(&self) -> bool {
+        self.inline_graphics
     }
 
     pub const fn quick_switch_overlay(&self) -> bool {
@@ -991,6 +1010,35 @@ mod tests {
         );
         let disabled: InterfaceSettings = toml::from_str("pane_high_contrast = false").unwrap();
         assert!(!disabled.pane_high_contrast());
+    }
+
+    #[test]
+    fn inline_graphics_is_opt_in_and_round_trips_through_configuration() {
+        assert!(!InterfaceSettings::DEFAULT.inline_graphics());
+        assert!(!crate::Configuration::empty()
+            .interface_settings()
+            .inline_graphics());
+        let existing: InterfaceSettings = toml::from_str("show_session_details = true").unwrap();
+        assert!(!existing.inline_graphics());
+        assert!(!toml::to_string(&InterfaceSettings::DEFAULT)
+            .unwrap()
+            .contains("inline_graphics"));
+
+        let enabled = InterfaceSettings::DEFAULT.with_inline_graphics(true);
+        let written = toml::to_string(&enabled).unwrap();
+        assert!(written.contains("inline_graphics = true"));
+        let document = crate::Configuration::empty()
+            .with_interface_settings(enabled.clone())
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        let restored = crate::Configuration::parse(&document).unwrap();
+        assert!(restored.interface_settings().inline_graphics());
+        assert_eq!(restored.interface_settings(), &enabled);
+
+        let disabled: InterfaceSettings = toml::from_str("inline_graphics = false").unwrap();
+        assert!(!disabled.inline_graphics());
+        assert!(toml::from_str::<InterfaceSettings>("inline_graphics = 'yes'").is_err());
     }
 
     #[test]

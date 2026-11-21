@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "mai-code-1.1-flash", "sources": "39869b0a37e8eb8cd1e5bf94699cc4f0f2cccbdf72a69cd62e7d502daeead864"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "6d095e7c289902652490eb0a54356498db694e68404a4142e559e5fa62f65c27"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -73,3 +73,16 @@ Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
 - Configuration and workspace files contain metadata, never credential or terminal content.
 - File-security helpers are about publication safety, not connection authority.
+
+## Program storage settings
+
+Use for: Reviewed digest-bound save and migration metadata
+
+- [`JavaScriptProgramStorageSettings`](../../crates/festerm-config/src/settings.rs) — Persists explicit per-program storage review.
+- [`TransactionalSaveStore`](../../app/festerm/src/javascript_program_storage.rs) — Owns exact reviewed save publication.
+
+Evidence:
+- [`javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume`](../../app/festerm/src/javascript_program_storage.rs) — Resume retains the selected confirmed save.
+
+Caveats:
+- Storage enablement, budgets and migration require explicit review; no path-derived authority.

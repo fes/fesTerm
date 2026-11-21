@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a12253392fe6bafed1ec437cab3926186370f126711a5b1725ecd2b0e3cc25c7"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "codex-source-verified", "sources": "a12253392fe6bafed1ec437cab3926186370f126711a5b1725ecd2b0e3cc25c7"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -69,3 +69,17 @@ Caveats:
 - The machine owns protocol state, not transport authentication or authorization.
 - Client metadata and JSON-RPC IDs are never treated as identity or grant.
 - Staged qualification gates catalog and input features separately from backend authorization.
+
+## JavaScript terminal programs
+
+Use for: Contained runtime and digest-bound storage
+
+- [`JavaScriptProgramLaunch`](../../crates/festerm-automation-js/src/program.rs) — Captures reviewed terminal-only launch capabilities.
+- [`ProgramSupervisor`](../../crates/festerm-automation-js/src/program_supervisor.rs) — Owns confined workers and disclosure fences.
+- [`ProgramStorageHost`](../../crates/festerm-automation-js/src/program_storage.rs) — Bounds program save requests.
+
+Evidence:
+- [`tw2k2_plays_through_the_confined_program_worker`](../../crates/festerm-automation-js/tests/tw2k2_program_compatibility.rs) — Exercises the real contained program worker.
+
+Caveats:
+- Own-terminal programs do not gain automation-target authority or unreviewed storage; developer routes remain default-off.

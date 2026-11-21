@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -41,6 +42,9 @@ fn automation_instance() -> Option<u64> {
 /// Byte threshold for one session's scheduling slice. An indivisible event
 /// may cross it by at most that event's bounded payload.
 pub const MAX_INGEST_BYTES_PER_SESSION_SLICE: usize = MAX_IO_CHUNK_BYTES * 4;
+
+/// How soon graphics output blocked on reply capacity is retried.
+const GRAPHICS_BACKLOG_RETRY: Duration = Duration::from_millis(16);
 
 /// Total synchronous output-ingest time available to all sessions in an
 /// application update.
@@ -253,6 +257,14 @@ impl PendingCommandBuffer {
     #[cfg(test)]
     pub fn enqueue(&mut self, bytes: &[u8]) -> Result<(), PendingCommandError> {
         self.enqueue_from_source(bytes, false, false)
+    }
+
+    fn can_accept(&self, bytes: usize) -> bool {
+        bytes <= MAX_IO_CHUNK_BYTES
+            && self
+                .queued_bytes
+                .checked_add(bytes)
+                .is_some_and(|queued_bytes| queued_bytes <= self.capacity)
     }
 
     fn enqueue_from_source(
@@ -499,6 +511,34 @@ pub struct SessionController<S: Session> {
     port_forwards: Vec<SshPortForwardRuntime>,
     last_resize: Option<TerminalSize>,
     resize_probe: ResizeProbe,
+    /// Device-pixel cell size published only for ADR 0089-eligible sessions;
+    /// `None` keeps every resize pixel-less.
+    cell_pixels: Option<CellPixelGeometry>,
+    /// The grid most recently requested by the view, so a pixel-only
+    /// geometry change can be re-staged without new rows or columns.
+    requested_dimensions: Option<Dimensions>,
+    /// Set once the terminal has enabled ADR 0089 Kitty graphics. Output is
+    /// then ingested with reply backpressure and the Kitty cell geometry is
+    /// published only from the PTY's applied resize generations.
+    graphics_authority: bool,
+    /// The unconsumed suffix of an output chunk that stopped on reply
+    /// pressure or a Kitty validation barrier. It is ingested before any
+    /// newer session event.
+    graphics_backlog: Vec<u8>,
+    /// Validates completed Kitty uploads off the UI thread; the terminal
+    /// holds this session's later output behind the pending job.
+    kitty_validation: KittyValidationWorker,
+    /// The last generation tag handed to the session for a graphics resize.
+    resize_generation: u64,
+    /// The newest tagged resize the session accepted. Only its own
+    /// acknowledgement can publish Kitty geometry, so a delayed one for an
+    /// older request of the same size (A-B-A) never matches.
+    tagged_resize: Option<(NonZeroU64, TerminalSize)>,
+    /// Graphics replies left in the terminal because the ordered write queue
+    /// could not take them; retried on a timer since no event may follow.
+    replies_held: bool,
+    /// The session refused the last pending-write flush as full.
+    writes_backpressured: bool,
     /// Whether any resize has ever been requested for this controller. The
     /// very first resize (immediately after a session is spawned, before the
     /// PTY has ever been told a size other than its startup default) is sent
@@ -566,6 +606,15 @@ impl<S: Session> SessionController<S> {
             port_forwards: Vec::new(),
             last_resize: None,
             resize_probe: ResizeProbe::default(),
+            cell_pixels: None,
+            requested_dimensions: None,
+            graphics_authority: false,
+            graphics_backlog: Vec::new(),
+            kitty_validation: KittyValidationWorker::default(),
+            resize_generation: 0,
+            tagged_resize: None,
+            replies_held: false,
+            writes_backpressured: false,
             has_requested_resize: false,
             last_pump_output_received: false,
             last_pump_closed: false,
@@ -612,6 +661,15 @@ impl<S: Session> SessionController<S> {
             port_forwards: Vec::new(),
             last_resize: None,
             resize_probe: ResizeProbe::default(),
+            cell_pixels: None,
+            requested_dimensions: None,
+            graphics_authority: false,
+            graphics_backlog: Vec::new(),
+            kitty_validation: KittyValidationWorker::default(),
+            resize_generation: 0,
+            tagged_resize: None,
+            replies_held: false,
+            writes_backpressured: false,
             has_requested_resize: false,
             last_pump_output_received: false,
             last_pump_closed: false,
@@ -635,6 +693,11 @@ impl<S: Session> SessionController<S> {
     }
 
     pub fn attach_recording_stream(&mut self, stream: festerm_recording::RecordingStream) {
+        // ADR 0089 §9: graphics sessions are never recorded. Dropping the
+        // stream fails its recording instead of silently omitting output.
+        if self.graphics_authority {
+            return;
+        }
         self.recording_stream = Some(stream);
     }
 
@@ -968,18 +1031,63 @@ impl<S: Session> SessionController<S> {
     ) -> PumpResult {
         self.last_pump_output_received = false;
         self.last_pump_closed = false;
-        let Some(session) = &self.session else {
+        if self.session.is_none() {
             return PumpResult {
                 hit_limit: false,
                 output_received: false,
                 ingested_bytes: 0,
                 closed: false,
             };
+        }
+        let validated = self.advance_kitty_validation(terminal);
+        if terminal.kitty_validation_pending() {
+            // Every later event of this session waits for the job; other
+            // sessions and the UI keep running.
+            self.last_pump_output_received = validated;
+            return PumpResult {
+                hit_limit: false,
+                output_received: validated,
+                ingested_bytes: 0,
+                closed: false,
+            };
+        }
+        let backlog_bytes = self.ingest_graphics_backlog(terminal);
+        let progressed = validated || backlog_bytes != 0;
+        if terminal.kitty_validation_pending() {
+            self.last_pump_output_received = progressed;
+            return PumpResult {
+                hit_limit: false,
+                output_received: progressed,
+                ingested_bytes: backlog_bytes,
+                closed: false,
+            };
+        }
+        if !self.graphics_backlog.is_empty() {
+            // Newer events wait behind the suffix. Without progress, the
+            // retry is timed (`next_output_backlog_repaint_delay`) rather
+            // than spinning the shared ingest budget.
+            self.last_backpressure = Some(FlowDirection::Output);
+            self.last_pump_output_received = progressed;
+            return PumpResult {
+                hit_limit: backlog_bytes != 0,
+                output_received: progressed,
+                ingested_bytes: backlog_bytes,
+                closed: false,
+            };
+        }
+        let requested_size = self.requested_size();
+        let latest_resize = self
+            .tagged_resize
+            .filter(|(_, size)| Some(*size) == requested_size);
+        let Some(session) = &self.session else {
+            unreachable!("checked above");
         };
         let mut observed = Vec::new();
         let resize_probe = &mut self.resize_probe;
         let recording_stream = &mut self.recording_stream;
-        let result = pump_session_events_with_mutations(
+        let graphics = self.graphics_authority;
+        let graphics_backlog = &mut self.graphics_backlog;
+        let mut result = pump_session_events_with_mutations(
             session,
             terminal,
             MAX_SESSION_EVENTS_PER_SLICE,
@@ -988,35 +1096,61 @@ impl<S: Session> SessionController<S> {
                 PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
                 PumpedSessionEvent::Event(event) => observed.push(event.clone()),
             },
-            |mutation| match mutation {
-                TerminalMutation::Output { bytes, terminal } => {
-                    apply_recording_output(terminal, bytes, recording_stream.as_ref());
-                }
-                TerminalMutation::Recovery { command, terminal } => {
-                    apply_recovery_sync(terminal, command, recording_stream.as_ref());
-                }
-                TerminalMutation::Resize(terminal) => {
-                    if let Some(stream) = recording_stream.as_ref() {
-                        let _ = stream.observe_resize(terminal);
-                    }
-                }
-                TerminalMutation::IntegrityFailure(message) => {
-                    if let Some(stream) = recording_stream.as_ref() {
-                        if let Err(error) = stream.fail_integrity(message) {
-                            tracing::error!(
-                                "Could not stop recording after a session failure: {error}"
-                            );
+            |mutation| {
+                match mutation {
+                    TerminalMutation::Output { bytes, terminal } if graphics => {
+                        let consumed = terminal.ingest_with_reply_backpressure(bytes);
+                        // A validation barrier can stop even after the last
+                        // byte; the (possibly empty) suffix and every newer
+                        // event then wait for its result.
+                        if consumed < bytes.len() || terminal.kitty_validation_pending() {
+                            graphics_backlog.extend_from_slice(&bytes[consumed..]);
+                            return false;
                         }
                     }
+                    TerminalMutation::Output { bytes, terminal } => {
+                        apply_recording_output(terminal, bytes, recording_stream.as_ref());
+                    }
+                    TerminalMutation::Applied {
+                        size,
+                        generation,
+                        terminal,
+                    } => {
+                        if graphics {
+                            let current = generation.zip(Some(size)) == latest_resize;
+                            publish_applied_kitty_geometry(terminal, size, current);
+                        }
+                    }
+                    TerminalMutation::Recovery { command, terminal } => {
+                        apply_recovery_sync(terminal, command, recording_stream.as_ref());
+                    }
+                    TerminalMutation::Resize(terminal) => {
+                        if let Some(stream) = recording_stream.as_ref() {
+                            let _ = stream.observe_resize(terminal);
+                        }
+                    }
+                    TerminalMutation::IntegrityFailure(message) => {
+                        if let Some(stream) = recording_stream.as_ref() {
+                            if let Err(error) = stream.fail_integrity(message) {
+                                tracing::error!(
+                                    "Could not stop recording after a session failure: {error}"
+                                );
+                            }
+                        }
+                    }
+                    TerminalMutation::End => {
+                        drop(recording_stream.take());
+                    }
                 }
-                TerminalMutation::End => {
-                    drop(recording_stream.take());
-                }
+                true
             },
         );
         for event in observed {
             self.observe_session_event(event);
         }
+        self.dispatch_kitty_validation(terminal);
+        result.ingested_bytes = result.ingested_bytes.saturating_add(backlog_bytes);
+        result.output_received |= progressed;
         if result.hit_limit {
             self.last_backpressure = Some(FlowDirection::Output);
         }
@@ -1046,7 +1180,8 @@ impl<S: Session> SessionController<S> {
                 self.update_automation_liveness(&lifecycle);
                 self.last_lifecycle = Some(lifecycle);
             }
-            SessionEvent::ResizeApplied(size) => {
+            SessionEvent::ResizeApplied(size)
+            | SessionEvent::ResizeAppliedGeneration { size, .. } => {
                 tracing::debug!(
                     target: "festerm::session",
                     columns = size.columns(),
@@ -1087,6 +1222,7 @@ impl<S: Session> SessionController<S> {
         {
             let _ = terminal.drain_replies();
             let _ = terminal.take_reply_queue_overflowed();
+            self.replies_held = false;
             return;
         }
         if terminal.take_reply_queue_overflowed() {
@@ -1096,10 +1232,85 @@ impl<S: Session> SessionController<S> {
                 "terminal reply queue overflowed before session forwarding"
             );
         }
+        if self.graphics_authority
+            && !self
+                .pending_writes
+                .can_accept(terminal.queued_replies().len())
+        {
+            // Graphics output already waits behind these replies; draining
+            // them into a full queue would lose them.
+            self.replies_held = true;
+            return;
+        }
+        self.replies_held = false;
         let replies = terminal.drain_replies();
         if !replies.is_empty() {
             self.queue_bytes(&replies, "terminal reply");
         }
+    }
+
+    /// Switches this controller to ADR 0089 graphics ingestion. Call once,
+    /// right after the terminal enabled Kitty graphics and before any output.
+    pub(crate) fn enable_graphics_authority(&mut self) {
+        self.graphics_authority = true;
+    }
+
+    /// Resumes a graphics output suffix after forwarding queued replies, and
+    /// returns how many of its bytes were ingested.
+    fn ingest_graphics_backlog(&mut self, terminal: &mut Terminal) -> usize {
+        if self.graphics_backlog.is_empty() {
+            return 0;
+        }
+        self.forward_terminal_replies(terminal);
+        let consumed = terminal.ingest_with_reply_backpressure(&self.graphics_backlog);
+        self.graphics_backlog.drain(..consumed);
+        self.dispatch_kitty_validation(terminal);
+        consumed
+    }
+
+    /// Hands a newly pending Kitty validation to this session's worker.
+    fn dispatch_kitty_validation(&mut self, terminal: &mut Terminal) {
+        if let Err(error) = self.kitty_validation.dispatch(terminal) {
+            self.record_kitty_validation_failure(error);
+        }
+    }
+
+    /// Publishes a finished validation in stream order. Returns whether the
+    /// terminal changed, so the caller repaints and resumes held output.
+    fn advance_kitty_validation(&mut self, terminal: &mut Terminal) -> bool {
+        self.dispatch_kitty_validation(terminal);
+        match self.kitty_validation.try_complete(terminal) {
+            Ok(completed) => completed,
+            Err(error) => {
+                self.record_kitty_validation_failure(error);
+                false
+            }
+        }
+    }
+
+    fn record_kitty_validation_failure(&mut self, error: &'static str) {
+        tracing::error!(target: "festerm::session", error, "Kitty validation worker failed");
+        self.last_error = Some(error.to_owned());
+    }
+
+    /// Retry interval while graphics output waits for reply capacity or a
+    /// Kitty validation result, or while its replies wait for the session to
+    /// accept writes. The PTY has no writability wake-up, and a final reply
+    /// may have no later output or input to schedule a frame.
+    pub fn next_output_backlog_repaint_delay(&self) -> Option<Duration> {
+        let replies_waiting = self.graphics_authority
+            && (self.replies_held
+                || (self.writes_backpressured && !self.pending_writes.writes.is_empty()));
+        (!self.graphics_backlog.is_empty() || self.kitty_validation.awaiting() || replies_waiting)
+            .then_some(GRAPHICS_BACKLOG_RETRY)
+    }
+
+    /// The pixel-bearing size this controller most recently asked the PTY
+    /// for, whether or not it has been sent yet.
+    fn requested_size(&self) -> Option<TerminalSize> {
+        self.requested_dimensions.and_then(|dimensions| {
+            terminal_size_with_cell_pixels(dimensions, self.cell_pixels).ok()
+        })
     }
 
     /// A metadata-only position in the existing bounded ordered byte queue.
@@ -1268,12 +1479,15 @@ impl<S: Session> SessionController<S> {
             },
         ) {
             PendingFlush::Drained => {
+                self.writes_backpressured = false;
                 self.last_input_delivery = "accepted-by-session";
             }
             PendingFlush::Clipboard => {
+                self.writes_backpressured = false;
                 self.last_input_delivery = "queued-clipboard";
             }
             PendingFlush::Backpressured => {
+                self.writes_backpressured = true;
                 self.last_input_delivery = "queued-backpressure";
                 self.last_backpressure = Some(FlowDirection::Input);
                 if self.pending_writes.clipboard.is_none() {
@@ -1299,6 +1513,24 @@ impl<S: Session> SessionController<S> {
                 );
             }
         }
+    }
+
+    /// Records the rendered cell size in device pixels for an ADR 0089
+    /// eligible session and re-stages the current grid with it, so a DPI-,
+    /// zoom- or font-only change is a resize generation even when rows and
+    /// columns are unchanged. `dimensions` is used only before the view has
+    /// requested any grid.
+    pub fn set_cell_pixel_geometry(
+        &mut self,
+        dimensions: Dimensions,
+        geometry: Option<CellPixelGeometry>,
+    ) {
+        if self.cell_pixels == geometry {
+            return;
+        }
+        self.cell_pixels = geometry;
+        let dimensions = self.requested_dimensions.unwrap_or(dimensions);
+        self.record_terminal_resize(dimensions);
     }
 
     /// Stages a requested resize for debounced delivery to the PTY, restarting
@@ -1366,8 +1598,23 @@ impl<S: Session> SessionController<S> {
         let Some(session) = &self.session else {
             return;
         };
-        match session.try_resize(size) {
-            Ok(()) => self.resize_probe.record_resize_request(size),
+        let result = if self.graphics_authority {
+            self.resize_generation = self.resize_generation.saturating_add(1);
+            let generation =
+                NonZeroU64::new(self.resize_generation).expect("resize generations start at one");
+            session
+                .try_resize_generation(size, generation)
+                .map(|()| Some(generation))
+        } else {
+            session.try_resize(size).map(|()| None)
+        };
+        match result {
+            Ok(generation) => {
+                if let Some(generation) = generation {
+                    self.tagged_resize = Some((generation, size));
+                }
+                self.resize_probe.record_resize_request(size);
+            }
             Err(SessionSendError::Full { .. }) => {
                 self.pending_resize = Some(size);
                 self.last_backpressure = Some(FlowDirection::Resize);
@@ -1732,7 +1979,8 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
     }
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
-        match terminal_size(dimensions) {
+        self.requested_dimensions = Some(dimensions);
+        match terminal_size_with_cell_pixels(dimensions, self.cell_pixels) {
             Ok(size) => self.stage_resize(size),
             Err(error) => {
                 self.last_error = Some(error);
@@ -1752,6 +2000,201 @@ impl<S: Session> Drop for SessionController<S> {
 }
 
 // ─── Free Functions ──────────────────────────────────────────────────────────
+
+/// One terminal cell in device pixels, derived as
+/// `max(1, round(points_per_cell * pixels_per_point))` per axis (ADR 0089 §4).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CellPixelGeometry {
+    width: u16,
+    height: u16,
+}
+
+impl CellPixelGeometry {
+    pub const fn width(self) -> u16 {
+        self.width
+    }
+
+    pub const fn height(self) -> u16 {
+        self.height
+    }
+
+    /// Returns `None` for missing, non-finite, non-positive or oversized
+    /// input, so untrusted geometry is never published.
+    pub fn from_points(width: f32, height: f32, pixels_per_point: f32) -> Option<Self> {
+        Some(Self {
+            width: cell_axis_pixels(width, pixels_per_point)?,
+            height: cell_axis_pixels(height, pixels_per_point)?,
+        })
+    }
+}
+
+fn cell_axis_pixels(points: f32, pixels_per_point: f32) -> Option<u16> {
+    if !(points.is_finite() && pixels_per_point.is_finite())
+        || points <= 0.0
+        || pixels_per_point <= 0.0
+    {
+        return None;
+    }
+    let pixels = (f64::from(points) * f64::from(pixels_per_point))
+        .round()
+        .max(1.0);
+    // Lossless: bounded to `1..=u16::MAX` and already integral.
+    (pixels <= f64::from(u16::MAX)).then_some(pixels as u16)
+}
+
+/// Like [`terminal_size`], adding grid pixel dimensions when a cell size is
+/// known. A grid too large to express in `u16` pixels stays pixel-less.
+pub fn terminal_size_with_cell_pixels(
+    dimensions: Dimensions,
+    cell: Option<CellPixelGeometry>,
+) -> Result<TerminalSize, String> {
+    let size = terminal_size(dimensions)?;
+    let Some(cell) = cell else {
+        return Ok(size);
+    };
+    match (
+        size.columns().checked_mul(cell.width),
+        size.rows().checked_mul(cell.height),
+    ) {
+        (Some(width), Some(height)) => {
+            TerminalSize::with_pixels(size.columns(), size.rows(), width, height)
+                .map_err(|error| error.to_string())
+        }
+        _ => Ok(size),
+    }
+}
+
+/// ADR 0089 §4: Kitty replies describe only the cell size the PTY has
+/// applied, never a pending generation. `current` is whether this is the
+/// acknowledgement of the newest tagged request, which is also the newest
+/// requested size. Any other acknowledgement (untagged, older, superseded),
+/// one for another grid than the terminal's, or a pixel-less or inexact size
+/// withdraws the geometry, which also withholds every graphics reply until
+/// the matching generation is applied.
+fn publish_applied_kitty_geometry(terminal: &mut Terminal, size: TerminalSize, current: bool) {
+    let grid = terminal.dimensions();
+    let current = current
+        && usize::from(size.columns()) == grid.columns()
+        && usize::from(size.rows()) == grid.rows();
+    let geometry = current
+        .then(|| applied_cell_pixels(size))
+        .flatten()
+        .and_then(|(width, height)| festerm_core::kitty::KittyGeometry::new(width, height));
+    if terminal.set_kitty_geometry(geometry).is_err() {
+        let _ = terminal.set_kitty_geometry(None);
+    }
+}
+
+/// One lazily started worker thread per graphics session. The terminal
+/// admits at most one job at a time, so the channels never hold more than
+/// one job or result.
+#[derive(Default)]
+struct KittyValidationWorker {
+    thread: Option<KittyValidationThread>,
+    /// A job whose worker stopped before receiving it; resent to a new one.
+    unsent: Option<festerm_core::kitty::KittyValidation>,
+    awaiting: bool,
+    /// The worker died holding a job, so this session's barrier never lifts.
+    lost: bool,
+}
+
+struct KittyValidationThread {
+    jobs: std::sync::mpsc::Sender<festerm_core::kitty::KittyValidation>,
+    results: std::sync::mpsc::Receiver<festerm_core::kitty::KittyValidationResult>,
+}
+
+impl KittyValidationWorker {
+    const fn awaiting(&self) -> bool {
+        self.awaiting
+    }
+
+    /// Takes the terminal's pending job, if any, and sends it to the worker.
+    /// A worker that cannot start yet leaves the job pending for a retry; a
+    /// slow or unavailable worker is never a protocol failure.
+    fn dispatch(&mut self, terminal: &mut Terminal) -> Result<(), &'static str> {
+        if self.lost || !terminal.kitty_validation_pending() {
+            return Ok(());
+        }
+        self.awaiting = true;
+        if self.thread.is_none() {
+            self.thread = KittyValidationThread::start();
+        }
+        let Some(thread) = &self.thread else {
+            return Ok(());
+        };
+        let Some(job) = self
+            .unsent
+            .take()
+            .or_else(|| terminal.take_kitty_validation())
+        else {
+            return Ok(());
+        };
+        if let Err(std::sync::mpsc::SendError(job)) = thread.jobs.send(job) {
+            self.unsent = Some(job);
+            self.thread = None;
+            return Err("Kitty validation worker stopped before accepting a job");
+        }
+        Ok(())
+    }
+
+    fn try_complete(&mut self, terminal: &mut Terminal) -> Result<bool, &'static str> {
+        if !terminal.kitty_validation_pending() {
+            self.awaiting = false;
+            return Ok(false);
+        }
+        let Some(thread) = &self.thread else {
+            return Ok(false);
+        };
+        match thread.results.try_recv() {
+            Ok(result) => {
+                let published = terminal.complete_kitty_validation(result);
+                self.awaiting = terminal.kitty_validation_pending();
+                Ok(published)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(false),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.thread = None;
+                self.awaiting = false;
+                self.lost = true;
+                Err("Kitty validation worker stopped during a job")
+            }
+        }
+    }
+}
+
+impl KittyValidationThread {
+    fn start() -> Option<Self> {
+        let (jobs, job_receiver) =
+            std::sync::mpsc::channel::<festerm_core::kitty::KittyValidation>();
+        let (result_sender, results) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("festerm-kitty-validation".to_owned())
+            .spawn(move || {
+                for job in job_receiver {
+                    if result_sender.send(job.validate()).is_err() {
+                        break;
+                    }
+                }
+            });
+        match spawned {
+            Ok(_) => Some(Self { jobs, results }),
+            Err(error) => {
+                tracing::warn!(
+                    target: "festerm::session",
+                    %error,
+                    "Kitty validation worker could not start; retrying"
+                );
+                None
+            }
+        }
+    }
+}
+
+fn applied_cell_pixels(size: TerminalSize) -> Option<(u16, u16)> {
+    let (width, height) = (size.pixel_width()?, size.pixel_height()?);
+    let (columns, rows) = (size.columns(), size.rows());
+    (width % columns == 0 && height % rows == 0).then(|| (width / columns, height / rows))
+}
 
 pub fn terminal_size(dimensions: Dimensions) -> Result<TerminalSize, String> {
     let columns = u16::try_from(dimensions.columns()).map_err(|_| {
@@ -1788,6 +2231,13 @@ pub enum PumpedSessionEvent<'a> {
 enum TerminalMutation<'a> {
     Output {
         bytes: &'a [u8],
+        terminal: &'a mut Terminal,
+    },
+    /// A resize the frontend-owned PTY reports as applied, in wire order,
+    /// with its request's tag when the session acknowledged one.
+    Applied {
+        size: TerminalSize,
+        generation: Option<NonZeroU64>,
         terminal: &'a mut Terminal,
     },
     Recovery {
@@ -1827,12 +2277,15 @@ fn pump_session_events_with_resize(
         maximum,
         &mut resize,
         &mut observe,
-        |mutation| match mutation {
-            TerminalMutation::Output { bytes, terminal } => terminal.ingest(bytes),
-            TerminalMutation::Recovery { command, terminal } => {
-                apply_recovery_sync(terminal, command, None);
+        |mutation| {
+            match mutation {
+                TerminalMutation::Output { bytes, terminal } => terminal.ingest(bytes),
+                TerminalMutation::Recovery { command, terminal } => {
+                    apply_recovery_sync(terminal, command, None);
+                }
+                _ => {}
             }
-            _ => {}
+            true
         },
     )
 }
@@ -1843,7 +2296,8 @@ fn pump_session_events_with_mutations(
     maximum: usize,
     mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
-    mut mutation: impl FnMut(TerminalMutation<'_>),
+    // Returns `false` when output stopped early and newer events must wait.
+    mut mutation: impl FnMut(TerminalMutation<'_>) -> bool,
 ) -> PumpResult {
     let mut output_received = false;
     let mut ingested_bytes = 0usize;
@@ -1853,13 +2307,13 @@ fn pump_session_events_with_mutations(
                 SessionEvent::Output(bytes) => {
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
-                    mutation(TerminalMutation::Output { bytes, terminal });
+                    let complete = mutation(TerminalMutation::Output { bytes, terminal });
                     if session.terminal_replies_owned_by_backend() {
                         let _ = terminal.drain_replies();
                         let _ = terminal.take_reply_queue_overflowed();
                     }
                     ingested_bytes = ingested_bytes.saturating_add(bytes.len());
-                    if ingested_bytes >= MAX_INGEST_BYTES_PER_SESSION_SLICE {
+                    if !complete || ingested_bytes >= MAX_INGEST_BYTES_PER_SESSION_SLICE {
                         return PumpResult {
                             hit_limit: true,
                             output_received,
@@ -1912,6 +2366,7 @@ fn pump_session_events_with_mutations(
                     }
                 }
                 SessionEvent::ResizeApplied(size)
+                | SessionEvent::ResizeAppliedGeneration { size, .. }
                     if session.terminal_replies_owned_by_backend() =>
                 {
                     let resized =
@@ -1930,6 +2385,22 @@ fn pump_session_events_with_mutations(
                     } else {
                         mutation(TerminalMutation::Resize(terminal));
                     }
+                    observe(PumpedSessionEvent::Event(delivery.event()));
+                }
+                SessionEvent::ResizeApplied(size) => {
+                    mutation(TerminalMutation::Applied {
+                        size: *size,
+                        generation: None,
+                        terminal,
+                    });
+                    observe(PumpedSessionEvent::Event(delivery.event()));
+                }
+                SessionEvent::ResizeAppliedGeneration { size, generation } => {
+                    mutation(TerminalMutation::Applied {
+                        size: *size,
+                        generation: Some(*generation),
+                        terminal,
+                    });
                     observe(PumpedSessionEvent::Event(delivery.event()));
                 }
                 SessionEvent::Lifecycle(
@@ -2087,6 +2558,7 @@ pub(crate) mod fake {
         backend_owned_terminal: bool,
         viewport_calls: Mutex<Vec<ViewportCall>>,
         resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
+        tagged_resizes: Mutex<Vec<(TerminalSize, NonZeroU64)>>,
         events_closed: bool,
         automation_epoch: Arc<AutomationEpoch>,
     }
@@ -2109,9 +2581,23 @@ pub(crate) mod fake {
                 backend_owned_terminal: false,
                 viewport_calls: Mutex::new(Vec::new()),
                 resize_results: Mutex::new(VecDeque::new()),
+                tagged_resizes: Mutex::new(Vec::new()),
                 events_closed: false,
                 automation_epoch,
             }
+        }
+
+        /// The PTY's tagged acknowledgement of the `index`th accepted
+        /// generation-tagged resize.
+        pub fn tagged_ack(&self, index: usize) -> SessionEvent {
+            let (size, generation) = self.tagged_resizes.lock().unwrap()[index];
+            SessionEvent::ResizeAppliedGeneration { size, generation }
+        }
+
+        /// The acknowledgement of the newest accepted tagged resize.
+        pub fn latest_tagged_ack(&self) -> SessionEvent {
+            let count = self.tagged_resizes.lock().unwrap().len();
+            self.tagged_ack(count - 1)
         }
 
         fn events(&self) -> MutexGuard<'_, VecDeque<SessionEvent>> {
@@ -2120,6 +2606,10 @@ pub(crate) mod fake {
 
         pub fn sent(&self) -> Vec<Vec<u8>> {
             self.sent.lock().expect("fake session sent lock").clone()
+        }
+
+        pub fn push_events(&self, events: impl IntoIterator<Item = SessionEvent>) {
+            self.events().extend(events);
         }
 
         pub fn with_resize_results(
@@ -2205,6 +2695,16 @@ pub(crate) mod fake {
             result
         }
 
+        fn try_resize_generation(
+            &self,
+            size: TerminalSize,
+            generation: NonZeroU64,
+        ) -> Result<(), SessionSendError> {
+            self.try_resize(size)?;
+            self.tagged_resizes.lock().unwrap().push((size, generation));
+            Ok(())
+        }
+
         fn try_shutdown(&self) -> Result<(), SessionSendError> {
             Ok(())
         }
@@ -2256,6 +2756,8 @@ pub(crate) mod fake {
         invalidate_after_test_reservation: std::sync::atomic::AtomicBool,
         authoritative_recovery: std::sync::atomic::AtomicBool,
         recovered_terminal: Mutex<Option<Terminal>>,
+        resize_requests: Mutex<Vec<(TerminalSize, Option<NonZeroU64>)>>,
+        input_full: std::sync::atomic::AtomicBool,
         #[cfg(all(windows, target_arch = "x86_64"))]
         notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     }
@@ -2288,10 +2790,29 @@ pub(crate) mod fake {
                     invalidate_after_test_reservation: std::sync::atomic::AtomicBool::new(false),
                     authoritative_recovery: std::sync::atomic::AtomicBool::new(false),
                     recovered_terminal: Mutex::new(None),
+                    resize_requests: Mutex::new(Vec::new()),
+                    input_full: std::sync::atomic::AtomicBool::new(false),
                     #[cfg(all(windows, target_arch = "x86_64"))]
                     notifier: Mutex::new(None),
                 }),
             }
+        }
+
+        /// Every resize requested so far, oldest first, with its generation
+        /// tag when it was requested through `try_resize_generation`.
+        pub fn resize_requests(&self) -> Vec<(TerminalSize, Option<NonZeroU64>)> {
+            self.inner
+                .resize_requests
+                .lock()
+                .expect("fake ssh resize lock")
+                .clone()
+        }
+
+        /// While `full`, input is refused as a full transport queue.
+        pub fn set_input_full(&self, full: bool) {
+            self.inner
+                .input_full
+                .store(full, std::sync::atomic::Ordering::Release);
         }
 
         pub fn operations(&self) -> Vec<FakeSshOperation> {
@@ -2530,6 +3051,16 @@ pub(crate) mod fake {
         }
 
         fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            if self
+                .inner
+                .input_full
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err(SessionSendError::Full {
+                    operation: festerm_session::SessionOperation::Input,
+                    capacity: DEFAULT_COMMAND_QUEUE_CAPACITY,
+                });
+            }
             self.inner
                 .sent
                 .lock()
@@ -2571,7 +3102,25 @@ pub(crate) mod fake {
             Ok(reservation)
         }
 
-        fn try_resize(&self, _size: TerminalSize) -> Result<(), SessionSendError> {
+        fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+            self.inner
+                .resize_requests
+                .lock()
+                .expect("fake ssh resize lock")
+                .push((size, None));
+            Ok(())
+        }
+
+        fn try_resize_generation(
+            &self,
+            size: TerminalSize,
+            generation: NonZeroU64,
+        ) -> Result<(), SessionSendError> {
+            self.inner
+                .resize_requests
+                .lock()
+                .expect("fake ssh resize lock")
+                .push((size, Some(generation)));
             Ok(())
         }
 
@@ -2610,6 +3159,149 @@ pub(crate) mod fake {
 mod tests {
     use super::*;
     use fake::FakeSession;
+
+    #[test]
+    fn resize_acknowledgements_keep_delivery_permit_and_wire_order() {
+        use festerm_session::SessionEventDelivery;
+        use std::{cell::RefCell, sync::Mutex};
+        struct Permit(Arc<AtomicBool>);
+        impl Drop for Permit {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        struct Guarded {
+            events: Mutex<VecDeque<SessionEvent>>,
+            held: Arc<AtomicBool>,
+            live: Arc<AtomicBool>,
+        }
+        impl Session for Guarded {
+            fn id(&self) -> festerm_session::SessionId {
+                festerm_session::SessionId::next()
+            }
+            fn lifecycle(&self) -> SessionLifecycle {
+                SessionLifecycle::Running
+            }
+            fn metrics(&self) -> SessionMetrics {
+                SessionMetrics::default()
+            }
+            fn try_send_input(&self, _: &[u8]) -> Result<(), SessionSendError> {
+                Ok(())
+            }
+            fn try_resize(&self, _: TerminalSize) -> Result<(), SessionSendError> {
+                Ok(())
+            }
+            fn try_shutdown(&self) -> Result<(), SessionSendError> {
+                Ok(())
+            }
+            fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+                panic!("the pump must retain the protected delivery")
+            }
+            fn try_recv_event_with_permit(
+                &self,
+            ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+                if !self.live.load(Ordering::Acquire) {
+                    return Err(SessionTryReceiveError::Empty);
+                }
+                let event = self
+                    .events
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or(SessionTryReceiveError::Empty)?;
+                assert!(!self.held.swap(true, Ordering::AcqRel));
+                Ok(SessionEventDelivery::protected(
+                    event,
+                    Box::new(Permit(self.held.clone())),
+                ))
+            }
+            fn shutdown(
+                &self,
+                _: Duration,
+            ) -> Result<festerm_session::ShutdownResult, festerm_session::ShutdownError>
+            {
+                Ok(festerm_session::ShutdownResult::Stopped)
+            }
+        }
+        let held = Arc::new(AtomicBool::new(false));
+        let live = Arc::new(AtomicBool::new(true));
+        let first = TerminalSize::new(80, 24).unwrap();
+        let second = TerminalSize::new(100, 30).unwrap();
+        let generation = NonZeroU64::new(7).unwrap();
+        let session = Guarded {
+            events: Mutex::new(VecDeque::from([
+                SessionEvent::ResizeApplied(first),
+                SessionEvent::Output(b"before".to_vec()),
+                SessionEvent::ResizeAppliedGeneration {
+                    size: second,
+                    generation,
+                },
+                SessionEvent::Output(b"must-not-deliver".to_vec()),
+            ])),
+            held: held.clone(),
+            live: live.clone(),
+        };
+        let observed = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(Dimensions::new(20, 10).unwrap()).unwrap();
+        pump_session_events_with_mutations(
+            &session,
+            &mut terminal,
+            16,
+            |_, _| true,
+            |event| {
+                assert!(
+                    held.load(Ordering::Acquire),
+                    "observer must retain delivery authority"
+                );
+                match event {
+                    PumpedSessionEvent::Event(SessionEvent::ResizeApplied(size)) => {
+                        assert_eq!(*size, first);
+                        observed.borrow_mut().push("resize");
+                    }
+                    PumpedSessionEvent::Output(bytes) => {
+                        assert_eq!(bytes, b"before");
+                        observed.borrow_mut().push("output");
+                    }
+                    PumpedSessionEvent::Event(SessionEvent::ResizeAppliedGeneration {
+                        size,
+                        generation: actual,
+                    }) => {
+                        assert_eq!((*size, *actual), (second, generation));
+                        observed.borrow_mut().push("tagged");
+                        live.store(false, Ordering::Release);
+                    }
+                    _ => panic!("unexpected event"),
+                }
+            },
+            |mutation| {
+                assert!(
+                    held.load(Ordering::Acquire),
+                    "mutation must retain delivery authority"
+                );
+                match mutation {
+                    TerminalMutation::Applied { size, terminal, .. } => {
+                        terminal
+                            .resize(
+                                Dimensions::new(
+                                    usize::from(size.columns()),
+                                    usize::from(size.rows()),
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap();
+                    }
+                    TerminalMutation::Output { bytes, terminal } => terminal.ingest(bytes),
+                    _ => panic!("unexpected mutation"),
+                }
+                true
+            },
+        );
+        assert_eq!(*observed.borrow(), ["resize", "output", "tagged"]);
+        assert!(!held.load(Ordering::Acquire));
+        assert_eq!(session.events.lock().unwrap().len(), 1);
+        assert!(terminal.text_snapshot().text().contains("before"));
+        assert!(!terminal.text_snapshot().text().contains("must-not-deliver"));
+    }
 
     #[cfg(any(unix, windows))]
     use std::time::Instant;
@@ -3365,6 +4057,396 @@ mod tests {
         controller.flush_pending_resize();
         assert_eq!(controller.resize_probe().generations().len(), 2);
         assert!(controller.next_resize_repaint_delay().is_none());
+    }
+
+    #[test]
+    fn cell_pixel_geometry_rounds_device_pixels_deterministically() {
+        assert_eq!(
+            CellPixelGeometry::from_points(8.4, 17.0, 1.5),
+            Some(CellPixelGeometry {
+                width: 13,
+                height: 26
+            })
+        );
+        assert_eq!(
+            CellPixelGeometry::from_points(0.2, 0.2, 1.0),
+            Some(CellPixelGeometry {
+                width: 1,
+                height: 1
+            })
+        );
+        for (width, height, pixels_per_point) in [
+            (0.0, 16.0, 2.0),
+            (8.0, -1.0, 2.0),
+            (f32::NAN, 16.0, 2.0),
+            (8.0, f32::INFINITY, 2.0),
+            (8.0, 16.0, 0.0),
+            (70_000.0, 16.0, 1.0),
+        ] {
+            assert_eq!(
+                CellPixelGeometry::from_points(width, height, pixels_per_point),
+                None,
+                "{width} x {height} @ {pixels_per_point}"
+            );
+        }
+
+        let dimensions = Dimensions::new(80, 24).unwrap();
+        assert_eq!(
+            terminal_size_with_cell_pixels(
+                dimensions,
+                CellPixelGeometry::from_points(1_000.0, 16.0, 1.0)
+            ),
+            TerminalSize::new(80, 24).map_err(|error| error.to_string()),
+            "a grid wider than u16 pixels stays pixel-less"
+        );
+    }
+
+    #[test]
+    fn dpi_only_cell_geometry_change_is_a_pixel_bearing_resize_generation() {
+        use fake::ViewportCall;
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+        let dimensions = Dimensions::new(80, 24).unwrap();
+        controller.record_terminal_resize(dimensions);
+        let retina = CellPixelGeometry::from_points(8.0, 16.0, 2.0);
+        controller.set_cell_pixel_geometry(dimensions, retina);
+        controller.force_flush_pending_resize();
+        // Re-observing the same geometry every frame is not a new generation.
+        controller.set_cell_pixel_geometry(dimensions, retina);
+        controller.force_flush_pending_resize();
+        controller
+            .set_cell_pixel_geometry(dimensions, CellPixelGeometry::from_points(8.0, 16.0, 1.0));
+        controller.force_flush_pending_resize();
+        controller.record_terminal_resize(Dimensions::new(100, 30).unwrap());
+        controller.force_flush_pending_resize();
+        controller.set_cell_pixel_geometry(dimensions, None);
+        controller.force_flush_pending_resize();
+        assert_eq!(
+            controller.session.as_ref().unwrap().viewport_calls(),
+            vec![
+                ViewportCall::Resize(TerminalSize::new(80, 24).unwrap()),
+                ViewportCall::Resize(TerminalSize::with_pixels(80, 24, 1280, 768).unwrap()),
+                ViewportCall::Resize(TerminalSize::with_pixels(80, 24, 640, 384).unwrap()),
+                ViewportCall::Resize(TerminalSize::with_pixels(100, 30, 800, 480).unwrap()),
+                // The latest requested grid wins over a stale caller value.
+                ViewportCall::Resize(TerminalSize::new(100, 30).unwrap()),
+            ]
+        );
+        assert_eq!(controller.resize_probe().generations().len(), 5);
+    }
+
+    fn kitty_terminal() -> Terminal {
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        terminal
+            .enable_kitty_graphics(festerm_core::kitty::KittyConfig {
+                rgba_budget: festerm_core::kitty::MAX_RGBA_BYTES,
+                png_validator: None,
+            })
+            .unwrap();
+        terminal
+    }
+
+    /// The PTY's acknowledgement of the controller's `generation`th resize.
+    fn tagged_ack(
+        columns: u16,
+        rows: u16,
+        width: u16,
+        height: u16,
+        generation: u64,
+    ) -> SessionEvent {
+        SessionEvent::ResizeAppliedGeneration {
+            size: TerminalSize::with_pixels(columns, rows, width, height).unwrap(),
+            generation: NonZeroU64::new(generation).unwrap(),
+        }
+    }
+
+    #[test]
+    fn kitty_geometry_is_published_only_by_the_applied_pixel_resize() {
+        // The first pixel-bearing request is sent at once as generation 1.
+        let applied = |width, height| tagged_ack(80, 24, width, height, 1);
+        let events = || {
+            [
+                SessionEvent::Output(b"\x1b[16t".to_vec()),
+                applied(720, 432),
+                SessionEvent::Output(b"\x1b[16t\x1b[14t".to_vec()),
+                // Pixels that do not divide the grid evenly have no cell size.
+                applied(721, 432),
+                SessionEvent::Output(b"\x1b[16t".to_vec()),
+                applied(720, 432),
+                SessionEvent::ResizeApplied(TerminalSize::new(80, 24).unwrap()),
+                SessionEvent::Output(b"\x1b[16t".to_vec()),
+            ]
+        };
+        let mut controller = SessionController::for_test(FakeSession::new(events()));
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+        // Staging a pixel-bearing generation publishes nothing by itself.
+        controller.set_cell_pixel_geometry(
+            terminal.dimensions(),
+            CellPixelGeometry::from_points(9.0, 18.0, 1.0),
+        );
+        controller.pump_events(&mut terminal);
+        assert_eq!(terminal.drain_replies(), b"\x1b[6;18;9t\x1b[4;432;720t");
+
+        // Without graphics authority the applied pixels never reach core.
+        let mut controller = SessionController::for_test(FakeSession::new(events()));
+        let mut terminal = kitty_terminal();
+        controller.pump_events(&mut terminal);
+        assert!(terminal.drain_replies().is_empty());
+    }
+
+    #[test]
+    fn kitty_geometry_is_withheld_for_a_stale_or_superseded_ack() {
+        let query = || SessionEvent::Output(b"\x1b[16t".to_vec());
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+        controller.set_cell_pixel_geometry(
+            terminal.dimensions(),
+            CellPixelGeometry::from_points(9.0, 18.0, 1.0),
+        );
+        let narrower = Dimensions::new(72, 21).unwrap();
+        terminal.resize(narrower).unwrap();
+        controller.record_terminal_resize(narrower);
+        let session = controller.session.as_ref().unwrap();
+        // The 80x24 acknowledgement arrives after the grid became 72x21,
+        // while the narrower request is still debounced.
+        session.push_events([session.latest_tagged_ack(), query()]);
+        controller.pump_events(&mut terminal);
+        assert!(terminal.drain_replies().is_empty());
+
+        controller.force_flush_pending_resize();
+        let session = controller.session.as_ref().unwrap();
+        assert_eq!(session.latest_tagged_ack(), tagged_ack(72, 21, 648, 378, 2));
+        session.push_events([session.latest_tagged_ack(), query()]);
+        controller.pump_events(&mut terminal);
+        assert_eq!(terminal.drain_replies(), b"\x1b[6;18;9t");
+
+        // A DPI-only generation supersedes the applied one: its late
+        // duplicate acknowledgement withdraws, never republishes, old pixels.
+        controller
+            .set_cell_pixel_geometry(narrower, CellPixelGeometry::from_points(9.0, 18.0, 2.0));
+        let session = controller.session.as_ref().unwrap();
+        session.push_events([tagged_ack(72, 21, 648, 378, 2), query()]);
+        controller.pump_events(&mut terminal);
+        assert!(terminal.drain_replies().is_empty());
+
+        controller.force_flush_pending_resize();
+        let session = controller.session.as_ref().unwrap();
+        session.push_events([tagged_ack(72, 21, 1296, 756, 3), query()]);
+        controller.pump_events(&mut terminal);
+        assert_eq!(terminal.drain_replies(), b"\x1b[6;36;18t");
+    }
+
+    #[test]
+    fn kitty_geometry_publishes_only_the_newest_resize_generation() {
+        let query = || SessionEvent::Output(b"\x1b[16t".to_vec());
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+        let wide = terminal.dimensions();
+        controller.set_cell_pixel_geometry(wide, CellPixelGeometry::from_points(9.0, 18.0, 1.0));
+        // A, then B, then A again: the first and last requests are equal.
+        for grid in [Dimensions::new(72, 21).unwrap(), wide] {
+            terminal.resize(grid).unwrap();
+            controller.record_terminal_resize(grid);
+            controller.force_flush_pending_resize();
+        }
+        let session = controller.session.as_ref().unwrap();
+        let (first, narrow, last) = (
+            session.tagged_ack(0),
+            session.tagged_ack(1),
+            session.tagged_ack(2),
+        );
+        assert_eq!(first, tagged_ack(80, 24, 720, 432, 1));
+        assert_eq!(last, tagged_ack(80, 24, 720, 432, 3));
+        let SessionEvent::ResizeAppliedGeneration { size, .. } = last else {
+            unreachable!("tagged");
+        };
+
+        // The delayed first A, B, and an untagged A all withhold geometry.
+        for stale in [first, narrow, SessionEvent::ResizeApplied(size)] {
+            controller
+                .session
+                .as_ref()
+                .unwrap()
+                .push_events([stale, query()]);
+            controller.pump_events(&mut terminal);
+            assert!(terminal.drain_replies().is_empty());
+        }
+
+        // Only the newest generation publishes, even when the PTY coalesced
+        // the older acknowledgements away.
+        controller
+            .session
+            .as_ref()
+            .unwrap()
+            .push_events([last, query()]);
+        controller.pump_events(&mut terminal);
+        assert_eq!(terminal.drain_replies(), b"\x1b[6;18;9t");
+    }
+
+    #[test]
+    fn kitty_validation_holds_later_output_until_the_worker_result_is_published() {
+        let upload = b"\x1b_Ga=t,i=7,f=24,s=1,v=1;AAAA\x1b\\";
+        let mut controller = SessionController::for_test(FakeSession::new([
+            tagged_ack(80, 24, 720, 432, 1),
+            SessionEvent::Output([upload.as_slice(), b"Z\x1b[c"].concat()),
+            SessionEvent::Output(b"Y".to_vec()),
+        ]));
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+        terminal.enable_kitty_worker_handoff();
+        controller.set_cell_pixel_geometry(
+            terminal.dimensions(),
+            CellPixelGeometry::from_points(9.0, 18.0, 1.0),
+        );
+
+        controller.pump_events(&mut terminal);
+        // The packet went to the worker; the owner returned without
+        // validating it, and the suffix and newer event wait behind it.
+        assert!(terminal.kitty_validation_pending());
+        assert!(controller.next_output_backlog_repaint_delay().is_some());
+        assert_eq!(controller.graphics_backlog, b"Z\x1b[c");
+        assert!(terminal.drain_replies().is_empty());
+        assert!(terminal.row_text(0).unwrap().trim().is_empty());
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while terminal.kitty_validation_pending() {
+            assert!(
+                Instant::now() < deadline,
+                "validation result never published"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+            controller.pump_events(&mut terminal);
+        }
+        controller.pump_events(&mut terminal);
+        controller.forward_terminal_replies(&mut terminal);
+        controller.flush_pending_writes();
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"\x1b_Gi=7;OK\x1b\\\x1b[?6c"
+        );
+        assert!(terminal.row_text(0).unwrap().starts_with("ZY"));
+        assert!(controller.graphics_backlog.is_empty());
+        assert!(controller.next_output_backlog_repaint_delay().is_none());
+    }
+
+    #[test]
+    fn a_final_kitty_reply_blocked_by_write_backpressure_keeps_a_retry_armed_without_more_output() {
+        const QUERY: &[u8] = b"\x1b_Ga=q,i=31,s=1,v=1,f=24;AQID\x1b\\";
+        const REPLY: &[u8] = b"\x1b_Gi=31;OK\x1b\\";
+        let transport = fake::FakeSshSession::new([]);
+        let mut controller = SessionController::for_test(transport.clone());
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+        controller.set_cell_pixel_geometry(
+            terminal.dimensions(),
+            CellPixelGeometry::from_points(9.0, 18.0, 1.0),
+        );
+        let (size, generation) = transport.resize_requests()[0];
+        transport.push_event(SessionEvent::ResizeAppliedGeneration {
+            size,
+            generation: generation.unwrap(),
+        });
+        // The app's per-frame session work, without any new event.
+        let frame = |controller: &mut SessionController<fake::FakeSshSession>,
+                     terminal: &mut Terminal| {
+            controller.pump_events(terminal);
+            controller.forward_terminal_replies(terminal);
+            controller.flush_pending_writes();
+            controller.flush_pending_resize();
+        };
+        frame(&mut controller, &mut terminal);
+        assert_eq!(controller.next_output_backlog_repaint_delay(), None);
+
+        // The reply reached the ordered write queue, but the session is full.
+        transport.set_input_full(true);
+        transport.push_event(SessionEvent::Output(QUERY.to_vec()));
+        frame(&mut controller, &mut terminal);
+        assert!(controller.graphics_backlog.is_empty());
+        assert!(!terminal.kitty_validation_pending());
+        assert!(transport.sent().is_empty());
+        assert_eq!(
+            controller.next_output_backlog_repaint_delay(),
+            Some(GRAPHICS_BACKLOG_RETRY)
+        );
+        transport.set_input_full(false);
+        frame(&mut controller, &mut terminal);
+        assert_eq!(transport.sent().concat(), REPLY);
+        assert_eq!(controller.next_output_backlog_repaint_delay(), None);
+
+        // The reply stays in the terminal: the write queue has no room.
+        controller.pending_writes.capacity = REPLY.len() + 1;
+        transport.set_input_full(true);
+        controller.queue_bytes(b"xy", "UI input");
+        transport.push_event(SessionEvent::Output(QUERY.to_vec()));
+        frame(&mut controller, &mut terminal);
+        assert_eq!(terminal.queued_replies(), REPLY);
+        assert_eq!(
+            controller.next_output_backlog_repaint_delay(),
+            Some(GRAPHICS_BACKLOG_RETRY)
+        );
+        transport.set_input_full(false);
+        // The first retry drains the input ahead of it; the next sends it.
+        for _ in 0..2 {
+            assert!(controller.next_output_backlog_repaint_delay().is_some());
+            frame(&mut controller, &mut terminal);
+        }
+        assert_eq!(
+            transport.sent().concat(),
+            [REPLY, b"xy".as_slice(), REPLY].concat()
+        );
+        assert_eq!(controller.next_output_backlog_repaint_delay(), None);
+    }
+
+    #[test]
+    fn graphics_output_resumes_its_unconsumed_suffix_before_newer_output() {
+        const DA1_QUERY: &[u8] = b"\x1b[c";
+        const DA1: &[u8] = b"\x1b[?6c";
+        let queries = 14_000;
+        let mut controller = SessionController::for_test(FakeSession::new([
+            SessionEvent::Output(DA1_QUERY.repeat(queries)),
+            SessionEvent::Output(b"Z".to_vec()),
+        ]));
+        controller.enable_graphics_authority();
+        let mut terminal = kitty_terminal();
+
+        assert!(controller.pump_events(&mut terminal));
+        assert!(!controller.graphics_backlog.is_empty());
+        assert!(controller.next_output_backlog_repaint_delay().is_some());
+        assert!(terminal.row_text(0).unwrap().trim().is_empty());
+
+        for _ in 0..4 {
+            controller.forward_terminal_replies(&mut terminal);
+            controller.flush_pending_writes();
+            controller.pump_events(&mut terminal);
+        }
+        controller.forward_terminal_replies(&mut terminal);
+        controller.flush_pending_writes();
+        assert!(controller.graphics_backlog.is_empty());
+        assert!(controller.next_output_backlog_repaint_delay().is_none());
+        assert!(!terminal.take_reply_queue_overflowed());
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            DA1.repeat(queries)
+        );
+        assert!(terminal.row_text(0).unwrap().starts_with('Z'));
+    }
+
+    #[test]
+    fn cell_geometry_before_any_grid_request_is_the_immediate_first_resize() {
+        use fake::ViewportCall;
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+        controller.set_cell_pixel_geometry(
+            Dimensions::new(80, 24).unwrap(),
+            CellPixelGeometry::from_points(7.5, 15.0, 2.0),
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().viewport_calls(),
+            vec![ViewportCall::Resize(
+                TerminalSize::with_pixels(80, 24, 1200, 720).unwrap()
+            )]
+        );
     }
 
     #[test]
@@ -4148,6 +5230,7 @@ mod tests {
                     );
                     recorded += bytes.len();
                 }
+                true
             },
         );
         assert!(result.hit_limit);

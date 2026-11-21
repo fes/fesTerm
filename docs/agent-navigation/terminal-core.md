@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "mai-code-1.1-flash", "sources": "51dfa5533e55104484dd24f8f57c6dbe06c6510028461caf98800df382c8a270"} -->
+<!-- agent-navigation: {"domain": "terminal-core", "generator": "2", "model": "codex-source-verified", "sources": "f6d1fbe86a924aab5e62843e0f11751fc64cb0bc9e7677da65a246642f8d700f"} -->
 # Terminal core and fixtures
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -83,3 +83,16 @@ Caveats:
 - Recovery validation must reject queued replies and input, even if they are otherwise valid.
 - Wide-cluster and margin-edge wrap state must be validated before adoption.
 - A stale running daemon can fail for reasons the core tests do not model.
+
+## Inline graphics
+
+Use for: Bounded Kitty APC parsing and image authority
+
+- [`KittyConfig`](../../crates/festerm-core/src/kitty.rs) — Explicit opt-in, geometry, image and staging limits.
+- [`KittyPlacement`](../../crates/festerm-core/src/kitty.rs) — Protocol-owned image placement state.
+
+Evidence:
+- [`opt_in_requires_geometry_and_refuses_recording_and_recovery`](../../crates/festerm-core/tests/kitty.rs) — Geometry and unsupported-session gates remain explicit.
+
+Caveats:
+- No file/shared-memory transport; graphics do not grant recording or recovery eligibility.

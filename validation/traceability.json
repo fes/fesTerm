@@ -35,6 +35,83 @@
   ],
   "coverage": [
     {
+      "id": "bounded-inline-terminal-graphics",
+      "edges": [
+        "GFX-0[1-3]"
+      ],
+      "requirements": [
+        "REQUIREMENTS.md#deferred-requirements",
+        "COMPATIBILITY.md"
+      ],
+      "decisions": [
+        "ADR-0089"
+      ],
+      "automated_tests": [
+        "graphics_pixel_geometry_reaches_pty_core_and_replies",
+        "kitty_query_reply_precedes_following_da1_and_never_echoes_payload",
+        "kitty_reply_pressure_commits_upload_and_keeps_da1_order_over_live_output",
+        "invalid_png_streams_are_refused_through_the_wired_validator",
+        "kitty_placement_reaches_the_renderer_and_reset_releases_it",
+        "app_copy_omits_text_under_above_text_images_and_keeps_text_over_lower_images",
+        "ineligible_sessions_publish_no_pixels_and_answer_only_da1",
+        "a_later_recording_never_offers_or_attaches_an_eligible_graphics_session",
+        "dpi_only_change_republishes_pty_pixel_geometry_for_an_eligible_local_session",
+        "inline_graphics_is_frozen_eligible_only_for_an_opted_in_local_pty",
+        "inline_graphics_refuses_remote_and_persistent_backends_even_when_opted_in",
+        "inline_graphics_is_refused_for_a_session_enrolled_in_an_active_recording",
+        "remote_target_accepts_previous_snapshot_schema_and_pins_it_in_the_bridge_command",
+        "a_stale_pty_ack_for_a_superseded_grid_never_restores_kitty_geometry",
+        "kitty_geometry_is_published_only_by_the_applied_pixel_resize",
+        "kitty_geometry_is_withheld_for_a_stale_or_superseded_ack",
+        "a_delayed_ack_for_an_earlier_identical_size_waits_for_the_newest_generation",
+        "kitty_geometry_publishes_only_the_newest_resize_generation",
+        "applied_resize_acknowledgement_waits_for_queue_room_instead_of_being_dropped",
+        "final_graphics_replies_held_by_write_backpressure_are_sent_by_self_scheduled_frames",
+        "a_final_kitty_reply_blocked_by_write_backpressure_keeps_a_retry_armed_without_more_output",
+        "copy_and_pointer_stay_on_the_plain_path_without_drawn_above_text_pixels",
+        "png_textures_decode_once_and_are_reused_across_frames_pointer_and_copy",
+        "exported_png_round_trips_the_exact_decoded_pixels",
+        "image_hit_prefers_topmost_non_transparent_drawable_placement",
+        "terminal_context_menu_copies_and_saves_the_hit_kitty_image_only",
+        "terminal_image_save_writes_exact_png_through_confirmed_destination",
+        "transparent_kitty_pixel_does_not_offer_image_export",
+        "a_render_budget_for_one_png_never_thrashes_and_the_undrawn_png_never_occludes",
+        "frame_drawable_set_avoids_thrash_across_two_large_images_and_matches_occlusion",
+        "kitty_feature_query_replies_before_da1_and_leaves_uploads_and_placements_untouched",
+        "feature_queries_report_only_supported_fields_and_preserve_multipart_upload",
+        "release_builds_never_answer_the_kitty_graphics_query",
+        "pending_png_validation_pauses_only_its_stream_while_frames_and_other_sessions_advance",
+        "preview_sessions_validate_png_uploads_on_their_worker_while_holding_later_output",
+        "kitty_validation_holds_later_output_until_the_worker_result_is_published",
+        "worker_validates_png_before_owner_commits_cursor_and_ordered_replies",
+        "graphics_output_resumes_its_unconsumed_suffix_before_newer_output",
+        "placement_pixel_extent_preserves_aspect_and_excludes_unused_cells",
+        "the_pool_admits_fixed_session_reservations_up_to_the_aggregate_and_releases_on_drop",
+        "inline_graphics_eligibility_holds_a_fixed_protocol_reservation_before_enabling",
+        "settings_toggle_inline_graphics_returns_the_toggle_command",
+        "client_retries_the_previous_schema_once_and_never_accepts_a_downgraded_safe_framing_snapshot",
+        "establish_negotiated_retries_the_previous_schema_on_a_fresh_stream",
+        "javascript_program_refuses_inline_graphics_even_when_opted_in",
+        "resize_acknowledgements_keep_delivery_permit_and_wire_order"
+      ],
+      "manual_scenarios": [
+        "GFX-01",
+        "GFX-02",
+        "GFX-03"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Phase 0 bounded APC/DCS framing and discard-resynchronization must be accepted independently of image enablement",
+        "New terminal semantics must negotiate or adapt sessiond, tunnel/mobile snapshots and recording replay explicitly",
+        "Physical cell geometry, PTY pixel winsize and reply geometry must become authoritative terminal state",
+        "Kitty direct-only parser, fixed per-session protocol reservation, deterministic store, quota, cursor/erase/scroll/reset behavior and local-PTY decode backpressure require complete portable coverage",
+        "Default-off renderer clipping, z-order, texture and native-painter evidence, real client interoperability and DPI/zoom qualification remain required",
+        "Windows ConPTY remains ineligible until pinned/inbox APC passthrough and cursor resynchronization are qualified",
+        "Sessiond/tunnel/mobile, recording, scrollback persistence, placeholders, relative placements, animation and all non-direct Kitty media remain separate gates",
+        "Sixel requires a separately accepted compatibility profile, including DECSDM, palette, HLS, geometry, XTSMGRAPHICS and streaming-decoder decisions"
+      ]
+    },
+    {
       "id": "recording-settings",
       "edges": [
         "REC-01"
@@ -545,7 +622,9 @@
         "javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume",
         "javascript_program_storage_is_digest_bound_and_round_trips",
         "javascript_program_storage_controls_are_digest_bound_and_separate",
-        "digest_bound_program_storage_honors_quota_and_delete"
+        "digest_bound_program_storage_honors_quota_and_delete",
+        "javascript_program_refuses_inline_graphics_even_when_opted_in",
+        "resize_acknowledgements_keep_delivery_permit_and_wire_order"
       ],
       "manual_scenarios": [
         "JSP-01"

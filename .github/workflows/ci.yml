@@ -283,19 +283,19 @@ jobs:
       - name: Select the software Vulkan driver for headless tests
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features festerm/javascript-program-dev -- -D warnings
       - name: Test workspace with a private native runtime fixture root
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
           test_runtime_root="$(mktemp -d "$RUNNER_TEMP/fes.XXXXXX")"
-          FESTERM_SESSIOND_TEST_RUNTIME_ROOT="$test_runtime_root" cargo nextest run --workspace --profile ci
-          FESTERM_SESSIOND_TEST_RUNTIME_ROOT="$test_runtime_root" cargo test --workspace --doc
+          FESTERM_SESSIOND_TEST_RUNTIME_ROOT="$test_runtime_root" cargo nextest run --workspace --features festerm/javascript-program-dev --profile ci
+          FESTERM_SESSIOND_TEST_RUNTIME_ROOT="$test_runtime_root" cargo test --workspace --features festerm/javascript-program-dev --doc
       - name: Run Windows workspace tests with native exit metadata
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')
+        run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace', '--features', 'festerm/javascript-program-dev')
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: '1'
       - name: Require the native Windows WMI starter lifecycle regression

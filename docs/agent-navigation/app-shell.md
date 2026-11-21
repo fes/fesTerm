@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "380a06e0c86b0d6dcc0964d51d209be4fb7256a453f9d2a9139ab29e7dbf4d40"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "0d960c071396a5ce6c7a52f0fc7383f625909b687a0748c0dc67873f4272ff5f"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,12 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 
 Use for: Startup and workspace recovery
 
-- [`main`](../../app/festerm/src/main.rs) — CLI bootstrap and native viewport startup
-- [`FesTermApplication`](../../app/festerm/src/application.rs) — Owns every window and cross-window policy
-- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved secondary windows after primary exists
+- [`main`](../../app/festerm/src/main.rs)
+- [`FesTermApplication`](../../app/festerm/src/application.rs)
+- [`restore_windows`](../../app/festerm/src/application.rs)
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Owned windows stay coherent under lifecycle churn
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs)
 
 Caveats:
 - Primary window owns quit, wake, and secret-store policy.
@@ -28,11 +28,11 @@ Caveats:
 
 Use for: Frame logic and focused panes
 
-- [`frame_logic`](../../app/festerm/src/app.rs) — Drains close requests, pumps sessions, and saves geometry
-- [`ui_content`](../../app/festerm/src/app.rs) — Builds UI; applies border cursor feedback last
+- [`frame_logic`](../../app/festerm/src/app.rs)
+- [`ui_content`](../../app/festerm/src/app.rs)
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Input stays on the focused pane while both terminals render
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs)
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
@@ -43,12 +43,12 @@ Caveats:
 
 Use for: Profiles, settings, and typed app command dispatch
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Profile editor and connect/save dispatch flow
-- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Global settings, bindings, and automation preferences
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs)
+- [`show_settings`](../../app/festerm/src/screens/settings.rs)
 
 Evidence:
-- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Profile actions route through the app command layer
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Settings page order and state stay aligned with the flow
+- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs)
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs)
 
 Caveats:
 - Profile and settings actions dispatch as AppCommand events, not direct mutation.
@@ -59,11 +59,11 @@ Caveats:
 
 Use for: Host discovery, inventory, attach, and creation review
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review
+- [`show_host_browser`](../../app/festerm/src/host_browser.rs)
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry
-- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness
+- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs)
+- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
@@ -74,14 +74,14 @@ Caveats:
 
 Use for: Exit recovery and host failure history
 
-- [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the lifecycle journal and panic hook
+- [`init`](../../app/festerm/src/diagnostics.rs)
 - [`Failure`](../../app/festerm/src/desktop_remote_access.rs) — Native timeout recovery.
-- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Persists the app exit reason and shutdown context
-- [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs) — Enable boundaries.
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs)
+- [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs)
 
 Evidence:
-- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Preserves partial-write artifacts
-- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs) — Historical pane only; no readiness claim
+- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs)
+- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs)
 
 Caveats:
 - Diagnostics preserve evidence, not runtime authority.
@@ -91,14 +91,28 @@ Caveats:
 
 Use for: Remote file review and worker lifecycle
 
-- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Fences retired remote reviews
-- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Reviews captured side, directory, and selection before confirm
-- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Shared queue, bounded outcomes, and Files session lifecycle
-- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs) — Builds exact, bounded remote delete review for host files
+- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
+- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
+- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs)
+- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs)
 
 Evidence:
-- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs) — Checks dialog geometry and review framing
-- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs) — Fences late disclosures while retaining terminal outcomes
+- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
+- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs)
 
 Caveats:
 - Local/SFTP delete is nonrecursive; Open2 write grants no delete; Open3 needs separate consent and exact review.
+
+## Program and image composition
+
+Use for: App-owned lifecycle, eligibility and Safe Mode
+
+- [`JavaScriptProgramCoordinator`](../../app/festerm/src/javascript_program_lifecycle.rs) — Tracks pending/live/closing quotas.
+- [`InlineGraphicsPolicy`](../../app/festerm/src/inline_graphics.rs) — Gates eligible local and SSH terminal graphics.
+
+Evidence:
+- [`safe_mode_dominates_saved_automation_without_rewriting_it`](../../app/festerm/src/app.rs) — Safe Mode suppresses saved activation without rewriting.
+- [`terminal_image_save_writes_exact_png_through_confirmed_destination`](../../app/festerm/src/app.rs) — Export uses the confirmed destination.
+
+Caveats:
+- Default-off developer JavaScript and separately opted-in graphics retain their own consent gates.

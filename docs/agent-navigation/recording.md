@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "mai-code-1.1-flash", "sources": "48e0d8eee2fcb597ad2a7b8702de3194a3a376a6fa5abf41cbaba404f9a63813"} -->
+<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "codex-source-verified", "sources": "aba5454b32e641bec84945482f2a2f3c3d4c5be56963ab0d1cdecce6b87d2e8a"} -->
 # Terminal recording and export
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

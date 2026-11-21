@@ -265,6 +265,11 @@ Conditional Access evidence. The token bootstrap does not establish those.
 Define a versioned bridge protocol independently of the daemon's local
 protocol and recovery-snapshot schema. Negotiate capabilities before actions;
 unknown major versions and unsupported snapshot schemas refuse explicitly.
+A client offers its newest snapshot schema first. Only after an explicit
+incompatible refusal does it retry once, on a fresh connection, with the
+previous schema. It never accepts a snapshot whose terminal semantics the
+negotiated schema cannot represent, and a peer offering an older schema never
+takes over an attached frontend.
 Do not assume the daemon's local-only deserializer is a safe network codec.
 Network-facing decode needs its own bounded-allocation review and adversarial
 tests before use.

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "33c94272b800ff6b8bddaf7949e3d15f5702fe4241c908e1f3d0e9fa9b4cd445"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "7025e69cc03c6d5a6e3f089ffdcae7c2ec35ed1028ba34cc906bd3c6b586c676"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -88,3 +88,12 @@ Caveats:
 - Unsupported commands are refused with no side effects.
 - Substitution parsing reuses the same engine as the find bar.
 - Completion offers only commands that are actually valid.
+
+## Program launch review
+
+Use for: Typed own-terminal JavaScript launch
+
+- [`JavaScriptProgramLaunch`](../../crates/festerm-automation-js/src/program.rs) — Binds digest, terminal capability set and launch generation.
+
+Caveats:
+- Palette/menu routes use the app coordinator; no automation target or implicit file grant.

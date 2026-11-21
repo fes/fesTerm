@@ -16,6 +16,7 @@ pub use festerm_admission::{
 
 use std::{
     fmt,
+    num::NonZeroU64,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -463,6 +464,14 @@ pub enum SessionEvent {
     HostKeyVerification(HostKeyPrompt),
     PasswordRequested(PasswordPrompt),
     ResizeApplied(TerminalSize),
+    /// Acknowledges the [`Session::try_resize_generation`] request tagged
+    /// `generation` once the backend applied `size`, so a delayed
+    /// acknowledgement of an older request for the same size is never
+    /// mistaken for a newer one.
+    ResizeAppliedGeneration {
+        size: TerminalSize,
+        generation: NonZeroU64,
+    },
     PortForwardsUpdated(Vec<SshPortForwardRuntime>),
     Backpressure {
         direction: FlowDirection,
@@ -659,6 +668,17 @@ pub trait Session: Send + Sync {
         Err(ReserveAutomationInputError::Unsupported)
     }
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
+    /// Requests a resize whose applied-size acknowledgement is
+    /// [`SessionEvent::ResizeAppliedGeneration`] carrying `generation`.
+    /// Backends that cannot tag acknowledgements resize as
+    /// [`Self::try_resize`] does and report an untagged `ResizeApplied`.
+    fn try_resize_generation(
+        &self,
+        size: TerminalSize,
+        _generation: NonZeroU64,
+    ) -> Result<(), SessionSendError> {
+        self.try_resize(size)
+    }
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
     fn try_recv_event_with_permit(

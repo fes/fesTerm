@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::{
     DiscoveredSession, DiscoveryInventory, DiscoveryStatus, PersistentSession,
     PersistentSessionError, MACHINE_READABLE_SCHEMA_VERSION, MAX_DISCOVERY_RECORD_COUNT,
-    PROTOCOL_VERSION, RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+    PROTOCOL_VERSION, RECOVERY_SNAPSHOT_SCHEMA_VERSION, TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
 };
 
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(30);
@@ -197,7 +197,13 @@ impl RemoteSessionInventory {
                 DiscoveryStatus::Available | DiscoveryStatus::Attached
             )
             || session.daemon_protocol.version != Some(PROTOCOL_VERSION)
-            || session.recovery_snapshot_schema.version != Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION)
+            || !session
+                .recovery_snapshot_schema
+                .version
+                .is_some_and(|version| {
+                    (TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION..=RECOVERY_SNAPSHOT_SCHEMA_VERSION)
+                        .contains(&version)
+                })
             || !session.daemon_protocol.supported
             || !session.recovery_snapshot_schema.supported
         {
@@ -218,6 +224,10 @@ impl RemoteSessionInventory {
             name: session.name.clone(),
             pid,
             generation,
+            snapshot_schema: session
+                .recovery_snapshot_schema
+                .version
+                .unwrap_or(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
         })
     }
 }
@@ -229,6 +239,10 @@ pub struct RemoteSessionTarget {
     name: String,
     pid: u32,
     generation: u128,
+    /// The discovered generation's own schema. The helper relays that
+    /// daemon's bytes unchanged, so a previous-schema session keeps its
+    /// schema (and can never carry newer terminal semantics) end to end.
+    snapshot_schema: u16,
 }
 
 impl RemoteSessionTarget {
@@ -252,7 +266,7 @@ impl RemoteSessionTarget {
         format!(
             "{} bridge --name {} --pid {} --generation {} --protocol {} --snapshot-schema {} --allow-takeover",
             self.endpoint.helper, self.name, self.pid, self.generation,
-            PROTOCOL_VERSION, RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            PROTOCOL_VERSION, self.snapshot_schema,
         )
     }
 
@@ -270,7 +284,7 @@ impl RemoteSessionTarget {
             notifier,
             None,
             PROTOCOL_VERSION,
-            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            self.snapshot_schema,
             None,
             None,
         )
@@ -386,6 +400,22 @@ mod tests {
     }
 
     #[test]
+    fn remote_target_accepts_previous_snapshot_schema_and_pins_it_in_the_bridge_command() {
+        let mut wire = document();
+        wire["sessions"][0]["recovery_snapshot_schema"] = json!({"version": 4, "supported": true});
+        let inventory =
+            RemoteSessionInventory::decode(endpoint(), &serde_json::to_vec(&wire).unwrap())
+                .unwrap();
+        let target = inventory
+            .select("existing")
+            .expect("a schema-4 session from the previous helper must remain attachable");
+        assert_eq!(
+            target.bridge_command(),
+            format!("festerm-sessiond bridge --name existing --pid 42 --generation 123456 --protocol {PROTOCOL_VERSION} --snapshot-schema 4 --allow-takeover")
+        );
+    }
+
+    #[test]
     fn remote_inventory_refuses_unavailable_incompatible_or_invalid_generations() {
         for (key, value) in [
             ("pid", json!(0)),
@@ -397,7 +427,11 @@ mod tests {
             ("daemon_protocol", json!({"version": 1, "supported": true})),
             (
                 "recovery_snapshot_schema",
-                json!({"version": 2, "supported": true}),
+                json!({"version": 3, "supported": true}),
+            ),
+            (
+                "recovery_snapshot_schema",
+                json!({"version": 4, "supported": false}),
             ),
             (
                 "recovery_snapshot_schema",
