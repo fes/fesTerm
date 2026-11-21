@@ -1514,10 +1514,10 @@ mod delivery_race_tests {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             self.calls += 1;
             if self.calls == 1 {
-                self.entered.send(()).unwrap();
-                self.release.recv().unwrap();
                 Ok(1)
             } else {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
                 Ok(bytes.len())
             }
         }
@@ -1562,14 +1562,15 @@ mod delivery_race_tests {
                 Err(mpsc::RecvTimeoutError::Timeout)
             ));
             release_send.send(()).unwrap();
-            assert!(write_done_receive
+            let write_result = write_done_receive
                 .recv_timeout(Duration::from_secs(1))
-                .unwrap()
-                .is_ok());
+                .unwrap();
+            assert!(write_result.is_ok(), "{write_result:?}");
             revoke_done_receive
                 .recv_timeout(Duration::from_secs(1))
                 .unwrap();
         });
+        assert_eq!(writer.calls, 2);
     }
 }
 
