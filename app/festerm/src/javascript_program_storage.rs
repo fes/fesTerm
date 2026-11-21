@@ -1097,7 +1097,13 @@ mod tests {
         fn new() -> Self {
             let name = format!(".javascript-save-test-{}", Uuid::new_v4().simple());
             let path = std::env::current_dir().unwrap().join(&name);
+            #[cfg(unix)]
             let parent = File::open(path.parent().unwrap()).unwrap();
+            #[cfg(windows)]
+            let parent = festerm_windows_security::lock_directory_path_without_delete_sharing(
+                path.parent().unwrap(),
+            )
+            .unwrap();
             #[cfg(unix)]
             drop(
                 festerm_unix_security::create_private_directory(&parent, Path::new(&name)).unwrap(),
