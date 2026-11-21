@@ -7546,6 +7546,10 @@ impl FesTermApp {
                     ui.visuals_mut().disabled_alpha = 1.0;
                     ui.disable();
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                if self.show_inline_host_browser(ui, escape_pressed) {
+                    return;
+                }
                 let tab = self.state.active_tab_mut();
                 match &mut tab.content {
                     TabContent::Launcher => {

@@ -1594,6 +1594,7 @@ fn assert_account_switch_keeps_directory(workspace_entry: bool) {
                     *first = false;
                 }
                 app.poll_host_browser(ui.ctx());
+                app.show_inline_host_browser(ui, false);
                 app.show_host_browser(ui.ctx(), false);
             },
             (app, true),
@@ -1917,4 +1918,174 @@ fn ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure() {
     harness.get_by_label(
         "Connection admission remains closed. No session result or absence was accepted.",
     );
+}
+
+#[test]
+fn full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window() {
+    use crate::screens::host_workspace;
+    use egui_kittest::kittest::Queryable;
+    let (mut app, _) = fixture();
+    app.host_browser = None;
+    app.state.active_tab_mut().content = TabContent::Launcher;
+    app.secret_store = Ok(Arc::new(festerm_secret_store::MemorySecretStore::new()));
+    // Hold existing admission so the real full-page action cannot contact a provider.
+    let mut permits = Vec::new();
+    while let Ok(permit) = ConnectionPermit::reserve(&app.state.host_client_budgets) {
+        permits.push(permit);
+    }
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(752.0, 516.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness
+        .get_by_label_contains("Dev Tunnel · Experimental")
+        .click();
+    harness.run_steps(3);
+    let directory_heading = harness.get_by_label("Find & Connect").rect();
+    // The existing automatic discovery action is processed by the real app router.
+    let request = harness
+        .state()
+        .host_discovery_queue
+        .front()
+        .expect("queued discovery");
+    let tab = request.tab;
+    let request = request.request;
+    host_workspace::report_discovery(
+        &harness.ctx,
+        tab,
+        request,
+        "github-user",
+        Ok(vec![festerm_tunnel_client::service::TunnelSummary {
+            locator: "first.fixture".into(),
+            name: Some("Seven-session host".into()),
+            description: None,
+            active: true,
+        }]),
+    );
+    harness.run_steps(3);
+    harness.state_mut().secret_store =
+        Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    harness.get_by_label("Seven-session host").click();
+    harness.run_steps(3);
+    let browser = harness
+        .state()
+        .host_browser
+        .as_ref()
+        .expect("actual host action");
+    assert!(browser.workspace && browser.current(&harness.state().state, &harness.ctx));
+    assert!(harness.state().workspace_host_is_inline(&harness.ctx));
+    assert_eq!(harness.query_all_by_label("Find & Connect").count(), 1);
+    let selected_heading = harness.get_by_label("Find & Connect").rect();
+    assert!(
+        (selected_heading.left() - directory_heading.left()).abs() < 0.5,
+        "selected host keeps the full-page left inset: {selected_heading:?}, {directory_heading:?}"
+    );
+    assert!((selected_heading.height() - directory_heading.height()).abs() < 0.5,
+        "selected host keeps the full-page title style: {selected_heading:?}, {directory_heading:?}");
+    assert!(harness.query_by_label("Choose a host").is_none());
+    // Inject the existing authorized inventory DTO, not a new transport or UI route.
+    let mut inventory = FesTermApp::gallery_host_browser("sessions")
+        .host_browser
+        .take()
+        .unwrap()
+        .inventory
+        .take()
+        .unwrap();
+    let session = inventory.sessions[0].clone();
+    inventory.sessions = (1..=7)
+        .map(|index| {
+            let mut session = session.clone();
+            session.name = format!("Visible session {index}");
+            session.target.logical = format!("{index:08x}-1111-4111-8111-111111111111")
+                .parse()
+                .unwrap();
+            session
+        })
+        .collect();
+    let browser = harness.state_mut().host_browser.as_mut().unwrap();
+    browser.inventory = Some(inventory);
+    browser.host_approved = true;
+    browser.feedback = None;
+    harness.run_steps(3);
+    for index in 1..=7 {
+        let label = format!("Visible session {index}");
+        harness.get_by_label(&label).scroll_to_me();
+        harness.run_steps(3);
+        let rect = harness.get_by_label(&label).rect();
+        assert!(
+            rect.left() >= 0.0
+                && rect.right() <= 752.0
+                && rect.top() >= 0.0
+                && rect.bottom() <= 516.0,
+            "{label}: {rect:?}"
+        );
+    }
+    assert_eq!(harness.query_all_by_label("Connect").count(), 7);
+    assert!(harness
+        .state()
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .worker
+        .is_none());
+    let cancelled = harness
+        .state()
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .cancel
+        .clone();
+    harness.state_mut().overlays.about_open = true;
+    harness.run_steps(3);
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert!(!harness.state().overlays.about_open);
+    assert!(harness
+        .state()
+        .host_browser
+        .as_ref()
+        .is_some_and(|browser| browser.current(&harness.state().state, &harness.ctx)));
+    assert!(
+        !cancelled.is_cancelled(),
+        "About owns its Escape exclusively"
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert!(harness.state().host_browser.is_none());
+    assert!(cancelled.is_cancelled());
+    harness.get_by_label("Choose a host");
+}
+
+#[test]
+fn profile_host_selection_keeps_its_modal_owner() {
+    use crate::screens::host_workspace;
+    use egui_kittest::kittest::Queryable;
+    let app = FesTermApp::gallery_host_browser("workspace-sessions");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(752.0, 516.0))
+        .build_ui_state(
+            |ui, (app, first): &mut (FesTermApp, bool)| {
+                if *first {
+                    let browser = app.host_browser.as_ref().unwrap();
+                    host_workspace::install_profile_request_for_test(
+                        ui.ctx(),
+                        browser.tab,
+                        browser.request,
+                    );
+                    *first = false;
+                }
+                assert!(!app.show_inline_host_browser(ui, false));
+                app.show_host_browser(ui.ctx(), false);
+            },
+            (app, true),
+        );
+    harness.run_steps(3);
+    assert_eq!(harness.query_all_by_label("Select session").count(), 2);
+    assert!(!harness.state().0.workspace_host_is_inline(&harness.ctx));
+    assert!(harness
+        .state()
+        .0
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .current(&harness.state().0.state, &harness.ctx));
 }

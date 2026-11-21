@@ -944,8 +944,15 @@ it must not first show the old stacked host list. Confirm one automatic director
 request for the selected account, explicit Refresh after failure, scoped Sign in
 again after expiry, and no host inventory/key/terminal action before host selection.
 Switch accounts while discovery is pending and reject its late old-account result.
-Select a host to enter the existing session workspace; check narrow reflow, Back
-and separately collapsed Advanced legacy form. Focused CPU regressions cover the
+Select a host to enter its session workspace inline in the same tab, without a
+second Find & Connect modal. Its title and page insets must match the directory.
+At 752×516, load seven authorized sessions and scroll
+the whole workspace to reach every session and its action; account/host controls
+must not consume a fixed header above an unusable session viewport. Check Escape
+returns to the directory. Escape in About or another blocking confirmation must
+close only that overlay and retain the selected host. The profile editor’s
+host/session picker remains a modal owned by that draft. Also check narrow reflow and separately collapsed
+Advanced legacy form. Focused CPU regressions cover the
 route and request witnesses; native visual/keyboard/real-provider checks remain
 required and are not established by those regressions.
 

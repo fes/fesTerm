@@ -6035,6 +6035,8 @@
         "host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert",
         "new_host_shell_discards_selected_recipe_launch_and_uses_persistent_host_default",
         "narrow_host_browser_keeps_new_shell_actions_and_fields_inside_viewport",
+        "full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window",
+        "profile_host_selection_keeps_its_modal_owner",
         "account_switch_keeps_directory_open_retires_old_authority_and_selects_new_account_host",
         "saved_profile_account_switch_retires_profile_request_and_keeps_directory_open",
         "mobile_host_session_shortcuts_bind_exact_host_logical_and_generation_without_launch",

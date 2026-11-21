@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "380a06e0c86b0d6dcc0964d51d209be4fb7256a453f9d2a9139ab29e7dbf4d40"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "645649cded65580851017d3ec4623156381c407c48f3a05f09e2e664b5135870"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -59,10 +59,10 @@ Caveats:
 
 Use for: Host discovery, inventory, attach, and creation review
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs) — Routes discovery, inventory, and explicit creation or attach review
+- [`show_inline_host_browser`](../../app/festerm/src/host_browser.rs) — Selected workspace host stays in its owning tab; profile pickers retain modal review
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs) — Approval requires explicit consent and a bounded registry
+- [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs) — Full-page action and seven-row scrolling at 752×516
 - [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness
 
 Caveats:
