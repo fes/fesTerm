@@ -1547,22 +1547,53 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
         Err(ControlError::Cancelled)
     ));
     cancelled.store(false, Ordering::Release);
-    let running = fixture
-        .control()
-        .ensure(
+    // Keep one issued operation even if final publication encounters the
+    // daemon's nonblocking generation lease. Busy can follow committed creation.
+    let operation = fixture.issued();
+    let mut held_publication = None;
+    let mut committed_target = None;
+    let running = retry_busy(|| {
+        let result = fixture.control().ensure(
             &fixture.owner,
-            &fixture.issued(),
+            &operation,
             &creation,
             false,
             &cancelled,
             |state| {
                 if state.effect == Effect::Resume && state.grant.is_some() {
                     cancelled.store(true, Ordering::Release);
+                    if committed_target.is_none() {
+                        let record = fixture.state();
+                        let target = Target {
+                            logical: creation.logical.clone(),
+                            generation: serde_json::from_value(
+                                record["sessions"][creation.logical.as_str()]["generation"].clone(),
+                            )
+                            .unwrap(),
+                        };
+                        held_publication = Some(lock_generation_lease(&fixture, &target));
+                        committed_target = Some(target);
+                    }
                 }
                 Ok(())
             },
-        )
-        .unwrap();
+        );
+        if let Some(lock) = held_publication.take() {
+            assert!(
+                matches!(&result, Err(ControlError::Busy)),
+                "HOST control stage=absence-denial/held-publication actual={}",
+                control_result_diagnostic(&result),
+            );
+            drop(lock);
+        }
+        result
+    })
+    .unwrap();
+    assert_eq!(Some(&running.target), committed_target.as_ref());
+    assert!(
+        running.created,
+        "the same issued creation must be recovered"
+    );
     assert!(running.cancelled);
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
     let stale = Target {

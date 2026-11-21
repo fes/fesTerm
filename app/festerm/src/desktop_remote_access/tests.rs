@@ -2666,3 +2666,59 @@ fn desktop_remote_access_enable_timeout_clears_stale_scope_without_replay_and_re
         .is_none());
     assert!(!harness.state().access_enabled());
 }
+
+#[test]
+fn desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let calls = Arc::new(AtomicU8::new(0));
+    let counted = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            assert_eq!(request.operation, Operation::Enable);
+            counted.fetch_add(1, Ordering::SeqCst);
+            Err(Failure::NativeTimeout)
+        },
+    )));
+    controller.view.scope = update_fixture_scope();
+    controller.view.access_requested = Some(true);
+    let context = egui::Context::default();
+    controller.start(Operation::Enable, false, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.scope, Scope::Unobserved);
+    assert_eq!(controller.view.failure, Some(Failure::NativeTimeout));
+    assert_eq!(controller.view.bundle_status, BundleStatus::Blocked);
+    controller.poll(&context);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "no automatic retry after unknown setup result"
+    );
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 1600.0))
+        .build_ui_state(
+            |ui, view: &mut View| {
+                assert!(show(ui, view, &[]).is_none());
+            },
+            controller.view.clone(),
+        );
+    harness.run();
+    harness.get_by_label(Failure::NativeTimeout.notice());
+    assert!(
+        harness
+            .query_by_label(Failure::NativeTimeout.message())
+            .is_none(),
+        "main view keeps detailed deadline guidance in Recovery"
+    );
+    harness.get_by_label("Remote access status is unavailable. Refresh local status.");
+    harness.get_by_label("Advanced / Recovery").click();
+    harness.run();
+    harness.get_by_label(Failure::NativeTimeout.message());
+    assert!(harness
+        .query_by_label(Failure::Cancelled.notice())
+        .is_none());
+    assert!(!harness.state().access_enabled());
+    assert!(harness.query_by_label(Failure::Timeout.message()).is_none());
+    assert!(harness
+        .query_by_label(Failure::PrivateStorage.notice())
+        .is_none());
+}
