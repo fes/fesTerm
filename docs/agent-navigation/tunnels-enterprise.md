@@ -1,16 +1,16 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "2429041ef7a491f927a1b1d59dba5fcd01fcc7a5adad6ad8de8acff8cdafff28"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "afcebc1544a8bc6300355200942e63c586420fce350d19e98e23d846e9a6e873"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns HOST selection, owner consent, native service state, and public metadata boundaries for enterprise dev tunnels and PowerShell sessions.
+Owns HOST selection, consent, native services and enterprise/PowerShell metadata.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
 ## Host Discovery
 
-Use for: When resolving a HOST candidate or bounding inventory rows for a signed-in tab
+Use for: HOST resolution and signed-in inventory.
 
 - [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Filters HOST marker and rejects bridge fallback in the service selector
 - [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds worker inventory to signed-in project metadata before rendering
@@ -25,7 +25,7 @@ Caveats:
 
 ## Owner Consent
 
-Use for: When a local owner pass is required before host replacement or admin operations
+Use for: Owner approval for replacement or administration.
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Local approval binds the reviewed owner key and granted permissions
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority or execution grant
@@ -33,7 +33,7 @@ Use for: When a local owner pass is required before host replacement or admin op
 
 Evidence:
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies a ready or authorized state
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Confirms identity binding, grants, and helper provenance are preserved
+- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs) — Checks binding, grants and helper provenance.
 
 Caveats:
 - Helper gate checks reject unsupported or foreign capabilities
@@ -41,7 +41,7 @@ Caveats:
 
 ## Native Services
 
-Use for: Native observation and stopped receipt completion for reviewed creation or Files policy.
+Use for: Stopped receipt completion for creation/Files policy.
 
 - [`complete_setup_with`](../../crates/festerm-host-setup/src/services/reconfiguration.rs) — Copies reviewed Files policy; pins bundle, native scope and executable.
 - [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads same-user native service state.
@@ -56,13 +56,13 @@ Caveats:
 
 ## Portable Metadata
 
-Use for: When serializing recipes or reporting PowerShell lifecycle outcomes across clients
+Use for: Portable recipes and PowerShell lifecycle.
 
 - [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs) — Portable metadata excludes credentials, trust grants, and consent data
 - [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, runtime, close, cancel, and failure transitions
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch fields and four connection behaviors survive round-trip import
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Checks recipe import round-trip.
 - [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — A close failure stays distinct from a successful exit
 
 Caveats:
@@ -81,15 +81,17 @@ Evidence:
 Caveats:
 - Submitted uncertainty retains the GUI permit; Running is not Ready.
 
-## Account readiness renewal
+## Account readiness and client renewal
 
-Use for: In-place ordinary account readiness while retaining the healthy relay.
+Use for: HOST readiness and Desktop account renewal.
 
 - [`maintain`](../../crates/festerm-host-setup/src/ordinary.rs) — Renews outside wire admission and drains owned native work.
 - [`refresh`](../../crates/festerm-host-setup/src/ordinary.rs) — Publishes only the same prepared Arc and protected account scope.
+- [`renew`](../../app/festerm/src/tunnel_account.rs) — Fences a Desktop client refresh in the native store before exchanging it.
 
 Evidence:
 - [`ordinary_successful_maintenance_keeps_same_serving_future_live`](../../crates/festerm-host-setup/src/controller.rs) — Keeps the serving future after successful renewal.
+- [`uncertain_exchange_or_publication_cannot_replay_after_reopen`](../../app/festerm/src/tunnel_account.rs) — Refuses refresh replay on reopening.
 
 Caveats:
 - Uncertain persistence ends renewal without replay; native same-run qualification remains open.

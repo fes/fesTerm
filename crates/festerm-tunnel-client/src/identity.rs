@@ -76,14 +76,35 @@ impl fmt::Debug for Identity {
 }
 impl Identity {
     pub fn encode_private(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
+        self.encode_record(true)
+    }
+
+    /// The existing private encoding, with expired access retained and refresh
+    /// authority removed. Before exchanging an expired refreshable identity,
+    /// the caller must publish and read back this value under its account lease.
+    /// Keep the original pair only in memory. A crash or uncertain exchange then
+    /// requires explicit sign-in instead of replaying that pair on reopening.
+    /// Only verified publication of the successful replacement restores refresh.
+    pub fn encode_refresh_attempt(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
+        if !self.needs_sign_in() || !self.can_refresh() {
+            return Err(Error::Expired);
+        }
+        self.encode_record(false)
+    }
+
+    fn encode_record(&self, retain_refresh: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
         let mut bytes = Zeroizing::new(STORE_PREFIX.to_vec());
         let record = StoredIdentity {
             account: self.account.clone(),
             client_id: self.client_id.clone(),
             access_token: self.access_token.clone(),
-            refresh_token: self.refresh_token.clone(),
+            refresh_token: if retain_refresh {
+                self.refresh_token.clone()
+            } else {
+                None
+            },
             expires_at: self.expires_at,
-            refresh_expires_at: self.refresh_expires_at,
+            refresh_expires_at: retain_refresh.then_some(self.refresh_expires_at).flatten(),
         };
         serde_json::to_writer(&mut *bytes, &record).map_err(|_| Error::Response)?;
         if bytes.len() > RESPONSE_LIMIT {
@@ -510,6 +531,46 @@ mod tests {
     const GRANT: &str = r#"{"device_code":"PRIVATE_DEVICE","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#;
     const TOKEN: &str = r#"{"access_token":"PRIVATE_ACCESS","refresh_token":"PRIVATE_REFRESH","token_type":"bearer","scope":"","expires_in":3600,"refresh_token_expires_in":7200}"#;
     const USER: &str = r#"{"id":42,"login":"owned-account","name":"ignored"}"#;
+
+    #[tokio::test]
+    async fn persisted_refresh_attempt_prevents_exchange_after_reopen() {
+        let original = Identity {
+            account: Account {
+                id: 42,
+                login: "owned-account".into(),
+            },
+            client_id: "ownedApp".into(),
+            access_token: "PRIVATE_EXPIRED_ACCESS".into(),
+            refresh_token: Some("PRIVATE_REFRESH".into()),
+            expires_at: Some(0),
+            refresh_expires_at: None,
+        };
+        let attempted = original.encode_refresh_attempt().unwrap();
+        assert!(attempted.starts_with(STORE_PREFIX));
+        let reopened = Identity::decode_private(&attempted, 42, "ownedApp").unwrap();
+        assert_eq!(reopened.account, original.account);
+        assert!(reopened.needs_sign_in());
+        assert!(!reopened.can_refresh());
+        let unused = Fake::new(&[]);
+        assert_eq!(
+            reopened
+                .refresh(&unused, "ownedApp", &CancellationToken::new())
+                .await
+                .unwrap_err(),
+            Error::Expired
+        );
+        assert!(unused.requests.lock().unwrap().is_empty());
+        // The exchange authority is retained only by the original live owner.
+        assert!(original.can_refresh());
+        assert_eq!(
+            reopened.encode_refresh_attempt().unwrap_err(),
+            Error::Expired
+        );
+        assert_eq!(
+            Identity::decode_private(&attempted, 43, "ownedApp").unwrap_err(),
+            Error::AccountChanged
+        );
+    }
 
     #[test]
     fn native_registration_selects_service_app_and_refuses_unqualified_overrides() {

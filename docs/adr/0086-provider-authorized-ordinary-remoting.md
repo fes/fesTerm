@@ -385,3 +385,15 @@ pre/post NotStarted inventory, plus a separate completion marker; legacy
 ordinary-only markers do not qualify this negative gate. Fixture/inventory and
 wrapper marker tests are automated; real provider/native-vault/GUI cases remain
 unqualified until executed. No product authorization or protocol is changed.
+
+Expired selected-client account identities use the existing native V2 encoding
+and per-reference account lease for bounded renewal. Before a potentially
+consuming exchange, persist and verify the same private record without refresh
+authority; keep the original pair only in memory. Only verified same-account
+replacement publication restores that authority. If reopening finds the fenced
+expired record, require explicit sign-in; never restore or replay its old pair.
+A newly committed replacement can survive a reported publication error and may
+be reused after a fresh bound native-store read. No alternate account, weaker
+transport or device-flow fallback is introduced. Deterministic private-store
+and transport regressions cover the failure boundary; native vault/provider
+expiry and restart qualification remains part of HOST-01/HOST-02 and DT-07.

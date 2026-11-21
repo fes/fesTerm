@@ -42,6 +42,19 @@ impl std::fmt::Debug for RequestFailure {
     }
 }
 impl RequestFailure {
+    fn renewal(error: festerm_tunnel_client::Error) -> Self {
+        use festerm_tunnel_client::Error;
+        if error == Error::Expired {
+            return Self::expired();
+        }
+        let mut failure = Self::from(error);
+        if !matches!(error, Error::Cancelled | Error::Busy) {
+            failure.needs_sign_in = true;
+            failure.message.push_str(" Account renewal did not complete. Sign in again in Settings; no credential exchange was replayed.");
+        }
+        failure
+    }
+
     fn expired() -> Self {
         Self {
             message: "GitHub sign-in expired. Sign in again to continue.".into(),
@@ -1172,12 +1185,14 @@ impl FesTermApp {
                 if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let identity = secret.with_bytes(|bytes| Identity::decode_private(bytes,
                     work_account.account_id(), client)).map_err(RequestFailure::from)?;
-                if identity.needs_sign_in() {
-                    return Err(RequestFailure::expired());
-                }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "Host discovery could not start.")?;
                 runtime.block_on(async {
+                    let http = festerm_tunnel_client::Https::new().map_err(RequestFailure::from)?;
+                    let identity = super::tunnel_account::renew(identity, &work_account, store.as_ref(),
+                        client, &http, &work_cancel, &|| if work_cancel.is_cancelled() {
+                            Err(festerm_tunnel_client::Error::Cancelled)
+                        } else { Ok(()) }).await.map_err(RequestFailure::renewal)?;
                     tokio::select! {
                         _ = work_cancel.cancelled() => Err("Discovery cancelled.".into()),
                         result = tokio::time::timeout(Duration::from_secs(30),
@@ -2899,7 +2914,9 @@ impl FesTermApp {
                 }.map_err(|error| error.message().to_owned())?;
                 if cancel.is_cancelled() { return Err("Host review cancelled; protected preparation may have completed locally. No connection was authorized.".into()); }
                 if !matches!(action, Action::Inventory) { return Ok(ResultEvent::Prepared(receipt)); }
-                let identity = load_host_identity(&account, store.as_ref())?;
+                let identity = load_host_identity(&account, store.as_ref(), &cancel, &|| {
+                    if cancel.is_cancelled() { Err(festerm_tunnel_client::Error::Cancelled) } else { Ok(()) }
+                })?;
                 if cancel.is_cancelled() { return Err("Host resolution cancelled.".into()); }
                 let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                     .map_err(|_| "The selected-host resolver worker could not start.".to_owned())?;
@@ -3034,7 +3051,7 @@ pub(super) fn prepare_ordinary_account(
     let privacy = Arc::new(privacy);
     let check_cancel = account_cancel.clone();
     let guard = OrdinaryAccountGuard::new(
-        account_cancel,
+        account_cancel.clone(),
         Arc::new(move || {
             let _retained_monitor = &privacy;
             if check_cancel.is_cancelled() || loss.load(std::sync::atomic::Ordering::Acquire) {
@@ -3047,7 +3064,14 @@ pub(super) fn prepare_ordinary_account(
     guard
         .check()
         .map_err(|_| "OS privacy or account state changed.")?;
-    let identity = load_host_identity(account, store)?;
+    let identity = load_host_identity(account, store, &account_cancel, &|| {
+        if browser_cancel.is_cancelled() {
+            return Err(festerm_tunnel_client::Error::Cancelled);
+        }
+        guard
+            .check()
+            .map_err(|_| festerm_tunnel_client::Error::Cancelled)
+    })?;
     drop(permit);
     Ok((identity, guard))
 }
@@ -3055,17 +3079,33 @@ pub(super) fn prepare_ordinary_account(
 fn load_host_identity(
     account: &DevTunnelAccount,
     store: &dyn SecretStore,
+    cancel: &CancellationToken,
+    check: &impl Fn() -> Result<(), festerm_tunnel_client::Error>,
 ) -> Result<Identity, RequestFailure> {
+    check().map_err(RequestFailure::from)?;
+    let _lease =
+        super::tunnel_workflow::account_lease(Some(account)).map_err(RequestFailure::from)?;
+    check().map_err(RequestFailure::from)?;
     let client = identity::registered_client_id()
         .ok_or("Account sign-in is not configured in this build.")?;
     let secret = store.get(account.credential_reference()).map_err(|_| "The selected account's native credential is unavailable. No sign-in or fallback was attempted.")?;
     let identity = secret
         .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client))
         .map_err(RequestFailure::from)?;
-    if identity.needs_sign_in() {
-        return Err(RequestFailure::expired());
+    if !identity.needs_sign_in() {
+        check().map_err(RequestFailure::from)?;
+        return Ok(identity);
     }
-    Ok(identity)
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| RequestFailure::from("Account renewal could not start."))?;
+    let http = festerm_tunnel_client::Https::new().map_err(RequestFailure::from)?;
+    runtime
+        .block_on(super::tunnel_account::renew(
+            identity, account, store, client, &http, cancel, check,
+        ))
+        .map_err(RequestFailure::renewal)
 }
 
 async fn resolve_host(

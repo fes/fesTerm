@@ -6311,6 +6311,12 @@
         "ADR-0087"
       ],
       "automated_tests": [
+        "persisted_refresh_attempt_prevents_exchange_after_reopen",
+        "expired_identity_renews_and_publishes_exact_same_account",
+        "failed_or_unverified_fence_never_exchanges",
+        "uncertain_exchange_or_publication_cannot_replay_after_reopen",
+        "cancellation_and_changed_guard_never_mutate_or_exchange",
+        "guard_loss_after_exchange_keeps_attempt_fenced_without_publication",
         "the_dev_tunnel_card_opens_find_connect_directory_without_execution_or_legacy_form",
         "first_directory_entry_discovers_only_selected_account_and_selects_without_execution",
         "first_directory_narrow_guidance_and_status_wrap_inside_viewport",
@@ -6854,7 +6860,8 @@
         "Ordinary capability minting, shared-target dispatch and automatic Desktop/mobile host expansion are integrated with focused regressions and controlled native-helper tests, including fresh native-anchor rollback refusal, zero-admin Start, catalog-only local routing and backward-readable unsharing. Fresh three-platform CI, real provider/native-vault/service/GUI qualification, all 24 normal matrix cases and matched-grid Copilot initial-screen evidence remain required. Primitive signature verification and owned fixtures do not establish those native gates.",
         "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
         "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority.",
-        "The opt-in ordinary service-client OFF wrapper requires a distinct stopped-shared-profile server EnsureProfile exactDenied with unchanged catalog revision and no sessions or uncertain targets pre/post, plus its separate stopped-negative marker. GenericOFF uses server-routed Ensure with authoritative no-session/no-unknown postcondition. Pure fixture/marker tests do not qualify actual provider/native-vault or native24matrix execution; legacy ordinary-only marker fixtures cannot satisfy the full OFF gate."
+        "The opt-in ordinary service-client OFF wrapper requires a distinct stopped-shared-profile server EnsureProfile exactDenied with unchanged catalog revision and no sessions or uncertain targets pre/post, plus its separate stopped-negative marker. GenericOFF uses server-routed Ensure with authoritative no-session/no-unknown postcondition. Pure fixture/marker tests do not qualify actual provider/native-vault or native24matrix execution; legacy ordinary-only marker fixtures cannot satisfy the full OFF gate.",
+        "Issue #838: native expired-account renewal for Desktop discovery and shell/Files, same-account vault publication, prompt/lock behavior and cancellation/restart remain unqualified. Portable one-use refresh/store fixtures do not prove why older native credentials expired or whether they retained refresh authority."
       ]
     },
     {
