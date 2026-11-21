@@ -17,16 +17,27 @@ use sha2::{Digest, Sha256};
 use std::{io, path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReadinessEvent {
+    OwnerDigestChanged,
+    CloudDigestChanged,
+    IdentityNotReadyBefore,
+    IdentityNotReadyAfter,
+    RenewalOk,
+    RenewalError,
+}
+type ReadinessDiagnostic = Arc<dyn Fn(ReadinessEvent, Option<&io::Error>) + Send + Sync>;
+
 struct Prepared {
     expected: Snapshot,
     owner_digest: [u8; 32],
     route: OrdinaryRoute,
     observer: PreparedOrdinaryObserver,
-    refresh_reported: std::sync::atomic::AtomicBool,
+    refresh_reported: std::sync::atomic::AtomicU8,
 }
 
 #[derive(Debug)]
-struct ReadinessRefreshRequired;
+struct ReadinessRefreshRequired(ReadinessEvent);
 impl std::fmt::Display for ReadinessRefreshRequired {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("host.ordinary_readiness_refresh_required")
@@ -34,13 +45,30 @@ impl std::fmt::Display for ReadinessRefreshRequired {
 }
 impl std::error::Error for ReadinessRefreshRequired {}
 impl Prepared {
-    fn require_refresh(&self) {
-        if !self
-            .refresh_reported
-            .swap(true, std::sync::atomic::Ordering::Relaxed)
-        {
-            eprintln!("host.ordinary_readiness_refresh_required: disable then enable remote access to reload protected policy/account readiness; existing shells are retained");
+    fn require_refresh(&self, diagnostic: Option<&ReadinessDiagnostic>, reason: ReadinessEvent) {
+        report_readiness_once(&self.refresh_reported, diagnostic, reason);
+    }
+}
+
+fn report_readiness_once(
+    reported: &std::sync::atomic::AtomicU8,
+    diagnostic: Option<&ReadinessDiagnostic>,
+    reason: ReadinessEvent,
+) {
+    let bit = match reason {
+        ReadinessEvent::OwnerDigestChanged => 1,
+        ReadinessEvent::CloudDigestChanged => 2,
+        ReadinessEvent::IdentityNotReadyBefore => 4,
+        ReadinessEvent::IdentityNotReadyAfter => 8,
+        ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError => return,
+    };
+    if reported.fetch_or(bit, std::sync::atomic::Ordering::Relaxed) & bit == 0 {
+        // Caller has already released its protected policy guard. At most
+        // one event per closed reason and prepared Arc, never per tick.
+        if let Some(diagnostic) = diagnostic {
+            diagnostic(reason, None);
         }
+        eprintln!("host.ordinary_readiness_refresh_required: disable then enable remote access to reload protected policy/account readiness; existing shells are retained");
     }
 }
 
@@ -49,6 +77,7 @@ pub struct CurrentHostPolicySource {
     owner: CurrentOwnerPolicySource,
     storage: OwnerStorage,
     ordinary: std::sync::RwLock<Option<Arc<Prepared>>>,
+    diagnostic: Option<ReadinessDiagnostic>,
 }
 
 pub struct CurrentHostPolicy(CurrentPolicy);
@@ -76,17 +105,26 @@ impl CurrentHostPolicySource {
     pub async fn prepare(
         store: Arc<Store>,
         storage_kind: OwnerStorage,
+        expected: &Snapshot,
         cancel: &CancellationToken,
     ) -> io::Result<Self> {
-        let expected = store.snapshot()?;
+        if store.snapshot()? != *expected || cancel.is_cancelled() {
+            return Err(io::Error::other("host.ordinary_scope_changed"));
+        }
+        let expected = expected.clone();
         let owner = CurrentOwnerPolicySource::new(store.clone(), storage_kind);
         let ordinary = if expected.settings.ordinary_access == OrdinaryAccess::ProviderOwner {
             let enrollment = store
                 .owner_enrollment_with_storage(storage_kind)?
                 .snapshot()?;
-            let observer = CloudHostAdapter::new(&store)
-                .prepare_ordinary_observer(cancel)
-                .await?;
+            let observer = CloudHostAdapter::prepare_ordinary_observer(
+                store.clone(),
+                expected.clone(),
+                None,
+                None,
+                cancel,
+            )
+            .await?;
             Some(Self::prepared(&store, expected, enrollment, observer)?)
         } else {
             None
@@ -96,24 +134,133 @@ impl CurrentHostPolicySource {
             owner,
             storage: storage_kind,
             ordinary: std::sync::RwLock::new(ordinary.map(Arc::new)),
+            diagnostic: None,
         })
     }
 
-    /// Called between relay attempts, outside all wire admission deadlines.
-    pub async fn refresh(&self, cancel: &CancellationToken) -> io::Result<()> {
-        let prepared = Self::prepare(self.store.clone(), self.storage_kind(), cancel).await?;
-        let next = prepared
-            .ordinary
-            .into_inner()
-            .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))?;
-        *self
-            .ordinary
-            .write()
-            .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))? = next;
-        Ok(())
+    pub(crate) fn with_diagnostic(mut self, diagnostic: ReadinessDiagnostic) -> Self {
+        self.diagnostic = Some(diagnostic);
+        self
     }
-    fn storage_kind(&self) -> OwnerStorage {
-        self.storage
+
+    /// Prepare only the immutable worker scope, outside wire admission. The
+    /// protected lease and Arc compare make publication one fenced operation.
+    pub async fn refresh(
+        self: &Arc<Self>,
+        expected: &Snapshot,
+        cancel: &CancellationToken,
+    ) -> io::Result<()> {
+        let previous = self
+            .ordinary
+            .read()
+            .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))?
+            .clone();
+        let Some(previous) = previous else {
+            if self.store.snapshot()? != *expected
+                || cancel.is_cancelled()
+                || expected.settings.ordinary_access == OrdinaryAccess::ProviderOwner
+            {
+                return Err(io::Error::other("host.ordinary_scope_changed"));
+            }
+            return Ok(());
+        };
+        if cancel.is_cancelled() {
+            return Err(crate::cloud::cancelled_account_work());
+        }
+        if previous.expected != *expected {
+            return Err(io::Error::other("host.ordinary_scope_changed"));
+        }
+        // Reject changed native owner policy without blocking the relay loop.
+        let source = self.clone();
+        let current = expected.clone();
+        let old = previous.clone();
+        crate::cloud::owned_blocking(move || {
+            drop(Self::project_ordinary_current(
+                &source.store.owner_enrollment_with_storage(source.storage)?,
+                &current,
+                old.owner_digest,
+                old.observer.record_digest,
+                old.observer.resource(),
+            )?);
+            Ok(())
+        })
+        .await?;
+        let observer = CloudHostAdapter::prepare_ordinary_observer(
+            self.store.clone(),
+            expected.clone(),
+            Some(previous.observer.record_digest),
+            Some(previous.owner_digest),
+            cancel,
+        )
+        .await?;
+        let source = self.clone();
+        let current = expected.clone();
+        let publication_cancel = cancel.clone();
+        crate::cloud::owned_blocking(move || {
+            let enrollment = source
+                .store
+                .owner_enrollment_with_storage(source.storage)?
+                .snapshot()?;
+            let next = Self::prepared(&source.store, current.clone(), enrollment, observer)?;
+            if next.owner_digest != previous.owner_digest
+                || next.route != previous.route
+                || !next.observer.same_scope(&previous.observer)
+                || !next.observer.is_ready()
+            {
+                return Err(io::Error::other("host.ordinary_policy_changed"));
+            }
+            let enrollment = source.store.owner_enrollment_with_storage(source.storage)?;
+            let _guard = Self::project_ordinary_current(
+                &enrollment,
+                &current,
+                previous.owner_digest,
+                previous.observer.record_digest,
+                previous.observer.resource(),
+            )?;
+            publish_same_arc(&source.ordinary, &previous, next, &publication_cancel)
+        })
+        .await
+    }
+
+    /// Controller-owned maintenance; admission performs no credential refresh.
+    /// A short expired interval remains fail-closed until a ready replacement
+    /// is published. Success retains the relay, runtime and aggregate budgets.
+    pub async fn maintain(
+        self: &Arc<Self>,
+        expected: &Snapshot,
+        cancel: &CancellationToken,
+    ) -> io::Result<()> {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Ok(()),
+                _ = tick.tick() => {}
+            }
+            let expired = self
+                .ordinary
+                .read()
+                .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))?
+                .as_ref()
+                .is_some_and(|prepared| !prepared.observer.is_ready());
+            if expired {
+                // Never drop a renewal with an owned native task in flight.
+                // The controller cancels and drains this maintenance future.
+                let refreshed = self.refresh(expected, cancel).await;
+                if let Some(diagnostic) = &self.diagnostic {
+                    diagnostic(
+                        if refreshed.is_ok() {
+                            ReadinessEvent::RenewalOk
+                        } else {
+                            ReadinessEvent::RenewalError
+                        },
+                        refreshed.as_ref().err(),
+                    );
+                }
+                refreshed.map_err(crate::cloud::terminal_ordinary_renewal)?;
+            }
+        }
     }
 
     fn prepared(
@@ -141,7 +288,7 @@ impl CurrentHostPolicySource {
             owner_digest,
             route: policy.host_info.route,
             observer,
-            refresh_reported: false.into(),
+            refresh_reported: 0.into(),
         })
     }
 
@@ -244,8 +391,15 @@ impl CurrentHostPolicySource {
                 16 * 1024,
             )?)
             .into();
-            if owner != owner_digest || cloud != cloud_digest {
-                return Err(io::Error::other(ReadinessRefreshRequired));
+            if owner != owner_digest {
+                return Err(io::Error::other(ReadinessRefreshRequired(
+                    ReadinessEvent::OwnerDigestChanged,
+                )));
+            }
+            if cloud != cloud_digest {
+                return Err(io::Error::other(ReadinessRefreshRequired(
+                    ReadinessEvent::CloudDigestChanged,
+                )));
             }
             Ok(CurrentHostPolicy(CurrentPolicy::Ordinary {
                 _lease: lease,
@@ -275,19 +429,41 @@ impl CurrentHostPolicySource {
             .map_err(|e| {
                 if e.kind() == io::ErrorKind::WouldBlock {
                     ContractError::Busy
-                } else if e
+                } else if let Some(cause) = e
                     .get_ref()
-                    .is_some_and(|cause| cause.is::<ReadinessRefreshRequired>())
+                    .and_then(|cause| cause.downcast_ref::<ReadinessRefreshRequired>())
                 {
-                    // Report only after the failed projection dropped its
-                    // protected lifecycle lease; diagnostic I/O owns no lock.
-                    prepared.require_refresh();
+                    // Projection returned, dropping its protected policy lease.
+                    prepared.require_refresh(self.diagnostic.as_ref(), cause.0);
                     ContractError::Stale
                 } else {
                     ContractError::Denied
                 }
             })
     }
+}
+
+// Called only while the exact current protected policy lease remains held.
+fn publish_same_arc<T>(
+    slot: &std::sync::RwLock<Option<Arc<T>>>,
+    previous: &Arc<T>,
+    next: T,
+    cancel: &CancellationToken,
+) -> io::Result<()> {
+    let mut current = slot
+        .write()
+        .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))?;
+    if cancel.is_cancelled() {
+        return Err(crate::cloud::cancelled_account_work());
+    }
+    if current
+        .as_ref()
+        .is_none_or(|value| !Arc::ptr_eq(value, previous))
+    {
+        return Err(io::Error::other("host.ordinary_scope_changed"));
+    }
+    *current = Some(Arc::new(next));
+    Ok(())
 }
 
 impl ProtectedPolicySource for CurrentHostPolicySource {
@@ -320,12 +496,18 @@ impl ProtectedPolicySource for CurrentHostPolicySource {
                 return Err(ContractError::Denied);
             }
             if !prepared.observer.is_ready() {
-                prepared.require_refresh();
+                prepared.require_refresh(
+                    self.diagnostic.as_ref(),
+                    ReadinessEvent::IdentityNotReadyBefore,
+                );
                 return Err(ContractError::Stale);
             }
             prepared.observer.observe(cancel).await.map_err(|_| {
                 if !prepared.observer.is_ready() {
-                    prepared.require_refresh();
+                    prepared.require_refresh(
+                        self.diagnostic.as_ref(),
+                        ReadinessEvent::IdentityNotReadyAfter,
+                    );
                     ContractError::Stale
                 } else {
                     ContractError::Denied
@@ -346,6 +528,45 @@ mod tests {
     use festerm_tunnel_client::host::{
         CreateAccess, CreateProtocol, Resource, HOST_LABEL, HOST_PORT,
     };
+
+    #[test]
+    fn readiness_diagnostic_is_bounded_per_static_reason_without_tick_noise() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let diagnostic: ReadinessDiagnostic = Arc::new(move |event, error| {
+            assert!(error.is_none());
+            captured.lock().unwrap().push(event);
+        });
+        let reported = std::sync::atomic::AtomicU8::new(0);
+        for _ in 0..3 {
+            for reason in [
+                ReadinessEvent::OwnerDigestChanged,
+                ReadinessEvent::CloudDigestChanged,
+                ReadinessEvent::IdentityNotReadyBefore,
+                ReadinessEvent::IdentityNotReadyAfter,
+            ] {
+                report_readiness_once(&reported, Some(&diagnostic), reason);
+            }
+        }
+        assert_eq!(events.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn prepared_publication_refuses_same_value_different_arc_or_cancelled_work() {
+        let previous = Arc::new(1_u8);
+        let slot = std::sync::RwLock::new(Some(previous.clone()));
+        let cancel = CancellationToken::new();
+        publish_same_arc(&slot, &previous, 2, &cancel).unwrap();
+        assert_eq!(**slot.read().unwrap().as_ref().unwrap(), 2);
+        assert!(publish_same_arc(&slot, &previous, 3, &cancel).is_err());
+        let current = slot.read().unwrap().clone().unwrap();
+        *slot.write().unwrap() = Some(Arc::new(2));
+        assert!(publish_same_arc(&slot, &current, 3, &cancel).is_err());
+        let current = slot.read().unwrap().clone().unwrap();
+        cancel.cancel();
+        assert!(publish_same_arc(&slot, &current, 3, &cancel).is_err());
+        assert_eq!(**slot.read().unwrap().as_ref().unwrap(), 2);
+    }
 
     #[test]
     fn provider_owner_policy_uses_verified_zero_admin_key_binding_without_legacy_permissions() {
@@ -511,6 +732,25 @@ mod anchor_tests {
                 .revoke(a.revision, key.public_key())
                 .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock));
             drop(guard);
+            for (owner, cloud, reason) in [
+                ([0; 32], cloud_digest, ReadinessEvent::OwnerDigestChanged),
+                (owner_digest, [0; 32], ReadinessEvent::CloudDigestChanged),
+            ] {
+                let error = CurrentHostPolicySource::project_ordinary_current(
+                    &owners, &expected, owner, cloud, &resource,
+                )
+                .err()
+                .unwrap();
+                assert_eq!(
+                    error
+                        .get_ref()
+                        .unwrap()
+                        .downcast_ref::<ReadinessRefreshRequired>()
+                        .unwrap()
+                        .0,
+                    reason
+                );
+            }
             let b = owners.revoke(a.revision, key.public_key()).unwrap();
             let bytes_b = store
                 .with_locked(|directory, _| {

@@ -1165,6 +1165,16 @@ Large-text test preference are explicit. All 21 server actors and protected
 records survived. This does not close the full iOS workflow case, in-place
 Copilot resize, touchscreen input, accessibility or combined-release gates.
 
+DT-05 also requires long-lived ordinary readiness renewal in the same protected
+run without disconnecting a healthy relay. Verify unchanged creation policy,
+binding and durable generations; replacement must refuse changed/revoked scope,
+cancelled work and failed native credential persistence. No keychain prompts or
+interactive fallback are permitted. Retain the original error before Refresh;
+an expired prepared observer may refuse admission briefly until replacement.
+This new renewal gate is **UNRUN** natively; prior unchanged-file-digest refusals
+do not prove credential expiry or a root cause. Existing lifetime and no-replay
+checks remain required.
+
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a
 screen or configured right margin, including wrap retained in an inactive
 alternate buffer. The core regression tests automate acceptance of these valid
@@ -6201,6 +6211,12 @@ old legacy items and the failed signed16 cohort unchanged; no automatic ACL
 migration, Always Allow grant, timeout increase or replay is justified by this
 source change. Ad-hoc development and production stable-DR evidence stay distinct.
 
+DT-05 / ADR0016: composed macOS Desktop HOST account renewal must use the selected
+HOST OAuth item in a dedicated no-UI serving process. Verify the same item and
+ACL remain after successful native renewal; deletion/lock/refusal never upserts,
+prompts or publishes a replacement observer. Pure pre-open admission and owned
+blocking-work fixtures do not qualify this native composed path.
+
 ### macOS stop completion after a launchd refusal
 
 Portable service fixtures cover a completed positive nonzero `launchctl bootout`
@@ -6217,3 +6233,18 @@ finished Disabled at the same epoch. That failure is retained and its cause is
 unproved. The new stop-race fixture does not establish that historical cause.
 A signed current-source native Disable/Enable check, including retained shell
 identity and fresh remote I/O, remains required before qualifying this fix.
+
+### Attachment publication policy contention
+
+DT-05 / HOST-03: while a first frontend is active, connect a second persistent
+session on the same host and verify its snapshot precedes activation/input.
+Transient contention during the final protected policy read must preserve the
+single pending native attachment and recheck fresh authority within the existing
+one-second bound. Sustained contention, changed authority or cancellation must
+remain uncertain without replaying native attachment, creating a replacement or
+stopping either shell. Keep both actor/generation identities and fresh I/O.
+
+A controlled real-daemon regression reproduces the original post-native `Busy`
+publication refusal and verifies snapshot adoption with one actor/generation;
+portable tests cover guard retention, final refusals and budget exhaustion.
+This is not installed GUI/provider/vault acceptance or a full matrix result.

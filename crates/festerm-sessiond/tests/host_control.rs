@@ -88,6 +88,75 @@ fn host_control_result_diagnostics_are_content_free_and_variant_exact() {
 }
 
 #[test]
+fn native_attach_publication_waits_for_fresh_policy_without_replaying_attachment() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let created = fixture.ensure(&creation);
+    let control = fixture.control();
+    let mut admissions = 0;
+    let mut initial_grant = None;
+    let pending = retry_busy(|| {
+        control.attach(
+            &fixture.owner,
+            &created.target,
+            &creation.attachment,
+            false,
+            2 * 1024 * 1024,
+            noop_session_event_notifier(),
+            |state| {
+                assert_eq!(state.effect, Effect::Attach);
+                admissions += 1;
+                let grant = (
+                    state.grant.as_ref().map(|grant| {
+                        (
+                            grant.logical.clone(),
+                            grant.owner.clone(),
+                            grant.state,
+                            grant.revision,
+                            grant.remote_access,
+                        )
+                    }),
+                    state.grant_epoch,
+                    state.issuance_epoch,
+                );
+                if let Some(initial) = &initial_grant {
+                    assert_eq!(&grant, initial);
+                } else {
+                    initial_grant = Some(grant);
+                }
+                if admissions == 2 {
+                    // The native connection already exists at publication.
+                    // Only this fresh policy acquisition is contended.
+                    Err(ControlError::Busy)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+    });
+    assert!(
+        pending.is_ok(),
+        "post-native policy contention must not lose the pending snapshot: {}",
+        control_result_diagnostic(&pending)
+    );
+    assert_eq!(
+        admissions, 3,
+        "one initial admission and two publication reads"
+    );
+    let pending = pending.unwrap();
+    assert_eq!(pending.authority.target(), &created.target);
+    let (session, _) = fixture.adopt(&created.target, pending);
+    let running = list_running_sessions_in(&fixture.root).unwrap();
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0].session.pid, created.identity.pid);
+    assert_eq!(
+        running[0].session.created_at_unix_ms,
+        created.target.generation.get()
+    );
+    drop(session);
+}
+
+#[test]
 fn shared_profile_catalog_is_advertised_while_stopped_and_fences_old_revisions() {
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});

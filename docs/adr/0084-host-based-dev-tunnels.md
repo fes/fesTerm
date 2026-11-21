@@ -112,6 +112,24 @@ Use detached launch and platform-specific process/job/service ownership that
 survives those components exiting. This is a lifetime guarantee, not a claim
 about identical OS process ancestry on every platform.
 
+Ordinary provider readiness is renewed by the serving controller outside wire
+admission deadlines. A replacement must retain the original run snapshot,
+owner/cloud digests, account/resource and route, then publish under the current
+protected lease only if the prepared Arc is still the expected one. It cannot
+adopt a newer lifecycle/settings scope. Refreshed credentials persist at the
+same native reference before publication, with no UI or interactive fallback.
+Successful renewal retains the relay and aggregate runtime budgets. Until a
+ready replacement is published, expired observers refuse admission. Failed or
+uncertain renewal cancels/drains owned work and preserves the existing relay
+cleanup and fail-closed result; it never replays refresh or a session operation.
+This closes a source-level cached-readiness gap; it does not establish the cause
+of any historical native refusal with unchanged protected file digests.
+The existing bounded runtime history records closed owner-digest, cloud-digest
+and identity-not-ready (before/after observation) reasons, once per reason and
+prepared observer. In-place renewal records success or error, never each timer
+tick; protected guards are released before logging. No expiry values, provider
+identifiers or error bodies are added, and history grants no readiness authority.
+
 Terminal attachments exist while used. Inventory may briefly query daemon
 metadata without acquiring a frontend lease or displacing a local attachment.
 Do not keep every terminal attached merely to display inventory. Preserve the
@@ -2990,3 +3008,21 @@ Validation impact: deterministic service fixtures cover the absent-job race and
 changed scope, ownership, definition and observation refusals. The original
 signed Mac Disable failure remains causally unproved; current-source native
 lifecycle/I/O qualification remains in the manual registry.
+
+### Fresh publication admission after native attachment
+
+A native attachment may already be connected when its final protected policy
+acquisition encounters `Busy`. Reacquire only that fresh source/policy admission
+within the existing one-second committed-contention budget. Keep the original
+journal transaction, target, ticket and captured admission fence; every successful
+read must revalidate current authority. Never repeat the lease reservation,
+native connection, snapshot adoption or input. Denial, stale/revoked authority,
+cancellation, storage errors and exhausted contention retain the original
+committed-but-not-published outcome. A successful guard remains held through
+pending-attachment publication.
+
+Validation impact: a real daemon regression forces contention at the second,
+post-native admission, then requires one unchanged actor/generation and actual
+snapshot adoption. Pure tests cover guard retention, fresh final refusal and
+expired budgets. The first macOS CI failure remains recorded; controlled native
+fixtures do not qualify provider/vault/GUI remoting or the full client matrix.
