@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "b0abd1e74630522505008d3cd7d0082791a2d8091cd06028bdf7427b0b186a52"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "97973ada580a8db9bf2457fd9360b3fe1ea24e5d6fba691fa036ab1e22ae7119"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -49,6 +49,7 @@ Use for: How is a named session resumed, reconnected, or mirrored for persistenc
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned mirror drains replies while ingesting terminal bytes
 
 Evidence:
+- [`absence_denial_revocation_cancellation_and_generations_remain_distinct`](../../crates/festerm-sessiond/tests/host_control.rs) — Forces post-commit lease contention and recovers the same issued creation, preserving cancellation and generation fences.
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect semantics, and explicit attach rules
 - [`the_conpty_sidecar_is_staged_beside_the_helper_that_loads_it`](../../crates/festerm-sessiond/src/lib.rs) — Checks executable-relative sidecar retention
 - [`recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged`](../../crates/festerm-sessiond/src/main.rs) — Recovery failures do not adopt an attachment or mutate output
