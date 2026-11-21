@@ -3026,3 +3026,24 @@ post-native admission, then requires one unchanged actor/generation and actual
 snapshot adoption. Pure tests cover guard retention, fresh final refusal and
 expired budgets. The first macOS CI failure remains recorded; controlled native
 fixtures do not qualify provider/vault/GUI remoting or the full client matrix.
+
+### Desktop Disable failure evidence
+
+Desktop records a best-effort `host.disable_completion` event when the existing
+Disable controller returns an error. Fields are the finite error kind, optional
+numeric OS code, and an exact closed static-reason allowlist; unrecognized errors
+remain `unknown`. Arbitrary error text, paths, account identifiers and references
+are not recorded. The original owned result passes unchanged to the original
+failure mapper, even when logging fails. No retry, new deadline, authority or
+recovery action is introduced.
+
+The signed Mac `5590426e` run reproduced first-Disable StopRequested failure.
+Its later running-state manager output passes the existing validation predicates;
+the exact-absence reconciliation did not resolve that failure. The observer
+provides evidence for the next bounded fix, not a claim of repair or native
+lifecycle acceptance.
+
+Validation impact: GUI:HOST-04/05; existing result identity and classification,
+closed reason matching, numeric OS evidence, private-value redaction and log
+failure isolation have focused coverage. Actual signed native failure capture
+remains pending.

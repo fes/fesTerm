@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "a39573016c7bcdb06a3fb285b6fd9ea939cb419082ccc49c8ae6f9c643e9be3b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "7c8dc56f016103e1ee94e5ce83278a94587cdb1181cf7511b52f5df02b774069"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -97,3 +97,7 @@ Evidence:
 
 Caveats:
 - No shared GUI fence, ACL migration, Ready claim or automatic retry.
+
+## Disable diagnostics
+
+- [`disable_completion_result`](../../app/festerm/src/desktop_remote_access/native.rs) — Finite errors; original result retained. Native capture pending.

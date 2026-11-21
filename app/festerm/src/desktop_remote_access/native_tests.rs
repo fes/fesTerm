@@ -1534,3 +1534,120 @@ fn mac_host_identity_refusal_has_exact_signing_guidance() {
         observed
     );
 }
+
+#[test]
+fn desktop_remote_access_disable_error_observer_preserves_owned_result_and_log_failure() {
+    struct Success(std::sync::Arc<()>);
+    let access_denied = if cfg!(windows) { 5 } else { 13 };
+    for broken_log in [false, true] {
+        let root = storage::private_test_directory();
+        if broken_log {
+            std::fs::create_dir(root.path().join("worker.log")).unwrap();
+        }
+        let identity = std::sync::Arc::new(());
+        let calls = std::cell::Cell::new(0);
+        let result = disable_completion_result(root.path(), {
+            calls.set(calls.get() + 1);
+            Ok(Success(identity.clone()))
+        })
+        .unwrap();
+        assert!(std::sync::Arc::ptr_eq(&identity, &result.0));
+        assert_eq!(calls.get(), 1);
+        let error = disable_completion_result::<()>(
+            root.path(),
+            Err(io::Error::from_raw_os_error(access_denied)),
+        )
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(access_denied));
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            failure(error),
+            failure(io::Error::from_raw_os_error(access_denied))
+        );
+        if !broken_log {
+            let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+            assert_eq!(log.lines().count(), 1);
+            assert!(log.contains(&format!(
+                "host.disable_completion outcome=error kind=permission_denied os={access_denied} reason=unknown"
+            )));
+        }
+        assert!(!root.path().join("host-runtime.json").exists());
+    }
+}
+
+#[test]
+fn desktop_remote_access_disable_error_observer_redacts_and_preserves_inner_error() {
+    #[derive(Debug)]
+    struct PrivateError(std::sync::Arc<()>);
+    impl std::fmt::Display for PrivateError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("host.service_invalid_observation PRIVATE-token /private/account-reference")
+        }
+    }
+    impl std::error::Error for PrivateError {}
+    let root = storage::private_test_directory();
+    let identity = std::sync::Arc::new(());
+    let error = disable_completion_result::<()>(
+        root.path(),
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            PrivateError(identity.clone()),
+        )),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(std::sync::Arc::ptr_eq(
+        &identity,
+        &error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PrivateError>()
+            .unwrap()
+            .0
+    ));
+    let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+    assert!(log.contains("kind=invalid_data os=none reason=unknown"));
+    assert!(!log.contains("PRIVATE"));
+    assert!(!log.contains("/private"));
+    assert!(!log.contains("host.service_invalid_observation"));
+    assert!(!log.contains("epoch="));
+    assert!(!log.contains("run="));
+}
+
+#[test]
+fn desktop_remote_access_disable_error_observer_localizes_known_failure_without_remapping() {
+    for (kind, message, expected_reason) in [
+        (
+            io::ErrorKind::Other,
+            "host.service_foreign_native_definition",
+            "foreign_native_definition",
+        ),
+        (
+            io::ErrorKind::Other,
+            "host.service_invalid_receipt",
+            "invalid_receipt",
+        ),
+        (
+            io::ErrorKind::WouldBlock,
+            "host.runtime_stop_pending",
+            "runtime_stop_pending",
+        ),
+        (
+            io::ErrorKind::Other,
+            "host.service_native_operation_failed",
+            "native_operation_failed",
+        ),
+    ] {
+        let root = storage::private_test_directory();
+        let expected = failure(io::Error::new(kind, message));
+        let error =
+            disable_completion_result::<()>(root.path(), Err(io::Error::new(kind, message)))
+                .unwrap_err();
+        assert_eq!(error.to_string(), message);
+        assert_eq!(failure(error), expected);
+        let log = std::fs::read_to_string(root.path().join("worker.log")).unwrap();
+        assert!(log.contains(&format!("os=none reason={expected_reason}")));
+        assert!(!log.contains("host.service_"));
+        assert!(!log.contains("host.runtime_"));
+    }
+}

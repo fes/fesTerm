@@ -959,7 +959,7 @@ jobs:
 
   authenticate-helpers:
     name: Authenticate standalone helper artifacts
-    if: needs.validate.outputs.publish == 'true' || needs.validate.outputs.signed_helpers_candidate == 'true'
+    if: needs.validate.outputs.publish == 'true' || needs.validate.outputs.signed_helpers_candidate == 'true' || (github.event_name == 'workflow_dispatch' && needs.validate.outputs.publish == 'false' && needs.validate.outputs.authenticated_helpers == 'true' && needs.validate.outputs.headless_helpers == 'true')
     needs: [validate, helper-bundles, helper-windows-sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -975,7 +975,7 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.source_commit }}
       - name: Require exact candidate source and workflow
-        if: needs.validate.outputs.signed_helpers_candidate == 'true'
+        if: needs.validate.outputs.publish == 'false'
         env:
           WORKFLOW_COMMIT: ${{ github.workflow_sha }}
           RESUME_PUBLISH: ${{ inputs.resume_publish }}
@@ -1089,13 +1089,13 @@ jobs:
             dist/*.manifest.json.sig
           if-no-files-found: error
       - name: Record exact candidate provenance without signing credentials
-        if: needs.validate.outputs.signed_helpers_candidate == 'true'
+        if: needs.validate.outputs.publish == 'false'
         env:
           WORKFLOW_COMMIT: ${{ github.workflow_sha }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: python3 scripts/record_helper_candidate.py --output candidate-helper-provenance.json dist
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        if: needs.validate.outputs.signed_helpers_candidate == 'true'
+        if: needs.validate.outputs.publish == 'false'
         with:
           name: candidate-signed-helpers-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.validate.outputs.source_commit }}
           path: |
