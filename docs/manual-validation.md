@@ -6211,6 +6211,20 @@ old legacy items and the failed signed16 cohort unchanged; no automatic ACL
 migration, Always Allow grant, timeout increase or replay is justified by this
 source change. Ad-hoc development and production stable-DR evidence stay distinct.
 
+HOST-04/05 / initial authorization recovery: with a controlled account and a
+matching signed GUI/HOST cohort, preserve a cancelled/timed-out initial HOST
+sign-in before any resource submission. Use supported recovery to Disabled,
+then review a new Enable and verify normal authorization can proceed with a
+distinct current reference and the same installation/account/host identity.
+Compare references only inside protected metadata and retain booleans/hashes,
+never tokens or native secret values. Confirm exact old journal retention and
+no deletion, recreation or adoption of its unknown native item. Reopening the
+same current ticket must not restore fresh creation authority. History
+collision/corruption/full or interrupted publication must stop without evicting
+evidence or affecting unrelated profiles/actors. The portable memory-vault and
+storage-fault fixtures are not this native qualification; it remains pending
+for this source correction. No Always Allow grant or automatic retry is added.
+
 DT-05 / ADR0016: composed macOS Desktop HOST account renewal must use the selected
 HOST OAuth item in a dedicated no-UI serving process. Verify the same item and
 ACL remain after successful native renewal; deletion/lock/refusal never upserts,

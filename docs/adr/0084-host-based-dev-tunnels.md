@@ -3064,3 +3064,31 @@ catalogs, a subsequent fresh Desktop lifecycle creation, partial journals,
 orphan namespace markers, corruption, consent mismatch, contention and symlinks.
 Native upgrade/setup acceptance remains pending; existing incomplete roots
 require separate manual review and are never automatically repaired.
+
+### New Desktop approval after interrupted initial account authorization
+
+A new, strictly later reviewed Enable can reserve a distinct HOST credential
+reference only for the same installation, Desktop origin, OS user, account and
+protected host identity, with no binding, authentication, submission, resource,
+receipt, creation name or ambiguous legacy retirement. Reusing an old ticket or
+reference never restores one-shot native creation authority. Existing
+authenticated reuse and Headless behavior retain their previous semantics.
+
+Under the existing operation and lifecycle locks, a bounded private history
+first preserves the exact prior record bytes, then the current journal publishes
+the new reference. Only success of both durable writes returns a fresh live
+handle. Crash/uncertainty after the first write retains evidence and refuses a
+collision; crash/uncertainty after the second leaves a current reference that
+reopens without creation authority. There is no automatic rollback, pruning,
+native-item lookup/deletion, old-reference adoption or token export. The private
+history schema is separate from legacy resource-retirement evidence and grants
+no authority. Record v1 remains unchanged; history bounds/compatibility are in
+[ADR 0016](0016-native-secret-store-boundary.md#fresh-desktop-host-purpose-wiring).
+
+Validation impact: GUI:HOST-04/05 and ADR0016. Portable fixtures cover distinct
+reference creation after supported recovery, retained unknown native values,
+same-ticket/reopen refusal, unchanged authenticated/Headless behavior, scope and
+legacy refusal, count/byte limits, corruption/collisions and errors before/after
+actual archive/current publication. These tests do not establish current-source
+native Keychain or provider authorization success; the corresponding manual
+initial-authorization recovery gate remains open.

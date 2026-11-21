@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "72964da6642e9e967becb7a9a34320bdcc5706db6169d75ca7c61954b03bb7a2"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "0a77fc6842da58bdb3c008485c29875d4346e18df8fc7509b093f28da31c2c19"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -100,6 +100,6 @@ Evidence:
 - [`host_cloud_fresh_creation_is_consumed_before_native_effect_and_never_rearmed`](../../crates/festerm-host-setup/src/cloud.rs) — Checks one-call creation.
 
 Caveats:
-- Existing pending receipts never reauthorize create; no native acceptance is claimed.
+- Old references never rearm; new Desktop approval reserves a distinct reference after private retention.
 - Ad-hoc self and production signed-DR qualification stay distinct.
 - No ACL migration, upsert or hostile same-user write-isolation claim.
