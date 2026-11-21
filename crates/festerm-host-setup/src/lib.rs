@@ -19,10 +19,23 @@ pub mod cloud;
     feature = "native-services"
 ))]
 pub mod controller;
+#[cfg(all(
+    target_os = "macos",
+    feature = "cloud",
+    feature = "host-runtime",
+    feature = "native-services"
+))]
+pub mod desktop_start;
+
 #[cfg(feature = "cloud")]
 pub mod diagnostics;
 #[cfg(feature = "owner-enrollment")]
 pub mod enrollment;
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "owner-enrollment", feature = "cloud")
+))]
+mod host_items;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
 #[cfg(all(

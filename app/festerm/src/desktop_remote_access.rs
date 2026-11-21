@@ -294,6 +294,8 @@ pub enum Failure {
     PrivateStorage,
     FileAccessReview,
     FileHelperUnsupported,
+    MacHostHelperUnsupported,
+    MacHostIdentityUnsupported,
     SignedBundle,
     BundleNotPublished,
     AcquisitionUnavailable,
@@ -341,6 +343,8 @@ impl Failure {
             Self::FileHelperUnsupported => {
                 "This host component does not support remote file access."
             }
+            Self::MacHostIdentityUnsupported => "Use matching signed app and host components before enabling remote access.",
+            Self::MacHostHelperUnsupported => "Update the host component before enabling remote access.",
             Self::PlatformPrerequisite => {
                 "Host setup is not qualified for this startup policy or platform."
             }
@@ -366,6 +370,8 @@ impl Failure {
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
             Self::FileAccessReview => "File access requires an absolute folder and connections through your GitHub account. Disable remote access before changing the folder or permissions, then review Enable again. Current protected settings were retained.",
+            Self::MacHostIdentityUnsupported => "This app and the authenticated host component must be signed with Apple-issued Developer ID Application certificates from the same developer team. Use the official signed fesTerm app. Ad-hoc development builds cannot share the required protected storage. No account sign-in or host setup was started.",
+            Self::MacHostHelperUnsupported => "Select a matching signed host component with macOS startup support. If already installed, disable remote access and use Update before reviewing Enable. No automatic fallback or startup is attempted.",
             Self::FileHelperUnsupported => "Obtain a matching signed host component with remote file access support, or explicitly turn file access off while remote access is disabled. Remote access was not enabled and no replacement was applied.",
             Self::SignedBundle => "This build's authenticated native host bundle was refused. Changed bytes, invalid signatures and unsupported publishers are not installed. No older or unsigned fallback is attempted.",
             Self::BundleNotPublished => "The exact current-version native host bundle is not published. Genuine schema-2 release assets remain unqualified. Nothing is installed; retry explicitly after publication. No older/latest/schema-1 fallback.",

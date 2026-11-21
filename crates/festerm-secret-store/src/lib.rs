@@ -989,3 +989,9 @@ mod native {
         Err(SecretStoreError::Unsupported)
     }
 }
+
+/// Selected macOS HOST item mechanism; ordinary account stores are unchanged.
+#[cfg(target_os = "macos")]
+mod host_items;
+#[cfg(target_os = "macos")]
+pub use host_items::{HostSecretPurpose, MacHostCreationContext, MacHostSecretItem};

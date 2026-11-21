@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "codex-source-verified", "sources": "a12253392fe6bafed1ec437cab3926186370f126711a5b1725ecd2b0e3cc25c7"} -->
+<!-- agent-navigation: {"domain": "automation", "generator": "2", "model": "codex-source-verified", "sources": "b189f06d0412427046b826468cc1b127697caf96703dbc49f9872d77557405fa"} -->
 # Automation, workflows, and MCP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

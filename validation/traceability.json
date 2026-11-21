@@ -747,6 +747,7 @@
         "registered_workflow_review_uses_its_digest_and_removal_is_separate",
         "registered_workflow_actions_wrap_at_narrow_width",
         "workflow_registration_opens_automation_activity_directly",
+        "inline_host_workspace_preserves_pending_automation_settings_until_settings_renders",
         "safe_mode_dominates_saved_automation_without_rewriting_it",
         "safe_mode_hides_javascript_developer_commands",
         "safe_mode_restart_reuses_session_and_document_confirmation",
@@ -5388,11 +5389,39 @@
       ],
       "decisions": [
         "ADR-0003",
-        "ADR-0016"
+        "ADR-0016",
+        "ADR-0084"
       ],
       "automated_tests": [
         "rejects_secret_fields_and_values_without_echoing_them",
-        "failed_workspace_save_retains_configuration_without_path_or_content_leakage"
+        "failed_workspace_save_retains_configuration_without_path_or_content_leakage",
+        "mac_host_item_policy_distinguishes_any_app_empty_and_exact_two",
+        "mac_host_identity_compatibility_requires_developer_id_same_team",
+        "mac_host_item_policy_checks_every_read_entry_and_bounds",
+        "mac_host_item_creation_only_follows_proven_absence",
+        "mac_host_item_update_has_no_create_fallback_and_preserves_primary_errors",
+        "mac_host_owned_partial_error_releases_retained_native_output",
+        "host_item_creation_binding_retains_only_selected_purpose_and_reference",
+        "host_item_errors_remain_finite_and_no_reference_is_a_display_value",
+        "host_cloud_fresh_creation_is_consumed_before_native_effect_and_never_rearmed",
+        "host_cloud_fresh_creation_publishes_final_authentication_after_selected_native_create",
+        "protected_owner_fresh_native_creation_prepares_before_effect_and_refuses_interrupted_missing",
+        "native_service_parent_revocation_after_credential_read_prevents_unsent_start",
+        "native_service_dedicated_guard_drains_late_manager_before_process_completion",
+        "desktop_start_reply_is_closed_bounded_and_never_claims_readiness",
+        "desktop_start_full_scope_digest_changes_with_consent",
+        "desktop_start_cancel_closes_parent_pipe_and_drains_the_owned_child",
+        "headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses",
+        "host_owner_setup_missing_mac_helper_capability_refuses_before_ticket_or_sign_in",
+        "host_owner_setup_incompatible_mac_identity_refuses_before_ticket_or_sign_in",
+        "protected_owner_desktop_stage_less_initialization_refuses_before_any_receipt",
+        "desktop_start_process_fence_refusal_precedes_selected_store_and_effects",
+        "mac_host_access_capability_is_static_and_separate_from_existing_reply",
+        "desktop_start_non_macos_owner_routing_refuses_without_state_access",
+        "mac_host_helper_capability_refusal_has_exact_update_guidance",
+        "mac_host_identity_refusal_has_exact_signing_guidance",
+        "native_service_dedicated_start_reuses_existing_expired_guard_without_reset",
+        "native_service_held_start_guard_reopen_reaches_registration_without_reacquiring"
       ],
       "manual_scenarios": [
         "NP-03",
@@ -6272,6 +6301,9 @@
         "host_session_table_deduplicates_logical_ids_keeps_unknown_and_creation_off_inert",
         "new_host_shell_discards_selected_recipe_launch_and_uses_persistent_host_default",
         "narrow_host_browser_keeps_new_shell_actions_and_fields_inside_viewport",
+        "full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window",
+        "inline_host_workspace_preserves_pending_automation_settings_until_settings_renders",
+        "profile_host_selection_keeps_its_modal_owner",
         "account_switch_keeps_directory_open_retires_old_authority_and_selects_new_account_host",
         "saved_profile_account_switch_retires_profile_request_and_keeps_directory_open",
         "mobile_host_session_shortcuts_bind_exact_host_logical_and_generation_without_launch",
@@ -6820,7 +6852,8 @@
         "docs/native-host-services.md#native-host-process-recovery",
         "docs/manual-validation.md#native-host-process-recovery-730",
         "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
-        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision",
+        "docs/adr/0084-host-based-dev-tunnels.md#exact-macos-stop-completion-after-a-native-refusal"
       ],
       "decisions": [
         "ADR-0084",
@@ -7170,7 +7203,9 @@
         "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled",
         "desktop_remote_access_native_timeout_classification_is_exact_and_preserves_contention",
         "desktop_remote_access_native_timeout_completion_keeps_primary_result_and_recovery",
-        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery"
+        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery",
+        "native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence",
+        "native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

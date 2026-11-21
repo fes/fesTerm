@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "6c99e4baf5f060f31d41f27e3c155322357644f0806a61674ca0f1528ee58bc0"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "752b6d5df440e03e24b4be9ea39571bd3e9eccf8efc71f2bb100e72abe413ffe"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -48,6 +48,7 @@ Use for: When observing or starting a native service without confusing process s
 Evidence:
 - [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition state and trusts direct process observation
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies service readiness
+- [`native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence`](../../crates/festerm-host-setup/src/services/tests.rs) — Completes failed bootout only after exact fresh absence proof
 
 Caveats:
 - Running is not readiness
@@ -67,3 +68,15 @@ Evidence:
 Caveats:
 - Portable metadata is intentionally public-only
 - Close and cancel remain distinct lifecycle commands
+
+## Dedicated Mac start
+
+Use for: Exact Desktop start through the registered helper.
+
+- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime.
+
+Evidence:
+- [`native_service_dedicated_guard_drains_late_manager_before_process_completion`](../../crates/festerm-host-setup/src/services/native.rs) — Holds the original context through native drain.
+
+Caveats:
+- Submitted uncertainty retains the GUI permit; Running is not Ready.

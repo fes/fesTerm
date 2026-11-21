@@ -88,6 +88,10 @@ pub(crate) trait SetupBoundary {
         CloudHostAdapter::new(store)
     }
 
+    fn host_item_admission(&self, _store: &Store, _stage: &TrustedStage) -> io::Result<()> {
+        Ok(())
+    }
+
     async fn sign_in(
         &self,
         cloud: &CloudHostAdapter<'_>,
@@ -95,6 +99,25 @@ pub(crate) trait SetupBoundary {
         cancel: &CancellationToken,
         prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
     ) -> io::Result<()>;
+    async fn sign_in_at_stage(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+        _stage: &TrustedStage,
+    ) -> io::Result<()> {
+        self.sign_in(cloud, foreground, cancel, prompt).await
+    }
+    fn initialize_owner(
+        &self,
+        owners: &OwnerEnrollment<'_>,
+        account: String,
+        epoch: u64,
+        _stage: &TrustedStage,
+    ) -> io::Result<EnrollmentSnapshot> {
+        owners.initialize_at_epoch(Path::new(HOST_IDENTITY_FILE), account, epoch)
+    }
     async fn provision(
         &self,
         cloud: &CloudHostAdapter<'_>,
@@ -134,6 +157,46 @@ pub(crate) trait SetupBoundary {
 struct NativeBoundary;
 
 impl SetupBoundary for NativeBoundary {
+    fn host_item_admission(&self, store: &Store, stage: &TrustedStage) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        if store.snapshot()?.origin == crate::lifecycle::Origin::Desktop {
+            stage.require_mac_host_access()?;
+            stage.require_mac_host_creation_identity()?;
+        }
+        let _ = (store, stage);
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    async fn sign_in_at_stage(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+        stage: &TrustedStage,
+    ) -> io::Result<()> {
+        if cloud.is_desktop()? {
+            cloud
+                .sign_in_desktop(foreground, cancel, prompt, stage)
+                .await
+        } else {
+            cloud.sign_in(foreground, cancel, prompt).await
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn initialize_owner(
+        &self,
+        owners: &OwnerEnrollment<'_>,
+        account: String,
+        epoch: u64,
+        stage: &TrustedStage,
+    ) -> io::Result<EnrollmentSnapshot> {
+        if owners.is_desktop()? {
+            owners.initialize_desktop_at_epoch(Path::new(HOST_IDENTITY_FILE), account, epoch, stage)
+        } else {
+            owners.initialize_at_epoch(Path::new(HOST_IDENTITY_FILE), account, epoch)
+        }
+    }
     fn complete_setup(
         &self,
         store: &Store,
@@ -286,6 +349,7 @@ pub(crate) async fn setup_scoped_with(
         return Err(refused("host.foreground_scope_changed"));
     }
     stage.sessiond_path()?;
+    boundary.host_item_admission(store, stage)?;
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
     }
@@ -310,7 +374,7 @@ pub(crate) async fn setup_scoped_with(
             }
             let foreground = cloud.foreground(&ticket, account)?;
             boundary
-                .sign_in(&cloud, &foreground, cancel, prompt)
+                .sign_in_at_stage(&cloud, &foreground, cancel, prompt, stage)
                 .await?;
             boundary.provision(&cloud, &foreground, cancel).await?;
             ticket.epoch()
@@ -358,7 +422,7 @@ pub(crate) async fn setup_scoped_with(
         Ok(existing) => existing,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             observe_owner_result(OwnerStage::Initialization, &mut observe, || {
-                owners.initialize_at_epoch(Path::new(HOST_IDENTITY_FILE), account, expected_epoch)
+                boundary.initialize_owner(&owners, account, expected_epoch, stage)
             })?
         }
         Err(error) => return Err(error),

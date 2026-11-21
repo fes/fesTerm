@@ -449,7 +449,17 @@ lock; ordinary discovery releases its read lock before native connection.
 
 Platform-sensitive file authority remains isolated in the two ADR 0034
 security crates. `festerm-unix-security` owns no-follow opens, private staging,
-metadata snapshots and no-overwrite publication. `festerm-windows-security`
+metadata snapshots and no-overwrite publication. Its macOS-only selected
+Keychain module additionally owns public native handles and exact-two-code-object
+access capture/create-new/retained-update mechanisms (ADR0016/0084). HOST
+consent, authenticated stage selection and lifecycle policy remain above this
+boundary; the unsafe-free secret-store facade fixes namespace and opaque item
+binding. Desktop HOST owner-anchor and OAuth paths select this facade; ordinary
+account stores remain unchanged. Fresh creation requires the actual GUI and
+selected HOST to have Apple-issued Developer ID Application non-ad-hoc signatures from the same Team,
+checked before setup reserves state or starts OAuth. Exact trusted-app read ACLs
+remain separate from the legacy creator-partition prerequisite.
+`festerm-windows-security`
 owns native handle-relative creation/publication and complete Windows access
 policy handling in addition to named-pipe DACL support. Each named-pipe
 instance is created while the daemon token temporarily has a current-user-only
@@ -1042,3 +1052,14 @@ configuration; iOS persistent native storage remains Unsupported. This changes
 the mobile composition dependency graph and requires the ADR/architecture
 review before merge. It does not accept device networking, native input or
 physical iOS feasibility. Desktop contracts are unchanged.
+
+
+For fresh macOS Desktop HOST credentials, host-setup owns the purpose and live
+creation reservation while the unsafe-free secret-store facade owns namespace
+and native-handle use. The selected immutable authenticated stage supplies the
+second application identity; ordinary account stores are unchanged. Actual
+Desktop start crosses a fixed one-shot helper command, not a generic broker:
+the registered helper owns the existing native lease/deadline and process-wide
+no-UI fence, the GUI owns exact snapshot/nonce correlation and parent lifetime,
+and submitted uncertainty retains independent lifecycle revocation. See
+[ADR0016](docs/adr/0016-native-secret-store-boundary.md) and ADR0084.

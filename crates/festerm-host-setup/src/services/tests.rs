@@ -2054,6 +2054,92 @@ fn native_service_linux_failed_cleanup_retries_removed_definition_and_resets_onl
 
 #[cfg(unix)]
 #[test]
+fn native_service_held_start_guard_reopen_reaches_registration_without_reacquiring() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let services = services(root.path(), &store, Platform::Linux);
+    let guard = services.lease().unwrap().drain_before_drop();
+    let error = services
+        .reopen_stage_admitted(snapshot.epoch, Phase::Provisioned, &guard)
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "host.service_not_installed",
+        "held guard must reach actual registration boundary rather than nested Busy"
+    );
+    assert!(services.runner.state.borrow().calls.is_empty());
+    drop(guard);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_dedicated_start_reuses_existing_expired_guard_without_reset() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    services.runner.state.borrow_mut().calls.clear();
+    let guard = services.lease().unwrap().drain_before_drop();
+    native::expire_operation_for_test();
+    let error = services
+        .start_admitted(
+            &stage,
+            snapshot.epoch,
+            native::check_operation_for_test,
+            || Ok(()),
+            guard,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "host.service_native_timeout");
+    assert!(
+        services.runner.state.borrow().calls.is_empty(),
+        "expired original operation cannot submit manager work"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_parent_revocation_after_credential_read_prevents_unsent_start() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    let revoked = std::cell::Cell::new(false);
+    services.runner.state.borrow_mut().calls.clear();
+    let error = services
+        .start_checked(
+            &stage,
+            snapshot.epoch,
+            || {
+                revoked.set(true);
+                Ok(())
+            },
+            || {
+                if revoked.get() {
+                    Err(refused("host.cloud_cancelled"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "host.cloud_cancelled");
+    assert!(
+        services.runner.state.borrow().calls.is_empty(),
+        "no manager request after revoked read"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn native_service_start_reconciles_bounded_transitions_without_duplicate_start() {
     let root = storage::private_test_directory();
     let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
@@ -2912,5 +2998,196 @@ fn native_service_start_credential_observations_use_ni_reads_and_keep_locked_ref
         assert!(!log.contains("github:1234"));
         assert!(!log.contains("run="));
         assert!(!log.contains(&active.state.display().to_string()));
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum FailedBootout {
+    Absent,
+    Running,
+    Stopped,
+    ForeignDefinition,
+    MissingDefinition,
+    ChangedReceipt,
+    ChangedEpoch,
+    MalformedObservation,
+    ObservationError,
+    ChangedEpochAfterObservation,
+    ForeignDefinitionAfterObservation,
+    SignalExit,
+    InconsistentExit,
+    ExecutionError,
+}
+
+#[cfg(unix)]
+struct FailedBootoutRunner<'a> {
+    native: FakeRunner,
+    store: &'a Store,
+    mode: FailedBootout,
+    attempted: std::cell::Cell<bool>,
+}
+
+#[cfg(unix)]
+impl CommandRunner for FailedBootoutRunner<'_> {
+    fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+        let mut output = self.native.execute(request)?;
+        let NativeRequest::Process { args, .. } = request else {
+            return Ok(output);
+        };
+        if args.iter().any(|arg| arg == "bootout") {
+            self.attempted.set(true);
+            match self.mode {
+                FailedBootout::Running | FailedBootout::Stopped => {
+                    let mut state = self.native.state.borrow_mut();
+                    state.registered = true;
+                    state.running = matches!(self.mode, FailedBootout::Running);
+                }
+                FailedBootout::ForeignDefinition => {
+                    std::fs::write(&self.native.definition, b"foreign")?;
+                }
+                FailedBootout::MissingDefinition => {
+                    std::fs::remove_file(&self.native.definition)?;
+                }
+                FailedBootout::ChangedReceipt => {
+                    let mut record: Registration =
+                        serde_json::from_slice(&std::fs::read(&self.native.receipt)?)?;
+                    record.removed = true;
+                    let directory =
+                        storage::private_directory(self.native.receipt.parent().unwrap(), false)?;
+                    storage::replace_private(
+                        &directory,
+                        Path::new(RECORD),
+                        &serde_json::to_vec(&record)?,
+                    )?;
+                }
+                FailedBootout::ChangedEpoch => self.store.revoke()?,
+                FailedBootout::ExecutionError => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "fixture.bootout_execution_failure",
+                    ));
+                }
+                _ => {}
+            }
+            output.success = false;
+            output.code = match self.mode {
+                FailedBootout::SignalExit => -1,
+                FailedBootout::InconsistentExit => 0,
+                _ => 3,
+            };
+        } else if self.attempted.get() && args.first().is_some_and(|arg| arg == "print") {
+            match self.mode {
+                FailedBootout::ChangedEpochAfterObservation => self.store.revoke()?,
+                FailedBootout::ForeignDefinitionAfterObservation => {
+                    std::fs::write(&self.native.definition, b"foreign")?;
+                }
+                FailedBootout::MalformedObservation => {
+                    output.success = true;
+                    output.code = 0;
+                    output.stdout = b"unqualified manager output".to_vec();
+                }
+                FailedBootout::ObservationError => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "fixture.observe",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(output)
+    }
+}
+
+#[cfg(unix)]
+fn failed_bootout_fixture<'a>(
+    store: &'a Store,
+    base: Services<'a, FakeRunner>,
+    mode: FailedBootout,
+) -> Services<'a, FailedBootoutRunner<'a>> {
+    Services {
+        store,
+        state: base.state,
+        context: base.context,
+        runner: FailedBootoutRunner {
+            native: base.runner,
+            store,
+            mode,
+            attempted: std::cell::Cell::new(false),
+        },
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let base = services(root.path(), &store, Platform::Macos);
+    base.install(&stage, snapshot.epoch).unwrap();
+    base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    let receipt = std::fs::read(&base.runner.receipt).unwrap();
+    let manager = failed_bootout_fixture(&store, base, FailedBootout::Absent);
+    let observed = manager.stop(revoked.epoch).unwrap();
+    assert_eq!(observed.process, ProcessState::Absent);
+    assert_eq!(store.snapshot().unwrap(), revoked);
+    assert_eq!(
+        std::fs::read(&manager.runner.native.receipt).unwrap(),
+        receipt
+    );
+    assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request|
+        matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+    ).count(), 1);
+    store
+        .confirm_stopped(revoked.epoch, revoked.binding.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof() {
+    for mode in [
+        FailedBootout::Running,
+        FailedBootout::Stopped,
+        FailedBootout::ForeignDefinition,
+        FailedBootout::MissingDefinition,
+        FailedBootout::ChangedReceipt,
+        FailedBootout::ChangedEpoch,
+        FailedBootout::MalformedObservation,
+        FailedBootout::ObservationError,
+        FailedBootout::ChangedEpochAfterObservation,
+        FailedBootout::ForeignDefinitionAfterObservation,
+        FailedBootout::SignalExit,
+        FailedBootout::InconsistentExit,
+        FailedBootout::ExecutionError,
+    ] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Macos);
+        base.install(&stage, snapshot.epoch).unwrap();
+        base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+        store.revoke().unwrap();
+        let revoked = store.snapshot().unwrap();
+        let manager = failed_bootout_fixture(&store, base, mode);
+        let error = manager.stop(revoked.epoch).err().unwrap();
+        if matches!(mode, FailedBootout::ExecutionError) {
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            assert_eq!(error.to_string(), "fixture.bootout_execution_failure");
+        } else {
+            assert_eq!(error.to_string(), "host.service_native_operation_failed");
+        }
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request|
+            matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+        ).count(), 1);
     }
 }

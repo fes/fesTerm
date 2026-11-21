@@ -2915,3 +2915,78 @@ existing prompt, finish prompt-free and preserve state. This change grants no AC
 access or automatic retry, and does not resolve #816 or provide signed/native
 qualification. Existing release controls and owner authorization govern later
 exact-candidate runs.
+
+### Fresh macOS HOST item mechanism (#816)
+
+The additive ADR0016 facade and macOS module in `festerm-unix-security` provide
+owned public native handles for one bound fresh owner-anchor or HOST-OAuth
+reference. Creation captures this executing GUI plus a caller-authenticated
+immutable HOST and verifies exact-two-app plaintext-read trust and no automatic
+HOST ACL administration. Both actual GUI and authenticated HOST require valid
+non-ad-hoc Developer ID Application signatures with the same Team identifier before fresh
+setup reserves state or starts OAuth. The trusted-app list is independent of
+legacy partition admission; matching signatures avoid the observed creator-cdhash
+versus HOST-Team mismatch without editing any existing ACL. Native item access
+and production stable-DR upgrade evidence remain distinct. Supported updates use
+the retained selected item and never upsert or repair old access policy.
+
+Host-setup supplies authenticated stage/full-snapshot consent and the existing
+reserved-reference/publication order. The mechanism itself grants no setup,
+activation or native-start authority; those remain in the purpose/start boundary
+below. No secret or opaque reference enters diagnostics.
+The existing same-user account boundary is retained; hostile coordinated native
+anchor plus policy replacement is not newly claimed resisted. Standard ENCRYPT
+rights do not become an all-app plaintext-read grant.
+
+### Fresh macOS HOST purpose and start boundary (#816)
+
+The follow-up selects the ADR0016 facade only for Desktop owner-anchor and
+HOST OAuth purposes. Creation uses the freshly reserved-reference rules above;
+reloaded/ambiguous pending state requires explicit reconciliation, never native
+absence as new creation consent. Initialization keeps INITIALIZING and prepared
+zero-grant policy durable before native creation and final publication afterward.
+Cloud sign-in consumes its live reservation immediately before native creation;
+final authenticated publication follows the native effect. Retained updates
+reopen the exact logical item without an upsert or ACL repair.
+
+The authenticated helper advertises a separate static `mac-host-access`
+capability. A fixed `start-desktop` command binds installation, epoch, full
+snapshot digest and nonce; it verifies its registered executable and acquires
+the existing service lease and unchanged native deadline inside the child,
+before publisher/self authentication. The same guard enters the private start
+core without reacquisition or deadline reset; prerequisite failures also drain
+retained native workers before helper exit.
+The GUI holds no service lease while waiting. A private EOF lifetime pipe
+revokes unsent effects after credential reads and immediately before native
+requests. Submitted native-manager effects remain uncertain on timeout or lost
+reply; the owned carrier drains the actual child, and existing independent
+Disable/compensation remains responsible for revocation. This adds no
+lock-through-spawn linearization claim, automatic retry or endpoint-Ready claim.
+The dedicated start and serving processes disable Keychain UI before stores;
+foreground GUI getters and ordinary accounts retain their existing UI behavior.
+No readiness renewal/maintenance/history implementation is imported here.
+
+#### Validation impact
+
+Bounded semantic ACL fixtures distinguish null/all-app, empty/admin and exact
+two identities, refuse broader read entries, and exercise missing/collision/error
+create/update ordering. A CoreFoundation-only partial-output test checks RAII
+release without opening Keychain. Facade fixtures retain exact purpose/reference
+and finite errors. Actual selected-item native Keychain effects, read/update
+access by GUI/HOST, denied unrelated plaintext read/automatic administration,
+missing/locked/deleted behavior and stable-DR upgrade remain opt-in Mac tests.
+This source enabler does not resolve #816 or qualify a live Enable; existing
+retained R5 items are untouched and receive no automatic ACL migration.
+
+### Exact macOS stop completion after a native refusal
+
+A completed positive nonzero bootout result may be reconciled only by one fresh
+native Absent observation, with the original StopRequested snapshot, exact
+registration and valid private definition checked before and after observation.
+Execution errors and every unqualified proof preserve the original failure. No
+bootout replay, new timeout, PID kill or registration change is introduced.
+
+Validation impact: deterministic service fixtures cover the absent-job race and
+changed scope, ownership, definition and observation refusals. The original
+signed Mac Disable failure remains causally unproved; current-source native
+lifecycle/I/O qualification remains in the manual registry.

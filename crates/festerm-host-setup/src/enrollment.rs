@@ -454,6 +454,7 @@ pub struct OwnerEnrollment<'a> {
     installation: &'a Store,
     vault: Box<dyn SecretStore>,
     storage: OwnerStorage,
+    require_stage_creation: bool,
 }
 
 /// Scoped protected policy guard for the backend's atomic admission callback.
@@ -584,7 +585,21 @@ impl Store {
                 Err(error) => return Err(error),
             }
             let vault: Box<dyn SecretStore> = match selected {
-                OwnerStorage::NativeVault => native_store().map_err(vault_error)?,
+                OwnerStorage::NativeVault => {
+                    #[cfg(target_os = "macos")]
+                    if installation.origin == Origin::Desktop {
+                        Box::new(
+                            crate::host_items::HostPurposeStore::open(
+                                festerm_secret_store::HostSecretPurpose::OwnerAnchor,
+                            )
+                            .map_err(vault_error)?,
+                        )
+                    } else {
+                        native_store().map_err(vault_error)?
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    native_store().map_err(vault_error)?
+                }
                 OwnerStorage::HeadlessProtectedFile => Box::new(
                     festerm_tunnel_bridge::owner_auth::ExplicitHeadlessFileStore::select(
                         directory,
@@ -596,12 +611,25 @@ impl Store {
                 installation: self,
                 vault,
                 storage: selected,
+                require_stage_creation: cfg!(target_os = "macos")
+                    && installation.origin == Origin::Desktop
+                    && selected == OwnerStorage::NativeVault,
             })
         })
     }
 }
 
 impl OwnerEnrollment<'_> {
+    #[cfg(all(
+        target_os = "macos",
+        feature = "native-services",
+        feature = "cloud",
+        feature = "host-runtime"
+    ))]
+    pub(crate) fn is_desktop(&self) -> io::Result<bool> {
+        Ok(self.installation.snapshot()?.origin == Origin::Desktop)
+    }
+
     pub(crate) fn private_session_policy(&self, state: &Path) -> io::Result<PrivateSessionPolicy> {
         self.session_policy_using(state, AnchorRead::Foreground)
     }
@@ -735,7 +763,74 @@ impl OwnerEnrollment<'_> {
         migration: Option<&str>,
         publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
+        if self.require_stage_creation {
+            return Err(refused("owner.authenticated_host_stage_required"));
+        }
+        self.initialize_using(
+            identity_file,
+            account,
+            expected_epoch,
+            migration,
+            publish_reference,
+            false,
+            |reference, secret| {
+                self.vault
+                    .create_reserved(reference, secret)
+                    .map_err(|error| self.storage_error(error))
+            },
+        )
+    }
+
+    #[cfg(all(
+        target_os = "macos",
+        feature = "native-services",
+        feature = "cloud",
+        feature = "host-runtime"
+    ))]
+    pub(crate) fn initialize_desktop_at_epoch(
+        &self,
+        identity_file: &Path,
+        account: String,
+        epoch: u64,
+        stage: &crate::services::TrustedStage,
+    ) -> io::Result<EnrollmentSnapshot> {
+        self.initialize_using(
+            identity_file,
+            account,
+            Some(epoch),
+            None,
+            |directory, reference| {
+                protected_state::publish_new(directory, Path::new(ANCHOR), reference)
+            },
+            true,
+            |reference, secret| {
+                stage.create_host_item(
+                    festerm_secret_store::HostSecretPurpose::OwnerAnchor,
+                    reference,
+                    secret,
+                )
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_using(
+        &self,
+        identity_file: &Path,
+        account: String,
+        expected_epoch: Option<u64>,
+        migration: Option<&str>,
+        publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+        require_fresh: bool,
+        create: impl FnOnce(&SecretReference, &SecretBytes) -> io::Result<()>,
+    ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
+            if require_fresh
+                && (installation.origin != Origin::Desktop
+                    || self.storage != OwnerStorage::NativeVault)
+            {
+                return Err(refused("owner.desktop_native_storage_required"));
+            }
             if expected_epoch.is_some_and(|epoch| installation.epoch != epoch) {
                 return Err(refused("owner.stale_operation"));
             }
@@ -791,6 +886,9 @@ impl OwnerEnrollment<'_> {
             record.validate(installation)?;
             let reference = match initializing_reference(directory, installation, self.storage) {
                 Ok(reference) => {
+                    if require_fresh {
+                        return Err(refused("owner.initialization_requires_reconciliation"));
+                    }
                     match self.vault.get(&reference) {
                         Err(festerm_secret_store::SecretStoreError::Missing) => {}
                         Ok(_) => {
@@ -820,9 +918,7 @@ impl OwnerEnrollment<'_> {
             };
             self.prepare(directory, &record, [0; 32])?;
             let anchor = PolicyAnchor::for_record(&record, [0; 32])?;
-            self.vault
-                .create_reserved(&reference, &SecretBytes::copy_from_slice(&anchor.encode()))
-                .map_err(|error| self.storage_error(error))?;
+            create(&reference, &SecretBytes::copy_from_slice(&anchor.encode()))?;
             // The exact reference and prepared zero-grant record are durable
             // before native creation. No failure can orphan an unknown reference.
             publish_reference(directory, reference.to_persisted_string().as_bytes())?;
@@ -1556,6 +1652,7 @@ pub(crate) mod tests {
             installation,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         }
     }
 
@@ -1618,6 +1715,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let expected = store.snapshot().unwrap();
@@ -1659,6 +1757,7 @@ pub(crate) mod tests {
                 installation: &store,
                 vault: Box::new(SharedVault(vault)),
                 storage: OwnerStorage::NativeVault,
+                require_stage_creation: false,
             };
             let initial = initialize(&enrollment);
             let mut expected = store.snapshot().unwrap();
@@ -1715,12 +1814,111 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn protected_owner_desktop_stage_less_initialization_refuses_before_any_receipt() {
+        let (root, store, vault) = setup_origin(Origin::Desktop);
+        let mut enrollment = fixture_owners(&store, vault.clone());
+        enrollment.require_stage_creation = true;
+        let epoch = store.snapshot().unwrap().epoch;
+        for error in [
+            enrollment
+                .initialize_at_epoch(Path::new("host-identity"), "github:1234".into(), epoch)
+                .unwrap_err(),
+            enrollment
+                .initialize_for_migration("not-a-reservation", "github:1234".into())
+                .unwrap_err(),
+        ] {
+            assert_eq!(error.to_string(), "owner.authenticated_host_stage_required");
+        }
+        for name in [INITIALIZING, PREPARED, ANCHOR, RECORD] {
+            assert!(!root.path().join("installation").join(name).exists());
+        }
+        // The stage-bound controller seam bypasses the unsupported legacy
+        // entrypoint only with an explicit one-call fresh creator.
+        let record = enrollment
+            .initialize_using(
+                Path::new("host-identity"),
+                "github:1234".into(),
+                Some(epoch),
+                None,
+                |directory, reference| {
+                    protected_state::publish_new(directory, Path::new(ANCHOR), reference)
+                },
+                true,
+                |reference, secret| {
+                    vault
+                        .memory
+                        .create_reserved(reference, secret)
+                        .map_err(vault_error)
+                },
+            )
+            .unwrap();
+        assert!(record.keys.is_empty());
+        assert_eq!(enrollment.snapshot().unwrap(), record);
+    }
+
+    #[test]
+    fn protected_owner_fresh_native_creation_prepares_before_effect_and_refuses_interrupted_missing(
+    ) {
+        let (_root, store, vault) = setup_origin(Origin::Desktop);
+        let enrollment = fixture_owners(&store, vault.clone());
+        let epoch = store.snapshot().unwrap().epoch;
+        let error = enrollment
+            .initialize_using(
+                Path::new("host-identity"),
+                "github:1234".into(),
+                Some(epoch),
+                None,
+                |_, _| panic!("failed create cannot publish final reference"),
+                true,
+                |reference, _| {
+                    let directory =
+                        storage::private_directory(&_root.path().join("installation"), false)?;
+                    assert!(
+                        storage::read_private(&directory, Path::new(INITIALIZING), 512).is_ok()
+                    );
+                    assert!(
+                        storage::read_private(&directory, Path::new(PREPARED), LIMIT + 512).is_ok()
+                    );
+                    assert_eq!(
+                        storage::read_private(&directory, Path::new(RECORD), LIMIT)
+                            .unwrap_err()
+                            .kind(),
+                        io::ErrorKind::NotFound
+                    );
+                    assert!(matches!(
+                        vault.memory.get(reference),
+                        Err(SecretStoreError::Missing)
+                    ));
+                    Err(refused("fixture.unknown_native_create"))
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "fixture.unknown_native_create");
+        let error = enrollment
+            .initialize_using(
+                Path::new("host-identity"),
+                "github:1234".into(),
+                Some(epoch),
+                None,
+                |_, _| panic!(),
+                true,
+                |_, _| panic!("old INITIALIZING never grants recreate"),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "owner.initialization_requires_reconciliation"
+        );
+    }
+
+    #[test]
     fn protected_owner_initialization_fences_original_foreground_epoch_before_publication() {
         let (_root, store, vault) = setup();
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let epoch = store.snapshot().unwrap().epoch;
         assert!(enrollment
@@ -1740,6 +1938,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         assert!(initial.keys.is_empty());
@@ -1778,6 +1977,7 @@ pub(crate) mod tests {
             installation: &reopened,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         assert_eq!(reopened.snapshot().unwrap(), enrolled);
         assert!(reopened
@@ -1792,6 +1992,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[31; 32]);
@@ -2167,6 +2368,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[41; 32]);
@@ -2207,6 +2409,7 @@ pub(crate) mod tests {
             installation: &foreign,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         assert!(foreign.snapshot().is_err());
         store
@@ -2224,6 +2427,7 @@ pub(crate) mod tests {
             installation: &reopened,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         assert!(reopened.snapshot().is_err());
         let reference = SecretReference::parse(std::str::from_utf8(&anchor).unwrap()).unwrap();
@@ -2242,6 +2446,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let old = store
@@ -2268,6 +2473,7 @@ pub(crate) mod tests {
                 installation: &store,
                 vault: Box::new(SharedVault(vault)),
                 storage: OwnerStorage::NativeVault,
+                require_stage_creation: false,
             };
             initialize(&enrollment);
             if change_account {
@@ -2304,6 +2510,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[51; 32]);
@@ -2381,6 +2588,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         assert!(enrollment
             .initialize(Path::new("host-identity"), "github:foreign".into())
@@ -2416,6 +2624,7 @@ pub(crate) mod tests {
             installation: &other,
             vault: Box::new(SharedVault(other_vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         assert!(unprovisioned
             .initialize(Path::new("host-identity"), "github:1234".into())
@@ -2434,6 +2643,7 @@ pub(crate) mod tests {
                     installation: &store,
                     vault: Box::new(SharedVault(vault.clone())),
                     storage: selected,
+                    require_stage_creation: false,
                 },
                 OwnerStorage::HeadlessProtectedFile => {
                     store.owner_enrollment_with_storage(selected).unwrap()
@@ -2466,6 +2676,7 @@ pub(crate) mod tests {
                 installation: &store,
                 vault: Box::new(SharedVault(vault)),
                 storage: other,
+                require_stage_creation: false,
             };
             assert!(wrong
                 .initialize(Path::new("host-identity"), "github:1234".into())
@@ -2498,6 +2709,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[61; 32]);
@@ -2570,6 +2782,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let first = OwnerSigningKey::from_seed(&[1; 32]);
@@ -2834,6 +3047,7 @@ pub(crate) mod tests {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
             storage: OwnerStorage::NativeVault,
+            require_stage_creation: false,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[71; 32]);

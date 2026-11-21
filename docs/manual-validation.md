@@ -944,8 +944,15 @@ it must not first show the old stacked host list. Confirm one automatic director
 request for the selected account, explicit Refresh after failure, scoped Sign in
 again after expiry, and no host inventory/key/terminal action before host selection.
 Switch accounts while discovery is pending and reject its late old-account result.
-Select a host to enter the existing session workspace; check narrow reflow, Back
-and separately collapsed Advanced legacy form. Focused CPU regressions cover the
+Select a host to enter its session workspace inline in the same tab, without a
+second Find & Connect modal. Its title and page insets must match the directory.
+At 752×516, load seven authorized sessions and scroll
+the whole workspace to reach every session and its action; account/host controls
+must not consume a fixed header above an unusable session viewport. Check Escape
+returns to the directory. Escape in About or another blocking confirmation must
+close only that overlay and retain the selected host. The profile editor’s
+host/session picker remains a modal owned by that draft. Also check narrow reflow and separately collapsed
+Advanced legacy form. Focused CPU regressions cover the
 route and request witnesses; native visual/keyboard/real-provider checks remain
 required and are not established by those regressions.
 
@@ -6142,3 +6149,51 @@ remains unproved. Preserve that first result. This source adds no ACL grant or
 automatic retry and provides no signed/native qualification. Existing release
 controls and owner authorization govern later exact-candidate runs; see
 [ADR 0084](adr/0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
+
+### #816 macOS HOST item mechanism native qualification
+
+The selected-item mechanism/facade has policy, ordering, ownership and finite
+error unit coverage; the fresh Desktop wiring below selects it only with its
+reviewed creation reservation. No automated test opens the host user's Keychain. Under the existing opt-in Mac HOST native gate,
+use disposable selected canaries and explicitly qualified GUI/HOST identities to
+verify create/read/required update, ACL preservation, unrelated plaintext-read
+and automatic HOST-administration refusal, missing/locked/deleted failure and
+same-DR update behavior. Keep current ad-hoc development identity separate from
+production signed-DR qualification. Existing reserved items are never migrated,
+recreated after absence or SetAccess-repaired. Hostile coordinated same-user
+vault plus policy overwrite resistance is not claimed. Actual #816 native and
+complete Enable/listener/I/O qualification remain open; the mechanism supplies
+no permission or automatic retry authority.
+
+
+### #816 fresh macOS purpose/start wiring
+
+Source fixtures cover newly minted versus reloaded creation reservations,
+prepared-before-create/final-after-publication ordering, full-snapshot reply
+correlation, closed bounded DTOs, parent EOF, and revocation after credential
+reads before native requests. The ordinary account and non-Mac/headless paths
+remain separate. These tests do not open the host user's Keychain or establish
+native HOST acceptance. The existing disposable native gate must exercise a
+fresh exact GUI/authenticated-HOST cohort through create/read/retained update,
+noninteractive actual start, missing/locked/deleted refusal, cancel/parent death
+and submitted-unknown cleanup, then normal lifecycle and actual I/O. Retain
+old legacy items and the failed signed16 cohort unchanged; no automatic ACL
+migration, Always Allow grant, timeout increase or replay is justified by this
+source change. Ad-hoc development and production stable-DR evidence stay distinct.
+
+### macOS stop completion after a launchd refusal
+
+Portable service fixtures cover a completed positive nonzero `launchctl bootout`
+result after the exact job has become absent. Completion requires the original
+StopRequested snapshot, retained registration and valid private definition before
+and after one fresh native Absent observation. Execution errors, signal exits,
+foreign/changed/missing definitions and unqualified observations retain the
+original failure; no stop command is replayed.
+
+The signed `f3979dd8` Mac cohort passed fresh Enable, noninteractive Start and
+retained Enable with the same protected credential reference. Its first Disable
+stopped the HOST but left StopRequested; an explicitly reviewed completion
+finished Disabled at the same epoch. That failure is retained and its cause is
+unproved. The new stop-race fixture does not establish that historical cause.
+A signed current-source native Disable/Enable check, including retained shell
+identity and fresh remote I/O, remains required before qualifying this fix.
