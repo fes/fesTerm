@@ -20,7 +20,7 @@ EVIDENCE = ROOT / "validation" / "windows-warp" / "native-prefix-navigation-2026
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
 class MarkdownScrollingTests(unittest.TestCase):
-    def probe(self, body):
+    def probe(self, body, *, load_scrolling_helper=True):
         environment = os.environ.copy()
         environment["FESTERM_SCROLL_SCRIPT"] = str(SCRIPT)
         environment["FESTERM_OPTIONAL_SCRIPT"] = str(OPTIONAL_SCRIPT)
@@ -32,7 +32,9 @@ class MarkdownScrollingTests(unittest.TestCase):
                 "-Command",
                 r"""
 $ErrorActionPreference = 'Stop'
-. $env:FESTERM_SCROLL_SCRIPT -HelperOnly
+"""
+                + (". $env:FESTERM_SCROLL_SCRIPT -HelperOnly\n" if load_scrolling_helper else "")
+                + r"""
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Reject($action) {
     $rejected = $false
@@ -104,7 +106,9 @@ $function = $ast.Find({
 Assert ($null -ne $function) 'Aggregate native entry point exists'
 . ([scriptblock]::Create($function.Extent.Text))
 $env:OS = 'not-windows'
-Reject { Invoke-MarkdownScrollingValidation }
+$message = ''
+try { Invoke-MarkdownScrollingValidation } catch { $message = $_.Exception.Message }
+Assert ($message -eq 'Native Markdown scrolling requires Windows.') 'Platform rejected before any native work'
 $env:OS = 'Windows_NT'
 foreach ($name in @('FESTERM_MARKDOWN_SCROLL_EXE', 'FESTERM_MARKDOWN_SCROLL_RECEIPT',
     'FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT', 'FESTERM_MARKDOWN_SCROLL_OUT')) {
@@ -112,8 +116,9 @@ foreach ($name in @('FESTERM_MARKDOWN_SCROLL_EXE', 'FESTERM_MARKDOWN_SCROLL_RECE
 }
 $message = ''
 try { Invoke-MarkdownScrollingValidation } catch { $message = $_.Exception.Message }
-Assert ($message -like '*FESTERM_MARKDOWN_SCROLL_EXE*') 'Missing artifact rejected before any native work'
-"""
+Assert ($message -eq 'Set FESTERM_MARKDOWN_SCROLL_EXE for native Markdown scrolling.') 'Missing artifact rejected before any native work'
+""",
+            load_scrolling_helper=False,
         )
 
     def test_invariant_offsets_scientific_notation_ansi_and_pane(self):
