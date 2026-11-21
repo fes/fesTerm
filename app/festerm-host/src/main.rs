@@ -847,7 +847,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     }
 }
 
-#[cfg(not(feature = "owner-routing"))]
+#[cfg(any(not(feature = "owner-routing"), not(target_os = "macos")))]
 fn unavailable() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
@@ -1185,6 +1185,33 @@ fn diagnostic(error: &io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(not(target_os = "macos"), feature = "owner-routing"))]
+    #[test]
+    fn desktop_start_non_macos_owner_routing_refuses_without_state_access() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let state = root.path().join("must-remain-absent");
+        let scope = "a".repeat(64);
+        let error = execute(arguments(&[
+            "start-desktop",
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--installation",
+            "11111111-1111-4111-8111-111111111111",
+            "--epoch",
+            "1",
+            "--scope-digest",
+            &scope,
+            "--nonce",
+            "22222222-2222-4222-8222-222222222222",
+            "--consent",
+            "start",
+        ]))
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(error.to_string(), unavailable().to_string());
+        assert!(!state.exists());
+    }
 
     #[test]
     fn desktop_start_process_fence_refusal_precedes_selected_store_and_effects() {
