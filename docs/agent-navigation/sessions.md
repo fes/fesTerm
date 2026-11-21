@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "d84b8d8e46b84ff0581cb460a777fb0f8065979dbc1bbae57eaca504167c5987"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "4476cd4b1b6d8bffb48d5fb2837899e34285671459a05b42306727d671413099"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -32,6 +32,7 @@ Use for: How does a local shell get started, resized, and shut down safely?
 - [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated local shell bootstrap with explicit env and working directory
 - [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Canonical Windows cwd normalization at the spawn boundary
 - [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup
+- [`Replies`](../../crates/festerm-pty-test-child/src/terminal_capability_probe.rs) — Bounded fixed-query parser in the opt-in nonshipping console collector.
 
 Evidence:
 - [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "56b35a59c368f85c2d83db7be5f0de0e12f32c023722f6a1363201ebd808e1f8"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "d821e1eba2c798ae44e74183a7d788bda7d67993789494f74369ca13d7766c28"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -71,3 +71,16 @@ Caveats:
 - Resume is treated as wake; suspend is intentionally ignored.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
+
+## Console capability probe
+
+Use for: Private Windows observations before matched-grid Copilot checks.
+
+- [`worker_record`](../../crates/festerm-pty-test-child/src/terminal_capability_windows.rs) — Checks actual input with one bounded release allowance.
+- [`pending_input_diagnostic`](../../crates/festerm-pty-test-child/src/terminal_capability_windows.rs) — Retains only bounded event-type and direction counts.
+
+Evidence:
+- [`actual_worker_releases_are_private_bounded_and_emit_no_reply`](../../crates/festerm-pty-test-child/src/terminal_capability_windows.rs) — Rejects overflow and unrelated input without replay.
+
+Caveats:
+- Nonshipping helper only; console mediation and current-build native gates remain explicit.

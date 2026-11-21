@@ -142,9 +142,10 @@ local and remote results at the same cursor, viewport and palette state.
 Static server terminal identity is permitted for these fesTerm clients; do not
 infer missing capability transfer merely because the creation request has no
 terminal metadata fields. Do not substitute synthetic xterm probe replies. The opt-in
-[POSIX terminal collector](native-terminal-capability-probe.md) observes fixed
-queries in the existing foreground PTY; Windows console collection remains a
-separate native gate.
+[terminal collectors](native-terminal-capability-probe.md) observe fixed queries
+in the existing foreground PTY/console. The Windows test helper observes the
+application-visible ConPTY/console stack, whose Conhost may mediate replies;
+actual Windows collection and paired comparisons remain a separate native gate.
 
 Capture the fresh local reference on the server and the corresponding actual
 client screen at matching initial-screen checkpoints. Compare the visible

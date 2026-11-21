@@ -1766,6 +1766,17 @@
         "host_delete_probe_is_separate_strict_bounded_and_revalidates_stage",
         "host_delete_capabilities_probe_is_separate_static_and_refuses_extra_arguments",
         "desktop_remote_access_delete_permission_is_separate_requires_write_and_survives_draft_roundtrip"
+,
+        "fragmented_reordered_queries_and_duplicates_are_observed_not_invented",
+        "unrecognized_input_is_counted_without_retaining_or_reporting_content",
+        "bounded_frames_and_total_input_refuse_before_unbounded_retention",
+        "environment_and_case_identifiers_retain_only_the_fixed_safe_contract",
+        "cleanup_attempts_and_verifies_both_modes_after_a_set_failure",
+        "success_requires_every_observation_and_verified_cleanup_condition",
+        "pending_projection_is_bounded_and_ignores_event_payloads",
+        "failed_or_empty_peek_keeps_pending_refusal_without_invented_observations",
+        "idle_snapshot_accepts_only_complete_bounded_releases_without_consuming",
+        "actual_worker_releases_are_private_bounded_and_emit_no_reply"
       ],
       "manual_scenarios": [
         "DT-01",
@@ -1778,6 +1789,7 @@
       "prerequisites": [
         "Fresh required Windows x64 CI proof of the three legacy tunnel-setup fixtures after 9d521174; read-only capture improvements and macOS checks are not Windows qualification",
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
+        "The nonshipping Windows terminal collector has portable parser/dispatch and mode-cleanup regressions plus Windows cross-compilation. Actual Windows reply-record encoding, bounded cancellation/worker completion, exact mode restoration/private output and matched local/remote query and Copilot comparisons remain native gates. Conhost-mediated replies qualify application-visible console behavior, not direct client answers",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
         "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429",
         "DT-02 active native Copilot parity remains unqualified in all24 Desktop/iOS/Android campaign cases: pair fresh server-local fesTerm and actual Dev Tunnels Copilot runs at matched columns/rows, recording logical/physical pixel geometry, CLI version/hash, controlled cwd/initial state, theme/font/scale, selected TERM/TERM_PROGRAM/COLORTERM/locale and actual bounded DA/DSR/color/mode replies without duplicates; retain server/client screenshots. First-viewport/input, sustained resize Full and latest-size CPU regressions are separate controller evidence, not actual PTY ordering or native Copilot acceptance. Existing adapter payload/mode, protected creation policy, session identity and #681 prerequisites remain unchanged."

@@ -34,13 +34,43 @@ class NativeProbeRunnerTests(unittest.TestCase):
                 runner.main(args)
             self.assertEqual(caught.exception.code, 2)
 
-    def test_windows_remains_an_explicit_gate_without_importing_posix_collector(self):
-        with patch.object(runner, "os", types.SimpleNamespace(name="nt")), \
+    def test_windows_requires_explicit_staged_helper_without_service_fixture(self):
+        with patch.object(runner, "os", types.SimpleNamespace(name="nt", environ={})), \
                 contextlib.redirect_stdout(io.StringIO()) as output, \
                 patch.object(runner, "fixture_record", side_effect=AssertionError("service fixture")):
             code = runner.main(["--terminal-capability-probe", "--case", "fixture", "--result", "new.json"])
         self.assertEqual(code, 2)
         self.assertEqual(output.getvalue(), "")
+
+    def test_windows_helper_inherits_console_without_capture_or_shell(self):
+        helper = str(PATH.parent / "staged-probe.exe")
+        result = types.SimpleNamespace(returncode=1)
+        with patch.object(runner, "os", types.SimpleNamespace(name="nt", environ={"FESTERM_TERMINAL_CAPABILITY_HELPER": helper})), \
+                patch.object(runner.Path, "is_file", return_value=True), \
+                patch.object(runner.subprocess, "run", return_value=result) as run, \
+                patch.object(runner, "fixture_record", side_effect=AssertionError("service fixture")):
+            code = runner.main(["--terminal-capability-probe", "--case", "fixture", "--result", "new.json"])
+        self.assertEqual(code, 1)
+        run.assert_called_once_with([helper, "--case", "fixture", "--output", "new.json"], check=False)
+
+    def test_windows_helper_failure_stays_silent_and_relative_helper_is_refused(self):
+        for helper in ("relative.exe", str(PATH.parent / "absent.exe")):
+            with self.subTest(helper=helper), \
+                    patch.object(runner, "os", types.SimpleNamespace(name="nt", environ={"FESTERM_TERMINAL_CAPABILITY_HELPER": helper})), \
+                    patch.object(runner.Path, "is_file", return_value=False), \
+                    patch.object(runner.subprocess, "run", side_effect=AssertionError("must not launch")):
+                self.assertEqual(runner.main(["--terminal-capability-probe", "--case", "fixture", "--result", "new.json"]), 2)
+
+    def test_windows_launch_error_returns_silent_admission_failure(self):
+        helper = str(PATH.parent / "staged-probe.exe")
+        with patch.object(runner, "os", types.SimpleNamespace(name="nt", environ={"FESTERM_TERMINAL_CAPABILITY_HELPER": helper})), \
+                patch.object(runner.Path, "is_file", return_value=True), \
+                patch.object(runner.subprocess, "run", side_effect=OSError("private platform text")), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(runner.main(["--terminal-capability-probe", "--case", "fixture", "--result", "new.json"]), 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
 
 
 if __name__ == "__main__":

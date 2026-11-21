@@ -2848,9 +2848,12 @@ name = "festerm-pty-test-child"
 version = "0.17.14"
 dependencies = [
  "festerm-test-support",
+ "festerm-windows-security",
+ "regex",
  "serde_json",
  "tempfile",
  "terminal_size",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
