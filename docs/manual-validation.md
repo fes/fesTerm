@@ -6160,9 +6160,15 @@ controls and owner authorization govern later exact-candidate runs; see
 For the Windows capability collector, attributed private `diag2` execution and
 query pairs are linked in [the collector evidence](native-terminal-capability-probe.md#attributed-native-evidence).
 The bounded key-release correction is retained in tracked source without a
-second diagnostic binary alias. Current-composition native execution and forced
-deadline/cancellation/restoration checks remain open; no ordinary terminal input
-or expected query reply is injected to make the collector pass.
+second diagnostic binary alias. An actual 12,006 ms partial-response deadline
+exercised synchronous-I/O cancellation, positive worker drain/join and exact
+saved-mode readback; the observation remained incomplete. Together with complete
+ten-reply pairs, four native Windows tests and byte-identical production console
+code/entrypoint, that attributed evidence qualifies nonshipping collector
+integration. Newly built current-composition execution, external console-control
+event cancellation and forced OS restoration failure remain unqualified
+follow-up checks. No ordinary terminal input or expected query reply is injected
+to make the collector pass; no full workflow matrix acceptance is implied.
 
 ### #816 macOS HOST item mechanism native qualification
 
