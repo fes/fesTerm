@@ -360,6 +360,9 @@ packaged acceptance.
   cleanup tests, reviewed delete identity/capture/restore and unknown/no-replay,
   separate default-off consent/helper probe, stream negotiation/frame bounds, legacy discovery, portable
   client-only dependency checks and managed policy migration/revocation tests.
+  Stopped registration projection must copy only the current reviewed Files
+  snapshot, including revocation; authority/native races must leave the receipt
+  unchanged (ADR 0084).
 - **Native/manual evidence required:** DT-05 signed host enable/disable and
   cross-platform filesystem conflict qualification; DT-07 physical iOS and
   desktop integration once their separate clients exist.

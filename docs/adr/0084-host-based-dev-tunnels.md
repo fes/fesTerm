@@ -2695,7 +2695,7 @@ macOS. Windows retains the shared admission/lease tests; its production context
 must still reject elevated or service accounts before that lease gate. The Unix
 fixtures do not claim ordinary-user Windows native startup qualification.
 
-### Validation impact: stopped creation-policy changes
+### Validation impact: stopped reviewed-policy changes
 
 Changing generic creation remains an explicit Disable, reviewed Enable, then
 separate Start workflow. Enable may complete the creation flag in an existing
@@ -2706,7 +2706,10 @@ anchored owner-policy and previous registration comparisons precede one atomic
 receipt replacement under a single lifecycle lease. Cancellation or a changed
 owner revision, key, binding, epoch or registration refuses completion.
 
-Only `allow_creation` may differ. Friendly name, startup, installation, identity,
+Only the explicitly reviewed `allow_creation`, `ordinary_access` and `filesystem`
+policy may differ. Files root, write/delete grants and revocation are copied from
+the exact protected lifecycle snapshot, never inferred from the selected bundle.
+Friendly name, startup, installation, identity,
 enrollment, native definition, executable path/digest and all other receipt fields
 stay unchanged. The selected signed current release and the independently
 reauthenticated registered release must identify the same complete bundle.
@@ -2726,7 +2729,10 @@ completion is idempotent. A pending/uncertain cloud operation retains its existi
 Reconcile requirement. Enabling global creation does not grant it to any client:
 separate owner permissions and fresh runtime policy still apply.
 
-The `native_service_stopped_creation_projection_*` fixtures cover both
+The `native_service_stopped_files_projection_*` fixture covers OFF→read-only,
+root/write/delete changes and revocation with unchanged native definition and
+durable-state bytes. The `native_service_stopped_creation_projection_*` fixtures
+exercise authority/native fences for both creation and Files targets and cover both
 directions, exact receipt/definition preservation, alternate identical cache
 location, interrupted completion, runtime exclusion and final policy/scope races.
 The replacement-history fixture additionally preserves a completed strictly

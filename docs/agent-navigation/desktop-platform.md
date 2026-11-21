@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "0fba47d9c416afbf13aba733d13d137cb3206e02538a7a3ce8cf53a20ba33620"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "82b8deb8302c5269122c0a5738757a63feb31b022668202de50ae7822b069b37"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -22,7 +22,7 @@ Evidence:
 Caveats:
 - Install markers gate updater availability, not signing.
 - Public-key presence is required before any self-update path.
-- Package-smoke binaries are not release bundles.
+- Package-smoke Settings GUIs are development artifacts; signed HOST policy qualification retains separate source attribution.
 
 ## Native smoke
 

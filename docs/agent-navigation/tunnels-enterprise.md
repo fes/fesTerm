@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "2ae7ce02cc152bc39a23638d6638cceccb742ef468e93450b04efd70fbcfe206"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "2429041ef7a491f927a1b1d59dba5fcd01fcc7a5adad6ad8de8acff8cdafff28"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -41,19 +41,18 @@ Caveats:
 
 ## Native Services
 
-Use for: When observing or starting a native service without confusing process state with readiness
+Use for: Native observation and stopped receipt completion for reviewed creation or Files policy.
 
-- [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads same-user native service state from the host registry
-- [`ProcessState`](../../crates/festerm-host-setup/src/services.rs) — Reports Absent, Stopped, Running, Failed, and Transitioning states
+- [`complete_setup_with`](../../crates/festerm-host-setup/src/services/reconfiguration.rs) — Copies reviewed Files policy; pins bundle, native scope and executable.
+- [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads same-user native service state.
 
 Evidence:
-- [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition state and trusts direct process observation
-- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies service readiness
+- [`native_service_stopped_files_projection_preserves_registration_and_durable_state`](../../crates/festerm-host-setup/src/services/tests.rs) — Covers root/write/delete changes and revocation; retains durable bytes.
 - [`native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence`](../../crates/festerm-host-setup/src/services/tests.rs) — Completes failed bootout only after exact fresh absence proof
 
 Caveats:
-- Running is not readiness
-- Native process observation is separate from cloud or endpoint health
+- Changed authority, scope or unknown native state refuses completion; no native Start or catalog action occurs.
+- Running is not readiness; portable fixtures do not qualify native Files.
 
 ## Portable Metadata
 

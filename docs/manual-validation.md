@@ -6065,6 +6065,16 @@ Start. Changed owner policy, binding, startup, friendly name, binary or unknown
 native/runtime state must refuse. The portable stopped-projection fixtures do
 not complete this native acceptance gate or grant generic creation to clients.
 
+DTFILES-01–04 / HOST-04: on the same authenticated signed release, explicitly
+review a rooted read-only Files grant while access is Disabled, then Enable.
+Require actual Listening and the exact reviewed root/permissions in the native
+registration; repeat Files revocation and root/write/delete changes only with
+separate explicit consent. Preserve the executable, native definition, binding,
+all non-Files settings, durable shells and catalog. Portable projection/fence
+fixtures cover the receipt update; corrected-GUI native qualification remains
+unrun. The first Linux RO Enable's `native_registration` failure is preserved
+in #839; its precise native callsite is not asserted by the portable regression.
+
 For DT-05 / MOB-06 and HOST-02/03 Copilot visual qualification, the optional
 [native capability collector](native-terminal-capability-probe.md) records the
 actual foreground POSIX terminal's fixed DA1/DA2/DSR and palette/default-color
