@@ -2777,6 +2777,7 @@ fn native_service_windows_fresh_reservation_retains_raw_snapshot_and_never_start
 #[path = "windows_worker_tests.rs"]
 mod windows_worker_tests;
 
+#[cfg(unix)]
 #[test]
 fn native_service_start_credential_delay_exhausts_inherited_budget_without_effects() {
     struct DeadlineRunner(FakeRunner);
