@@ -1394,7 +1394,21 @@ impl SessionControl {
     }
 
     fn transaction(&self) -> Result<Transaction, ControlError> {
-        let directory = storage::private_directory(&self.root, false).map_err(storage_error)?;
+        self.transaction_with_initialization(true)?
+            .ok_or(ControlError::Storage)
+    }
+
+    fn transaction_with_initialization(
+        &self,
+        initialize: bool,
+    ) -> Result<Option<Transaction>, ControlError> {
+        let directory = match storage::private_directory(&self.root, false) {
+            Ok(directory) => directory,
+            Err(error) if !initialize && error.kind() == io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(storage_error(error)),
+        };
         let (lock, initialized) =
             match storage::open_private_file(&directory, Path::new("host-sessions.lock"), false) {
                 Ok(file) => (file, false),
@@ -1402,7 +1416,20 @@ impl SessionControl {
                     // A missing half of an existing journal is not a new
                     // namespace. Never reset issuance or split a live lock.
                     match storage::read_private(&directory, Path::new(STATE_FILE), STATE_LIMIT) {
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            if !initialize {
+                                return match storage::read_private(
+                                    &directory,
+                                    Path::new("host-binding-namespace.json"),
+                                    256,
+                                ) {
+                                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                                        Ok(None)
+                                    }
+                                    _ => Err(ControlError::Storage),
+                                };
+                            }
+                        }
                         _ => return Err(ControlError::Storage),
                     }
                     match storage::open_private_file(
@@ -1556,7 +1583,7 @@ impl SessionControl {
         if initialized {
             tx.save()?;
         }
-        Ok(tx)
+        Ok(Some(tx))
     }
 
     fn admission<G>(
@@ -2064,7 +2091,11 @@ impl SessionControl {
         if !valid_profile_consent(consent) {
             return Err(ControlError::Invalid);
         }
-        let tx = self.transaction()?;
+        // Startup/profile inspection must not initialize a HOST namespace.
+        // An existing journal still requires its exact lock and full validation.
+        let Some(tx) = self.transaction_with_initialization(false)? else {
+            return Ok(None);
+        };
         match tx.state.profiles.get(logical) {
             Some(profile) if profile.consent == consent => {
                 Ok(Some((profile.revision, profile.enabled)))

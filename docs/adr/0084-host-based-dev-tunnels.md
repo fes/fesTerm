@@ -3047,3 +3047,20 @@ Validation impact: GUI:HOST-04/05; existing result identity and classification,
 closed reason matching, numeric OS evidence, private-value redaction and log
 failure isolation have focused coverage. Actual signed native failure capture
 remains pending.
+
+
+### Noninitializing local catalog observation
+
+Startup and saved-profile inspection use a lazy catalog handle and read only an
+already initialized catalog. Missing directories or an absent journal/lock pair
+return no entry without creating host storage. An orphan binding marker, missing
+half, corrupt journal, unsafe path or busy lock remains an error. Existing
+catalogs retain exclusive locking and complete state/namespace validation.
+Explicit catalog writes keep their initialization behavior; observation cannot
+create lifecycle state, adopt an incomplete host root or grant remote access.
+
+Validation impact: GUI:HOST-02/HOST-04. Regression tests cover absent/empty
+catalogs, a subsequent fresh Desktop lifecycle creation, partial journals,
+orphan namespace markers, corruption, consent mismatch, contention and symlinks.
+Native upgrade/setup acceptance remains pending; existing incomplete roots
+require separate manual review and are never automatically repaired.
