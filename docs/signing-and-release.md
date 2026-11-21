@@ -89,16 +89,17 @@ payload.
 
 Production publication is triggered only by a `vMAJOR.MINOR.PATCH` tag whose
 version matches the workspace. Normal manual dispatch builds the native signed
-packages and helpers without publishing. The default-false
-`signed_helpers_candidate` input additionally authenticates standalone helper
-metadata using the existing updater root and retains complete helper bundles
-for exact-source native validation. It cannot be combined with `resume_publish`.
-This mode skips desktop package jobs and their Windows ARM64 application-build
-feeder; validation and all six native helper build/signing targets still run.
+packages and authenticates standalone helper metadata using the existing
+updater root, retaining complete helper bundles for exact-source native
+validation without publishing. The default-false `signed_helpers_candidate`
+input selects helper-only validation and cannot be combined with
+`resume_publish`. This mode skips desktop package jobs and their Windows ARM64
+application-build feeder; validation and all six native helper build/signing targets still run.
 
-The `authenticate-helpers` job is shared by publication and this explicit
-candidate mode. It uses `environment: release` with `contents: read`, consumes
-only helper artifacts from the same workflow run, and keeps the existing Apple
+The `authenticate-helpers` job is shared by publication and both manual
+nonpublishing modes. Normal nonpublishing authentication requires the validated
+authenticated-helper and headless-helper capabilities. It uses
+`environment: release` with `contents: read`, consumes only helper artifacts from the same workflow run, and keeps the existing Apple
 signing/notarization and Windows OIDC/Authenticode producer checks. Manifest
 preparation/builds and verification run without signing credentials; only the
 manifest-signing step receives the updater private key/password. The public key
@@ -106,8 +107,8 @@ must equal `packaging/updater.pub`, and the existing independent verifier checks
 both helper families on all six targets. Publication downloads this already
 signed metadata and verifies it again; it does not sign it a second time.
 
-For a candidate, the selected dispatch commit, checked-out source and workflow
-commit must all equal `GITHUB_SHA`. A provenance receipt records that SHA,
+For either nonpublishing mode, the selected dispatch commit, checked-out source
+and workflow commit must all equal `GITHUB_SHA`. A provenance receipt records that SHA,
 workflow reference, run ID/attempt, exact package version, and the length/SHA-256
 of every archive, checksum, manifest and signature. Candidate artifacts have a
 seven-day retention period and access follows repository Actions permissions.

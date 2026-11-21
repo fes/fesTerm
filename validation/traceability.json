@@ -3163,6 +3163,7 @@
       "prerequisites": [
         "native update apply, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent",
         "scripts/tests/test_run_macos_development.py and opt-in scripts/run-macos-development.py --check cover only development environment/identity and Launcher-only Quit; signed-package and live-session teardown evidence remains required",
+        "scripts/tests/test_helper_candidate.py covers source-bound eligibility and exact candidate provenance for normal and helper-only nonpublishing Release dispatches; both retain existing protected signing/authentication gates and native publisher/workflow qualification",
         "Actual Windows/macOS/Linux OS cursor shape/precedence and native resize/control/DPI behavior remain pending; final egui PlatformOutput tests do not qualify native cursor rectangles or prove the observed native OS cursor failure\u2019s cause."
       ]
     },

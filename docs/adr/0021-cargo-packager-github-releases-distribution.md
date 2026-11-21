@@ -169,7 +169,13 @@ evidence remains validation pending under
   `WIN-06` in `docs/gui-action-graph.md`. Packaged builds expose explicit
   check, download, and install/restart transitions; developer builds expose no
   network action.
-- **Automated tests required:** Release CI must validate package contents,
+- **Automated tests required:** Normal manual nonpublishing builds and the
+  helper-only candidate mode authenticate the same exact-source helper
+  artifacts behind the existing release review gate; neither publishes assets.
+  `test_full_nonpublishing_authentication_uses_closed_source_bound_event_predicate`
+  and `test_full_nonpublishing_input_retains_exact_candidate_provenance` cover
+  eligibility, source guards and unchanged run-scoped provenance.
+  Release CI must validate package contents,
   checksums, signatures, feed completeness, and version agreement. Application
   tests must prove that checking cannot download, the Download action cannot install,
   live-session restart confirmation gates installation and remains safely

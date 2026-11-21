@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -123,6 +125,69 @@ class HelperCandidateTests(unittest.TestCase):
         self.assertNotIn("cargo packager signer sign", publish)
         self.assertNotIn("secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY", publish)
         self.assertNotIn("name: release-", after)
+
+
+    def test_full_nonpublishing_input_retains_exact_candidate_provenance(self):
+        for flag in ("false", "true"):
+            with self.subTest(helper_only=flag):
+                result = self.record(SIGNED_HELPERS_CANDIDATE=flag)
+                self.assertEqual(result["purpose"], "signed-helper-candidate-no-publication")
+                self.assertEqual(result["source_commit"], self.source)
+                self.assertEqual(result["workflow_commit"], self.source)
+                self.assertEqual(len(result["artifacts"]), 48)
+                self.assertNotIn("private-placeholder", str(result))
+
+    @unittest.skipUnless(shutil.which("bash"), "requires Bash for source-bound predicate")
+    def test_full_nonpublishing_authentication_uses_closed_source_bound_event_predicate(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        authentication = workflow.split("  authenticate-helpers:\n", 1)[1].split("  publish:\n", 1)[0]
+        header = authentication.split("    steps:\n", 1)[0]
+        actual = next(line.removeprefix("    if: ") for line in header.splitlines() if line.startswith("    if: "))
+        expected = "needs.validate.outputs.publish == 'true' || needs.validate.outputs.signed_helpers_candidate == 'true' || (github.event_name == 'workflow_dispatch' && needs.validate.outputs.publish == 'false' && needs.validate.outputs.authenticated_helpers == 'true' && needs.validate.outputs.headless_helpers == 'true')"
+        self.assertEqual(actual, expected)
+        # Execute the actual closed boolean expression, not an independently
+        # copied Python policy. Only these existing expression names substitute.
+        expression = actual
+        for source, variable in {
+            "needs.validate.outputs.publish": "$PUBLISH",
+            "needs.validate.outputs.signed_helpers_candidate": "$CANDIDATE",
+            "needs.validate.outputs.authenticated_helpers": "$AUTHENTICATED",
+            "needs.validate.outputs.headless_helpers": "$HEADLESS",
+            "github.event_name": "$EVENT",
+        }.items():
+            expression = expression.replace(source, variable)
+        expression = expression.replace("(", "( ").replace(")", " )")
+        cases = [
+            # Tag publication and recovery retain their existing path.
+            ("push", "true", "false", "true", "true", True),
+            ("workflow_dispatch", "true", "false", "true", "true", True),
+            # Both manual test modes authenticate, while only helper-only mode
+            # suppresses desktop jobs (separate existing regression above).
+            ("workflow_dispatch", "false", "false", "true", "true", True),
+            ("workflow_dispatch", "false", "true", "true", "true", True),
+            ("push", "false", "false", "true", "true", False),
+            ("pull_request", "false", "false", "true", "true", False),
+            ("workflow_dispatch", "false", "false", "false", "true", False),
+            ("workflow_dispatch", "false", "false", "true", "false", False),
+            ("workflow_dispatch", "", "false", "true", "true", False),
+        ]
+        for event, publish, candidate, authenticated, headless, allowed in cases:
+            with self.subTest(event=event, publish=publish, candidate=candidate, authenticated=authenticated, headless=headless):
+                result = subprocess.run(
+                    [shutil.which("bash"), "-c", "if [[ " + expression + " ]]; then exit 0; else exit 1; fi"],
+                    env={**os.environ, "EVENT": event, "PUBLISH": publish, "CANDIDATE": candidate,
+                         "AUTHENTICATED": authenticated, "HEADLESS": headless},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertIn(result.returncode, (0, 1), result.stderr)
+                self.assertEqual(result.returncode == 0, allowed)
+        self.assertEqual(authentication.count("if: needs.validate.outputs.publish == 'false'"), 3)
+        self.assertIn('test "$RESUME_PUBLISH" = false', authentication)
+        self.assertIn('test "$SOURCE_COMMIT" = "$GITHUB_SHA"', authentication)
+        self.assertIn('test "$WORKFLOW_COMMIT" = "$GITHUB_SHA"', authentication)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', authentication)
+        self.assertIn("if: needs.validate.outputs.publish == 'true'", workflow.split("  publish:\n", 1)[1])
+
 
 
 if __name__ == "__main__":

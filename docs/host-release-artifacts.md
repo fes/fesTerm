@@ -44,7 +44,7 @@ Schema 1 is not accepted as schema 2: it never guaranteed host CLI inclusion.
 
 `scripts/build_host_manifest.py` binds the actual archive length and SHA-256
 after the existing package/notice checks. The protected `authenticate-helpers`
-release job (publication or explicit nonpublishing candidate mode) requires the
+release job (publication or either manual nonpublishing mode) requires the
 existing updater private key/password and requires the configured
 public key to equal `packaging/updater.pub`. Pinned cargo-packager 0.11.8 signs
 the **exact manifest bytes**, using its existing base64-encoded Minisign
