@@ -3092,3 +3092,22 @@ legacy refusal, count/byte limits, corruption/collisions and errors before/after
 actual archive/current publication. These tests do not establish current-source
 native Keychain or provider authorization success; the corresponding manual
 initial-authorization recovery gate remains open.
+
+### macOS post-stop observation contention
+
+After one native stop command, macOS may briefly contend with another reader
+for the lifecycle lock. Retry only the read-only stop proof within the original
+stop deadline, retaining the operation lease and exact captured snapshot and
+registration. Every successful observation must be bracketed by fresh matching
+snapshot, registration and private service-definition checks. Never repeat the
+manager command or registration reconciliation. Non-contention failures and
+changed authority remain final; a completed nonzero bootout still requires exact
+absence and otherwise preserves its original error.
+
+Validation impact: GUI:HOST-04/05. A controlled lease regression reproduces
+contention after exactly one completed bootout; deadline exhaustion and changed
+epoch, registration, definition or observation refuse completion. This proves a
+source race, not the call site of the signed 0.17.18 native busy failure. The
+controller's final lifecycle commit remains a separate possible contention
+point. Native first-confirmation Disable, retained Enable and session I/O with
+the corrected build remain pending.

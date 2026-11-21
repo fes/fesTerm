@@ -1618,6 +1618,11 @@ fn desktop_remote_access_disable_error_observer_redacts_and_preserves_inner_erro
 fn desktop_remote_access_disable_error_observer_localizes_known_failure_without_remapping() {
     for (kind, message, expected_reason) in [
         (
+            io::ErrorKind::WouldBlock,
+            "host.installation_busy",
+            "installation_busy",
+        ),
+        (
             io::ErrorKind::Other,
             "host.service_foreign_native_definition",
             "foreign_native_definition",

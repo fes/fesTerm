@@ -246,6 +246,7 @@ fn disable_completion_reason(error: &io::Error) -> &'static str {
         "host.service_foreign_receipt" => "foreign_receipt",
         "host.service_stop_not_observed" => "stop_not_observed",
         "host.runtime_stop_pending" => "runtime_stop_pending",
+        "host.installation_busy" => "installation_busy",
         "host.service_native_output_limit" => "native_output_limit",
         "host.service_native_spawn_failed" => "native_spawn_failed",
         "host.service_foreign_state_directory" => "foreign_state_directory",
