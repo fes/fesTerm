@@ -528,12 +528,119 @@ fn native_service_stopped_creation_projection_preserves_registration_and_durable
 }
 
 #[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+fn reconfigure_files_lifecycle(
+    store: &Store,
+    filesystem: Option<festerm_tunnel_bridge::file_protocol::Policy>,
+) -> Snapshot {
+    store.revoke().unwrap();
+    let stopped = store.snapshot().unwrap();
+    store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    let before = store.snapshot().unwrap();
+    let mut settings = before.settings.clone();
+    settings.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
+    settings.filesystem = filesystem;
+    // This headless fixture must explicitly configure Files while Disabled;
+    // generic Enable cannot stand in for Desktop's full file-consent review.
+    store.configure(settings).unwrap();
+    let before = store.snapshot().unwrap();
+    let ticket = store
+        .request_enable_if_current(&before, &before.settings)
+        .unwrap();
+    store
+        .record_provisioned(&ticket, before.binding.unwrap())
+        .unwrap();
+    store.snapshot().unwrap()
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_stopped_files_projection_preserves_registration_and_durable_state() {
+    use crate::enrollment::OwnerStorage;
+    use festerm_tunnel_bridge::file_protocol::Policy;
+    let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
+    let owners = store
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    owners
+        .initialize(Path::new("host-identity"), "github:1234".into())
+        .unwrap();
+    let mut services = services(root.path(), &store, Platform::Linux);
+    services.state = root.path().join("installation");
+    services.runner.receipt = services.state.join(RECORD);
+    let stage = trusted::fixture(root.path());
+    services
+        .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+        .unwrap();
+    let original = services.registration().unwrap().1.unwrap();
+    let definition = std::fs::read(&services.runner.definition).unwrap();
+    let durable = services
+        .state
+        .join("fixture-independent-daemon-and-catalog");
+    std::fs::write(&durable, b"same daemon, shells, catalog").unwrap();
+    let selected_root = storage::private_test_directory();
+    let selected = trusted::fixture(selected_root.path());
+    // Explicit reviewed grants: off -> read-only, root/write/delete changes,
+    // then revocation. Neither a same release nor write grants deletion itself.
+    for policy in [
+        Some(("first", false, false)),
+        Some(("second", false, false)),
+        Some(("second", true, false)),
+        Some(("second", true, true)),
+        Some(("second", true, false)),
+        Some(("second", false, false)),
+        None,
+    ] {
+        let expected = reconfigure_files_lifecycle(
+            &store,
+            policy.map(|(folder, write, delete)| Policy {
+                root: root.path().join(folder),
+                write,
+                delete,
+            }),
+        );
+        let owner = owners.snapshot().unwrap();
+        let calls_before = services.runner.state.borrow().calls.len();
+        let complete = || {
+            services.complete_setup_with(
+                &selected,
+                &expected,
+                &owner,
+                &owners,
+                &tokio_util::sync::CancellationToken::new(),
+                |_| Ok(trusted::fixture(root.path())),
+            )
+        };
+        assert_eq!(complete().unwrap().process, ProcessState::Stopped);
+        let mut wanted = original.clone();
+        wanted.settings = expected.settings.clone();
+        assert_eq!(services.registration().unwrap().1.unwrap(), wanted);
+        let receipt = std::fs::read(&services.runner.receipt).unwrap();
+        assert_eq!(complete().unwrap().process, ProcessState::Stopped);
+        assert_eq!(std::fs::read(&services.runner.receipt).unwrap(), receipt);
+        assert_eq!(
+            std::fs::read(&services.runner.definition).unwrap(),
+            definition
+        );
+        assert_eq!(
+            std::fs::read(&durable).unwrap(),
+            b"same daemon, shells, catalog"
+        );
+        assert_eq!(owners.snapshot().unwrap(), owner);
+        assert!(services.runner.state.borrow().calls[calls_before..].iter().all(|call|
+            matches!(call, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "show"))));
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
 #[test]
 fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_races() {
     use crate::enrollment::OwnerStorage;
     // Every case retains the exact old receipt, definition and lifecycle. A
     // real held runtime lease exercises exclusion rather than PID inference.
-    for case in [
+    // The same authority/native fences apply to creation and reviewed Files grants.
+    for (files, case) in [
         "running",
         "unknown",
         "runtime",
@@ -548,7 +655,10 @@ fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_ra
         "digest",
         "version",
         "bundle",
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|case| [(false, case), (true, case)])
+    {
         let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
         let owners = store
             .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
@@ -563,7 +673,18 @@ fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_ra
         services
             .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
             .unwrap();
-        let mut expected = reconfigure_lifecycle(&store, true);
+        let mut expected = if files {
+            reconfigure_files_lifecycle(
+                &store,
+                Some(festerm_tunnel_bridge::file_protocol::Policy {
+                    root: root.path().join("reviewed-root"),
+                    write: false,
+                    delete: false,
+                }),
+            )
+        } else {
+            reconfigure_lifecycle(&store, true)
+        };
         let mut owner = owners.snapshot().unwrap();
         let old = std::fs::read(&services.runner.receipt).unwrap();
         let mut selected = trusted::fixture(root.path());
@@ -660,14 +781,18 @@ fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_ra
 fn native_service_stopped_creation_projection_rechecks_after_qualification() {
     use crate::enrollment::OwnerStorage;
     use festerm_tunnel_bridge::owner_auth::OwnerSigningKey;
-    for case in [
+    // The same authority/native fences apply to creation and reviewed Files grants.
+    for (files, case) in [
         "owner-revision",
         "revoke-key",
         "binding",
         "epoch",
         "record",
         "cancel",
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|case| [(false, case), (true, case)])
+    {
         let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
         let owners = store
             .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
@@ -690,7 +815,18 @@ fn native_service_stopped_creation_projection_rechecks_after_qualification() {
         services
             .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
             .unwrap();
-        let mut expected = reconfigure_lifecycle(&store, true);
+        let mut expected = if files {
+            reconfigure_files_lifecycle(
+                &store,
+                Some(festerm_tunnel_bridge::file_protocol::Policy {
+                    root: root.path().join("reviewed-root"),
+                    write: false,
+                    delete: false,
+                }),
+            )
+        } else {
+            reconfigure_lifecycle(&store, true)
+        };
         let owner = owners.snapshot().unwrap();
         let before = services.registration().unwrap().1.unwrap();
         let cancel = tokio_util::sync::CancellationToken::new();

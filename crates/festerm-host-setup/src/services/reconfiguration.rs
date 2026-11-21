@@ -111,6 +111,9 @@ impl<R: CommandRunner> Services<'_, R> {
         let mut new = old.clone();
         new.settings.allow_creation = snapshot.settings.allow_creation;
         new.settings.ordinary_access = snapshot.settings.ordinary_access;
+        // Copy only the Files policy already approved in the protected scope,
+        // including explicit revocation; the remaining receipt stays pinned.
+        new.settings.filesystem = snapshot.settings.filesystem.clone();
         if new.settings != snapshot.settings || definitions::render(&new)? != old.definition {
             return Err(refused("host.service_explicit_replacement_required"));
         }
