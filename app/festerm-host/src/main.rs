@@ -905,9 +905,12 @@ async fn with_shutdown<T>(
     tokio::select! {
         result = &mut work => result,
         signal = shutdown_signal() => {
-            signal?;
             cancel.cancel();
-            work.await
+            // Even signal-registration failure must retain/drain owned native
+            // work before the serving context and runtime lease are dropped.
+            let result = work.await;
+            signal?;
+            result
         }
     }
 }
@@ -1239,28 +1242,6 @@ mod tests {
     }
 
     #[test]
-    fn headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses() {
-        for command in [
-            "capabilities",
-            "owner-readiness",
-            "start-desktop",
-            "setup",
-            "disable",
-            "update",
-            "run-status",
-            "run-desktop-status",
-        ] {
-            initialize_serving_store(command, || panic!("foreground must not change process UI"))
-                .unwrap();
-        }
-        for command in ["run", "run-desktop", "run-managed", "run-desktop-managed"] {
-            assert!(
-                initialize_serving_store(command, || Err(io::Error::other("fixture"))).is_err()
-            );
-        }
-    }
-
-    #[test]
     fn owner_readiness_fence_precedes_observation_and_refuses_failed_initialization() {
         use std::cell::RefCell;
         let order = RefCell::new(Vec::new());
@@ -1287,6 +1268,33 @@ mod tests {
         )
         .is_err());
         assert!(!observed.get());
+    }
+
+    #[test]
+    fn headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses() {
+        for command in [
+            "capabilities",
+            "owner-readiness",
+            "start-desktop",
+            "setup",
+            "configure",
+            "status",
+            "disable",
+            "update",
+            "run-status",
+            "run-desktop-status",
+        ] {
+            initialize_serving_store(command, || {
+                panic!("foreground route must not change Keychain UI")
+            })
+            .unwrap();
+        }
+        for command in ["run", "run-desktop", "run-managed", "run-desktop-managed"] {
+            assert!(initialize_serving_store(command, || Err(io::Error::other(
+                "fixture fence failure"
+            )))
+            .is_err());
+        }
     }
 
     #[test]

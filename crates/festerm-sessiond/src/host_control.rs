@@ -175,6 +175,85 @@ mod attach_diagnostic_tests {
     use super::*;
 
     #[test]
+    fn attachment_publication_reacquires_only_busy_policy_and_keeps_the_successful_guard() {
+        struct Guard(Arc<std::sync::atomic::AtomicUsize>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut reads = 0;
+        let guard = SessionControl::readmit_attachment_publication_until(
+            Instant::now() + COMMITTED_LEASE_CONTENTION,
+            || {
+                reads += 1;
+                match reads {
+                    1 => Err(ControlError::Busy),
+                    2 => Ok(Guard(dropped.clone())),
+                    _ => panic!("successful admission is not repeated"),
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(reads, 2);
+        assert_eq!(dropped.load(Ordering::SeqCst), 0);
+        drop(guard);
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn attachment_publication_readmit_never_retries_a_noncontention_refusal() {
+        for refusal in [
+            ControlError::Denied,
+            ControlError::Stale,
+            ControlError::Revoked,
+            ControlError::Cancelled,
+            ControlError::Storage,
+            ControlError::Unknown,
+            ControlError::Ended,
+            ControlError::Invalid,
+            ControlError::CommittedButNotPublished,
+        ] {
+            let mut reads = 0;
+            let result = SessionControl::readmit_attachment_publication_until(
+                Instant::now() + COMMITTED_LEASE_CONTENTION,
+                || {
+                    reads += 1;
+                    match reads {
+                        1 => Err(ControlError::Busy),
+                        2 => Err::<(), _>(refusal),
+                        _ => panic!("noncontention refusal is final"),
+                    }
+                },
+            );
+            assert_eq!(result, Err(refusal));
+            assert_eq!(reads, 2);
+        }
+    }
+
+    #[test]
+    fn attachment_publication_readmit_stops_at_the_existing_contention_deadline() {
+        let result = SessionControl::readmit_attachment_publication_until(
+            Instant::now(),
+            || -> Result<(), ControlError> { panic!("expired scope cannot read policy") },
+        );
+        assert_eq!(result, Err(ControlError::Busy));
+        let mut reads = 0;
+        let result = SessionControl::readmit_attachment_publication_until(
+            Instant::now() + Duration::from_millis(5),
+            || {
+                reads += 1;
+                assert_eq!(reads, 1, "deadline must prevent another acquisition");
+                std::thread::sleep(Duration::from_millis(10));
+                Err::<(), _>(ControlError::Busy)
+            },
+        );
+        assert_eq!(result, Err(ControlError::Busy));
+        assert!(reads <= 1);
+    }
+
+    #[test]
     fn first_persistent_attach_diagnostics_keep_boundary_without_private_error_text() {
         assert!(attach_failure_diagnostics_enabled(false, false, false));
         let error = io::Error::new(
@@ -1520,6 +1599,24 @@ impl SessionControl {
             return Err(ControlError::Revoked);
         }
         Ok(guard)
+    }
+
+    fn readmit_attachment_publication_until<G>(
+        deadline: Instant,
+        mut readmit: impl FnMut() -> Result<G, ControlError>,
+    ) -> Result<G, ControlError> {
+        loop {
+            if Instant::now() >= deadline {
+                return Err(ControlError::Busy);
+            }
+            match readmit() {
+                Err(ControlError::Busy) => std::thread::sleep(
+                    Duration::from_millis(5)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                ),
+                result => return result,
+            }
+        }
     }
 
     fn binding_source(
@@ -3030,7 +3127,13 @@ impl SessionControl {
                 return Err(ControlError::Busy);
             }
         };
-        let publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit);
+        // The native attachment already exists. Wait only for a fresh protected
+        // policy/source lease; never repeat the reservation or native connect.
+        // Every acquisition revalidates the caller's original admission fence.
+        let publication = Self::readmit_attachment_publication_until(
+            Instant::now() + COMMITTED_LEASE_CONTENTION,
+            || Self::admission(Some(record), owner, Effect::Attach, &mut admit),
+        );
         #[cfg(any(test, feature = "test-support"))]
         if let Err(error) = &publication {
             AttachFailureDiagnostic::PublicationReadmit(*error).report(diagnose);

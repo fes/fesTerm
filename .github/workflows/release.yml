@@ -281,6 +281,8 @@ jobs:
           hdiutil verify "$dmg"
           mv "$dmg" "dist/fesTerm-${VERSION}-macos-aarch64.dmg"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        # Retain the already-validated app archive if the later DMG step fails.
+        if: ${{ always() }}
         with:
           name: release-macos
           path: dist/*

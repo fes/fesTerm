@@ -360,7 +360,13 @@ impl Peer {
                 );
                 require(session.adopt_into(&mut terminal));
                 let _ = session.try_recv_event();
-                assert!(!session.lifecycle().is_terminal(), "HOST attachment failed");
+                // HostSession retains finite, content-free attachment stage
+                // and cause diagnostics. Do not discard them at this boundary.
+                let lifecycle = session.lifecycle();
+                assert!(
+                    !lifecycle.is_terminal(),
+                    "HOST attachment failed: {lifecycle:?}"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             let (input, marker) = probe(self.shell, &uuid::Uuid::new_v4().simple().to_string());

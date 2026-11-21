@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "752b6d5df440e03e24b4be9ea39571bd3e9eccf8efc71f2bb100e72abe413ffe"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "d5f2295e8c6346bdf9732e6313634e400502eb227b2f8035630a30c82a124bfb"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -80,3 +80,16 @@ Evidence:
 
 Caveats:
 - Submitted uncertainty retains the GUI permit; Running is not Ready.
+
+## Account readiness renewal
+
+Use for: In-place ordinary account readiness while retaining the healthy relay.
+
+- [`maintain`](../../crates/festerm-host-setup/src/ordinary.rs) — Renews outside wire admission and drains owned native work.
+- [`refresh`](../../crates/festerm-host-setup/src/ordinary.rs) — Publishes only the same prepared Arc and protected account scope.
+
+Evidence:
+- [`ordinary_successful_maintenance_keeps_same_serving_future_live`](../../crates/festerm-host-setup/src/controller.rs) — Keeps the serving future after successful renewal.
+
+Caveats:
+- Uncertain persistence ends renewal without replay; native same-run qualification remains open.

@@ -45,6 +45,13 @@ impl SecretStore for HostPurposeStore {
     ) -> Result<(), SecretStoreError> {
         MacHostSecretItem::open_existing(self.purpose, reference)?.update(secret)
     }
+    fn update_noninteractive(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        MacHostSecretItem::update_existing_noninteractive(self.purpose, reference, secret)
+    }
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError> {
         self.native.delete(reference)
     }

@@ -23,6 +23,18 @@ user-visible label are fixed, non-sensitive constants. It deliberately has no
 file, keyutils, plaintext, or in-memory production fallback. The deterministic
 memory implementation is injection-only for tests and future app composition.
 
+Background HOST readiness renewal uses explicit `get_noninteractive` and
+`update_noninteractive` operations; unsupported backends refuse rather than
+calling an interactive method. Updates retain the existing opaque reference.
+Linux updates exactly one unlocked Secret Service item through `SetSecret`,
+without unlock, creation or prompts. Windows retains the existing serialized
+generic CredRead/CredWrite contract, including its external-deletion race;
+this is not compare-and-swap. macOS updates require the dedicated HOST process
+to disable Keychain UI before runtime/vault initialization and verify that
+process-local fence. GUI and foreground setup/operator processes never set it.
+Native work remains owned and drained; a failed credential persistence never
+publishes the refreshed identity or authorizes replay of token refresh.
+
 The M8 password-credential slice persists only validated opaque SSH-password
 references in TOML. `festerm-ssh` resolves the secret on its background worker
 immediately before password authentication. It does not add persistence for
@@ -101,3 +113,23 @@ purpose/reference binding and finite errors. Tests do not query the host user's
 Keychain. Actual two-identity native create/read/update, retained-item deletion,
 ACL preservation, locked/denied behavior and signed-DR updates remain opt-in
 qualification under ADR0084; no live Mac fix or successful Enable is claimed.
+
+Secret-store unit regressions cover unsupported backends without fallback,
+existing-reference updates, size/missing refusal, the exact unlocked-item
+selector and failed macOS fence setup/readback. Synthetic HOST regressions
+cover persistence before readiness, changed scope, cancellation, retained-work
+draining and fatal uncertain renewal without replay. Platform typechecks do
+not establish native vault behavior.
+
+DT-05 additionally requires actual native noninteractive renewal in the same
+protected run, with no prompt and unchanged session/policy identity. macOS
+qualification must use the dedicated serving entrypoint; GUI and foreground
+setup remain unfenced. These native gates remain unrun for this change.
+
+Composed Desktop HOST renewal retains the selected purpose facade: the owned
+blocking observer preparation selects `HostPurposeStore` on macOS Desktop.
+Noninteractive persistence first verifies the dedicated process fence, then
+opens and updates the exact retained item. It never routes these HOST items
+through generic get/set update semantics; missing/denied items refuse without
+upsert, ACL mutation, prompt, or refresh replay. The deterministic pre-open
+admission regression does not establish actual native Keychain renewal.
