@@ -214,6 +214,49 @@ fn completion_io<T>(
         }
     }
 }
+// Diagnostic only: preserve the controller's exact Result before its existing
+// failure mapping. No epoch/account/run IDs or free-form error values are logged.
+fn disable_completion_result<T>(root: &Path, result: io::Result<T>) -> io::Result<T> {
+    if let Err(error) = &result {
+        let os = error
+            .raw_os_error()
+            .map_or_else(|| "none".to_owned(), |code| code.to_string());
+        festerm_tunnel_bridge::worker_log::WorkerLog::new(root).event(
+            "host.disable_completion",
+            &[
+                ("outcome", "error"),
+                ("kind", completion_kind(error.kind())),
+                ("os", &os),
+                ("reason", disable_completion_reason(error)),
+            ],
+        );
+    }
+    result
+}
+
+fn disable_completion_reason(error: &io::Error) -> &'static str {
+    match error.to_string().as_str() {
+        "host.service_invalid_observation" => "invalid_observation",
+        "host.service_observation_unqualified" => "observation_unqualified",
+        "host.service_launchd_observation_unavailable" => "launchd_observation_unavailable",
+        "host.service_foreign_native_definition" => "foreign_native_definition",
+        "host.service_foreign_definition" => "foreign_definition",
+        "host.service_definition_permissions" => "definition_permissions",
+        "host.service_invalid_receipt" => "invalid_receipt",
+        "host.service_foreign_receipt" => "foreign_receipt",
+        "host.service_stop_not_observed" => "stop_not_observed",
+        "host.runtime_stop_pending" => "runtime_stop_pending",
+        "host.service_native_output_limit" => "native_output_limit",
+        "host.service_native_spawn_failed" => "native_spawn_failed",
+        "host.service_foreign_state_directory" => "foreign_state_directory",
+        "host.service_lock_missing_reconciliation_required" => "service_lock_missing",
+        "host.runtime_lock_missing_reconciliation_required" => "runtime_lock_missing",
+        "host.runtime_consent_changed" => "runtime_consent_changed",
+        "host.service_stale_or_unapproved_operation" => "stale_operation",
+        _ => CompletionReason::from_error(error).code(),
+    }
+}
+
 fn completion_report(
     root: &Path,
     epoch: u64,
@@ -1116,7 +1159,11 @@ impl Native {
                 let Scope::Present(expected) = &request.expected else {
                     return Err(Failure::ScopeChanged);
                 };
-                controller::disable_if_current(store, &request.root, expected).map_err(failure)?;
+                disable_completion_result(
+                    &request.root,
+                    controller::disable_if_current(store, &request.root, expected),
+                )
+                .map_err(failure)?;
                 report(Some(store), &request.root)
             }
             Operation::Uninstall => {

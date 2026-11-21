@@ -6248,3 +6248,27 @@ A controlled real-daemon regression reproduces the original post-native `Busy`
 publication refusal and verifies snapshot adoption with one actor/generation;
 portable tests cover guard retention, final refusals and budget exhaustion.
 This is not installed GUI/provider/vault acceptance or a full matrix result.
+
+### Desktop Disable failure observer
+
+Status: automated contract coverage; native capture pending. The original Mac
+first-Disable failure remains unresolved. This change records an error returned
+by the Disable controller, while preserving its original outcome and recovery
+flow. Errors before that controller boundary do not produce this event.
+
+1. In the controlled signed Desktop build, open Settings → Dev Tunnels → Remote
+   access and confirm Disable once. Preserve the first result before Recovery.
+2. If it fails, retain the `host.disable_completion` line from the host worker
+   log. On macOS the default file is
+   `~/Library/Application Support/com.fes.fesTerm/remote-access-desktop-v1/worker.log`.
+   It contains only outcome, finite kind, optional numeric OS code and a closed
+   reason, plus the existing log timestamp/process envelope.
+3. Confirm that the original phase/result is unchanged and durable shells retain
+   their actor/generation. A missing event or `unknown` reason is not acceptance.
+4. Check that no arbitrary error text, credential, account reference or path
+   appears in the event. Complete supported Recovery only after preserving evidence.
+
+The real signed 5590 GUI reached retained Listening without a Keychain/sign-in
+prompt but still failed first Disable at epoch 6. Supported same-epoch completion
+and retained Enable at epoch 7 preserved its shell and binding. This observer has
+not yet captured that failure and does not establish its cause.

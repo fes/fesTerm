@@ -1766,8 +1766,7 @@
         "reviewed_ordinary_directory_move_and_delete_preserve_collision_and_refuse_new_child",
         "host_delete_probe_is_separate_strict_bounded_and_revalidates_stage",
         "host_delete_capabilities_probe_is_separate_static_and_refuses_extra_arguments",
-        "desktop_remote_access_delete_permission_is_separate_requires_write_and_survives_draft_roundtrip"
-,
+        "desktop_remote_access_delete_permission_is_separate_requires_write_and_survives_draft_roundtrip",
         "fragmented_reordered_queries_and_duplicates_are_observed_not_invented",
         "unrecognized_input_is_counted_without_retaining_or_reporting_content",
         "bounded_frames_and_total_input_refuse_before_unbounded_retention",
@@ -6870,7 +6869,9 @@
         "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
         "docs/adr/0087-macos-sessiond-socket-addresses.md#decision",
         "docs/adr/0016-native-secret-store-boundary.md#decision",
-        "docs/adr/0084-host-based-dev-tunnels.md#exact-macos-stop-completion-after-a-native-refusal"
+        "docs/adr/0084-host-based-dev-tunnels.md#exact-macos-stop-completion-after-a-native-refusal",
+        "docs/adr/0084-host-based-dev-tunnels.md#desktop-disable-failure-evidence",
+        "docs/manual-validation.md#desktop-disable-failure-observer"
       ],
       "decisions": [
         "ADR-0084",
@@ -7235,7 +7236,10 @@
         "readiness_diagnostic_is_bounded_per_static_reason_without_tick_noise",
         "ordinary_readiness_reasons_and_inplace_renewal_roundtrip_runtime_history_privately",
         "native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence",
-        "native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof"
+        "native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof",
+        "desktop_remote_access_disable_error_observer_preserves_owned_result_and_log_failure",
+        "desktop_remote_access_disable_error_observer_redacts_and_preserves_inner_error",
+        "desktop_remote_access_disable_error_observer_localizes_known_failure_without_remapping"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
