@@ -449,7 +449,13 @@ lock; ordinary discovery releases its read lock before native connection.
 
 Platform-sensitive file authority remains isolated in the two ADR 0034
 security crates. `festerm-unix-security` owns no-follow opens, private staging,
-metadata snapshots and no-overwrite publication. `festerm-windows-security`
+metadata snapshots and no-overwrite publication. Its macOS-only selected
+Keychain module additionally owns public native handles and exact-two-code-object
+access capture/create-new/retained-update mechanisms (ADR0016/0084). HOST
+consent, authenticated stage selection and lifecycle policy remain above this
+boundary; the unsafe-free secret-store facade fixes namespace and opaque item
+binding. This additive seam is not selected by current HOST paths.
+`festerm-windows-security`
 owns native handle-relative creation/publication and complete Windows access
 policy handling in addition to named-pipe DACL support. Each named-pipe
 instance is created while the daemon token temporarily has a current-user-only

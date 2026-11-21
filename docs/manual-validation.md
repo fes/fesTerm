@@ -6078,3 +6078,18 @@ remains unproved. Preserve that first result. This source adds no ACL grant or
 automatic retry and provides no signed/native qualification. Existing release
 controls and owner authorization govern later exact-candidate runs; see
 [ADR 0084](adr/0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
+
+### #816 additive macOS HOST item enabler (unwired)
+
+The selected-item mechanism/facade has policy, ordering, ownership and finite
+error unit coverage; it is not selected by current HOST setup. No automated test
+opens the host user's Keychain. Under the existing opt-in Mac HOST native gate,
+use disposable selected canaries and explicitly qualified GUI/HOST identities to
+verify create/read/required update, ACL preservation, unrelated plaintext-read
+and automatic HOST-administration refusal, missing/locked/deleted failure and
+same-DR update behavior. Keep current ad-hoc development identity separate from
+production signed-DR qualification. Existing reserved items are never migrated,
+recreated after absence or SetAccess-repaired. Hostile coordinated same-user
+vault plus policy overwrite resistance is not claimed. Actual #816 native and
+complete Enable/listener/I/O qualification remain open; this enabler adds no
+activation, permission or retry authority.

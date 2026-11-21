@@ -2907,3 +2907,33 @@ existing prompt, finish prompt-free and preserve state. This change grants no AC
 access or automatic retry, and does not resolve #816 or provide signed/native
 qualification. Existing release controls and owner authorization govern later
 exact-candidate runs.
+
+### Unwired fresh macOS HOST item enabler (#816)
+
+The additive ADR0016 facade and macOS module in `festerm-unix-security` provide
+owned public native handles for one bound fresh owner-anchor or HOST-OAuth
+reference. Creation captures this executing GUI plus a caller-authenticated
+immutable HOST and verifies exact-two-app plaintext-read trust and no automatic
+HOST ACL administration. The GUI may be a retained ad-hoc development build;
+production signed-DR upgrade evidence remains distinct. Supported updates use
+the retained selected item and never upsert or repair old access policy.
+
+This is mechanism only: no enrollment/cloud factory, start command, activation,
+credential getter or cancellation behavior is wired or changed. The caller must
+later supply authenticated stage/full-snapshot consent and existing reserved
+reference/publication order. No secret or opaque reference enters diagnostics.
+The existing same-user account boundary is retained; hostile coordinated native
+anchor plus policy replacement is not newly claimed resisted. Standard ENCRYPT
+rights do not become an all-app plaintext-read grant.
+
+#### Validation impact
+
+Bounded semantic ACL fixtures distinguish null/all-app, empty/admin and exact
+two identities, refuse broader read entries, and exercise missing/collision/error
+create/update ordering. A CoreFoundation-only partial-output test checks RAII
+release without opening Keychain. Facade fixtures retain exact purpose/reference
+and finite errors. Actual selected-item native Keychain effects, read/update
+access by GUI/HOST, denied unrelated plaintext read/automatic administration,
+missing/locked/deleted behavior and stable-DR upgrade remain opt-in Mac tests.
+This source enabler does not resolve #816 or qualify a live Enable; existing
+retained R5 items are untouched and receive no automatic ACL migration.

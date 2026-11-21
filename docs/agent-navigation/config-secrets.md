@@ -1,23 +1,23 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "7f4bebf2d947599fb27b6631c9a8d55f68cb2fa810622e0318d80f48c2dfe412"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "61f501d87ab6e2569e047e63ffb206e650ee7369a008ab849a5cf1f4237f004f"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns validated configuration and workspace metadata, opaque native credential references, and current-user file/process security boundaries.
+Owns config, workspace metadata and opaque native references.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
 ## Config startup
 
-Use for: Config selection and startup persistence.
+Use for: Config selection and autosave.
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses explicit override or native config path and keeps it private.
-- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private startup loader and save gate for automatic config writes.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Validates override versus native config path.
+- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Gates startup autosave.
 
 Evidence:
-- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Proves the override wins before the native config location.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Shows private native-directory creation and round-trip save behavior.
+- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Checks override precedence.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Checks private-directory creation and save.
 
 Caveats:
 - Diagnostics avoid exposing the selected path or source TOML.
@@ -26,15 +26,15 @@ Caveats:
 
 ## Config schema
 
-Use for: Validated config and workspace metadata.
+Use for: Validated workspace metadata.
 
-- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML document for profiles, workspace, settings, and accounts.
-- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Metadata-only restore state with tab and window validation.
-- [`DevTunnelFilesProfileConfiguration`](../../crates/festerm-config/src/profiles.rs) — Files destination/account metadata; restore grants no connection or credential authority.
+- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML metadata.
+- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Validates metadata-only restoration.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Opaque credential metadata.
 
 Evidence:
-- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks Files schema and exact restored tab kind.
-- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Confirms workspace validation and profile-reference checks.
+- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Checks workspace references.
+- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks exact Files tab kind.
 
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
@@ -43,14 +43,14 @@ Caveats:
 
 ## Secret boundary
 
-Use for: Native credential and opaque-reference custody.
+Use for: Native credential custody.
 
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than password or token data.
-- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Opaque reference, never a secret value.
+- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Owns native secret operations.
 
 Evidence:
-- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Shows config persists only the opaque reference and keeps the value opaque.
-- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Proves persisted references are canonical, random, and opaque.
+- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Checks reference-only persistence.
+- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Checks random canonical references.
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
@@ -60,14 +60,14 @@ Caveats:
 
 ## File security
 
-Use for: How are config directories and save payloads kept private before publication on Unix or Windows?
+Use for: Private file publication.
 
-- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Ensures a directory is owned and restricted to the current user.
-- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a file with a current-user-only DACL and verified publication flow.
+- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks current-user directory access.
+- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Publishes current-user-only files.
 
 Evidence:
-- [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Validates inherited ACL cleanup before a private directory is committed.
-- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Shows private creation and publication preserve the current-user-only DACL.
+- [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Checks inherited ACL cleanup.
+- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Checks DACL preservation.
 
 Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
@@ -86,3 +86,19 @@ Evidence:
 
 Caveats:
 - Context equality and WMI PIDs confer no creation consent, session or termination authority.
+
+## Selected Mac HOST items (unwired)
+
+Use for: Additive fresh-item creation and retained update mechanisms.
+
+- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Consumes one bound purpose/reference.
+- [`Applications`](../../crates/festerm-unix-security/src/macos_keychain/native.rs) — Captures and checks exact native identities.
+
+Evidence:
+- [`mac_host_item_creation_only_follows_proven_absence`](../../crates/festerm-unix-security/src/macos_keychain.rs) — Refuses error-to-create fallback.
+- [`host_item_creation_binding_retains_only_selected_purpose_and_reference`](../../crates/festerm-secret-store/src/host_items.rs) — Checks exact reference binding.
+
+Caveats:
+- Current HOST paths do not select this facade; no live Mac fix is qualified.
+- Ad-hoc self is distinct from production signed-DR native qualification.
+- No automatic ACL migration, upsert or hostile same-user write-isolation claim.

@@ -5151,11 +5151,19 @@
       ],
       "decisions": [
         "ADR-0003",
-        "ADR-0016"
+        "ADR-0016",
+        "ADR-0084"
       ],
       "automated_tests": [
         "rejects_secret_fields_and_values_without_echoing_them",
-        "failed_workspace_save_retains_configuration_without_path_or_content_leakage"
+        "failed_workspace_save_retains_configuration_without_path_or_content_leakage",
+        "mac_host_item_policy_distinguishes_any_app_empty_and_exact_two",
+        "mac_host_item_policy_checks_every_read_entry_and_bounds",
+        "mac_host_item_creation_only_follows_proven_absence",
+        "mac_host_item_update_has_no_create_fallback_and_preserves_primary_errors",
+        "mac_host_owned_partial_error_releases_retained_native_output",
+        "host_item_creation_binding_retains_only_selected_purpose_and_reference",
+        "host_item_errors_remain_finite_and_no_reference_is_a_display_value"
       ],
       "manual_scenarios": [
         "NP-03",

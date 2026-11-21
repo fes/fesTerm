@@ -989,3 +989,9 @@ mod native {
         Err(SecretStoreError::Unsupported)
     }
 }
+
+/// Additive macOS HOST item mechanism; no current product path selects it.
+#[cfg(target_os = "macos")]
+mod host_items;
+#[cfg(target_os = "macos")]
+pub use host_items::{HostSecretPurpose, MacHostCreationContext, MacHostSecretItem};
