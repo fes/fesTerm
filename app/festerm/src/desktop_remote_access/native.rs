@@ -64,6 +64,7 @@ fn completion_failure_code(error: Failure) -> &'static str {
         Failure::PrivateStorage => "private_storage",
         Failure::FileAccessReview => "file_access_review",
         Failure::MacHostHelperUnsupported => "mac_host_helper_unsupported",
+        Failure::MacHostIdentityUnsupported => "mac_host_identity_unsupported",
         Failure::FileHelperUnsupported => "file_helper_unsupported",
         Failure::SignedBundle => "signed_bundle",
         Failure::BundleNotPublished => "bundle_not_published",
@@ -389,6 +390,13 @@ fn failure(error: io::Error) -> Failure {
             .is_some_and(|inner| inner.is::<io::Error>() || inner.source().is_some())
     {
         Failure::NativeTimeout
+    } else if error.kind() == io::ErrorKind::Other
+        && detail == "host.mac_host_identity_incompatible"
+        && !error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<io::Error>() || inner.source().is_some())
+    {
+        Failure::MacHostIdentityUnsupported
     } else if error.kind() == io::ErrorKind::Other
         && detail == "host.mac_host_access_helper_required"
         && !error

@@ -22,6 +22,16 @@ struct Binding {
     reference: SecretReference,
 }
 impl MacHostCreationContext {
+    /// Metadata-only preflight before HOST setup reserves state or starts OAuth.
+    /// No Keychain is opened and no item or credential is read or changed.
+    pub fn validate_identities(
+        authenticated_host_path: &Path,
+        authenticated_host: &File,
+    ) -> Result<(), SecretStoreError> {
+        keychain::Applications::capture(authenticated_host_path, authenticated_host)
+            .map(drop)
+            .map_err(map)
+    }
     /// The caller must authenticate and retain the immutable HOST TrustedStage,
     /// and bind creation to reviewed full-snapshot/purpose/reference consent.
     /// This only captures identities; it confers no publisher or lifecycle grant.

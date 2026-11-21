@@ -49,8 +49,12 @@ no item access, and retains per-query noninteractive matching.
 
 The additive `MacHostCreationContext` binds one already reserved HOST purpose and
 opaque reference to this executing app and one caller-authenticated immutable
-HOST executable. The current app may be a valid retained ad-hoc development
-build; this does not establish production stable-DR upgrade qualification.
+HOST executable. Before setup reserves state or starts OAuth, both the actual
+executing app and authenticated HOST must be valid, non-ad-hoc Developer ID Application code
+with the same nonempty Team identifier. Trusted applications alone do not cross
+the legacy creator partition: an ad-hoc GUI's cdhash partition refuses the signed
+HOST's Team partition. Fresh creation revalidates these identities. This signing
+precondition does not establish stored-item access or stable-DR native evidence.
 The native mechanism captures both exact trusted applications and verifies
 standard legacy ACL plaintext-read trust plus absence of automatic HOST ACL
 administration. Standard all-app ENCRYPT is not a plaintext-read grant. It does

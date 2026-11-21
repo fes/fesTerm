@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "efe4dcb27e520a3668d9f27577d62b1beda2ecc02cb029bade4913d0b895b4d7"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "3a33202d317dc19975c56a0d415b9f76abe151ccfaecc53a6ee5baf036f47587"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -91,7 +91,7 @@ Caveats:
 
 Use for: Fresh Desktop purpose creation and retained update.
 
-- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Consumes one purpose/reference.
+- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Captures same-Team Developer ID identities before consuming one purpose/reference.
 - [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps HOST updates separate from ordinary accounts.
 
 Evidence:

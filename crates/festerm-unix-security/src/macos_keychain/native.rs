@@ -1,5 +1,6 @@
 use super::{
-    create_if_missing, input, policy, update_selected, Error, MAX_ACLS, MAX_AUTHORIZATIONS,
+    compatible_identities, create_if_missing, input, policy, update_selected, Error, MAX_ACLS,
+    MAX_AUTHORIZATIONS,
 };
 use std::{
     ffi::{c_void, CString},
@@ -62,9 +63,11 @@ unsafe extern "C" {
     fn CFNumberGetTypeID() -> usize;
     fn CFStringGetTypeID() -> usize;
     fn CFStringGetLength(string: Ref) -> isize;
+    fn CFStringGetCString(string: Ref, buffer: *mut i8, size: isize, encoding: u32) -> u8;
 }
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
+    fn SecRequirementCreateWithString(text: Ref, flags: u32, requirement: *mut Ref) -> Status;
     fn SecStaticCodeCreateWithPath(path: Ref, flags: u32, code: *mut Ref) -> Status;
     fn SecStaticCodeCheckValidity(code: Ref, flags: u32, requirement: Ref) -> Status;
     fn SecCodeCopySigningInformation(code: Ref, flags: u32, info: *mut Ref) -> Status;
@@ -238,6 +241,7 @@ struct Application {
     cpath: CString,
     held: File,
     identity: Identity,
+    team: String,
 }
 impl Application {
     fn capture(path: PathBuf, held: File, helper: bool) -> Result<Self, Error> {
@@ -257,26 +261,43 @@ impl Application {
         status(unsafe { SecStaticCodeCheckValidity(code.0, 1 << 4, ptr::null()) })
             .map_err(|_| Error::UnsupportedIdentity)?;
         let info = returned(|out| unsafe { SecCodeCopySigningInformation(code.0, 1 << 1, out) })?;
-        if helper {
-            // The GUI may be a retained valid ad-hoc development self. The
-            // helper must be signed; publisher/stage authentication is ABOVE
-            // this mechanism, not inferred from a nonempty team identifier.
-            unsafe {
-                let flags = CFDictionaryGetValue(info.0, kSecCodeInfoFlags);
-                let team = CFDictionaryGetValue(info.0, kSecCodeInfoTeamIdentifier);
-                let mut bits = 0_i32;
-                if flags.is_null()
-                    || CFGetTypeID(flags) != CFNumberGetTypeID()
-                    || CFNumberGetValue(flags, 3, (&mut bits as *mut i32).cast()) == 0
-                    || bits & 2 != 0
-                    || team.is_null()
-                    || CFGetTypeID(team) != CFStringGetTypeID()
-                    || !(1..=128).contains(&CFStringGetLength(team))
-                {
-                    return Err(Error::UnsupportedIdentity);
-                }
+        // A trusted-app ACL alone does not cross the creator's legacy partition.
+        let anchor = text(b"anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists")?;
+        let developer_id =
+            returned(|out| unsafe { SecRequirementCreateWithString(anchor.0, 0, out) })?;
+        let developer_id_valid =
+            unsafe { SecStaticCodeCheckValidity(code.0, 1 << 4, developer_id.0) } == 0;
+        let (bits, team) = unsafe {
+            let flags = CFDictionaryGetValue(info.0, kSecCodeInfoFlags);
+            let team = CFDictionaryGetValue(info.0, kSecCodeInfoTeamIdentifier);
+            let mut bits = 0_i32;
+            if flags.is_null()
+                || CFGetTypeID(flags) != CFNumberGetTypeID()
+                || CFNumberGetValue(flags, 3, (&mut bits as *mut i32).cast()) == 0
+                || team.is_null()
+                || CFGetTypeID(team) != CFStringGetTypeID()
+                || !(1..=128).contains(&CFStringGetLength(team))
+            {
+                return Err(Error::UnsupportedIdentity);
             }
-        }
+            let mut bytes = [0_i8; 513];
+            if CFStringGetCString(team, bytes.as_mut_ptr(), bytes.len() as isize, 0x08000100) == 0 {
+                return Err(Error::UnsupportedIdentity);
+            }
+            let team = std::ffi::CStr::from_ptr(bytes.as_ptr())
+                .to_str()
+                .map_err(|_| Error::UnsupportedIdentity)?
+                .to_owned();
+            (bits, team)
+        };
+        compatible_identities(
+            developer_id_valid,
+            bits & 2 != 0,
+            Some(&team),
+            developer_id_valid,
+            bits & 2 != 0,
+            Some(&team),
+        )?;
         let requirement =
             returned(|out| unsafe { SecCodeCopyDesignatedRequirement(code.0, 0, out) })
                 .map_err(|_| Error::UnsupportedIdentity)?;
@@ -297,6 +318,7 @@ impl Application {
             cpath,
             held,
             identity: before,
+            team,
         };
         result.revalidate()?;
         Ok(result)
@@ -321,8 +343,8 @@ pub struct Applications {
     access: Owned,
 }
 impl Applications {
-    /// Captures the executing process (including a valid ad-hoc development
-    /// build), never an arbitrary caller-supplied GUI. Holds executable handles.
+    /// Captures the executing Developer ID app and same-Team authenticated HOST,
+    /// never an arbitrary GUI. Ad-hoc identities cannot share the default partition.
     pub fn capture(
         authenticated_helper_path: &Path,
         authenticated_helper: &File,
@@ -336,6 +358,14 @@ impl Applications {
                 .try_clone()
                 .map_err(|_| Error::InvalidInput)?,
             true,
+        )?;
+        compatible_identities(
+            true,
+            false,
+            Some(&gui.team),
+            true,
+            false,
+            Some(&helper.team),
         )?;
         // Distinct identities, not two aliases for the same application.
         if unsafe { SecTrustedApplicationValidateWithPath(gui.app.0, helper.cpath.as_ptr()) } == 0

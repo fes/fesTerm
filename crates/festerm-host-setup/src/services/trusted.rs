@@ -484,6 +484,14 @@ impl TrustedStage {
         self.revalidate()
     }
 
+    #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn require_mac_host_creation_identity(&self) -> io::Result<()> {
+        self.revalidate()?;
+        festerm_secret_store::MacHostCreationContext::validate_identities(&self.path, &self.file)
+            .map_err(|_| refused("host.mac_host_identity_incompatible"))?;
+        self.revalidate()
+    }
+
     pub fn version(&self) -> &str {
         &self.release_version
     }

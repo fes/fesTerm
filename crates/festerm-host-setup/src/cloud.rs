@@ -2285,6 +2285,7 @@ mod tests {
         events: std::cell::RefCell<Vec<&'static str>>,
         fail_install: std::cell::Cell<bool>,
         fail_host_items: std::cell::Cell<bool>,
+        fail_host_identity: std::cell::Cell<bool>,
         desktop_vault: Option<std::sync::Arc<crate::enrollment::tests::Vault>>,
     }
 
@@ -2295,7 +2296,9 @@ mod tests {
             _: &Store,
             _: &crate::services::TrustedStage,
         ) -> io::Result<()> {
-            if self.fail_host_items.get() {
+            if self.fail_host_identity.get() {
+                Err(refused("host.mac_host_identity_incompatible"))
+            } else if self.fail_host_items.get() {
                 Err(refused("host.mac_host_access_helper_required"))
             } else {
                 Ok(())
@@ -2401,6 +2404,7 @@ mod tests {
             events: Default::default(),
             fail_install: Default::default(),
             fail_host_items: Default::default(),
+            fail_host_identity: Default::default(),
             desktop_vault: None,
         }
     }
@@ -2445,6 +2449,34 @@ mod tests {
         .err()
         .unwrap();
         assert_eq!(error.to_string(), "host.mac_host_access_helper_required");
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(!root.path().join("host").join(RECORD).exists());
+        assert!(boundary.events.borrow().is_empty());
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_owner_setup_incompatible_mac_identity_refuses_before_ticket_or_sign_in() {
+        let (root, store, secrets) = fixture();
+        let before = store.snapshot().unwrap();
+        let boundary = controller_boundary(&store, secrets);
+        boundary.fail_host_identity.set(true);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        let error = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| panic!("no device sign-in"),
+            &boundary,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), "host.mac_host_identity_incompatible");
         assert_eq!(store.snapshot().unwrap(), before);
         assert!(!root.path().join("host").join(RECORD).exists());
         assert!(boundary.events.borrow().is_empty());

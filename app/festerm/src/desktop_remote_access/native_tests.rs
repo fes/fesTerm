@@ -1513,3 +1513,24 @@ fn mac_host_helper_capability_refusal_has_exact_update_guidance() {
         assert_ne!(failure(error), Failure::MacHostHelperUnsupported);
     }
 }
+
+#[test]
+fn mac_host_identity_refusal_has_exact_signing_guidance() {
+    let observed = failure(std::io::Error::other("host.mac_host_identity_incompatible"));
+    assert_eq!(observed, Failure::MacHostIdentityUnsupported);
+    assert!(observed.message().contains("same developer team"));
+    assert!(observed.message().contains("No account sign-in"));
+    assert_ne!(
+        failure(std::io::Error::other(
+            "prefix host.mac_host_identity_incompatible"
+        )),
+        observed
+    );
+    assert_ne!(
+        failure(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "host.mac_host_identity_incompatible"
+        )),
+        observed
+    );
+}

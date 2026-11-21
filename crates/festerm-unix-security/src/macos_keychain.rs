@@ -13,6 +13,32 @@ pub enum Error {
     Native,
 }
 
+// The legacy partition gate is independent of trusted-application ACLs.
+// A shared Developer ID Team partition is required before creating fresh items.
+fn compatible_identities(
+    gui_developer_id_valid: bool,
+    gui_ad_hoc: bool,
+    gui_team: Option<&str>,
+    host_developer_id_valid: bool,
+    host_ad_hoc: bool,
+    host_team: Option<&str>,
+) -> Result<(), Error> {
+    match (gui_team, host_team) {
+        (Some(gui), Some(host))
+            if gui_developer_id_valid
+                && host_developer_id_valid
+                && !gui_ad_hoc
+                && !host_ad_hoc
+                && !gui.is_empty()
+                && gui.len() <= 128
+                && gui == host =>
+        {
+            Ok(())
+        }
+        _ => Err(Error::UnsupportedIdentity),
+    }
+}
+
 const LIMIT: usize = 64 * 1024;
 const MAX_ACLS: usize = 16;
 #[cfg(target_os = "macos")]
@@ -70,6 +96,41 @@ pub use native::{Applications, Item};
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mac_host_identity_compatibility_requires_developer_id_same_team() {
+        assert_eq!(
+            compatible_identities(true, false, Some("TEAM1"), true, false, Some("TEAM1")),
+            Ok(())
+        );
+        for (developer_id_valid, ad_hoc, team) in [
+            (false, false, Some("TEAM1")),
+            (true, true, Some("TEAM1")),
+            (true, false, None),
+            (true, false, Some("")),
+            (true, false, Some("TEAM2")),
+        ] {
+            assert_eq!(
+                compatible_identities(developer_id_valid, ad_hoc, team, true, false, Some("TEAM1")),
+                Err(Error::UnsupportedIdentity)
+            );
+            assert_eq!(
+                compatible_identities(true, false, Some("TEAM1"), developer_id_valid, ad_hoc, team),
+                Err(Error::UnsupportedIdentity)
+            );
+        }
+        assert_eq!(
+            compatible_identities(
+                true,
+                false,
+                Some(&"X".repeat(129)),
+                true,
+                false,
+                Some(&"X".repeat(129))
+            ),
+            Err(Error::UnsupportedIdentity)
+        );
+    }
+
     #[test]
     fn mac_host_item_policy_distinguishes_any_app_empty_and_exact_two() {
         let owner = (false, true, Some(vec![]));

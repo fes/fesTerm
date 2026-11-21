@@ -454,7 +454,11 @@ Keychain module additionally owns public native handles and exact-two-code-objec
 access capture/create-new/retained-update mechanisms (ADR0016/0084). HOST
 consent, authenticated stage selection and lifecycle policy remain above this
 boundary; the unsafe-free secret-store facade fixes namespace and opaque item
-binding. This additive seam is not selected by current HOST paths.
+binding. Desktop HOST owner-anchor and OAuth paths select this facade; ordinary
+account stores remain unchanged. Fresh creation requires the actual GUI and
+selected HOST to have Apple-issued Developer ID Application non-ad-hoc signatures from the same Team,
+checked before setup reserves state or starts OAuth. Exact trusted-app read ACLs
+remain separate from the legacy creator-partition prerequisite.
 `festerm-windows-security`
 owns native handle-relative creation/publication and complete Windows access
 policy handling in addition to named-pipe DACL support. Each named-pipe

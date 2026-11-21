@@ -161,6 +161,7 @@ impl SetupBoundary for NativeBoundary {
         #[cfg(target_os = "macos")]
         if store.snapshot()?.origin == crate::lifecycle::Origin::Desktop {
             stage.require_mac_host_access()?;
+            stage.require_mac_host_creation_identity()?;
         }
         let _ = (store, stage);
         Ok(())

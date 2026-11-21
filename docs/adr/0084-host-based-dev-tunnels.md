@@ -2922,8 +2922,12 @@ The additive ADR0016 facade and macOS module in `festerm-unix-security` provide
 owned public native handles for one bound fresh owner-anchor or HOST-OAuth
 reference. Creation captures this executing GUI plus a caller-authenticated
 immutable HOST and verifies exact-two-app plaintext-read trust and no automatic
-HOST ACL administration. The GUI may be a retained ad-hoc development build;
-production signed-DR upgrade evidence remains distinct. Supported updates use
+HOST ACL administration. Both actual GUI and authenticated HOST require valid
+non-ad-hoc Developer ID Application signatures with the same Team identifier before fresh
+setup reserves state or starts OAuth. The trusted-app list is independent of
+legacy partition admission; matching signatures avoid the observed creator-cdhash
+versus HOST-Team mismatch without editing any existing ACL. Native item access
+and production stable-DR upgrade evidence remain distinct. Supported updates use
 the retained selected item and never upsert or repair old access policy.
 
 Host-setup supplies authenticated stage/full-snapshot consent and the existing
