@@ -57,20 +57,29 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
 if ($env:FESTERM_RUN_TERMINAL_CAPABILITY_PROBE -eq '1') {
     if ($MarkdownScrollingOnly -or $WindowsPublisherOnly -or $ProvisionPsRpRunner -or
         -not $env:FESTERM_TERMINAL_CAPABILITY_CASE -or
-        -not $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH -or
-        ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)) {
-        exit 2 # Windows native console collection remains a separate gate.
+        -not $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH) {
+        exit 2
     }
     $probeStart = [Diagnostics.ProcessStartInfo]::new()
-    $probeStart.FileName = (Get-Command python3 -CommandType Application -ErrorAction Stop |
-        Select-Object -First 1).Source
+    $probeArguments = @("$PSScriptRoot/check_dev_tunnel_workflow.py",
+        '--terminal-capability-probe', '--case', $env:FESTERM_TERMINAL_CAPABILITY_CASE,
+        '--result', $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH)
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $helper = $env:FESTERM_TERMINAL_CAPABILITY_HELPER
+        if (-not $helper -or -not [IO.Path]::IsPathFullyQualified($helper) -or
+            -not [IO.File]::Exists($helper)) { exit 2 }
+        $probeStart.FileName = $helper
+        $probeArguments = @('--case', $env:FESTERM_TERMINAL_CAPABILITY_CASE,
+            '--output', $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH)
+    } else {
+        $probeStart.FileName = (Get-Command python3 -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1).Source
+    }
     $probeStart.UseShellExecute = $false
     $probeStart.RedirectStandardInput = $false
     $probeStart.RedirectStandardOutput = $false
     $probeStart.RedirectStandardError = $false
-    foreach ($argument in @("$PSScriptRoot/check_dev_tunnel_workflow.py",
-        '--terminal-capability-probe', '--case', $env:FESTERM_TERMINAL_CAPABILITY_CASE,
-        '--result', $env:FESTERM_TERMINAL_CAPABILITY_RESULT_PATH)) {
+    foreach ($argument in $probeArguments) {
         $probeStart.ArgumentList.Add($argument)
     }
     $probeProcess = [Diagnostics.Process]::Start($probeStart)

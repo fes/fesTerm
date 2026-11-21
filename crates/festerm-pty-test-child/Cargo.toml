@@ -12,13 +12,27 @@ publish = false
 name = "festerm-pty-test-child"
 path = "src/main.rs"
 
+[[bin]]
+name = "festerm-terminal-capability-probe"
+path = "src/terminal_capability_probe.rs"
+
 [dependencies]
+regex = "1"
+serde_json = "1"
 terminal_size = "0.4"
 festerm-test-support = { path = "../festerm-test-support" }
 
+[target.'cfg(windows)'.dependencies]
+festerm-windows-security = { path = "../festerm-windows-security" }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_IO"] }
+
 [dev-dependencies]
-serde_json = "1"
 tempfile = "3"
 
-[lints]
-workspace = true
+# Nonshipping fixture: only the Windows console backend admits native FFI.
+# Keep all other code denied; retain the workspace Clippy policy.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
