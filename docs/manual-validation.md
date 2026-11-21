@@ -5918,6 +5918,17 @@ endpoint-readiness proof. No raw errors, protected files, account/reference data
 or paths should be captured. These observations preserve existing failures and
 do not authorize another Enable, Start, permission grant or automatic replay.
 
+When the exact native service timeout is returned, Remote Access must show a
+native operation timeout notice and Recovery guidance: the command may not have
+run or may have completed, so refresh local status and review before another
+operation. It must not label this result as unavailable protected storage or
+claim the outer five-minute deadline expired/cancellation was requested. The
+outer deadline keeps its separate guidance. Exact classification, contention
+precedence, unknown/wrapped-error refusal, retained primary errors, stale-scope
+clearing and rendered recovery without automatic replay are automated. Current
+packaged native dialog/accessibility qualification remains required; this notice
+does not fix native credential access or qualify a successful Enable.
+
 During native start, `host.start_credentials` marks each existing credential
 check (`initial` or `before_mutation`). Nested `host.owner_start_noninteractive`
 lines identify the provider-owner NI snapshot API path with the same finite

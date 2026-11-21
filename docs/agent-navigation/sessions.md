@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "51ae3bd41d9b9b4300743b11e166b60aad51fcceafc79ecdb8f993abf3347ab0"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "5c4ae9991725cbf15a6167f592630b73b0cd67bb178c185a0b207f065fa0afdf"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,6 +46,7 @@ Use for: How is a named session resumed, reconnected, or mirrored for persistenc
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned mirror drains replies while ingesting terminal bytes
 
 Evidence:
+- [`absence_denial_revocation_cancellation_and_generations_remain_distinct`](../../crates/festerm-sessiond/tests/host_control.rs) — Forces post-commit lease contention and recovers the same issued creation, preserving cancellation and generation fences.
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect semantics, and explicit attach rules
 
 Caveats:

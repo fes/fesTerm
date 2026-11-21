@@ -288,6 +288,7 @@ pub enum Failure {
     },
     Cancelled,
     Timeout,
+    NativeTimeout,
     RefreshFirst,
     ScopeChanged,
     PrivateStorage,
@@ -320,6 +321,7 @@ impl Failure {
                 "Host account verification is required. Review access settings to sign in."
             }
             Self::NativeVault => "Unlock the credential store, then retry.",
+            Self::NativeTimeout => "The native host operation timed out. Refresh local status and review Recovery before another change.",
             Self::RefreshFirst | Self::ScopeChanged => "Refresh local status, then review again.",
             Self::OwnerApproval => "Review owner approval in Advanced / Recovery.",
             Self::Busy => "Host state is busy. Wait, then refresh local status.",
@@ -359,6 +361,7 @@ impl Failure {
             Self::Busy => "Wait for current work to finish, then refresh local status before another change.",
             Self::Cancelled => "Cancelled. Mutating work must finish revocation before retry.",
             Self::Timeout => "The five-minute deadline expired and cancellation was requested. Native or cloud work may have completed or may still be draining. Refresh local status and review Recovery before another change; nothing is retried automatically.",
+            Self::NativeTimeout => "A native host operation exceeded its deadline. The native command may not have run or may have completed; its outcome is uncertain. Refresh local status and review Recovery before another operation. Nothing is retried automatically.",
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
@@ -1272,6 +1275,7 @@ impl Controller {
                                         error,
                                         Failure::Busy
                                             | Failure::Timeout
+                                            | Failure::NativeTimeout
                                             | Failure::PrivateStorage
                                             | Failure::ScopeChanged
                                             | Failure::Reconciliation

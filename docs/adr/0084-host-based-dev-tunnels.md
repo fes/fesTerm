@@ -2540,6 +2540,14 @@ No run is invented, owner noninteractive reads are unchanged, and no raw error
 or resource/credential identifier is logged. These observations distinguish
 boundaries without turning their success into serving authority or readiness.
 
+Desktop presents the exact native service timeout separately from its outer
+five-minute operation deadline and from protected-storage failures. The native
+command may not have run or may have completed; its outcome remains uncertain.
+Refresh local status and review Recovery before another operation; there is no
+automatic retry. Presentation does not reset a deadline, request cancellation,
+or change the original native result, credential access, consent or effects.
+Unknown or wrapped error text does not establish this native timeout reason.
+
 Start credential checks have separate bounded `host.start_credentials` events,
 with `initial`/`before_mutation` correlation. Provider-owner calls additionally
 reuse the finite owner observer as `host.owner_start_noninteractive`; this
