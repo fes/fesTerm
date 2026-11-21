@@ -16,7 +16,10 @@ enum Monitor {
     Recording {
         _monitor: festerm_linux_power::RecordingPrivacyMonitor,
     },
-    #[cfg(feature = "experimental-dev-tunnels")]
+    #[cfg(any(
+        feature = "experimental-dev-tunnels",
+        feature = "javascript-program-dev"
+    ))]
     Session {
         _monitor: festerm_linux_power::PrivacyMonitor,
     },
@@ -116,7 +119,7 @@ pub(crate) struct PrivacyTask {
 
 impl PrivacyTask {
     pub(crate) fn start(wake: Wake) -> Result<Self, String> {
-        Self::start_inner(wake, None, (), None)
+        Self::start_inner(wake, None, (), None, "Recording")
     }
 
     /// Session access reuses the existing lock/sleep monitor; it does not
@@ -128,7 +131,22 @@ impl PrivacyTask {
         charge: impl Send + 'static,
         on_preparation_failure: PreparationFailure,
     ) -> Result<Self, String> {
-        Self::start_inner(wake, Some(on_loss), charge, Some(on_preparation_failure))
+        Self::start_inner(
+            wake,
+            Some(on_loss),
+            charge,
+            Some(on_preparation_failure),
+            "Remote connection",
+        )
+    }
+
+    #[cfg(all(feature = "javascript-program-dev", not(test)))]
+    pub(crate) fn start_javascript_with_loss(
+        wake: Wake,
+        on_loss: Wake,
+        charge: impl Send + 'static,
+    ) -> Result<Self, String> {
+        Self::start_inner(wake, Some(on_loss), charge, None, "JavaScript program")
     }
 
     fn start_inner(
@@ -136,12 +154,8 @@ impl PrivacyTask {
         on_loss: Option<Wake>,
         charge: impl Send + 'static,
         on_preparation_failure: Option<PreparationFailure>,
+        activity: &'static str,
     ) -> Result<Self, String> {
-        let activity = if on_loss.is_some() {
-            "Remote connection"
-        } else {
-            "Recording"
-        };
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
         let (send, receiver) = mpsc::sync_channel(1);
@@ -150,8 +164,8 @@ impl PrivacyTask {
             .spawn(move || {
                 // Cancellation of the waiter never releases admitted native work.
                 let _charge = charge;
-                let result =
-                    install(wake.clone(), on_loss, on_preparation_failure).and_then(|guard| {
+                let result = install(wake.clone(), on_loss, on_preparation_failure, activity)
+                    .and_then(|guard| {
                         if worker_cancelled.load(Ordering::Acquire) {
                             drop(guard);
                             Err(format!("{activity} preparation was cancelled"))
@@ -241,15 +255,12 @@ fn install(
     wake: Wake,
     on_loss: Option<Wake>,
     on_preparation_failure: Option<PreparationFailure>,
+    activity: &'static str,
 ) -> Result<PrivacyGuard, String> {
     let loss = Arc::new(AtomicBool::new(false));
     let recording: Slot = Arc::new(Mutex::new(None));
+    #[cfg(target_os = "linux")]
     let session = on_loss.is_some();
-    let activity = if session {
-        "Remote connection"
-    } else {
-        "Recording"
-    };
     let callback = privacy_loss_callback(loss.clone(), recording.clone(), wake, on_loss);
     #[cfg(windows)]
     let monitor = Monitor::install_with_loss_flag(callback, loss.clone());
@@ -257,7 +268,10 @@ fn install(
     let monitor = Monitor::install(callback);
     #[cfg(target_os = "linux")]
     let monitor = {
-        #[cfg(feature = "experimental-dev-tunnels")]
+        #[cfg(any(
+            feature = "experimental-dev-tunnels",
+            feature = "javascript-program-dev"
+        ))]
         if session {
             festerm_linux_power::PrivacyMonitor::install(callback)
                 .map(|monitor| Monitor::Session { _monitor: monitor })
@@ -265,7 +279,10 @@ fn install(
             festerm_linux_power::RecordingPrivacyMonitor::install(callback)
                 .map(|monitor| Monitor::Recording { _monitor: monitor })
         }
-        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        #[cfg(not(any(
+            feature = "experimental-dev-tunnels",
+            feature = "javascript-program-dev"
+        )))]
         festerm_linux_power::RecordingPrivacyMonitor::install(callback)
             .map(|monitor| Monitor::Recording { _monitor: monitor })
     };

@@ -5,7 +5,15 @@
 //! instance, PID-named local pipe whose DACL admits only the current user and
 //! this AppContainer, and the supervisor verifies the client process ID.
 
-use crate::{Error, CPU_SECONDS, PROCESS_BYTES};
+use crate::{Error, PROCESS_BYTES};
+
+const fn cpu_limit_seconds(program: bool) -> u64 {
+    if program {
+        crate::PROGRAM_HARD_CPU_SECONDS
+    } else {
+        crate::CPU_SECONDS
+    }
+}
 use std::{
     io::{self, Read, Write},
     os::windows::{
@@ -310,7 +318,7 @@ fn grant_image_access(program: &Path, container: &ContainerSid) {
     drop(descriptor);
 }
 
-fn create_job() -> Result<OwnedHandle, Error> {
+fn create_job(program: bool) -> Result<OwnedHandle, Error> {
     // SAFETY: anonymous, non-inheritable job with default security.
     let job =
         owned(unsafe { CreateJobObjectW(ptr::null(), ptr::null()) }).ok_or_else(last_error)?;
@@ -318,7 +326,8 @@ fn create_job() -> Result<OwnedHandle, Error> {
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
     limits.BasicLimitInformation.LimitFlags = REQUIRED_LIMITS;
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
-    limits.BasicLimitInformation.PerProcessUserTimeLimit = (CPU_SECONDS * 10_000_000) as i64;
+    limits.BasicLimitInformation.PerProcessUserTimeLimit =
+        (cpu_limit_seconds(program) * 10_000_000) as i64;
     limits.ProcessMemoryLimit = PROCESS_BYTES as usize;
     limits.JobMemoryLimit = PROCESS_BYTES as usize;
     let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
@@ -365,7 +374,7 @@ pub(crate) struct Child {
 }
 
 impl Child {
-    pub(crate) fn spawn(program: &Path) -> Result<Self, Error> {
+    pub(crate) fn spawn_with_argument(program: &Path, argument: &str) -> Result<Self, Error> {
         // Concurrent profile creation and image ACL updates race inside
         // userenv; serialize setup through process creation.
         static SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -374,7 +383,8 @@ impl Child {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let container = ContainerSid::get()?;
         grant_image_access(program, &container);
-        let job = create_job()?;
+        let program_mode = argument == "--javascript-program-worker";
+        let job = create_job(program_mode)?;
         let mut capabilities = SECURITY_CAPABILITIES {
             AppContainerSid: container.0,
             Capabilities: ptr::null_mut(),
@@ -431,7 +441,7 @@ impl Child {
         // The worker has no standard handles and speaks only on its verified pipe.
         startup.lpAttributeList = list.0;
         let application = wide(program);
-        let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
+        let mut command_line = wide(format!("\"{}\" {argument}", program.display()));
         let environment = worker_environment()?;
         let mut current_directory = windows_directory()?;
         current_directory.push(0);
@@ -547,6 +557,13 @@ impl Child {
         Ok(Some(code))
     }
 
+    #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
+    pub(crate) fn cpu_time(&self) -> Result<std::time::Duration, Error> {
+        process_cpu_time(self.process.as_raw_handle()).ok_or(Error::Unavailable(
+            "worker process CPU evidence unavailable",
+        ))
+    }
+
     pub(crate) fn kill(&mut self) -> io::Result<()> {
         // SAFETY: terminates every process in this owned job.
         if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
@@ -560,12 +577,12 @@ impl Child {
 /// and a full pipe accepts zero bytes, also reported as `WouldBlock`.
 pub(crate) struct PipeEnd(Arc<OwnedHandle>);
 
-fn nowait_read(handle: HANDLE, buffer: &mut [u8]) -> io::Result<usize> {
+fn pipe_read(handle: HANDLE, buffer: &mut [u8]) -> io::Result<usize> {
     if buffer.is_empty() {
         return Ok(0);
     }
     let mut read = 0;
-    // SAFETY: synchronous PIPE_NOWAIT read into a live buffer.
+    // SAFETY: synchronous read into a live buffer.
     if unsafe {
         ReadFile(
             handle,
@@ -586,12 +603,12 @@ fn nowait_read(handle: HANDLE, buffer: &mut [u8]) -> io::Result<usize> {
     }
 }
 
-fn nowait_write(handle: HANDLE, buffer: &[u8]) -> io::Result<usize> {
+fn pipe_write(handle: HANDLE, buffer: &[u8]) -> io::Result<usize> {
     if buffer.is_empty() {
         return Ok(0);
     }
     let mut written = 0;
-    // SAFETY: synchronous PIPE_NOWAIT write; the buffer is not retained.
+    // SAFETY: synchronous write; the buffer is not retained.
     if unsafe {
         WriteFile(
             handle,
@@ -616,13 +633,13 @@ fn nowait_write(handle: HANDLE, buffer: &[u8]) -> io::Result<usize> {
 
 impl Read for PipeEnd {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        nowait_read(self.0.as_raw_handle(), buffer)
+        pipe_read(self.0.as_raw_handle(), buffer)
     }
 }
 
 impl Write for PipeEnd {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        nowait_write(self.0.as_raw_handle(), buffer)
+        pipe_write(self.0.as_raw_handle(), buffer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -634,7 +651,7 @@ impl Write for PipeEnd {
 pub struct WorkerPipe(OwnedHandle);
 
 impl WorkerPipe {
-    pub(crate) fn connect() -> Result<Self, Error> {
+    pub(crate) fn connect(program: bool) -> Result<Self, Error> {
         // SAFETY: scalar query.
         let name = pipe_name(unsafe { GetCurrentProcessId() });
         // SAFETY: NUL-terminated name; no sharing, security attributes, or template.
@@ -650,7 +667,11 @@ impl WorkerPipe {
             )
         };
         let handle = owned(raw).ok_or(Error::Unavailable("worker pipe unavailable"))?;
-        let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+        let mode = if program {
+            PIPE_READMODE_BYTE
+        } else {
+            PIPE_READMODE_BYTE | PIPE_NOWAIT
+        };
         // SAFETY: live client handle opened with write-attribute access.
         if unsafe {
             SetNamedPipeHandleState(handle.as_raw_handle(), &mode, ptr::null(), ptr::null())
@@ -664,13 +685,13 @@ impl WorkerPipe {
 
 impl Read for &WorkerPipe {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        nowait_read(self.0.as_raw_handle(), buffer)
+        pipe_read(self.0.as_raw_handle(), buffer)
     }
 }
 
 impl Write for &WorkerPipe {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        nowait_write(self.0.as_raw_handle(), buffer)
+        pipe_write(self.0.as_raw_handle(), buffer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -783,7 +804,7 @@ fn worker_environment_isolated() -> bool {
 
 /// Worker-side qualification before Ready: verify the containment the
 /// supervisor established, then require representative native denials.
-pub(crate) fn confine() -> Result<(), Error> {
+pub(crate) fn confine(program: bool) -> Result<(), Error> {
     if !worker_environment_isolated() {
         return Err(unavailable(
             "worker environment was not cleared by its supervisor",
@@ -808,6 +829,7 @@ pub(crate) fn confine() -> Result<(), Error> {
     // SAFETY: zero is a valid initial value for this output structure.
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: a null job queries this process's job; limits is writable.
+    let cpu_ticks = (cpu_limit_seconds(program) * 10_000_000) as i64;
     if unsafe {
         QueryInformationJobObject(
             ptr::null_mut(),
@@ -820,7 +842,8 @@ pub(crate) fn confine() -> Result<(), Error> {
         || limits.BasicLimitInformation.LimitFlags & REQUIRED_LIMITS != REQUIRED_LIMITS
         || limits.BasicLimitInformation.ActiveProcessLimit != 1
         || limits.ProcessMemoryLimit as u64 > PROCESS_BYTES
-        || limits.BasicLimitInformation.PerProcessUserTimeLimit > (CPU_SECONDS * 10_000_000) as i64
+        || (program && limits.BasicLimitInformation.PerProcessUserTimeLimit != cpu_ticks)
+        || (!program && limits.BasicLimitInformation.PerProcessUserTimeLimit > cpu_ticks)
     {
         return Err(unavailable("worker Job Object limits not active"));
     }
@@ -899,21 +922,18 @@ fn native_probes() -> Result<(), Error> {
 }
 
 pub(crate) fn cpu_time() -> Option<std::time::Duration> {
+    // SAFETY: GetCurrentProcess returns a pseudo-handle for the current process;
+    // it is not retained or closed by the CPU-time query.
+    process_cpu_time(unsafe { GetCurrentProcess() })
+}
+
+fn process_cpu_time(process: HANDLE) -> Option<std::time::Duration> {
     let mut created = Default::default();
     let mut exited = Default::default();
     let mut kernel = windows_sys::Win32::Foundation::FILETIME::default();
     let mut user = windows_sys::Win32::Foundation::FILETIME::default();
     // SAFETY: all out pointers are valid FILETIMEs.
-    if unsafe {
-        GetProcessTimes(
-            GetCurrentProcess(),
-            &mut created,
-            &mut exited,
-            &mut kernel,
-            &mut user,
-        )
-    } == 0
-    {
+    if unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
         return None;
     }
     let ticks = |time: windows_sys::Win32::Foundation::FILETIME| {

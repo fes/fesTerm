@@ -5699,6 +5699,159 @@ fn automation_settings_presentation_changes_need_a_followup_frame() {
 }
 
 #[test]
+fn workflow_registration_is_inert_and_selection_uses_only_the_managed_artifact() {
+    use festerm_automation_js::snapshot::{Manifest, SourceSnapshot};
+    use std::time::Instant;
+
+    let parent = crate::recording_storage::test_private_parent();
+    let registry = crate::workflow_registry::WorkflowRegistry::at(
+        crate::recording_storage::test_directory_path(parent.path())
+            .join("workflows")
+            .join("v1"),
+    );
+    let snapshot = SourceSnapshot {
+        manifest: Manifest {
+            version: 1,
+            api_version: 1,
+            name: "registered".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            parameters: BTreeMap::new(),
+            capabilities: BTreeSet::new(),
+        },
+        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+    };
+    let source = serde_json::to_string(&snapshot).unwrap();
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    coordinator.workflow_registry = Some(registry.clone());
+
+    coordinator.command(
+        NativeCommand::RegisterWorkflow {
+            source: Arc::<str>::from(source),
+            review: false,
+        },
+        &context,
+    );
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while coordinator.workflow_registry_import.is_some() {
+        coordinator.poll_workflow_registry_import(&context);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+
+    let [entry] = coordinator.workflow_registry_view.entries.as_slice() else {
+        panic!("registration must publish one inert managed artifact");
+    };
+    let entry = entry.clone();
+    assert!(coordinator.workflow.view().current_bundle().is_none());
+    assert_eq!(entry.name, "registered");
+
+    coordinator.javascript_enabled = true;
+    coordinator.select_registered_workflow(entry.digest.clone(), &context);
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while matches!(
+        coordinator.workflow.view().status,
+        WorkflowStatus::Capturing | WorkflowStatus::Waiting
+    ) {
+        coordinator.workflow.poll(&context);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        coordinator
+            .workflow
+            .view()
+            .current_bundle()
+            .unwrap()
+            .digest(),
+        entry.digest
+    );
+    assert_eq!(
+        registry.view().entries,
+        coordinator.workflow_registry_view.entries
+    );
+}
+
+#[test]
+fn failed_registration_reports_inert_status_and_stops_importing() {
+    let parent = crate::recording_storage::test_private_parent();
+    let registry = crate::workflow_registry::WorkflowRegistry::at(
+        crate::recording_storage::test_directory_path(parent.path())
+            .join("workflows")
+            .join("v1"),
+    );
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    coordinator.workflow_registry = Some(registry);
+    coordinator.command(
+        NativeCommand::RegisterWorkflow {
+            source: Arc::<str>::from("{broken"),
+            review: false,
+        },
+        &context,
+    );
+    assert!(coordinator.workflow_registry_view.busy);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while coordinator.workflow_registry_import.is_some() {
+        coordinator.poll_workflow_registry_import(&context);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+
+    assert!(!coordinator.workflow_registry_view.busy);
+    assert!(coordinator
+        .workflow_registry_view
+        .operation_error
+        .as_deref()
+        .is_some_and(|message| message.contains("JSON")));
+}
+
+#[test]
+fn a_later_selection_cancels_post_import_review() {
+    use festerm_automation_js::snapshot::{Manifest, SourceSnapshot};
+
+    let bundle = festerm_automation_js::snapshot::ApprovedBundle::new(SourceSnapshot {
+        manifest: Manifest {
+            version: 1,
+            api_version: 1,
+            name: "late".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            parameters: BTreeMap::new(),
+            capabilities: BTreeSet::new(),
+        },
+        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+    })
+    .unwrap();
+    let digest = bundle.digest().to_owned();
+    let (sender, result) = mpsc::sync_channel(1);
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    coordinator.javascript_enabled = true;
+    coordinator.workflow_registry_import = Some(PendingRegistryImport {
+        result,
+        review: true,
+        selection_revision: coordinator.workflow.revision(),
+    });
+    coordinator.workflow.cancel();
+    sender
+        .send(Ok((
+            bundle,
+            crate::workflow_registry::Entry {
+                digest,
+                name: "late".into(),
+                imported_at: 1,
+            },
+        )))
+        .unwrap();
+
+    coordinator.poll_workflow_registry_import(&context);
+    assert!(coordinator.workflow.view().current_bundle().is_none());
+    assert!(coordinator.workflow_registry_import.is_none());
+}
+
+#[test]
 fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
     use festerm_automation_js::snapshot::{Manifest, SourceSnapshot};
 

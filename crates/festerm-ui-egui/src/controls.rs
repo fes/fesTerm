@@ -120,7 +120,8 @@ fn scoped_action_button(
         add(
             ui,
             egui::Button::new(if monospace { text.monospace() } else { text })
-                .corner_radius(ACTION_BUTTON_CORNER_RADIUS),
+                .corner_radius(ACTION_BUTTON_CORNER_RADIUS)
+                .min_size(egui::vec2(0.0, 24.0)),
         )
     })
     .inner

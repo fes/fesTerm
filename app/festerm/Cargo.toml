@@ -9,6 +9,7 @@ description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
 default = ["experimental-dev-tunnels", "local-host-settings"]
+javascript-program-dev = ["dep:festerm-javascript-session", "festerm-automation-js/javascript-program-dev"]
 experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "dep:arboard", "dep:webbrowser", "dep:gethostname"]
 # Local Settings alone composes host authority; portable recipes/fingerprints do not.
 local-host-settings = ["experimental-dev-tunnels", "festerm-host-setup/acquisition", "festerm-host-setup/cloud", "festerm-host-setup/native-services", "festerm-host-setup/host-runtime"]
@@ -35,6 +36,7 @@ festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-syntax = { path = "../../crates/festerm-syntax" }
 festerm-host-protocol = { path = "../../crates/festerm-host-protocol" }
 festerm-host-setup = { path = "../../crates/festerm-host-setup" }
+festerm-javascript-session = { path = "../../crates/festerm-javascript-session", optional = true }
 festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }

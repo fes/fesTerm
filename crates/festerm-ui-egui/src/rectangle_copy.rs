@@ -40,6 +40,7 @@ pub(crate) struct RectangleCopy {
     pub(crate) secondary_pressed: bool,
     pub(crate) held_buttons: u8,
     rows: Vec<FrozenRow>,
+    occluded_cells: Vec<bool>,
 }
 
 struct FrozenRow {
@@ -54,23 +55,49 @@ struct PrimaryDrag {
 }
 
 impl RectangleCopy {
+    #[cfg(test)]
     pub(crate) fn capture(
         snapshot: TerminalSnapshot<'_>,
         trim_trailing_spaces: bool,
         budget: usize,
     ) -> Result<Self, RectangleCopyError> {
+        Self::capture_with_occlusion(snapshot, trim_trailing_spaces, budget, &mut |_| false)
+    }
+
+    pub(crate) fn capture_with_occlusion(
+        snapshot: TerminalSnapshot<'_>,
+        trim_trailing_spaces: bool,
+        budget: usize,
+        occluded: &mut dyn FnMut(CellPosition) -> bool,
+    ) -> Result<Self, RectangleCopyError> {
         let dimensions = snapshot.dimensions();
+        let has_above_text = snapshot.kitty_placements().iter().any(|p| p.z >= 0);
         let mut bytes = TerminalRenderCache::frozen_storage_bytes(dimensions)
             .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
             .and_then(|bytes| {
                 bytes.checked_add(dimensions.rows().checked_mul(size_of::<FrozenRow>())?)
             })
+            .and_then(|bytes| {
+                if has_above_text {
+                    bytes.checked_add(dimensions.cell_count().checked_mul(size_of::<bool>())?)
+                } else {
+                    Some(bytes)
+                }
+            })
             .ok_or(RectangleCopyError::SnapshotTooLarge)?;
         if bytes > budget {
             return Err(RectangleCopyError::SnapshotTooLarge);
         }
+        let mut occluded_cells = if has_above_text {
+            Vec::with_capacity(dimensions.cell_count())
+        } else {
+            Vec::new()
+        };
         for row in 0..dimensions.rows() {
             for column in 0..dimensions.columns() {
+                if has_above_text {
+                    occluded_cells.push(occluded(CellPosition { column, row }));
+                }
                 if let Some(cell) = snapshot.cell(column, row) {
                     bytes = bytes
                         .checked_add(
@@ -116,7 +143,18 @@ impl RectangleCopy {
             secondary_pressed: false,
             held_buttons: 0,
             rows,
+            occluded_cells,
         })
+    }
+
+    pub(crate) fn is_cell_occluded(&self, position: CellPosition) -> bool {
+        position.row < self.dimensions.rows()
+            && position.column < self.dimensions.columns()
+            && self
+                .occluded_cells
+                .get(position.row * self.dimensions.columns() + position.column)
+                .copied()
+                .unwrap_or(false)
     }
 
     fn click(&mut self, position: CellPosition) {
@@ -216,7 +254,9 @@ impl RectangleCopy {
 
     pub(crate) fn context_copy_text(&self, cache: &TerminalRenderCache) -> String {
         let (first, last) = self.context_bounds();
-        self.text_in_bounds(cache, first, last)
+        self.text_in_bounds_bounded(cache, first, last, usize::MAX, false)
+            .expect("rectangle text fits in a String")
+            .expect("rectangle bounds contain text")
     }
 
     fn context_bounds(&self) -> (CellPosition, CellPosition) {
@@ -309,17 +349,6 @@ impl RectangleCopy {
         })
     }
 
-    fn text_in_bounds(
-        &self,
-        cache: &TerminalRenderCache,
-        first: CellPosition,
-        last: CellPosition,
-    ) -> String {
-        self.text_in_bounds_bounded(cache, first, last, usize::MAX, false)
-            .expect("rectangle text fits in a String")
-            .expect("rectangle bounds contain text")
-    }
-
     fn text_in_bounds_bounded(
         &self,
         cache: &TerminalRenderCache,
@@ -349,7 +378,10 @@ impl RectangleCopy {
                     let mut end = 0;
                     for (index, cell) in cells.iter().enumerate().rev() {
                         work.charge(1)?;
-                        if cell.width() != CellWidth::Continuation {
+                        let column = start + index;
+                        if cell.width() != CellWidth::Continuation
+                            && !self.is_cell_occluded(CellPosition { column, row })
+                        {
                             work.charge(cell.text().len())?;
                             if !cell.text().trim_end_matches(' ').is_empty() {
                                 end = index + 1;
@@ -363,7 +395,10 @@ impl RectangleCopy {
                 };
                 for (index, cell) in cells[..end].iter().enumerate() {
                     work.charge(1)?;
-                    if cell.width() != CellWidth::Continuation {
+                    let column = start + index;
+                    if cell.width() != CellWidth::Continuation
+                        && !self.is_cell_occluded(CellPosition { column, row })
+                    {
                         let text = if self.trim_trailing_spaces && index + 1 == end {
                             work.charge(cell.text().len())?;
                             cell.text().trim_end_matches(' ')

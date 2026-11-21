@@ -374,7 +374,7 @@ pub fn validate_value(value: &serde_json::Value) -> Result<(), Error> {
 
 pub fn encode_frame<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
     let payload = serde_json::to_vec(value).map_err(|_| Error::Protocol)?;
-    if payload.is_empty() || payload.len() > MAX_FRAME_BYTES {
+    if payload.is_empty() || payload.len() >= MAX_FRAME_BYTES {
         return Err(Error::Protocol);
     }
     let mut frame = Vec::with_capacity(payload.len() + 4);
@@ -393,7 +393,7 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(reader: &mut R) -> Result<T, Err
     let mut header = [0; 4];
     reader.read_exact(&mut header)?;
     let size = u32::from_be_bytes(header) as usize;
-    if size == 0 || size > MAX_FRAME_BYTES {
+    if size == 0 || size >= MAX_FRAME_BYTES {
         return Err(Error::Protocol);
     }
     let mut bytes = vec![0; size];
@@ -417,7 +417,7 @@ impl Decoder {
                 4 - self.bytes.len()
             } else {
                 let size = u32::from_be_bytes(self.bytes[..4].try_into().unwrap()) as usize;
-                if size == 0 || size > MAX_FRAME_BYTES {
+                if size == 0 || size >= MAX_FRAME_BYTES {
                     return Err(Error::Protocol);
                 }
                 let total = 4 + size;

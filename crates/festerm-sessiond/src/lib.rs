@@ -225,7 +225,8 @@ fn observe_recovery_allocation_restore() {
 /// This changes only when the daemon introduces an incompatible wire format.
 pub const PROTOCOL_VERSION: u16 = 3;
 /// Recovery snapshot schema used by protocol-v2 sessions started by this build.
-pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
+pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 5;
+const TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 /// Schema version for machine-readable helper metadata.
 pub const MACHINE_READABLE_SCHEMA_VERSION: u32 = 1;
 const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
@@ -659,7 +660,12 @@ pub fn capabilities() -> SessiondCapabilities {
             maximum: PROTOCOL_VERSION,
         },
         recovery_snapshot_schema: SupportedVersions {
-            supported_versions: vec![2, 3, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+            supported_versions: vec![
+                2,
+                3,
+                TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            ],
         },
         remote_attachment: true,
     }
@@ -2590,22 +2596,27 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
         })?;
         read_protocol_bytes(stream, &mut payload.bytes[start..end], &mut should_abort)?;
     }
-    let (semantics, bytes) = if snapshot_schema_version < 4 {
+    let (semantics, bytes) = if snapshot_schema_version < TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION {
         (
             festerm_core::TerminalSemantics::Legacy,
             payload.bytes.as_slice(),
         )
     } else {
-        match payload.bytes.split_first() {
-            Some((0, bytes)) => (festerm_core::TerminalSemantics::Legacy, bytes),
-            Some((1, bytes)) => (festerm_core::TerminalSemantics::Current, bytes),
-            _ => {
-                return Err(io::Error::new(
+        payload
+            .bytes
+            .split_first()
+            .and_then(|(&id, bytes)| {
+                let semantics = festerm_core::TerminalSemantics::from_wire_id(id)?;
+                (semantics != festerm_core::TerminalSemantics::SafeFraming
+                    || snapshot_schema_version >= RECOVERY_SNAPSHOT_SCHEMA_VERSION)
+                    .then_some((semantics, bytes))
+            })
+            .ok_or_else(|| {
+                io::Error::new(
                     io::ErrorKind::InvalidData,
                     "persistent-session recovery snapshot has unsupported terminal semantics",
-                ))
-            }
-        }
+                )
+            })?
     };
     let decoded = if snapshot_schema_version == 2 {
         bincode_options()
@@ -3378,9 +3389,12 @@ pub const fn protocol_is_supported(version: u16) -> bool {
     version >= MIN_SUPPORTED_PROTOCOL_VERSION && version <= PROTOCOL_VERSION
 }
 
-/// Schemas 2 and 3 retain their legacy terminal behavior; new helpers emit schema 4.
+/// Schemas 2–4 retain their original framing; new helpers emit schema 5.
 pub const fn snapshot_schema_is_supported(version: u16) -> bool {
-    version == 2 || version == 3 || version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
+    matches!(
+        version,
+        2 | 3 | TAGGED_RECOVERY_SNAPSHOT_SCHEMA_VERSION | RECOVERY_SNAPSHOT_SCHEMA_VERSION
+    )
 }
 
 const fn recovery_snapshot_required(protocol_version: u16, snapshot_schema_version: u16) -> bool {
@@ -4068,10 +4082,7 @@ pub fn encode_recovery_snapshot_with_limit(
     encoded.bytes[..RECOVERY_MAGIC.len()].copy_from_slice(RECOVERY_MAGIC);
     encoded.bytes[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
         .copy_from_slice(&(payload_len as u64).to_be_bytes());
-    encoded.bytes[RECOVERY_HEADER_BYTES] = match terminal.semantics() {
-        festerm_core::TerminalSemantics::Legacy => 0,
-        festerm_core::TerminalSemantics::Current => 1,
-    };
+    encoded.bytes[RECOVERY_HEADER_BYTES] = snapshot.semantics().wire_id();
     let mut destination = io::Cursor::new(&mut encoded.bytes[RECOVERY_HEADER_BYTES + 1..]);
     // The sized slice enforces the wire bound without a third sizing traversal.
     bincode_options()
@@ -4657,7 +4668,7 @@ mod recovery_wire_tests {
         assert!(payload.len() > 1024 * 1024);
         let mut expected = Vec::from(RECOVERY_MAGIC);
         expected.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
-        expected.push(1);
+        expected.push(2);
         expected.extend_from_slice(&payload);
         drop(payload);
         drop(snapshot);
@@ -4797,28 +4808,67 @@ mod recovery_wire_tests {
     }
 
     #[test]
-    fn schema4_preserves_and_validates_recovery_semantics() {
-        for semantics in [
-            festerm_core::TerminalSemantics::Legacy,
-            festerm_core::TerminalSemantics::Current,
+    fn tagged_recovery_snapshots_preserve_old_and_new_reset_semantics() {
+        use festerm_core::TerminalSemantics;
+
+        for (id, semantics, expected) in [
+            (0, TerminalSemantics::Legacy, "ABCXYZ"),
+            (1, TerminalSemantics::Current, "XYZ"),
+            (2, TerminalSemantics::SafeFraming, "XYZ"),
         ] {
             let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
             terminal.set_semantics(semantics);
             terminal.ingest(b"ABC");
             let mut encoded = encode_recovery_snapshot(&terminal).unwrap();
+            assert_eq!(encoded[RECOVERY_HEADER_BYTES], id);
+            let schema4 = read_attach_recovery_terminal(
+                &mut io::Cursor::new(&encoded),
+                PROTOCOL_VERSION,
+                4,
+                Instant::now() + Duration::from_secs(10),
+            );
+            if semantics == TerminalSemantics::SafeFraming {
+                assert!(schema4.is_err());
+            } else {
+                assert_eq!(schema4.unwrap().unwrap().semantics(), semantics);
+            }
             let mut recovered = read_snapshot(&mut io::Cursor::new(&encoded))
                 .unwrap()
                 .unwrap();
             assert_eq!(recovered.semantics(), semantics);
             recovered.ingest(b"\x1bcXYZ");
-            let expected = match semantics {
-                festerm_core::TerminalSemantics::Legacy => "ABCXYZ",
-                festerm_core::TerminalSemantics::Current => "XYZ",
-            };
+            assert_eq!(recovered.semantics(), semantics);
             assert!(recovered.row_text(0).unwrap().starts_with(expected));
-            encoded[RECOVERY_HEADER_BYTES] = 2;
+            encoded[RECOVERY_HEADER_BYTES] = 3;
             assert!(read_snapshot(&mut io::Cursor::new(encoded)).is_err());
         }
+    }
+
+    #[test]
+    fn safe_recovery_snapshot_resumes_graphics_discard_across_split_st() {
+        let payload = vec![b'X'; festerm_core::MAX_STRING_BYTES * 2];
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(12, 2).unwrap()).unwrap();
+        terminal.ingest(b"before\x1bP0;1q");
+        terminal.ingest(&payload);
+
+        let encoded = encode_recovery_snapshot(&terminal).unwrap();
+        let mut terminal = read_snapshot(&mut io::Cursor::new(encoded))
+            .unwrap()
+            .unwrap();
+        terminal.ingest(&payload);
+        terminal.ingest(b"\r\n\x1b");
+
+        let mut encoded = encode_recovery_snapshot(&terminal).unwrap();
+        let mut recovered = read_snapshot(&mut io::Cursor::new(&encoded))
+            .unwrap()
+            .unwrap();
+        recovered.ingest(b"\\after");
+        assert_eq!(recovered.row_text(0).unwrap().trim(), "beforeafter");
+        assert_eq!(recovered.scrollback_lines().len(), 0);
+        assert!(recovered.drain_replies().is_empty());
+
+        encoded[RECOVERY_HEADER_BYTES] = festerm_core::TerminalSemantics::Current.wire_id();
+        assert!(read_snapshot(&mut io::Cursor::new(encoded)).is_err());
     }
 
     #[test]
@@ -6758,7 +6808,7 @@ mod registry_filtering_tests {
         assert_eq!(
             capabilities.recovery_snapshot_schema,
             SupportedVersions {
-                supported_versions: vec![2, 3, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+                supported_versions: vec![2, 3, 4, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
             }
         );
         assert!(capabilities.remote_attachment);

@@ -821,6 +821,7 @@ impl FesTermApp {
                             if session.terminal.dimensions() != dimensions_before {
                                 session.controller.record_resize(&session.terminal);
                             }
+                            session.observe_inline_graphics_geometry(ui.ctx().pixels_per_point());
                             if observe_search {
                                 session
                                     .search

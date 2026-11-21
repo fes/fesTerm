@@ -188,6 +188,8 @@ pub(crate) enum QuitConfirmationPurpose {
     CloseWindow,
     InstallUpdate,
     RestartAfterUpdate,
+    RestartInSafeMode,
+    RestartNormally,
 }
 
 /// Aggregate confirmation shown once, for the whole application, before an
@@ -215,6 +217,11 @@ impl PendingQuitConfirmation {
         }
         let parts: Vec<String> = [
             phrase(self.counts.local, "local process", "local processes"),
+            phrase(
+                self.counts.javascript,
+                "JavaScript program",
+                "JavaScript programs",
+            ),
             phrase(self.counts.ssh, "SSH connection", "SSH connections"),
             phrase(self.counts.serial, "serial device", "serial devices"),
             phrase(
@@ -403,6 +410,7 @@ pub(crate) struct OverlayState {
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
     pub(crate) workflow_file_picker: bool,
+    pub(crate) workflow_editor_file_picker: bool,
     /// The editor's "Save As" destination sheet (ADR 0034 §3).
     pub(crate) save_as_picker: Option<crate::save_as::SaveAsPicker>,
     /// The directory the last Save As sheet was browsing when it closed, so
@@ -569,6 +577,7 @@ mod tests {
             pending_quit: Some(PendingQuitConfirmation {
                 counts: crate::tabs::LiveSessionCounts {
                     local: 1,
+                    javascript: 0,
                     ssh: 0,
                     serial: 0,
                     powershell: 0,
@@ -597,6 +606,7 @@ mod tests {
         let pending = PendingQuitConfirmation {
             counts: crate::tabs::LiveSessionCounts {
                 local: 1,
+                javascript: 0,
                 ssh: 0,
                 serial: 0,
                 powershell: 0,
@@ -612,6 +622,7 @@ mod tests {
         let pending = PendingQuitConfirmation {
             counts: crate::tabs::LiveSessionCounts {
                 local: 1,
+                javascript: 0,
                 ssh: 2,
                 serial: 1,
                 powershell: 0,
@@ -630,6 +641,7 @@ mod tests {
         let pending = PendingQuitConfirmation {
             counts: crate::tabs::LiveSessionCounts {
                 local: 0,
+                javascript: 0,
                 ssh: 3,
                 serial: 1,
                 powershell: 0,
@@ -648,6 +660,7 @@ mod tests {
         let pending = PendingQuitConfirmation {
             counts: crate::tabs::LiveSessionCounts {
                 local: 0,
+                javascript: 0,
                 ssh: 0,
                 serial: 0,
                 powershell: 2,

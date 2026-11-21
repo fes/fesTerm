@@ -178,6 +178,26 @@ fn route_mouse_input_with_policy(
     viewport_offset_rows: usize,
     force_local_selection: bool,
 ) -> InputRoute {
+    route_mouse_input_with_occlusion(
+        terminal,
+        event,
+        selection,
+        sink,
+        viewport_offset_rows,
+        force_local_selection,
+        false,
+    )
+}
+
+fn route_mouse_input_with_occlusion(
+    terminal: &mut Terminal,
+    event: MouseEvent,
+    selection: &mut Selection,
+    sink: &mut impl EncodedInputSink,
+    viewport_offset_rows: usize,
+    force_local_selection: bool,
+    suppress_selection_begin: bool,
+) -> InputRoute {
     let position = CellPosition {
         column: event.column,
         row: event.row,
@@ -201,6 +221,10 @@ fn route_mouse_input_with_policy(
                     .map(|content| (position, content))
             });
             match (event.kind, position) {
+                (MouseEventKind::Press(MouseButton::Left), _) if suppress_selection_begin => {
+                    selection.clear();
+                    sink.observe_local_selection("suppressed-above-text-graphic");
+                }
                 (MouseEventKind::Press(MouseButton::Left), Some((position, content))) => {
                     selection.begin_at(position, content);
                     sink.observe_local_selection("began");
@@ -439,6 +463,7 @@ pub(crate) struct InputAdapterState<'a> {
     /// a mouse-reporting application exactly as it is to local scrollback.
     pub(crate) scroll_speed_multiplier: f32,
     pub(crate) persistent_keyboard_focus: bool,
+    pub(crate) kitty: Option<&'a mut crate::kitty_graphics::KittyTextureCache>,
 }
 
 /// Which parts of terminal input `route_egui_events` should suppress this
@@ -471,7 +496,9 @@ pub(crate) fn route_egui_events(
         viewport_offset_rows,
         scroll_speed_multiplier,
         persistent_keyboard_focus,
+        mut kitty,
     } = input;
+    let pixels_per_point = ui.ctx().pixels_per_point();
     // Whether the terminal should currently accept keyboard input.
     //
     // This intentionally does *not* depend on egui's own internal
@@ -545,10 +572,29 @@ pub(crate) fn route_egui_events(
                 keyboard.ime_composing = !text.is_empty();
             }
             egui::Event::Copy if keyboard_focused => {
-                match selection_text(
-                    TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows),
-                    selection,
-                ) {
+                let copy_snapshot =
+                    TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows);
+                let text = if let Some(cache) = kitty.as_deref_mut() {
+                    cache.prepare_frame(copy_snapshot, layout, pixels_per_point);
+                    let map = crate::kitty_graphics::KittyCellOcclusionMap::build(
+                        cache,
+                        copy_snapshot,
+                        layout,
+                        pixels_per_point,
+                    );
+                    if map.is_empty() {
+                        selection_text(copy_snapshot, selection)
+                    } else {
+                        crate::selection::selection_text_with_occlusion(
+                            copy_snapshot,
+                            selection,
+                            &mut |content| map.is_content_occluded(content),
+                        )
+                    }
+                } else {
+                    selection_text(copy_snapshot, selection)
+                };
+                match text {
                     Some(text) => {
                         ui.ctx().copy_text(text);
                         selection.clear();
@@ -642,7 +688,7 @@ pub(crate) fn route_egui_events(
             } => {
                 if let Some(button) = translate_pointer_button(button) {
                     let observed = Instant::now();
-                    if let Some(route) = route_pointer_event(
+                    if let Some(route) = route_pointer_event_with_occlusion(
                         PointerInputEvent::Button {
                             position: pos,
                             button,
@@ -655,6 +701,7 @@ pub(crate) fn route_egui_events(
                         pointer,
                         sink,
                         viewport_offset_rows,
+                        kitty.as_deref_mut().map(|cache| (cache, pixels_per_point)),
                     ) {
                         reports.record(observed, route);
                     }
@@ -811,6 +858,29 @@ pub(crate) fn route_pointer_event(
     sink: &mut impl EncodedInputSink,
     viewport_offset_rows: usize,
 ) -> Option<InputRoute> {
+    route_pointer_event_with_occlusion(
+        event,
+        layout,
+        terminal,
+        selection,
+        pointer,
+        sink,
+        viewport_offset_rows,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn route_pointer_event_with_occlusion(
+    event: PointerInputEvent,
+    layout: GridLayout,
+    terminal: &mut Terminal,
+    selection: &mut Selection,
+    pointer: &mut TerminalPointerState,
+    sink: &mut impl EncodedInputSink,
+    viewport_offset_rows: usize,
+    kitty: Option<(&mut crate::kitty_graphics::KittyTextureCache, f32)>,
+) -> Option<InputRoute> {
     match event {
         PointerInputEvent::Button {
             position,
@@ -818,13 +888,23 @@ pub(crate) fn route_pointer_event(
             pressed: true,
             modifiers,
         } => {
+            let occluded = button == MouseButton::Left
+                && kitty.is_some_and(|(cache, ppp)| {
+                    let snapshot =
+                        TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows);
+                    cache.prepare_frame(snapshot, layout, ppp);
+                    crate::kitty_graphics::is_point_occluded_by_above_text(
+                        cache, snapshot, layout, ppp, position,
+                    )
+                });
             let cell = layout.cell_geometry().hit_test(position);
             let local_selection = button == MouseButton::Left
+                && !occluded
                 && cell.is_some()
                 && (pointer.local_only || modifiers.contains(Modifiers::SHIFT));
             pointer.press(button, position, cell.is_some(), local_selection, modifiers);
             cell.map(|position| {
-                route_mouse_input_with_policy(
+                route_mouse_input_with_occlusion(
                     terminal,
                     MouseEvent {
                         kind: MouseEventKind::Press(button),
@@ -836,6 +916,7 @@ pub(crate) fn route_pointer_event(
                     sink,
                     viewport_offset_rows,
                     pointer.local_only || local_selection,
+                    occluded,
                 )
             })
         }

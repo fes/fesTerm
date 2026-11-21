@@ -810,10 +810,13 @@ Global application actions and session-specific context are separate concerns.
 More actions owns infrequent global application actions without duplicating them
 in the command palette.
 
-Its primary entries are **New File**, **Open File…**, **Open Profiles**,
-**Open Settings**, **Session inspector** (when a session is active), and
-**About fesTerm**. **New File** immediately opens a blank, dirty `UNTITLED`
-editor document; its first Save continues through the ordinary Save As sheet.
+Its primary entries are **New File**, **Open File…**, the **JavaScript
+Workflows** submenu (**New JavaScript Workflow**, **Open JavaScript Workflow
+Source…**), **Open Profiles**, **Open Settings**, **Session inspector** (when a
+session is active), and **About fesTerm**. The workflow submenu uses ordinary
+30 px context-menu rows and is not duplicated in the command palette. **New
+File** immediately opens a blank, dirty `UNTITLED` editor document; its first
+Save continues through the ordinary Save As sheet.
 Terminal-only **Find in terminal** and **Focus mode** may appear
 when applicable; **Command palette** follows after a separator only in compact
 layouts.

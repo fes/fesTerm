@@ -83,7 +83,7 @@ def application_environment(root: Path) -> dict[str, str]:
     }
     for directory in directories.values():
         directory.mkdir(mode=0o700)
-    return {
+    environment = {
         **{key: str(value) for key, value in directories.items()},
         "ZDOTDIR": str(directories["HOME"]),
         "FESTERM_CONFIG_PATH": str(root / "config" / "festerm.toml"),
@@ -91,6 +91,10 @@ def application_environment(root: Path) -> dict[str, str]:
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
     }
+    for key in ("FESTERM_TW2K2_SNAPSHOT", "FESTERM_JAVASCRIPT_PROGRAM_DATA_DIR"):
+        if value := os.environ.get(key):
+            environment[key] = value
+    return environment
 
 
 def validate_root(root: Path) -> None:
@@ -149,7 +153,18 @@ def render_config(config: dict, binaries: Path, output: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def package(root: Path, environment: dict[str, str]) -> tuple[Path, list[str]]:
+def frontend_build_command(features: tuple[str, ...] = ()) -> list[str]:
+    command = [
+        "cargo", "build", "--locked", "--message-format=json-render-diagnostics",
+        "-p", "festerm", "-p", "festerm-sessiond",
+    ]
+    for feature in features:
+        command.extend(["--features", feature])
+    return command
+
+
+def package(root: Path, environment: dict[str, str],
+            features: tuple[str, ...] = ()) -> tuple[Path, list[str]]:
     config = tomllib.loads((ROOT / "packaging/macos.toml").read_text(encoding="utf-8"))
     version = subprocess.run(
         ["cargo", "packager", "--version"], check=True, capture_output=True,
@@ -160,14 +175,14 @@ def package(root: Path, environment: dict[str, str]) -> tuple[Path, list[str]]:
     if environment.get("CARGO_BUILD_TARGET"):
         raise LaunchError("Unset CARGO_BUILD_TARGET: this launcher requires a native host build")
     artifacts = {}
-    for packages in (
-        ["-p", "festerm", "-p", "festerm-sessiond"],
-        ["-p", "festerm-tunnel-bridge", "--no-default-features", "--features",
+    for command in (
+        frontend_build_command(features),
+        ["cargo", "build", "--locked", "--message-format=json-render-diagnostics",
+         "-p", "festerm-tunnel-bridge", "--no-default-features", "--features",
          "relay", "--bins"],
     ):
         result = subprocess.run(
-            ["cargo", "build", "--locked", "--message-format=json-render-diagnostics",
-             *packages],
+            command,
             check=True, stdout=subprocess.PIPE, text=True, cwd=ROOT, env=environment,
         )
         for line in result.stdout.splitlines():
@@ -332,6 +347,9 @@ def main() -> int:
                         help="verify native readiness and bounded normal Quit")
     parser.add_argument("--output", type=Path,
                         help="new private launch/evidence directory; must not exist")
+    parser.add_argument("--feature", action="append", default=[],
+                        choices=("javascript-program-dev",),
+                        help="opt in to an explicitly supported development-only feature")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("this launcher requires macOS and a logged-in GUI session")
@@ -359,7 +377,7 @@ def main() -> int:
             provenance[key] = bool(result) if key == "dirty" else result
         write_status(root, {**provenance, "status": "building"})
         try:
-            bundle, helpers = package(root, environment)
+            bundle, helpers = package(root, environment, tuple(args.feature))
         except (LaunchError, OSError, subprocess.SubprocessError, KeyboardInterrupt) as error:
             write_status(root, {**provenance, "status": "failed", "error": str(error),
                                 "shutdown_verified": False})

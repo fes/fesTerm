@@ -163,6 +163,16 @@ pub(crate) enum NativeCommand {
         input: u64,
     },
     CaptureWorkflow(SelectedWorkflow),
+    RegisterWorkflow {
+        source: Arc<str>,
+        review: bool,
+    },
+    SelectRegisteredWorkflow {
+        digest: String,
+    },
+    DeleteRegisteredWorkflow {
+        digest: String,
+    },
     ClearWorkflow,
     StartWorkflowMonitoring,
     StartWorkflowRun {
@@ -201,7 +211,23 @@ impl NativeCommand {
             // Equal paths do not prove the same selection or frozen snapshot.
             || commands
                 .clone()
-                .filter(|command| matches!(command, Self::CaptureWorkflow(_)))
+                .filter(|command| {
+                    matches!(
+                        command,
+                        Self::CaptureWorkflow(_) | Self::SelectRegisteredWorkflow { .. }
+                    )
+                })
+                .take(2)
+                .count()
+                == 2
+            || commands
+                .clone()
+                .filter(|command| {
+                    matches!(
+                        command,
+                        Self::RegisterWorkflow { .. } | Self::DeleteRegisteredWorkflow { .. }
+                    )
+                })
                 .take(2)
                 .count()
                 == 2
@@ -235,6 +261,7 @@ impl NativeCommand {
                 | Self::CancelWorkflowRun { .. }
                 | Self::ApproveWorkflowInput { .. }
                 | Self::DenyWorkflowInput { .. }
+                | Self::SelectRegisteredWorkflow { .. }
         )
     }
 
@@ -477,6 +504,7 @@ pub(crate) struct SettingsSnapshot {
     pub controller_opt_in_available: bool,
     pub controller_opted_in: bool,
     pub workflow: WorkflowView,
+    pub workflow_registry: crate::workflow_registry::View,
     pub javascript: javascript::View,
     stop: Arc<AtomicBool>,
 }
@@ -494,6 +522,7 @@ impl Default for SettingsSnapshot {
             controller_opt_in_available: false,
             controller_opted_in: false,
             workflow: WorkflowView::default(),
+            workflow_registry: Default::default(),
             javascript: javascript::View::default(),
             stop: Arc::new(AtomicBool::new(true)),
         }
@@ -530,6 +559,7 @@ impl SettingsSnapshot {
                         && left.control == right.control
                 })
             && self.workflow.same_presentation(&other.workflow)
+            && self.workflow_registry == other.workflow_registry
             && self.javascript == other.javascript
             && self.channels.len() == other.channels.len()
             && self
@@ -1185,8 +1215,25 @@ enum ReconcileError {
     Authority(festerm_automation::Error),
 }
 
+struct PendingRegistryImport {
+    result: mpsc::Receiver<
+        Result<
+            (
+                festerm_automation_js::snapshot::ApprovedBundle,
+                crate::workflow_registry::Entry,
+            ),
+            String,
+        >,
+    >,
+    review: bool,
+    selection_revision: u64,
+}
+
 pub(crate) struct Coordinator {
     workflow: workflow_selection::Selection,
+    workflow_registry: Option<crate::workflow_registry::WorkflowRegistry>,
+    workflow_registry_view: crate::workflow_registry::View,
+    workflow_registry_import: Option<PendingRegistryImport>,
     javascript_enabled: bool,
     javascript: javascript::State,
     presentation_workspace: Option<WorkspaceRevision>,
@@ -1249,6 +1296,9 @@ impl Default for Coordinator {
     fn default() -> Self {
         Self {
             workflow: workflow_selection::Selection::default(),
+            workflow_registry: None,
+            workflow_registry_view: Default::default(),
+            workflow_registry_import: None,
             javascript_enabled: false,
             javascript: javascript::State::default(),
             presentation_workspace: None,
@@ -1306,6 +1356,130 @@ impl Default for Coordinator {
 }
 
 impl Coordinator {
+    pub(crate) fn install_workflow_registry(&mut self, safe_mode: bool) {
+        if safe_mode {
+            self.workflow_registry_view.error =
+                Some("Safe Mode: workflow registry and execution are suppressed.".to_owned());
+            return;
+        }
+        self.workflow_registry = crate::workflow_registry::WorkflowRegistry::native();
+        self.refresh_workflow_registry();
+        if self.workflow_registry.is_none() {
+            self.workflow_registry_view.error =
+                Some("The device workflow storage directory is unavailable.".to_owned());
+        }
+    }
+
+    fn refresh_workflow_registry(&mut self) {
+        if let Some(registry) = &self.workflow_registry {
+            self.workflow_registry_view = registry.view();
+        }
+    }
+
+    fn import_workflow(&mut self, source: Arc<str>, review: bool, context: &egui::Context) {
+        let Some(registry) = self.workflow_registry.clone() else {
+            self.workflow.refuse(
+                "Workflow registration is unavailable. Exit Safe Mode or repair private storage.",
+            );
+            return;
+        };
+        if self.workflow_registry_import.is_some() {
+            self.workflow
+                .refuse("Wait for the current workflow import to finish.");
+            return;
+        }
+        self.workflow_registry_view.busy = true;
+        let (sender, result) = mpsc::sync_channel(1);
+        let wake = context.clone();
+        match thread::Builder::new()
+            .name("festerm-workflow-register".into())
+            .spawn(move || {
+                let result = registry
+                    .import_source(&source)
+                    .map_err(|failure| failure.to_string());
+                let _ = sender.send(result);
+                wake.request_repaint();
+            }) {
+            Ok(thread) => {
+                drop(thread);
+                self.workflow_registry_import = Some(PendingRegistryImport {
+                    result,
+                    review,
+                    selection_revision: self.workflow.revision(),
+                });
+                context.request_repaint();
+            }
+            Err(_) => {
+                self.workflow_registry_view.busy = false;
+                self.workflow_registry_view.operation_error =
+                    Some("The workflow import worker could not be started.".to_owned());
+            }
+        }
+    }
+
+    fn poll_workflow_registry_import(&mut self, context: &egui::Context) {
+        let Some(pending) = self.workflow_registry_import.as_ref() else {
+            return;
+        };
+        match pending.result.try_recv() {
+            Ok(Ok((_bundle, entry))) => {
+                let review = pending.review;
+                let selection_revision = pending.selection_revision;
+                self.workflow_registry_import = None;
+                self.refresh_workflow_registry();
+                if review
+                    && self.javascript_enabled
+                    && self.workflow.revision() == selection_revision
+                {
+                    self.workflow.capture_registered(
+                        entry.digest,
+                        self.workflow_registry.clone(),
+                        context,
+                    );
+                }
+            }
+            Ok(Err(failure)) => {
+                self.workflow_registry_import = None;
+                self.workflow_registry_view.busy = false;
+                self.workflow_registry_view.operation_error = Some(failure);
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.workflow_registry_import = None;
+                self.workflow_registry_view.busy = false;
+                self.workflow_registry_view.operation_error =
+                    Some("The workflow import worker failed.".to_owned());
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+        }
+    }
+
+    fn select_registered_workflow(&mut self, digest: String, context: &egui::Context) {
+        if !self.javascript_enabled {
+            self.workflow
+                .refuse("Enable JavaScript workflows before reviewing a registered artifact.");
+            return;
+        }
+        self.workflow
+            .capture_registered(digest, self.workflow_registry.clone(), context);
+    }
+
+    fn delete_registered_workflow(&mut self, digest: String) {
+        let result = self
+            .workflow_registry
+            .as_ref()
+            .ok_or_else(|| "Workflow registry is unavailable.".to_owned())
+            .and_then(|registry| registry.remove(&digest).map_err(|error| error.to_string()));
+        self.refresh_workflow_registry();
+        match result {
+            Ok(()) => {
+                self.workflow.cancel_if_digest(&digest);
+            }
+            Err(error) => self.workflow.refuse_owned(error),
+        }
+    }
+
     #[allow(dead_code)]
     fn direct_verification_surface(&self) -> verification::Surface {
         self.verification.surface()
@@ -2088,6 +2262,7 @@ impl Coordinator {
         }
         self.javascript_enabled = javascript_enabled;
         self.workflow.poll(context);
+        self.poll_workflow_registry_import(context);
     }
 
     fn tick_inner(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
@@ -2682,6 +2857,16 @@ impl Coordinator {
                         .refuse("Enable JavaScript workflows in all windows before selecting.");
                 }
             }
+            NativeCommand::RegisterWorkflow { source, review } => {
+                self.import_workflow(source, review, context)
+            }
+            NativeCommand::SelectRegisteredWorkflow { digest } => {
+                self.select_registered_workflow(digest, context)
+            }
+            NativeCommand::DeleteRegisteredWorkflow { digest } => {
+                self.delete_registered_workflow(digest);
+                context.request_repaint();
+            }
             NativeCommand::ClearWorkflow => self.workflow.cancel(),
             NativeCommand::StartWorkflowMonitoring
             | NativeCommand::StartWorkflowRun { .. }
@@ -3220,6 +3405,7 @@ impl Coordinator {
                 && self.controller_qualified(),
             controller_opted_in: mcp_open && self.controller_opted_in,
             workflow,
+            workflow_registry: self.workflow_registry_view.clone(),
             javascript: self.javascript_view(apps),
             stop: self.stop.clone(),
         }
@@ -3254,6 +3440,10 @@ fn target_label(apps: &[&FesTermApp], reference: TargetRef) -> Option<String> {
             }
             crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
                 format!("tunnel {}:{}", approval_label(host), port)
+            }
+            #[cfg(feature = "javascript-program-dev")]
+            crate::tabs::InspectorTransport::JavaScript { name } => {
+                format!("JavaScript program {}", approval_label(name))
             }
         };
         Some(format!(

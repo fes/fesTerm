@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "97973ada580a8db9bf2457fd9360b3fe1ea24e5d6fba691fa036ab1e22ae7119"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "d84b8d8e46b84ff0581cb460a777fb0f8065979dbc1bbae57eaca504167c5987"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -74,3 +74,16 @@ Caveats:
 - terminal_replies_owned_by_backend blocks duplicate forwarding.
 - pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Controller shutdown and reconnect preserve generation and recovery invariants.
+
+## JavaScript session backend
+
+Use for: Own-terminal program input, resize, output and cleanup
+
+- [`JavaScriptSession`](../../crates/festerm-javascript-session/src/lib.rs) — Uses the ordinary bounded session lifecycle.
+- [`ProcessJavaScriptRuntime`](../../crates/festerm-javascript-session/src/lib.rs) — Runs the install-owned contained worker.
+
+Evidence:
+- [`session_has_no_automation_or_terminal_reply_authority`](../../crates/festerm-javascript-session/src/lib.rs) — Programs own neither automation grants nor backend replies.
+
+Caveats:
+- The app remains the terminal writer; privacy loss cuts delivery and uncertain input is not replayed.

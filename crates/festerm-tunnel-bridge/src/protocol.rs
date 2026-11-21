@@ -6,7 +6,15 @@ use festerm_sessiond::RecoverySyncCommand;
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u16 = 4;
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 4;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 5;
+/// The schema before SafeFraming. A peer that negotiated it attaches only a
+/// terminal it can represent and never receives SafeFraming (wire id 2).
+pub const PREVIOUS_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
+/// Attach `Hello` schemas in preference order. A host older than SafeFraming
+/// answers the newer schema with `INCOMPATIBLE` before admission, so a client
+/// retries once, on a fresh connection, with the previous schema.
+pub const HELLO_SNAPSHOT_SCHEMAS: [u16; 2] =
+    [SNAPSHOT_SCHEMA_VERSION, PREVIOUS_SNAPSHOT_SCHEMA_VERSION];
 pub const SNAPSHOT_LIMIT: usize = 8 * 1024 * 1024;
 pub const CHUNK_LIMIT: usize = 64 * 1024;
 pub const HELLO: u8 = 1;
@@ -241,16 +249,30 @@ pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Terminal> {
     decode_snapshot_with_history_limit(bytes, usize::MAX)
 }
 
+/// Whether `terminal` can be sent under a negotiated snapshot `schema`.
+pub fn snapshot_fits_schema(terminal: &Terminal, schema: u16) -> bool {
+    schema >= SNAPSHOT_SCHEMA_VERSION || terminal.semantics() != TerminalSemantics::SafeFraming
+}
+
+/// Decodes a snapshot received under the negotiated `Hello` schema; a
+/// previous-schema snapshot claiming SafeFraming is refused, never downgraded.
+pub fn decode_snapshot_for_schema(bytes: &[u8], schema: u16) -> io::Result<Terminal> {
+    let terminal = decode_snapshot(bytes)?;
+    if !snapshot_fits_schema(&terminal, schema) {
+        return Err(invalid());
+    }
+    Ok(terminal)
+}
+
 pub(crate) fn decode_snapshot_with_history_limit(
     bytes: &[u8],
     history_limit: usize,
 ) -> io::Result<Terminal> {
     validate_length(SNAPSHOT, bytes.len())?;
-    let (semantics, bytes) = match bytes.split_first() {
-        Some((0, bytes)) => (TerminalSemantics::Legacy, bytes),
-        Some((1, bytes)) => (TerminalSemantics::Current, bytes),
-        _ => return Err(invalid()),
-    };
+    let (semantics, bytes) = bytes
+        .split_first()
+        .and_then(|(&id, bytes)| TerminalSemantics::from_wire_id(id).map(|value| (value, bytes)))
+        .ok_or_else(invalid)?;
     let mut terminal: Terminal = serde_json::from_slice(bytes).map_err(|_| invalid())?;
     terminal.set_semantics(semantics);
     terminal
@@ -306,10 +328,7 @@ impl io::Write for LimitedJson {
 
 pub(crate) fn encode_snapshot_bounded(terminal: &Terminal, maximum: usize) -> io::Result<Vec<u8>> {
     let mut output = LimitedJson {
-        bytes: vec![match terminal.semantics() {
-            TerminalSemantics::Legacy => 0,
-            TerminalSemantics::Current => 1,
-        }],
+        bytes: vec![terminal.semantics().wire_id()],
         maximum: maximum.min(SNAPSHOT_LIMIT),
     };
     serde_json::to_writer(&mut output, terminal).map_err(|_| invalid())?;
@@ -359,24 +378,44 @@ mod tests {
 
     #[test]
     fn remote_snapshot_retains_the_daemons_reset_semantics() {
-        for semantics in [TerminalSemantics::Legacy, TerminalSemantics::Current] {
+        for (id, semantics, expected) in [
+            (0, TerminalSemantics::Legacy, "ABCXYZ"),
+            (1, TerminalSemantics::Current, "XYZ"),
+            (2, TerminalSemantics::SafeFraming, "XYZ"),
+        ] {
             let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
             terminal.set_semantics(semantics);
             terminal.ingest(b"ABC");
             let bytes = encode_snapshot(&terminal.recovery_clone()).unwrap();
+            assert_eq!(bytes[0], id);
             let mut recovered = decode_snapshot(&bytes).unwrap();
             assert_eq!(recovered.semantics(), semantics);
             recovered.ingest(b"\x1bcXYZ");
-            let expected = match semantics {
-                TerminalSemantics::Legacy => "ABCXYZ",
-                TerminalSemantics::Current => "XYZ",
-            };
             assert!(recovered.row_text(0).unwrap().starts_with(expected));
             let mut invalid_semantics = bytes;
-            invalid_semantics[0] = 2;
+            invalid_semantics[0] = 3;
             assert!(decode_snapshot(&invalid_semantics).is_err());
         }
         assert!(decode_snapshot(&[]).is_err());
+    }
+
+    #[test]
+    fn remote_snapshot_restores_graphics_discard_without_exposing_its_tail() {
+        let mut terminal = Terminal::new(Dimensions::new(12, 2).unwrap()).unwrap();
+        terminal.ingest(b"before\x1b_G");
+        let payload = vec![b'X'; festerm_core::MAX_STRING_BYTES * 2];
+        terminal.ingest(&payload);
+
+        let mut snapshot = encode_snapshot(&terminal.recovery_clone()).unwrap();
+        let mut recovered = decode_snapshot(&snapshot).unwrap();
+        recovered.ingest(&payload);
+        recovered.ingest(b"\r\n\x1b\\after");
+        assert_eq!(recovered.row_text(0).unwrap().trim(), "beforeafter");
+        assert_eq!(recovered.scrollback_lines().len(), 0);
+        assert!(recovered.drain_replies().is_empty());
+
+        snapshot[0] = TerminalSemantics::Current.wire_id();
+        assert!(decode_snapshot(&snapshot).is_err());
     }
 
     #[test]

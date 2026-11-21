@@ -9,7 +9,7 @@ use festerm_config::{
 };
 use festerm_ui_egui::{
     chrome::ChipLayout,
-    controls::{action_button, ActionButtonRole},
+    controls::{action_button, action_button_enabled, ActionButtonRole},
     icon::{self, Icon},
     theme,
 };
@@ -64,6 +64,10 @@ pub(crate) struct SettingsViewModel {
     pub scroll_speed: ScrollSpeedPreference,
     pub rectangle_copy_trim_trailing_spaces: bool,
     pub scrollback_limit: ScrollbackLimitPreference,
+    pub inline_graphics: bool,
+    /// Open sessions with inline graphics on; see
+    /// `AppState::inline_graphics_sessions`.
+    pub inline_graphics_sessions: usize,
     pub image_memory_budget: ImageMemoryBudgetPreference,
     pub image_memory_over_budget: bool,
     pub quick_switch_overlay: bool,
@@ -71,6 +75,8 @@ pub(crate) struct SettingsViewModel {
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
     pub automatic_update_checks: bool,
+    pub safe_mode: bool,
+    pub open_automation_activity: bool,
     pub mcp_enabled: bool,
     pub javascript_enabled: bool,
     pub automation_mcp_enabled: bool,
@@ -81,10 +87,17 @@ pub(crate) struct SettingsViewModel {
     pub automation_preference_retry_available: bool,
     pub automation_window: crate::application::WindowId,
     pub automation: crate::automation::SettingsSnapshot,
+    pub javascript_program_storage: Vec<JavaScriptProgramStorageView>,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
     pub session_recording_enabled: bool,
     pub recording_preference_unsaved: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct JavaScriptProgramStorageView {
+    pub setting: festerm_config::JavaScriptProgramStorageSettings,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Default)]
@@ -218,6 +231,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         scroll_speed,
         rectangle_copy_trim_trailing_spaces,
         scrollback_limit,
+        inline_graphics,
+        inline_graphics_sessions,
         image_memory_budget,
         image_memory_over_budget,
         quick_switch_overlay,
@@ -225,6 +240,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_resumable_sessions,
         show_durable_session_in_status_bar,
         automatic_update_checks,
+        safe_mode,
+        open_automation_activity,
         mcp_enabled,
         javascript_enabled,
         automation_mcp_enabled,
@@ -235,6 +252,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         automation_preference_retry_available,
         automation_window,
         automation,
+        javascript_program_storage,
         default_sftp_local_directory,
         sftp_pane_order,
         session_recording_enabled,
@@ -266,6 +284,11 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         data.get_temp::<SettingsNavigation>(navigation_id)
             .unwrap_or_default()
     });
+    if open_automation_activity {
+        navigation.page = SettingsPage::AutomationActivity;
+        navigation.return_to = None;
+        navigation.focus_back = true;
+    }
     // The fixed Ctrl+Shift+F12 recovery chord asks the keyboard editor to
     // focus its search; the editor lives on its own sub-page, so go there.
     // The editor itself consumes the request.
@@ -567,6 +590,14 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 customize_local_shell,
                             ) {
                                 command = Some(AppCommand::ToggleCustomizeLocalShell);
+                            }
+                            if inline_graphics_setting_row(
+                                ui,
+                                crate::inline_graphics::BUILD,
+                                inline_graphics,
+                                inline_graphics_sessions,
+                            ) {
+                                command = Some(AppCommand::ToggleInlineGraphics);
                             }
                             ui.add_space(SETTINGS_CARD_GAP);
                             settings_group_label(ui, "New Session tab");
@@ -987,6 +1018,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         });
 
                         settings_card(ui, "Automation (Beta)", |ui| {
+                            if safe_mode {
+                                ssh_paragraph(ui, "Safe Mode is active. MCP and JavaScript execution are disabled for this process; saved preferences and workflow files were not changed.");
+                                ui.add_space(SETTINGS_ROW_GAP);
+                            }
                             if let Some(feedback) = automation_preference_feedback {
                                 ssh_paragraph(ui, feedback);
                                 if automation_preference_retry_available
@@ -997,35 +1032,46 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 ui.add_space(SETTINGS_ROW_GAP);
                             }
                             let viewport = ui.ctx().viewport_id();
-                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable local MCP (Beta)",
-                                    "Allow a local assistant adapter to request access. Each connection \
-                                     still needs a separate native grant for exact terminals. Terminal \
-                                     output can contain secrets. Off by default.",
-                                    mcp_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleMcpEnabled);
-                            }
+                            ui.add_enabled_ui(!safe_mode, |ui| {
+                                if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
+                                    settings_toggle_row(
+                                        ui,
+                                        "Enable local MCP (Beta)",
+                                        "Allow a local assistant adapter to request access. Each connection \
+                                         still needs a separate native grant for exact terminals. Terminal \
+                                         output can contain secrets. Off by default.",
+                                        mcp_enabled,
+                                    )
+                                }).inner {
+                                    automation_command.record(AppCommand::ToggleMcpEnabled);
+                                }
+                            });
                             ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
                             settings_row_separator(ui);
-                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
-                                settings_toggle_row(
-                                    ui,
-                                    "Enable JavaScript workflows (Beta)",
-                                    "Run a selected workflow in an isolated, resource-limited worker \
-                                     after you approve it for one local terminal. Every input it sends \
-                                     needs a separate approval. Off by default.",
-                                    javascript_enabled,
-                                )
-                            }).inner {
-                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
-                            }
+                            ui.add_enabled_ui(!safe_mode, |ui| {
+                                if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
+                                    settings_toggle_row(
+                                        ui,
+                                        "Enable JavaScript workflows (Beta)",
+                                        "Run a selected workflow in an isolated, resource-limited worker \
+                                         after you approve it for one local terminal. Every input it sends \
+                                         needs a separate approval. Off by default.",
+                                        javascript_enabled,
+                                    )
+                                }).inner {
+                                    automation_command.record(AppCommand::ToggleJavascriptEnabled);
+                                }
+                            });
                             settings_row_separator(ui);
                             ssh_paragraph(ui, automation.status);
                             ui.add_space(4.0);
+                            if !javascript_program_storage.is_empty() {
+                                settings_group_label(ui, "JavaScript program storage");
+                                for storage in &javascript_program_storage {
+                                    javascript_program_storage_row(ui, storage, &mut command);
+                                }
+                                ui.add_space(SETTINGS_ROW_GAP);
+                            }
                             let summary = automation_activity_summary(&automation);
                             let response = settings_drill_in_row(
                                 ui,
@@ -1149,7 +1195,7 @@ pub(crate) const RESET_ALL_SETTINGS_CATEGORIES: &[&str] = &[
     "Keyboard shortcuts: every customized binding",
     "Files & documents: SFTP pane order and folder, editor, and image memory",
     "Dev Tunnels options",
-    "Automation: Local MCP and JavaScript workflows turn off",
+    "Automation: Local MCP and JavaScript workflows turn off; per-program save policies reset",
     "Updates & privacy",
 ];
 /// What `AppCommand::ResetAllSettings` deliberately leaves alone.
@@ -1270,6 +1316,101 @@ fn escape_workflow_source(source: &str) -> String {
     escaped
 }
 
+fn javascript_program_storage_row(
+    ui: &mut Ui,
+    view: &JavaScriptProgramStorageView,
+    command: &mut Option<AppCommand>,
+) {
+    let setting = &view.setting;
+    ui.push_id(("javascript-program-storage", setting.digest()), |ui| {
+        ui.label(
+            egui::RichText::new(setting.name())
+                .strong()
+                .color(theme::TEXT_PRIMARY),
+        );
+        ui.label(
+            egui::RichText::new(format!(
+                "{} · {}",
+                &setting.digest()[..12],
+                crate::sftp_file_manager::format_size(Some(view.bytes))
+            ))
+            .color(theme::TEXT_MUTED),
+        );
+        if settings_toggle_row(
+            ui,
+            "Allow save data",
+            "Permit this exact reviewed program digest to persist one bounded JSON value. Other programs remain isolated. Changes apply to the next launch; close an active program before revoking its storage authority.",
+            setting.allowed(),
+        ) {
+            *command = Some(AppCommand::SetJavaScriptProgramStorage(
+                setting.clone().with_allowed(!setting.allowed()),
+            ));
+        }
+        ui.add_space(4.0);
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                ui.label(
+                    egui::RichText::new("Maximum JSON payload")
+                        .color(theme::TEXT_SECONDARY),
+                );
+            },
+            |ui| {
+                let selected = setting.max_bytes();
+                egui::ComboBox::from_id_salt(("javascript-storage-limit", setting.digest()))
+                    .selected_text(match selected {
+                        4096 => "4 KiB",
+                        8192 => "8 KiB",
+                        _ => "12 KiB",
+                    })
+                    .show_ui(ui, |ui| {
+                        for bytes in [4096, 8192, 12_288] {
+                            let selected_label = match bytes {
+                                4096 => "4 KiB",
+                                8192 => "8 KiB",
+                                _ => "12 KiB",
+                            };
+                            if ui
+                                .selectable_label(selected == bytes, selected_label)
+                                .clicked()
+                                && selected != bytes
+                            {
+                                *command = Some(AppCommand::SetJavaScriptProgramStorage(
+                                    setting.clone().with_max_bytes(bytes),
+                                ));
+                            }
+                        }
+                    });
+            },
+        );
+        ui.add_space(SETTINGS_ROW_GAP);
+        ui.horizontal_wrapped(|ui| {
+            if action_button(
+                ui,
+                ActionButtonRole::Secondary,
+                crate::sftp_file_manager::reveal_in_file_manager_label(),
+            )
+            .clicked()
+            {
+                *command = Some(AppCommand::RevealJavaScriptProgramStorage {
+                    digest: setting.digest().to_owned(),
+                });
+            }
+            let delete = action_button(
+                ui,
+                ActionButtonRole::DangerOutline,
+                "Delete saved data…",
+            );
+            if delete.clicked() {
+                *command = Some(AppCommand::DeleteJavaScriptProgramStorage {
+                    digest: setting.digest().to_owned(),
+                });
+            }
+        });
+        settings_row_separator(ui);
+    });
+}
+
 fn workflow_source_review(ui: &mut Ui, bundle: &festerm_automation_js::snapshot::ApprovedBundle) {
     let snapshot = bundle.snapshot();
     ui.collapsing("Review captured source (not approval)", |ui| {
@@ -1345,6 +1486,7 @@ fn workflow_settings(
 ) -> Option<AppCommand> {
     use crate::automation::{NativeCommand, WorkflowStatus};
     use festerm_automation_js::snapshot::{Capability, ParameterType};
+    let mut command = SettingsAutomationCommands::default();
 
     ssh_paragraph(
         ui,
@@ -1353,11 +1495,112 @@ fn workflow_settings(
          output can contain secrets. Each text or key input is shown here and waits for \
          your approval. Access stops when the screen locks or the computer sleeps.",
     );
-    if !enabled {
-        return None;
+    ui.add_space(8.0);
+    settings_group_label(ui, "Registered workflows");
+    if snapshot.workflow_registry.busy {
+        ssh_paragraph(ui, "Importing the workflow into private managed storage…");
+    }
+    if let Some(error) = &snapshot.workflow_registry.operation_error {
+        ui.colored_label(theme::STATUS_ERROR, error);
+    }
+    if let Some(error) = &snapshot.workflow_registry.error {
+        ui.colored_label(theme::STATUS_ERROR, error);
+    } else if snapshot.workflow_registry.entries.is_empty() {
+        ssh_paragraph(
+            ui,
+            "No workflows are registered. Register a saved .workflow.json from the editor; saving a file alone does not install it.",
+        );
+    } else {
+        for entry in &snapshot.workflow_registry.entries {
+            ui.push_id(("registered-workflow", &entry.digest), |ui| {
+                let name = ui
+                    .add(egui::Label::new(&entry.name).truncate())
+                    .on_hover_text(&entry.name);
+                name.widget_info(|| {
+                    WidgetInfo::labeled(WidgetType::Label, true, format!("Workflow {}", entry.name))
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "SHA-256 {}… · imported {}",
+                            entry.digest.get(..12).unwrap_or(&entry.digest),
+                            entry.imported_at
+                        ))
+                        .color(theme::TEXT_MUTED),
+                    );
+                    let review = action_button_enabled(
+                        ui,
+                        enabled,
+                        ActionButtonRole::Secondary,
+                        "Review Run",
+                    );
+                    review.widget_info(|| {
+                        WidgetInfo::labeled(
+                            WidgetType::Button,
+                            enabled,
+                            format!(
+                                "Review Run for {} ({})",
+                                entry.name,
+                                entry.digest.get(..12).unwrap_or(&entry.digest)
+                            ),
+                        )
+                    });
+                    if review.clicked() {
+                        command.record(AppCommand::Automation(
+                            NativeCommand::SelectRegisteredWorkflow {
+                                digest: entry.digest.clone(),
+                            },
+                        ));
+                    }
+                    let remove = action_button(ui, ActionButtonRole::DangerOutline, "Remove");
+                    remove.widget_info(|| {
+                        WidgetInfo::labeled(
+                            WidgetType::Button,
+                            true,
+                            format!(
+                                "Remove registered workflow {} ({})",
+                                entry.name,
+                                entry.digest.get(..12).unwrap_or(&entry.digest)
+                            ),
+                        )
+                    });
+                    if remove.clicked() {
+                        command.record(AppCommand::Automation(
+                            NativeCommand::DeleteRegisteredWorkflow {
+                                digest: entry.digest.clone(),
+                            },
+                        ));
+                    }
+                });
+                if !enabled {
+                    review_disabled_reason(ui);
+                }
+            });
+            ui.add_space(6.0);
+        }
     }
 
-    let mut command = SettingsAutomationCommands::default();
+    fn review_disabled_reason(ui: &mut Ui) {
+        ui.label(
+            egui::RichText::new("Enable JavaScript workflows before reviewing a registered run.")
+                .small()
+                .color(theme::TEXT_MUTED),
+        );
+    }
+    if snapshot.workflow_registry.quarantined > 0 {
+        ssh_paragraph(
+            ui,
+            &format!(
+                "{} malformed registry entries were quarantined and ignored.",
+                snapshot.workflow_registry.quarantined
+            ),
+        );
+    }
+    ui.add_space(8.0);
+    if !enabled {
+        return command.resolve(None);
+    }
+
     if ui
         .add_enabled(
             !snapshot.workflow.busy(),
@@ -2802,6 +3045,49 @@ fn settings_drill_in_row(
     response
 }
 
+const INLINE_GRAPHICS_TITLE: &str = "Inline graphics (developer preview)";
+
+fn inline_graphics_description(platform_supported: bool, sessions: usize) -> String {
+    let scope = if platform_supported {
+        "Developer builds only; unfinished and off by default. New local shell \
+         sessions on macOS and Linux accept a subset of the Kitty graphics \
+         protocol; shipped builds never enable or advertise it. Eligibility is fixed when a session starts: persistent, multiplexer, \
+         SSH, serial, tunnel, PowerShell and recorded sessions are refused, and \
+         recording refuses an eligible session."
+    } else {
+        "Developer builds only; unavailable on this platform. Only macOS and \
+         Linux local shells can be eligible."
+    };
+    let status = match sessions {
+        0 => "No open session has it on.".to_owned(),
+        1 => "1 open session has it on and cannot be recorded.".to_owned(),
+        count => format!("{count} open sessions have it on and cannot be recorded."),
+    };
+    format!("{scope} {status}")
+}
+
+/// ADR 0089 §9: Phase 1 is an unadvertised developer slice, so shipped
+/// builds never show the setting, and unsupported platforms show it inert.
+/// Returns whether the enabled switch was clicked.
+fn inline_graphics_setting_row(
+    ui: &mut Ui,
+    build: crate::inline_graphics::InlineGraphicsBuild,
+    enabled: bool,
+    sessions: usize,
+) -> bool {
+    if !build.developer_preview {
+        return false;
+    }
+    settings_row_separator(ui);
+    settings_toggle_row_enabled(
+        ui,
+        INLINE_GRAPHICS_TITLE,
+        &inline_graphics_description(build.platform_supported, sessions),
+        enabled,
+        build.platform_supported,
+    )
+}
+
 /// One labeled on/off preference row: a fixed title and state-independent
 /// description on the left, and a pill-shaped toggle switch on the right
 /// (`docs/images/gui-mockups/settings.png`) - replacing a plain text button
@@ -3102,6 +3388,7 @@ fn settings_clickstop_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automation::NativeCommand;
     use egui_kittest::{
         kittest::{NodeT, Queryable},
         Harness,
@@ -3235,6 +3522,8 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            inline_graphics: false,
+                            inline_graphics_sessions: 0,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,
                             quick_switch_overlay: false,
@@ -3242,6 +3531,8 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            safe_mode: false,
+                            open_automation_activity: false,
                             mcp_enabled: state.mcp_enabled,
                             javascript_enabled: state.javascript_enabled,
                             automation_mcp_enabled: state.mcp_enabled && !state.automation_stopped,
@@ -3254,6 +3545,7 @@ mod tests {
                                 .automation_preference_retry_available,
                             automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
+                            javascript_program_storage: Vec::new(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                             session_recording_enabled: false,
@@ -3335,6 +3627,126 @@ mod tests {
             } else {
                 assert!(harness.query_by_label("Select workflow JSON").is_none());
             }
+        }
+    }
+
+    #[test]
+    fn registered_workflow_review_uses_its_digest_and_removal_is_separate() {
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot
+            .workflow_registry
+            .entries
+            .push(crate::workflow_registry::Entry {
+                digest: "ab".repeat(32),
+                name: "registered".into(),
+                imported_at: 1,
+            });
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 500.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    if let Some(action) = workflow_settings(ui, &snapshot, true) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+        harness.get_by_label_contains("Review Run for").click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::Automation(
+                NativeCommand::SelectRegisteredWorkflow { digest }
+            )) if digest == &"ab".repeat(32)
+        ));
+
+        harness.state_mut().take();
+        harness
+            .get_by_label_contains("Remove registered workflow")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::Automation(
+                NativeCommand::DeleteRegisteredWorkflow { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn javascript_program_storage_controls_are_digest_bound_and_separate() {
+        let digest = "ab".repeat(32);
+        let setting = festerm_config::JavaScriptProgramStorageSettings::new(
+            digest.clone(),
+            "tw2k2-js".into(),
+        );
+        let view = JavaScriptProgramStorageView {
+            setting,
+            bytes: 3781,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(760.0, 420.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    javascript_program_storage_row(ui, &view, command);
+                },
+                None,
+            );
+        harness.run();
+        assert!(harness.query_by_label_contains(&digest[..12]).is_some());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Allow save data")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::SetJavaScriptProgramStorage(setting))
+                if setting.digest() == digest && setting.allowed()
+        ));
+
+        harness.state_mut().take();
+        harness.get_by_label("Delete saved data…").click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(AppCommand::DeleteJavaScriptProgramStorage { digest: actual })
+                if actual == &digest
+        ));
+    }
+
+    #[test]
+    fn registered_workflow_actions_wrap_at_narrow_width() {
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot
+            .workflow_registry
+            .entries
+            .push(crate::workflow_registry::Entry {
+                digest: "cd".repeat(32),
+                name: "workflow-".repeat(28),
+                imported_at: 1,
+            });
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<AppCommand>| {
+                    if let Some(action) = workflow_settings(ui, &snapshot, true) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+
+        for label in ["Review Run for", "Remove registered workflow"] {
+            let response = harness.get_by_label_contains(label);
+            assert!(response.rect().left() >= 0.0);
+            assert!(response.rect().right() <= 352.0);
+            assert!(
+                response.rect().height() >= 24.0,
+                "{label}: {}",
+                response.rect()
+            );
         }
     }
 
@@ -5129,6 +5541,98 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_inline_graphics_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        let build = crate::inline_graphics::BUILD;
+        if !build.developer_preview {
+            assert!(harness.query_by_label(INLINE_GRAPHICS_TITLE).is_none());
+            return;
+        }
+        let toggle =
+            harness.get_by_role_and_label(accesskit::Role::CheckBox, INLINE_GRAPHICS_TITLE);
+        assert_eq!(
+            toggle.accesskit_node().toggled(),
+            Some(accesskit::Toggled::False)
+        );
+        // Unsupported preview platforms (Windows) keep the row visible but inert.
+        assert_eq!(
+            toggle.accesskit_node().is_disabled(),
+            !build.platform_supported
+        );
+        toggle.click();
+        harness.run();
+
+        assert_eq!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::ToggleInlineGraphics)
+            ),
+            build.platform_supported
+        );
+    }
+
+    #[test]
+    fn inline_graphics_row_is_hidden_in_release_inert_when_unsupported_and_toggles_when_supported()
+    {
+        use crate::inline_graphics::InlineGraphicsBuild;
+        for (build, shown) in [
+            (
+                InlineGraphicsBuild {
+                    platform_supported: true,
+                    developer_preview: false,
+                },
+                false,
+            ),
+            (
+                InlineGraphicsBuild {
+                    platform_supported: false,
+                    developer_preview: true,
+                },
+                true,
+            ),
+            (
+                InlineGraphicsBuild {
+                    platform_supported: true,
+                    developer_preview: true,
+                },
+                true,
+            ),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(520.0, 400.0))
+                .build_ui_state(
+                    move |ui, clicks: &mut usize| {
+                        if inline_graphics_setting_row(ui, build, false, 0) {
+                            *clicks += 1;
+                        }
+                    },
+                    0,
+                );
+            harness.run();
+            let Some(toggle) =
+                harness.query_by_role_and_label(accesskit::Role::CheckBox, INLINE_GRAPHICS_TITLE)
+            else {
+                assert!(!shown, "{build:?}");
+                continue;
+            };
+            assert!(shown, "{build:?}");
+            assert_eq!(
+                toggle.accesskit_node().is_disabled(),
+                !build.platform_supported
+            );
+            toggle.click();
+            harness.run();
+            assert_eq!(
+                *harness.state(),
+                usize::from(build.platform_supported),
+                "{build:?}"
+            );
+        }
+    }
+
+    #[test]
     fn settings_auto_applies_default_sftp_local_directory_edits() {
         let mut harness = settings_harness();
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -5582,6 +6086,8 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            inline_graphics: false,
+                            inline_graphics_sessions: 0,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,
                             quick_switch_overlay: false,
@@ -5589,6 +6095,8 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            safe_mode: false,
+                            open_automation_activity: false,
                             mcp_enabled: false,
                             javascript_enabled: false,
                             automation_mcp_enabled: false,
@@ -5599,6 +6107,7 @@ mod tests {
                             automation_preference_retry_available: false,
                             automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
+                            javascript_program_storage: Vec::new(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                             session_recording_enabled: false,

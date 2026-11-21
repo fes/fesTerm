@@ -3,10 +3,22 @@
 //! No application/session authority is held here. Every host operation must be
 //! authorized by the caller's broker, including observation and result release.
 
+use std::time::Duration;
+
 #[cfg(not(target_os = "ios"))]
 mod engine;
 pub mod platform;
+#[cfg(feature = "javascript-program-dev")]
+pub mod program;
+#[cfg(feature = "javascript-program-dev")]
+mod program_storage;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+mod program_supervisor;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+mod program_worker;
 pub mod protocol;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+mod quickjs_program_runtime;
 pub mod snapshot;
 mod stdio;
 mod supervisor;
@@ -15,6 +27,22 @@ mod windows;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 
+#[cfg(feature = "javascript-program-dev")]
+pub use program::{JavaScriptProgramLaunch, ProgramDeliveryFence, ProgramDeliveryPermit};
+#[cfg(feature = "javascript-program-dev")]
+pub use program_storage::{
+    ProgramStorageCommit, ProgramStorageCommitRequest, ProgramStorageHost, ProgramStorageLoad,
+    ProgramStoragePreparation, ProgramStorageSnapshot, UnavailableProgramStorage,
+    MAX_STORAGE_SLOT_BYTES, MAX_STORAGE_VALUE_BYTES,
+};
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use program_supervisor::{ProgramSupervisor, ProgramSupervisorQuota};
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use quickjs_program_runtime::QuickJsProgramRuntime;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use quickjs_program_runtime::QuickJsProgramRuntimeError;
+#[cfg(all(feature = "javascript-program-dev", not(target_os = "ios")))]
+pub use stdio::program_worker_stdio;
 pub use stdio::worker_stdio;
 pub use supervisor::{
     cleanup_failed, event_wake_channel, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event,
@@ -55,6 +83,15 @@ pub const STACK_BYTES: usize = 1024 * 1024;
 pub const STACK_BYTES: usize = 512 * 1024;
 pub const PROCESS_BYTES: u64 = 128 * 1024 * 1024;
 pub const CPU_SECONDS: u64 = 5;
+/// Last-resort native process CPU ceiling for the interactive program mode.
+/// The supervisor and engine normally terminate much earlier through the
+/// rolling and per-turn budgets; this exists so confinement always remains
+/// finite even if their accounting fails.
+pub const PROGRAM_HARD_CPU_SECONDS: u64 = 3_600;
+pub const PROGRAM_CPU_WINDOW: Duration = Duration::from_secs(1);
+pub const PROGRAM_CPU_WINDOW_LIMIT: Duration = Duration::from_millis(250);
+pub const PROGRAM_TURN_TIMEOUT: Duration = Duration::from_secs(1);
+pub const PROGRAM_TURN_CPU_LIMIT: Duration = Duration::from_millis(200);
 pub const MAX_RUN_MS: u64 = 300_000;
 
 /// Content-free errors, safe for ordinary diagnostics.
@@ -78,4 +115,8 @@ pub enum Error {
     Cleanup,
     #[error("automation worker failed: {0}")]
     WorkerFailed(&'static str),
+    #[error("aggregate JavaScript program quota exhausted")]
+    ProgramQuota,
+    #[error("{0}")]
+    Storage(&'static str),
 }

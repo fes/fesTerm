@@ -5,6 +5,39 @@ connects to sessions, starts MCP/HTTP, watches files, or schedules jobs.
 The application owns approval, authorization, concurrency, recipients, privacy
 events, result retention, packaging/provenance, and default-off settings.
 
+## Developer-only terminal program runtime
+
+`QuickJsProgramRuntime::new(ApprovedProgram)` exposes a bounded, long-lived
+in-process slice behind a dedicated worker thread on non-iOS targets. `start`,
+`input`, `resize` and `close` synchronously return ordered terminal output
+chunks and content-free errors. The QuickJS `Runtime` and `Context` stay on that
+one thread between events. The accepted entry remains compatible with
+`main({ terminal })` and synchronous `terminal.events(callback)`. It also
+supports async `main({ terminal, assets, clock, params })`: one
+`terminal.events().next()` consumer, exact byte `Uint8Array` input, bounded
+`assets.read(id)`, `clock.now()` and cancellable `clock.sleep(ms)`.
+`params` is currently an empty frozen compatibility object, not a reviewed
+launch-payload channel. `terminal.write(text)` accepts only bounded strict
+UTF-8 text. Ambient wall-clock access through `Date` is not exposed.
+
+The reviewed manifest contains an exact opaque asset inventory; each entry has
+an ID, byte length and SHA-256 digest. Bytes are frozen into the approved
+program and verified at construction and worker transfer. There is no path,
+directory, save, picker, network or filesystem API. Host calls are typed and
+generation-bound, limited to eight outstanding calls, and delivered through
+the application-owned fence. Sleeps are at most 60 seconds and may be cut by
+worker cancellation. Root Promise settlement with pending host work reports
+`UnsettledWork`; late or mismatched results are protocol errors.
+
+This runtime is developer-only and default-off. It is not a qualified
+subprocess, production confinement boundary, GUI process, or enablement of a
+JavaScript session. Callers remain responsible for all approval, lifetime and
+authority policy. The engine heap remains 64 MiB and the JavaScript stack
+remains 1 MiB (512 KiB on Windows); commands, replies and output are bounded,
+and close interrupts a stalled callback after a 250 ms cooperation window.
+The runtime has no workflow host API, `eval`/constructor escape, process, fetch,
+network or filesystem surface.
+
 ## Stable integration API
 
 Public paths/signatures:
@@ -30,6 +63,7 @@ Supervisor::shutdown(self) -> Result<(), Error>
 worker_entry(input: impl Read, output: impl Write) -> Result<(), Error>
 worker_stdio() -> Result<(), Error>
 platform::availability() -> Result<&'static str, Error>
+platform::program_availability() -> Result<&'static str, Error>
 cleanup_failed() -> bool
 ```
 
@@ -227,6 +261,23 @@ Process and signal probes target the worker itself or use invalid arguments.
 A native mmap probe must fail with `ENOMEM` beyond the hard ceiling. Probes do
 not modify files, contact services, or spawn grandchildren.
 
+Interactive terminal programs use a distinct confinement/profile negotiation:
+`linux-seccomp-stdio-program-rolling-v1`,
+`macos-seatbelt-program-rolling-v1`, or
+`windows-appcontainer-program-job-v1`. They retain the same filesystem,
+network, process, descriptor, memory and single-process restrictions as
+automation mode. Automation keeps its original 5-second cumulative CPU
+ceiling; only program mode uses a finite 3,600-second native last-resort
+ceiling. Program mode independently enforces 200 ms CPU and 1 second wall time
+per active turn, plus 250 ms process CPU in each rolling 1-second window. The
+worker engine checks active CPU/wall time, while its parent samples Linux
+`/proc`, macOS `proc_pid_rusage`, or Windows `GetProcessTimes` every 10 ms and
+force-terminates/reaps a worker that exceeds the rolling quota. Program-mode
+input waits block in the inherited pipe (while output remains bounded and
+nonblocking), so idle waits add no polling work to the active CPU window.
+Child/supervisor CPU-evidence regressions fail closed. A 500 ms close cut
+remains separately bounded.
+
 Fault-injection tests require an unfiltered test thread and the expected inert
 kernel results before installing the worker filter. They verify the exact
 syscall and result that failed, and report a filtered or unsupported environment
@@ -249,7 +300,7 @@ ownership protocol is race-free. The Linux launcher and application startup
 remain blocked pending separately qualified ownership, executable provenance,
 and lifecycle evidence.
 
-Limits: 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
+Limits: automation remains 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
 5s cumulative process CPU, at most 5 minutes/run. Engine interrupt callbacks
 also check process CPU and wall deadlines. The native ceiling/watchdog covers
 uncooperative regex/native calls. Frames are big-endian u32 length plus JSON,
