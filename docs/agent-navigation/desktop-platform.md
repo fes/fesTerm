@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "5559990d1b8c45adacd1d61ff860481937e0ead2c4a61419632682d69da01d60"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "779342d055712a144ed8ec9104e20182c83eb3511e6fd4599a65f4c334d8a6bc"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -83,7 +83,7 @@ Evidence:
 - [`actual_worker_releases_are_private_bounded_and_emit_no_reply`](../../crates/festerm-pty-test-child/src/terminal_capability_windows.rs) — Rejects overflow and unrelated input without replay.
 
 Caveats:
-- Nonshipping helper only; console mediation and current-build native gates remain explicit.
+- Nonshipping helper only; console mediation and attributed native coverage retain explicit limits.
 
 ## Dedicated Mac HOST entry
 

@@ -175,8 +175,20 @@ nonconsuming release-only admission, actual worker release handling and failed
 Peek observations. Actual local/remote query pairs and their normal completion
 are attributed to that private binary, not a newly built current-main binary.
 
+A retained partial-response native run reached its actual 12,006 ms deadline
+with `terminal_restored`, `worker_drained` and `grid_stable` all true. That path
+requests `CancelSynchronousIo`, verifies the owned worker has finished and joins
+it before exact saved-mode readback. It remained an incomplete query observation;
+its cleanup coverage is distinct from the published complete ten-reply pairs.
+The current production console projection is byte-identical to that private
+source (20,405 bytes, SHA-256
+`23582d1ec20804820d9fcddafba79239e3e237bb8654f09d671aa2f2f90f4432`),
+and its entrypoint is identical. These attributed native runs and the independent
+source review qualify integration of this nonshipping collector.
+
 The canonical helper name is retained; the temporary diagnostic executable alias
-is not another shipping binary or protocol. Fresh current-composition execution,
-forced deadline/cancellation and restoration/failure qualification remain native
-gates. Existing pinned pairs do not automatically qualify another build or the
-full Desktop/Mobile workflow matrix.
+is not another shipping binary or protocol. A newly built current-composition
+binary, externally generated console-control-event cancellation and forced OS
+restoration failure remain unqualified follow-up checks. No new canonical binary
+execution, successful forced failure or full Desktop/Mobile workflow matrix is
+claimed by the production-source equivalence or existing pinned pairs.
