@@ -1173,6 +1173,13 @@ reattachment with newly built daemons remains native validation; source tests
 do not qualify old running helpers or establish the cause of #800. Preserve
 that original failing session rather than replacing it to claim recovery.
 
+The opt-in [Windows console collector](native-terminal-capability-probe.md#windows-console-collector)
+adds bounded application-visible query observations, selected environment and
+actual grid capture. Parser/dispatch tests and cross-compilation are automated;
+actual Windows reply-record encoding, deadline cancellation, exact console-mode
+restoration/private output and paired local/remote Copilot captures remain native
+gates. Conhost-mediated replies must not be described as direct client answers.
+
 DT-02 also checks the first attached viewport without requiring a second window
 resize: the actual PTY grid must match the client before the fresh program starts.
 Portable bound framed-stream regressions now hold HOST activation after snapshot
@@ -6149,6 +6156,19 @@ remains unproved. Preserve that first result. This source adds no ACL grant or
 automatic retry and provides no signed/native qualification. Existing release
 controls and owner authorization govern later exact-candidate runs; see
 [ADR 0084](adr/0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
+
+For the Windows capability collector, attributed private `diag2` execution and
+query pairs are linked in [the collector evidence](native-terminal-capability-probe.md#attributed-native-evidence).
+The bounded key-release correction is retained in tracked source without a
+second diagnostic binary alias. An actual 12,006 ms partial-response deadline
+exercised synchronous-I/O cancellation, positive worker drain/join and exact
+saved-mode readback; the observation remained incomplete. Together with complete
+ten-reply pairs, four native Windows tests and byte-identical production console
+code/entrypoint, that attributed evidence qualifies nonshipping collector
+integration. Newly built current-composition execution, external console-control
+event cancellation and forced OS restoration failure remain unqualified
+follow-up checks. No ordinary terminal input or expected query reply is injected
+to make the collector pass; no full workflow matrix acceptance is implied.
 
 ### #816 macOS HOST item mechanism native qualification
 
