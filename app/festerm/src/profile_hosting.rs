@@ -2488,9 +2488,8 @@ mod tests {
             OrdinaryAccess, Origin as HostOrigin, Phase as HostPhase, Settings, Startup,
             Store as HostStore,
         };
-        let fixture = tempfile::tempdir().unwrap();
-        let parent = trusted_hosting_root(&fixture);
-        let host = parent.join("desktop-host");
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let host = fixture.path().join("desktop-host");
         let catalog = catalog_observer_at(&host.join("daemon")).unwrap();
         assert_eq!(
             catalog.profile_status(
