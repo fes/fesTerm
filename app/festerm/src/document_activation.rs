@@ -69,6 +69,12 @@ pub enum StartupAction {
     ForwardedToPrimary,
     /// No file activation was requested and another process already owns the endpoint.
     IndependentNoActivation,
+    /// Safe Mode owns no cross-process activation endpoint. Explicit startup
+    /// paths remain local to this process and can never forward into an
+    /// existing normal-mode application.
+    SafeMode {
+        queue: ActivationQueue,
+    },
     Help,
     Version,
 }
@@ -328,7 +334,7 @@ impl QueueShared {
 }
 
 pub fn help_text() -> &'static str {
-    "Usage: festerm [--open [--] paths...] [--help] [--version]\n\nPaths passed positionally by the operating system are opened as documents. Use -- to open a filename that begins with '-'."
+    "Usage: festerm [--safe-mode] [--open [--] paths...] [--help] [--version]\n\n--safe-mode disables MCP, JavaScript execution and workflow registry activation without changing saved settings. Paths passed positionally by the operating system are opened as documents. Use -- to open a filename that begins with '-'."
 }
 
 pub fn parse_activation_args<I, S>(
@@ -345,6 +351,9 @@ where
     for arg in args.into_iter().map(Into::into) {
         if !collecting_after_dashdash {
             if is_macos_process_serial_number_arg(&arg) {
+                continue;
+            }
+            if arg == OsStr::new("--safe-mode") {
                 continue;
             }
             if arg == OsStr::new("--help") || arg == OsStr::new("-h") {
@@ -1140,6 +1149,26 @@ mod tests {
             parsed,
             CliActivation::Open {
                 paths: vec![cwd.join("-file.md")]
+            }
+        );
+    }
+
+    #[test]
+    fn safe_mode_is_an_activation_modifier_not_a_file() {
+        let cwd = PathBuf::from("/origin");
+        let parsed = parse_activation_args(
+            [
+                OsString::from("--safe-mode"),
+                OsString::from("--open"),
+                OsString::from("notes.md"),
+            ],
+            &cwd,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            CliActivation::Open {
+                paths: vec![cwd.join("notes.md")]
             }
         );
     }

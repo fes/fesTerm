@@ -6722,7 +6722,7 @@ fn build_reveal_command(path: &std::path::Path) -> RevealCommand {
 /// The context-menu label naming the platform-specific reveal action, so
 /// the same code path reads "Reveal in Finder" on macOS, "Show in File
 /// Explorer" on Windows, and "Open Containing Folder" elsewhere.
-fn reveal_in_file_manager_label() -> &'static str {
+pub(crate) fn reveal_in_file_manager_label() -> &'static str {
     if cfg!(target_os = "macos") {
         "Reveal in Finder"
     } else if cfg!(target_os = "windows") {
@@ -6732,7 +6732,7 @@ fn reveal_in_file_manager_label() -> &'static str {
     }
 }
 
-fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
     let command = build_reveal_command(path);
     std::process::Command::new(command.program)
         .args(&command.args)

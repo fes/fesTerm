@@ -13,6 +13,7 @@ mod colors;
 mod history;
 mod hyperlink;
 mod input;
+pub mod kitty;
 mod modes;
 mod parser;
 mod replies;
@@ -178,8 +179,8 @@ mod tests {
         Attributes, CellWidth, Color, ColorScheme, ContentPosition, Dimensions, FocusEvent,
         InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
         MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
-        TerminalOp, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_CELL_COUNT,
-        MAX_CSI_PARAMETERS, MAX_RECORDING_CHECKPOINT_BYTES, MAX_STRING_BYTES,
+        TerminalOp, TerminalSemantics, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen,
+        MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_RECORDING_CHECKPOINT_BYTES, MAX_STRING_BYTES,
         TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
@@ -424,6 +425,114 @@ mod tests {
 
         assert_eq!(terminal.row_text(0).as_deref(), Some("OKXBY   "));
         assert_eq!(terminal.attributes(), Attributes::NONE);
+    }
+
+    #[test]
+    fn safe_string_framing_keeps_oversize_payload_off_the_screen() {
+        let payload = vec![b'X'; MAX_STRING_BYTES * 8];
+        for prefix in [
+            b"\x1b_Ga=q,i=1;".as_slice(),
+            b"\x1bPq",
+            b"\x1bP0;1;2q",
+            b"\x1bP+q",
+            b"\x1bP$q",
+            b"\x1b_other-apc;",
+            b"\x1b^",
+            b"\x1bX",
+            b"\x1bP",
+        ] {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"before");
+            let cursor = terminal.cursor();
+            terminal.ingest(prefix);
+            if prefix == b"\x1bP" {
+                terminal.ingest(&vec![b'1'; MAX_STRING_BYTES]);
+                terminal.ingest(b"q");
+            }
+            terminal.ingest(&payload[..MAX_STRING_BYTES]);
+            terminal.ingest(b"\x1bx"); // Not a recognized escape.
+            terminal.ingest(&payload[MAX_STRING_BYTES..]);
+            terminal.ingest(b"\x1b");
+            assert_eq!(terminal.cursor(), cursor, "{prefix:?}");
+            terminal.validate_recovery_snapshot().unwrap();
+            terminal.ingest(b"\\after");
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "beforeafter");
+            assert_eq!(terminal.scrollback_lines().len(), 0);
+            assert!(terminal.drain_replies().is_empty());
+        }
+    }
+
+    #[test]
+    fn safe_string_discard_ignores_c0_and_resynchronizes() {
+        for prefix in [
+            b"\x1b_\r\nG".as_slice(),
+            b"\x1bP0;\r\n1q",
+            b"\x1b_\r\nother",
+            b"\x1bP\r\n+q",
+            b"\x1b^",
+            b"\x1bX",
+        ] {
+            for (end, row, column) in [
+                (b"\x1b\x0b\\".as_slice(), 0, 3),
+                (b"\x18", 0, 3),
+                (b"\x1b\x1a", 0, 3),
+                (b"\x1b\x1b[2;3H", 1, 2),
+            ] {
+                let mut terminal = terminal(12, 3);
+                terminal.ingest(b"abc");
+                let cursor = terminal.cursor();
+                terminal.ingest(prefix);
+                terminal.ingest(b"\r\n\x08\t\x0b\x0c\x0e\x0f\x07junk");
+                assert_eq!(terminal.cursor(), cursor);
+                for &byte in end {
+                    terminal.ingest(&[byte]);
+                }
+                terminal.ingest(b"Z");
+                assert_eq!(terminal.cell(column, row).unwrap().character(), 'Z');
+                assert!(terminal.drain_replies().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn safe_string_discard_keeps_unsupported_escape_intermediates_inert() {
+        for prefix in [b"\x1b_G".as_slice(), b"\x1bPq", b"\x1b^"] {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"before");
+            let cursor = terminal.cursor();
+            terminal.ingest(prefix);
+            for byte in b"\x1b#\r\n9hidden\x1b##8more\x1b !Xtail" {
+                terminal.ingest(&[*byte]);
+            }
+            assert_eq!(terminal.cursor(), cursor);
+            terminal.validate_recovery_snapshot().unwrap();
+            terminal.ingest(b"\x1b[2;3HZ");
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "before");
+            assert_eq!(terminal.cell(2, 1).unwrap().character(), 'Z');
+
+            terminal.ingest(prefix);
+            terminal.ingest(b"\x1b#\r\n8");
+            assert_eq!(terminal.row_text(0).unwrap(), "EEEEEEEEEEEE");
+        }
+    }
+
+    #[test]
+    fn pre_safe_framing_keeps_c0_and_overflow_behavior() {
+        for semantics in [TerminalSemantics::Legacy, TerminalSemantics::Current] {
+            for prefix in [b"\x1b_G".as_slice(), b"\x1bPq", b"\x1b^x"] {
+                let mut terminal = terminal(12, 3);
+                terminal.set_semantics(semantics);
+                terminal.ingest(b"A");
+                terminal.ingest(prefix);
+                terminal.ingest(b"\n\r");
+                assert_eq!(terminal.cursor().row(), 1);
+                assert_eq!(terminal.cursor().column(), 0);
+                terminal.ingest(&vec![b'X'; MAX_STRING_BYTES - 1]);
+                terminal.ingest(b"TAIL\x1b\\!");
+                assert_eq!(terminal.row_text(0).unwrap().trim(), "A");
+                assert_eq!(terminal.row_text(1).unwrap().trim(), "TAIL!");
+            }
+        }
     }
 
     #[test]

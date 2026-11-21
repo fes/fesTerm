@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "5d04d12a9cbc1b43a5e8d71cdc52f4d72bbb5e98bc05fbcaab100e9c26964907"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5d82d1781af51a25655843b18967f22cd19412abceedbb17b3e728ca5e8eb515"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,7 +12,7 @@ Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
 Use for: When an SSH host fingerprint must be accepted or rejected before shell or SFTP work continues.
 
-- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns the worker thread, trust gates, and session lifecycle for SSH.
+- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns the worker thread, trust gates, and session lifetime for SSH transport.
 - [`HostTrustDecision`](../../crates/festerm-ssh/src/lib.rs) — User response enum for reject, accept once, and persist.
 
 Evidence:
@@ -33,6 +33,7 @@ Use for: When the app opens a GUI-backed SFTP session and must pause for trust w
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Connected remote reads succeed with verified, bounded results.
+- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The connect flow shows host-key trust before password prompts.
 
 Caveats:
 - The connect task uses a dedicated runtime so russh dispatch is not killed by a throw-away runtime.
@@ -41,34 +42,28 @@ Caveats:
 
 ## sftp transfer queue
 
-Use for: Bounded copy queues, collision decisions, and events.
+Use for: When a bounded copy queue needs collision decisions, retries, or publication certainty.
 
-- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, events, batches, and commit.
+- [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, events, batches, and commit logic.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
 - [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the planner and queue.
-- [`Creation`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Owns Unix creation/handoff cleanup with retained parent/file identity.
 
 Evidence:
 - [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost OPEN reply preserves the primary error and reports uncertainty without deletion.
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
-- [`windows_download_cleanup_preserves_replaced_leaf`](../../crates/festerm-ssh/src/sftp.rs) — Retained-handle cleanup preserves a replacement leaf on Windows.
-- [`windows_download_retained_handle_prevents_ancestor_rename_until_cleanup`](../../crates/festerm-ssh/src/sftp.rs) — Blocks ancestor rename until retained-handle cleanup.
-- [`unix_download_lost_creation_handoff_waits_for_actual_cleanup`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Waits for actual abandoned-creation cleanup.
-- [`unix_download_ancestor_replacement_cleans_retained_parent_only`](../../crates/festerm-ssh/src/sftp_download_unix.rs) — Cleans only the retained parent; refuses changed-path publication.
 
 Caveats:
-- Uncertain output, including lost upload OPEN replies, is preserved and reported without claiming ownership or authorizing deletion.
-- Unix cleanup requires a matching regular file in a freshly trusted parent; unprovable parents, remote output and crash/restart recovery remain open. POSIX unlink excludes hostile same-user/root concurrent writers.
+- Uncertain output is preserved and reported without claiming ownership or authorizing deletion.
+- Unix cleanup requires a matching regular file in a freshly trusted parent; post-crash recovery remains open.
 - Remote names and listings are untrusted; validation occurs before any write.
-- A closed client turns future operations into Disconnected instead of continuing silently.
 
 ## app remote sftp
 
-Use for: GUI SFTP tabs, trust prompts, and remote pane reads.
+Use for: When GUI SFTP tabs read remote files or start a remote pane after trust resolution.
 
 - [`connect_remote_session`](../../app/festerm/src/sftp_file_manager.rs) — Bridges profile auth and host-key resolution into the GUI SFTP session.
-- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs) — Binds remote reads to verified endpoint identity and transport generation.
+- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs) — Binds remote reads to the verified endpoint identity and transport generation.
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.

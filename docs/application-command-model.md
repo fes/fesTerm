@@ -4,6 +4,23 @@
 
 This document defines how user-visible application actions are represented and dispatched in fesTerm. It complements `ARCHITECTURE.md` and `docs/gui-design.md`.
 
+Under the default-off ADR 0088 developer feature, `StartJavaScriptProgram`
+converges on application policy that creates a typed reviewed launch for the
+repository-owned developer echo. The launch binds the exact digest, API,
+terminal-only capability set and fresh worker generation. Program tabs own no
+automation target or filesystem authority, and launch waits for an
+application-owned OS-privacy fence rather than borrowing a recording or
+automation grant.
+
+The same coordinator owns pending/live/closing program admission across every
+window. `StartJavaScriptProgram` and save Start/Resume refuse above the explicit
+four-program/512 MiB accounted developer limit before worker spawn. A live tab
+move only changes presentation ownership. Close/quit cuts new admission and
+uses bounded cooperative save settlement followed by force/reap; privacy loss
+skips close checkpointing and suppresses queued delivery. Crash termination is
+not Resume: a later explicit command creates a fresh generation and reads only
+the confirmed save.
+
 ## Principle
 
 A user-visible application action should have one semantic command regardless of where the user invokes it.
@@ -94,6 +111,28 @@ OpenWorkspace(workspace)
 ```
 
 These names are illustrative rather than a required Rust API, but the current `AppCommand` vocabulary follows this shape closely. The implementation may use enums, typed command objects, or another explicit representation provided that the following properties hold.
+
+`NewJavaScriptWorkflowDraft`, `OpenJavaScriptWorkflowEditorPicker`,
+`OpenJavaScriptWorkflowSource` and `ValidateJavaScriptWorkflowSource` are
+native authoring commands, distinct from Settings' execution capture. The
+picker collects a local path, while the state owner opens and marks the source
+atomically. Validation runs off the UI thread and publishes only for the exact
+document revision it checked; edits and undo/reload/rebind invalidate the
+verdict. These commands work while the JavaScript workflow preference is off.
+They do not construct `NativeCommand::CaptureWorkflow`, approve scopes or start
+automation. `*.workflow.json` is recognized by the editor as workflow source;
+ordinary Open File behavior remains unchanged for generic JSON.
+
+`RegisterJavaScriptWorkflowSource` is an explicit non-authorizing bridge from
+one saved, unconflicted local editor document to the private registry. It
+queues bounded import work, never rereads a mutable path for execution, and
+opens Settings for the exact managed digest. `RegisterWorkflow`,
+`SelectRegisteredWorkflow` and `DeleteRegisteredWorkflow` are native
+automation commands: registration copies an immutable artifact, selection only
+loads that artifact for the existing review, and deletion updates metadata
+without touching the editor file. `--safe-mode` dominates these commands and
+prevents the registry or automation coordinator from activating for that
+process.
 
 ## Required Properties
 

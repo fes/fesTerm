@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "80843e691efb3697ce0046a0c366edb92b3a53a454249ca181fe2a131a2d7873"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "8165926aa837f77cf80970358462d391bc70ca0269385e517ab3f59223bad42b"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns the session lifecycle contract, local PTY startup, daemon-backed session persistence/recovery, and app-side terminal event pumping.
+This domain owns the session lifecycle contract, local PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
@@ -13,14 +13,16 @@ Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 Use for: Which lifecycle, queue, and reply rules apply to every session backend?
 
 - [`SessionLifecycle`](../../crates/festerm-session/src/lib.rs) — Lifecycle states and disconnected-but-not-terminal semantics
-- [`Session`](../../crates/festerm-session/src/lib.rs) — Runtime-independent backend API for input, resize, shutdown, and reply ownership
+- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Backend-emitted output, resize, recovery, and lifecycle events
+- [`Session`](../../crates/festerm-session/src/lib.rs) — Runtime-independent backend API for input, resize, shutdown, reply ownership
+- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Backend-owned reply suppression when recovery mirror handles terminal responses
 
 Evidence:
 - [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered across transitions
 
 Caveats:
 - Events never mutate Terminal directly.
-- Disconnected is not terminal.
+- SessionLifecycle::Disconnected is not terminal.
 - terminal_replies_owned_by_backend gates backend-owned replies.
 
 ## Local PTY
@@ -28,13 +30,14 @@ Caveats:
 Use for: How does a local shell get started, resized, and shut down safely?
 
 - [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated local shell bootstrap with explicit env and working directory
+- [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Canonical Windows cwd normalization at the spawn boundary
 - [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup
 
 Evidence:
 - [`child_acknowledgment_requires_completed_controlled_input`](../../crates/festerm-pty-test-child/tests/input_acknowledgment.rs) — Validates PTY-controlled input sequencing and completion
 
 Caveats:
-- Startup validation happens before spawn.
+- Local shell startup is validated before spawn.
 - Resize and shutdown must preserve queue ordering and bounds.
 - Process-tree cleanup differs by OS.
 
@@ -42,12 +45,14 @@ Caveats:
 
 Use for: How is a named session resumed, reconnected, or mirrored for persistence?
 
-- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery
+- [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery synchronization
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned mirror drains replies while ingesting terminal bytes
 
 Evidence:
 - [`absence_denial_revocation_cancellation_and_generations_remain_distinct`](../../crates/festerm-sessiond/tests/host_control.rs) — Forces post-commit lease contention and recovers the same issued creation, preserving cancellation and generation fences.
 - [`native_discovery_churn_reconnect_pins_generation_and_explicit_registry`](../../crates/festerm-sessiond/tests/native_daemon.rs) — Proves generation pinning, reconnect semantics, and explicit attach rules
+- [`the_conpty_sidecar_is_staged_beside_the_helper_that_loads_it`](../../crates/festerm-sessiond/src/lib.rs) — Checks executable-relative sidecar retention
+- [`recovery_encoding_failure_leaves_candidate_generation_and_output_unchanged`](../../crates/festerm-sessiond/src/main.rs) — Recovery failures do not adopt an attachment or mutate output
 
 Caveats:
 - Daemon protocol and recovery schema versions must stay compatible.
@@ -60,6 +65,7 @@ Use for: How are backend bytes and resize events turned into terminal updates wi
 
 - [`SessionController`](../../app/festerm/src/session_controller.rs) — App-owned terminal writer with pending input and generation tracking
 - [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Applies output, resize, recovery, and lifecycle events in wire order
+- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Suppresses duplicate terminal replies when the backend owns the mirror
 
 Evidence:
 - [`authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies`](../../app/festerm/src/session_controller.rs) — Proves output and resize ordering while suppressing duplicate backend replies
@@ -68,3 +74,16 @@ Caveats:
 - terminal_replies_owned_by_backend blocks duplicate forwarding.
 - pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Controller shutdown and reconnect preserve generation and recovery invariants.
+
+## JavaScript session backend
+
+Use for: Own-terminal program input, resize, output and cleanup
+
+- [`JavaScriptSession`](../../crates/festerm-javascript-session/src/lib.rs) — Uses the ordinary bounded session lifecycle.
+- [`ProcessJavaScriptRuntime`](../../crates/festerm-javascript-session/src/lib.rs) — Runs the install-owned contained worker.
+
+Evidence:
+- [`session_has_no_automation_or_terminal_reply_authority`](../../crates/festerm-javascript-session/src/lib.rs) — Programs own neither automation grants nor backend replies.
+
+Caveats:
+- The app remains the terminal writer; privacy loss cuts delivery and uncertain input is not replayed.

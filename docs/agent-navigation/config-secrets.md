@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "d36187b0ba432feba7d33943b204747a9b0408cc29dccbae24134ca9ae8278fb"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "efe4dcb27e520a3668d9f27577d62b1beda2ecc02cb029bade4913d0b895b4d7"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns config, workspace metadata and opaque native references.
+Owns config/workspace metadata, opaque references and private publication.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
@@ -12,29 +12,29 @@ Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/
 
 Use for: Config selection and autosave.
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Validates override versus native config path.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Selects override versus native path.
 - [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Gates startup autosave.
 
 Evidence:
 - [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Checks override precedence.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Checks private-directory creation and save.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Checks private creation and reload.
 
 Caveats:
-- Diagnostics avoid exposing the selected path or source TOML.
+- Diagnostics hide the selected file path and TOML.
 - Unknown or busy writes latch the save gate until restart.
-- The selected path is intentionally inaccessible outside this module.
+- The selected source is intentionally private to this module.
 
 ## Config schema
 
-Use for: Validated workspace metadata.
+Use for: Validate persisted metadata.
 
-- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML metadata.
-- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Validates metadata-only restoration.
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Opaque credential metadata.
+- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML schema.
+- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Validates metadata-only restore.
+- [`InterfaceSettings`](../../crates/festerm-config/src/settings.rs) — Persists UI defaults.
 
 Evidence:
-- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Checks workspace references.
-- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks exact Files tab kind.
+- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Checks workspace/profile references.
+- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks exact metadata round-trip.
 
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
@@ -43,49 +43,49 @@ Caveats:
 
 ## Secret boundary
 
-Use for: Native credential custody.
+Use for: Native credential references.
 
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Opaque reference, never a secret value.
-- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Owns native secret operations.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque reference.
+- [`SecretReference`](../../crates/festerm-secret-store/src/lib.rs) — Canonical UUIDv4 metadata.
+- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract.
 
 Evidence:
-- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Checks reference-only persistence.
-- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Checks random canonical references.
+- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Checks opaque-reference round-trip.
+- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Checks random canonical UUIDv4.
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
 - Unsupported, missing, locked, or unavailable native storage is a first-class error.
 - Secret references are opaque and must remain canonical UUIDv4 strings.
-- Dedicated macOS owner-readiness disables process Keychain UI before store construction; shared foreground getters do not.
 
 ## File security
 
-Use for: Private file publication.
+Use for: Private publication.
 
-- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks current-user directory access.
-- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Publishes current-user-only files.
+- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks private ownership.
+- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a private DACL file.
 
 Evidence:
 - [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Checks inherited ACL cleanup.
-- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Checks DACL preservation.
+- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Checks DACL retention.
 
 Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
 - Configuration and workspace files contain metadata, never credential or terminal content.
-- Successful file creation alone does not prove private ownership or safe publication.
+- File-security helpers are about publication safety, not connection authority.
 
-## Windows starter context
+## Program storage settings
 
-Use for: Hosted successor routing.
+Use for: Reviewed digest-bound save and migration metadata
 
-- [`same_start_context`](../../crates/festerm-windows-security/src/lib.rs) — Matches user, logon, session, integrity and elevation.
-- [`verify_successor`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Bounds the same-image successor lifetime.
+- [`JavaScriptProgramStorageSettings`](../../crates/festerm-config/src/settings.rs) — Persists explicit per-program storage review.
+- [`TransactionalSaveStore`](../../app/festerm/src/javascript_program_storage.rs) — Owns exact reviewed save publication.
 
 Evidence:
-- [`unicode_environment_safearray_preserves_drive_entries_and_wide_values`](../../crates/festerm-windows-security/src/independent_start/windows.rs) — Preserves drive entries and UTF-16.
+- [`javascript_program_storage_reopen_retains_confirmed_save_for_explicit_resume`](../../app/festerm/src/javascript_program_storage.rs) — Resume retains the selected confirmed save.
 
 Caveats:
-- Context equality and WMI PIDs confer no creation consent, session or termination authority.
+- Storage enablement, budgets and migration require explicit review; no path-derived authority.
 
 ## Selected Mac HOST items
 

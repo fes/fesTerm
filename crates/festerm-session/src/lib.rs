@@ -16,6 +16,7 @@ pub use festerm_admission::{
 
 use std::{
     fmt,
+    num::NonZeroU64,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -463,6 +464,14 @@ pub enum SessionEvent {
     HostKeyVerification(HostKeyPrompt),
     PasswordRequested(PasswordPrompt),
     ResizeApplied(TerminalSize),
+    /// Acknowledges the [`Session::try_resize_generation`] request tagged
+    /// `generation` once the backend applied `size`, so a delayed
+    /// acknowledgement of an older request for the same size is never
+    /// mistaken for a newer one.
+    ResizeAppliedGeneration {
+        size: TerminalSize,
+        generation: NonZeroU64,
+    },
     PortForwardsUpdated(Vec<SshPortForwardRuntime>),
     Backpressure {
         direction: FlowDirection,
@@ -479,6 +488,43 @@ pub enum SessionEvent {
 /// repaint request, without coupling session I/O to a GUI toolkit.
 pub trait SessionEventNotifier: Send + Sync {
     fn notify(&self);
+}
+
+/// A backend-owned permit that remains held while an event is physically used.
+///
+/// Ordinary sessions do not need one. Privacy-sensitive backends may use it to
+/// serialize revocation against terminal mutation, not merely queue removal.
+pub trait SessionEventDeliveryPermit {}
+
+impl<T: ?Sized> SessionEventDeliveryPermit for T {}
+
+/// One event plus any backend authority that must cover its physical delivery.
+pub struct SessionEventDelivery<'a> {
+    event: SessionEvent,
+    _permit: Option<Box<dyn SessionEventDeliveryPermit + 'a>>,
+}
+
+impl SessionEventDelivery<'_> {
+    pub fn new(event: SessionEvent) -> Self {
+        Self {
+            event,
+            _permit: None,
+        }
+    }
+
+    pub fn protected(
+        event: SessionEvent,
+        permit: Box<dyn SessionEventDeliveryPermit + '_>,
+    ) -> SessionEventDelivery<'_> {
+        SessionEventDelivery {
+            event,
+            _permit: Some(permit),
+        }
+    }
+
+    pub fn event(&self) -> &SessionEvent {
+        &self.event
+    }
 }
 
 /// The default notifier for callers without an event loop to wake.
@@ -622,8 +668,24 @@ pub trait Session: Send + Sync {
         Err(ReserveAutomationInputError::Unsupported)
     }
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
+    /// Requests a resize whose applied-size acknowledgement is
+    /// [`SessionEvent::ResizeAppliedGeneration`] carrying `generation`.
+    /// Backends that cannot tag acknowledgements resize as
+    /// [`Self::try_resize`] does and report an untagged `ResizeApplied`.
+    fn try_resize_generation(
+        &self,
+        size: TerminalSize,
+        _generation: NonZeroU64,
+    ) -> Result<(), SessionSendError> {
+        self.try_resize(size)
+    }
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
+    fn try_recv_event_with_permit(
+        &self,
+    ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+        self.try_recv_event().map(SessionEventDelivery::new)
+    }
 
     /// Returns the backend's live attachment identity, if it supports safe
     /// automation observation. Implementations return the same shared epoch

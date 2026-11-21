@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "989e7b08bafa13a372d3709b40a32de7393162bb4c0ebf8d6b48cb2ddd46cf86"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "f46e80ea7c491210f454d986e939a0c21571cbe150ebe9ac759fd9a6a44fc12f"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns HOST selection, owner consent, native service state, and portable metadata boundaries for enterprise dev tunnels and PowerShell sessions.
+Owns HOST selection, owner consent, native service state, and public metadata boundaries for enterprise dev tunnels and PowerShell sessions.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -12,12 +12,12 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: When resolving a HOST candidate or bounding inventory rows for a signed-in tab
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Explicit selected-host resolution; never accepts legacy bridge labels
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds worker inventory to signed-in project metadata before display
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Filters HOST marker and rejects bridge fallback in the service selector
+- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds worker inventory to signed-in project metadata before rendering
 
 Evidence:
 - [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects legacy bridge labels and ambiguous HOST selection
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale discovery results cannot repopulate a signed-out tab
+- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale results cannot repopulate a new signed-out tab
 
 Caveats:
 - Inventory rows are metadata, not live daemon proof
@@ -27,8 +27,8 @@ Caveats:
 
 Use for: When a local owner pass is required before host replacement or admin operations
 
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Local approval binds reviewed owner key and granted permissions
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no execution or replacement authority
+- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Local approval binds the reviewed owner key and granted permissions
+- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority or execution grant
 
 Evidence:
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies a ready or authorized state
@@ -43,8 +43,7 @@ Caveats:
 Use for: When observing or starting a native service without confusing process state with readiness
 
 - [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads same-user native service state from the host registry
-- [`ProcessState`](../../crates/festerm-host-setup/src/services.rs) — Observes Absent, Stopped, Running, Failed, and Transitioning states
-- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Exact registered Mac helper owns actual start; no GUI service lease.
+- [`ProcessState`](../../crates/festerm-host-setup/src/services.rs) — Reports Absent, Stopped, Running, Failed, and Transitioning states
 
 Evidence:
 - [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition state and trusts direct process observation
@@ -53,7 +52,6 @@ Evidence:
 Caveats:
 - Running is not readiness
 - Native process observation is separate from cloud or endpoint health
-- Parent EOF fences unsent work; submitted uncertainty retains the GUI permit through actual helper/native drain.
 
 ## Portable Metadata
 
@@ -63,9 +61,21 @@ Use for: When serializing recipes or reporting PowerShell lifecycle outcomes acr
 - [`PowerShellState`](../../app/festerm/src/powershell.rs) — Tracks setup, runtime, close, cancel, and failure transitions
 
 Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch fields and four connection behaviors round-trip through import/export
+- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Verifies launch fields and four connection behaviors survive round-trip import
 - [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs) — A close failure stays distinct from a successful exit
 
 Caveats:
 - Portable metadata is intentionally public-only
 - Close and cancel remain distinct lifecycle commands
+
+## Dedicated Mac start
+
+Use for: Exact Desktop start through the registered helper.
+
+- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime.
+
+Evidence:
+- [`native_service_dedicated_guard_drains_late_manager_before_process_completion`](../../crates/festerm-host-setup/src/services/native.rs) — Holds the original context through native drain.
+
+Caveats:
+- Submitted uncertainty retains the GUI permit; Running is not Ready.

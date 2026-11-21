@@ -43,6 +43,7 @@
       "title": "Sessions, PTY, serial, and persistence daemon",
       "paths": [
         "crates/festerm-session/**",
+        "crates/festerm-javascript-session/**",
         "crates/festerm-pty/**",
         "crates/festerm-pty-test-child/**",
         "crates/festerm-serial/**",

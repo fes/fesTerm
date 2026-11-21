@@ -1,0 +1,1954 @@
+//! Bounded v1 contracts and an in-process runner for terminal programs.
+//!
+//! This module deliberately does not provide a production worker, a process
+//! launcher, or any automation/session authority. The runner is a test seam
+//! for exercising terminal I/O contracts before native process integration.
+
+use crate::{
+    program_storage::{MAX_STORAGE_SLOT_BYTES, MAX_STORAGE_VALUE_BYTES},
+    protocol::{encode_frame, CHUNK_BYTES, MAX_FRAME_BYTES, MAX_SAFE_INTEGER},
+    snapshot::{token, unique_map, ApprovedBundle, Manifest, SourceSnapshot, MAX_SNAPSHOT_BYTES},
+    Error,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+pub const PROGRAM_PROTOCOL_VERSION: u16 = 1;
+pub const PROGRAM_API_VERSION: u16 = 1;
+pub const MAX_INPUT_CHUNK_BYTES: usize = CHUNK_BYTES;
+pub const MAX_OUTPUT_CHUNK_BYTES: usize = CHUNK_BYTES;
+pub const MAX_OUTPUT_QUEUE_BYTES: usize = 32 * 1024;
+pub const MAX_PENDING_WRITES: usize = 16;
+pub const MAX_PENDING_EVENTS: usize = 16;
+pub const MAX_PENDING_FRAMES: usize = 64;
+pub const MAX_PENDING_HOST_CALLS: usize = 8;
+pub const MAX_ASSET_BYTES: usize = 12 * 1024;
+pub const MAX_ASSETS: usize = 32;
+pub const MAX_SLEEP_MS: u32 = 60_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramKind {
+    TerminalProgram,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramCapability {
+    TerminalInput,
+    TerminalOutput,
+    TerminalResize,
+    AssetsRead,
+    ClockNow,
+    ClockSleep,
+    StorageLoad,
+    StorageCommit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramAsset {
+    pub id: String,
+    pub length: u32,
+    pub digest: String,
+}
+
+/// A reviewed terminal-program launch.
+///
+/// The application creates this value only from the reviewed developer
+/// program constructor below. It carries the immutable source digest, exact
+/// terminal-only capability set and the one worker generation that may use it.
+#[derive(Clone)]
+pub struct JavaScriptProgramLaunch {
+    program: ApprovedProgram,
+    worker_generation: u64,
+    params: ProgramLaunchParams,
+}
+
+impl JavaScriptProgramLaunch {
+    pub fn reviewed_developer_program(
+        program: ApprovedProgram,
+        worker_generation: u64,
+        params: ProgramLaunchParams,
+    ) -> Result<Self, Error> {
+        if worker_generation == 0
+            || worker_generation > MAX_SAFE_INTEGER
+            || params.validate().is_err()
+            || ![
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ]
+            .iter()
+            .all(|capability| program.manifest().capabilities.contains(capability))
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+            params,
+        })
+    }
+
+    pub fn reviewed_developer_echo(worker_generation: u64) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+
+        let program = developer_echo_program()?;
+        let capabilities = BTreeSet::from([
+            ProgramCapability::TerminalInput,
+            ProgramCapability::TerminalOutput,
+            ProgramCapability::TerminalResize,
+        ]);
+        if program.manifest().version != PROGRAM_PROTOCOL_VERSION
+            || program.manifest().api_version != PROGRAM_API_VERSION
+            || program.manifest().capabilities != capabilities
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+            params: ProgramLaunchParams::new(ProgramLaunchMode::New),
+        })
+    }
+
+    pub fn reviewed_developer_host_services(worker_generation: u64) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+        let program = developer_host_services_program()?;
+        Ok(Self {
+            program,
+            worker_generation,
+            params: ProgramLaunchParams::new(ProgramLaunchMode::New),
+        })
+    }
+
+    pub fn reviewed_developer_save(
+        worker_generation: u64,
+        mode: ProgramLaunchMode,
+    ) -> Result<Self, Error> {
+        if worker_generation == 0 || worker_generation > MAX_SAFE_INTEGER {
+            return Err(Error::Protocol);
+        }
+        let program = developer_save_program()?;
+        let expected = BTreeSet::from([
+            ProgramCapability::TerminalInput,
+            ProgramCapability::TerminalOutput,
+            ProgramCapability::TerminalResize,
+            ProgramCapability::StorageLoad,
+            ProgramCapability::StorageCommit,
+        ]);
+        if program.manifest().capabilities != expected {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            program,
+            worker_generation,
+            params: ProgramLaunchParams::new(mode),
+        })
+    }
+
+    pub fn program(&self) -> &ApprovedProgram {
+        &self.program
+    }
+
+    pub fn digest(&self) -> &str {
+        self.program.digest()
+    }
+
+    pub fn worker_generation(&self) -> u64 {
+        self.worker_generation
+    }
+
+    pub fn capabilities(&self) -> &BTreeSet<ProgramCapability> {
+        &self.program.manifest().capabilities
+    }
+
+    pub fn params(&self) -> &ProgramLaunchParams {
+        &self.params
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramLaunchMode {
+    New,
+    Resume,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramLaunchParams {
+    pub mode: ProgramLaunchMode,
+}
+
+impl ProgramLaunchParams {
+    pub const fn new(mode: ProgramLaunchMode) -> Self {
+        Self { mode }
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// Application-owned, non-blocking revocation boundary for one worker.
+///
+/// This object is checked immediately before process IPC, session-queue
+/// delivery and event consumption. It is not an authority grant; the reviewed
+/// launch remains the sole grant description.
+pub trait ProgramDeliveryPermit {}
+
+impl<T: ?Sized> ProgramDeliveryPermit for T {}
+
+pub trait ProgramDeliveryFence: Send + Sync {
+    /// Fast advisory check. Physical IPC and event use must hold `try_enter`.
+    fn is_live(&self, worker_generation: u64) -> bool;
+
+    /// Acquires the exclusive authority epoch through the physical use.
+    fn try_enter(
+        &self,
+        worker_generation: u64,
+    ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, Error>;
+
+    fn try_enter_now(
+        &self,
+        worker_generation: u64,
+    ) -> Result<Option<Box<dyn ProgramDeliveryPermit + '_>>, Error> {
+        self.try_enter(worker_generation)
+    }
+
+    /// Releases application-owned lifetime accounting after the worker and
+    /// its admitted storage work have settled. Default implementations keep
+    /// release coupled to fence drop.
+    fn release(&self) {}
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramManifest {
+    pub version: u16,
+    pub api_version: u16,
+    pub kind: ProgramKind,
+    pub name: String,
+    pub entry: String,
+    /// Exact sorted canonical paths, equal to the supplied module keys.
+    pub modules: Vec<String>,
+    pub capabilities: BTreeSet<ProgramCapability>,
+    #[serde(default)]
+    pub assets: Vec<ProgramAsset>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramSourceSnapshot {
+    pub manifest: ProgramManifest,
+    #[serde(deserialize_with = "unique_map")]
+    pub modules: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenProgramSnapshot {
+    #[serde(flatten)]
+    source: ProgramSourceSnapshot,
+    #[serde(deserialize_with = "unique_map")]
+    assets: BTreeMap<String, Vec<u8>>,
+}
+
+/// An immutable validated source set. Only in-memory bytes are accepted.
+#[derive(Clone)]
+pub struct ApprovedProgram {
+    snapshot: ProgramSourceSnapshot,
+    assets: BTreeMap<String, Vec<u8>>,
+    digest: String,
+}
+
+impl std::fmt::Debug for ApprovedProgram {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ApprovedProgram")
+            .field("digest", &self.digest)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ApprovedProgram {
+    pub fn new(snapshot: ProgramSourceSnapshot) -> Result<Self, Error> {
+        Self::with_assets(snapshot, BTreeMap::new())
+    }
+
+    pub fn with_assets(
+        snapshot: ProgramSourceSnapshot,
+        assets: BTreeMap<String, Vec<u8>>,
+    ) -> Result<Self, Error> {
+        validate_manifest(&snapshot, &assets)?;
+        ApprovedBundle::new(snapshot_as_workflow(&snapshot))?;
+        let frozen = FrozenProgramSnapshot {
+            source: snapshot.clone(),
+            assets: assets.clone(),
+        };
+        let canonical = serde_json::to_vec(&frozen).map_err(|_| Error::Snapshot)?;
+        if canonical.len() > MAX_SNAPSHOT_BYTES {
+            return Err(Error::Snapshot);
+        }
+        let digest = format!("{:x}", Sha256::digest(&canonical));
+        Ok(Self {
+            snapshot,
+            assets,
+            digest,
+        })
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn manifest(&self) -> &ProgramManifest {
+        &self.snapshot.manifest
+    }
+
+    pub fn snapshot(&self) -> &ProgramSourceSnapshot {
+        &self.snapshot
+    }
+
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&FrozenProgramSnapshot {
+            source: self.snapshot.clone(),
+            assets: self.assets.clone(),
+        })
+        .map_err(|_| Error::Snapshot)
+    }
+
+    pub fn asset(&self, id: &str) -> Option<&[u8]> {
+        self.assets.get(id).map(Vec::as_slice)
+    }
+
+    pub fn assets(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.assets
+    }
+}
+
+fn validate_manifest(
+    snapshot: &ProgramSourceSnapshot,
+    assets: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), Error> {
+    let manifest = &snapshot.manifest;
+    if manifest.version != PROGRAM_PROTOCOL_VERSION
+        || manifest.api_version != PROGRAM_API_VERSION
+        || manifest.kind != ProgramKind::TerminalProgram
+        || !token(&manifest.name)
+        || manifest.capabilities.is_empty()
+        || manifest.capabilities.len() > 8
+        || manifest.assets.len() > MAX_ASSETS
+    {
+        return Err(Error::Snapshot);
+    }
+    let mut ids = BTreeSet::new();
+    for asset in &manifest.assets {
+        if !token(&asset.id)
+            || !ids.insert(asset.id.as_str())
+            || asset.digest.len() != 64
+            || !asset.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || asset.length == 0
+            || asset.length as usize > MAX_ASSET_BYTES
+        {
+            return Err(Error::Snapshot);
+        }
+        let bytes = assets.get(&asset.id).ok_or(Error::Snapshot)?;
+        if bytes.len() != asset.length as usize
+            || format!("{:x}", Sha256::digest(bytes)) != asset.digest
+        {
+            return Err(Error::Snapshot);
+        }
+    }
+    if assets.len() != manifest.assets.len()
+        || assets.keys().any(|id| !ids.contains(id.as_str()))
+        || (assets.is_empty()
+            != !manifest
+                .capabilities
+                .contains(&ProgramCapability::AssetsRead))
+    {
+        return Err(Error::Snapshot);
+    }
+    Ok(())
+}
+
+fn snapshot_as_workflow(snapshot: &ProgramSourceSnapshot) -> SourceSnapshot {
+    SourceSnapshot {
+        manifest: Manifest {
+            version: 1,
+            api_version: 1,
+            name: snapshot.manifest.name.clone(),
+            entry: snapshot.manifest.entry.clone(),
+            modules: snapshot.manifest.modules.clone(),
+            parameters: BTreeMap::new(),
+            capabilities: BTreeSet::new(),
+        },
+        modules: snapshot.modules.clone(),
+    }
+}
+
+/// Incrementally reconstructs an immutable bounded program snapshot.
+pub struct ProgramBundleLoader {
+    digest: String,
+    expected_bytes: usize,
+    source: Vec<u8>,
+}
+
+impl ProgramBundleLoader {
+    pub fn begin(digest: String, expected_bytes: usize) -> Result<Self, Error> {
+        if digest.len() != 64
+            || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || expected_bytes == 0
+            || expected_bytes > MAX_SNAPSHOT_BYTES
+        {
+            return Err(Error::Protocol);
+        }
+        Ok(Self {
+            digest,
+            expected_bytes,
+            source: Vec::with_capacity(expected_bytes),
+        })
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        if bytes.is_empty()
+            || bytes.len() > CHUNK_BYTES
+            || self.source.len() + bytes.len() > self.expected_bytes
+        {
+            return Err(Error::Protocol);
+        }
+        self.source.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.expected_bytes - self.source.len()
+    }
+
+    pub fn finish(self) -> Result<ApprovedProgram, Error> {
+        if self.source.len() != self.expected_bytes {
+            return Err(Error::Protocol);
+        }
+        let frozen: FrozenProgramSnapshot =
+            serde_json::from_slice(&self.source).map_err(|_| Error::Snapshot)?;
+        let program = ApprovedProgram::with_assets(frozen.source, frozen.assets)?;
+        if program.digest() != self.digest {
+            return Err(Error::Snapshot);
+        }
+        Ok(program)
+    }
+}
+
+/// Minimal fixed, repository-owned source for deterministic in-process tests.
+pub fn developer_echo_program() -> Result<ApprovedProgram, Error> {
+    ApprovedProgram::new(ProgramSourceSnapshot {
+        manifest: ProgramManifest {
+            version: PROGRAM_PROTOCOL_VERSION,
+            api_version: PROGRAM_API_VERSION,
+            kind: ProgramKind::TerminalProgram,
+            name: "developer-echo".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            assets: Vec::new(),
+            capabilities: BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ]),
+        },
+        modules: BTreeMap::from([(
+            "main.js".into(),
+            r#"export function main({terminal}) {
+    let pending = [];
+    const decode = bytes => {
+        pending.push(...bytes);
+        let text = "";
+        let index = 0;
+        while (index < pending.length) {
+            const first = pending[index];
+            let length = 0;
+            if (first <= 0x7f) length = 1;
+            else if (first >= 0xc2 && first <= 0xdf) length = 2;
+            else if (first >= 0xe0 && first <= 0xef) length = 3;
+            else if (first >= 0xf0 && first <= 0xf4) length = 4;
+            if (length === 0) {
+                text += "\uFFFD";
+                index += 1;
+                continue;
+            }
+            if (pending.length - index < length) break;
+            const continuation = pending.slice(index + 1, index + length)
+                .every(byte => byte >= 0x80 && byte <= 0xbf);
+            if (!continuation) {
+                text += "\uFFFD";
+                index += 1;
+                continue;
+            }
+            let codePoint = length === 1 ? first : first & (0x7f >> length);
+            for (let offset = 1; offset < length; offset += 1) {
+                codePoint = (codePoint << 6) | (pending[index + offset] & 0x3f);
+            }
+            if (codePoint <= 0x10ffff && !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+                && !(length === 3 && codePoint < 0x0800)
+                && !(length === 4 && codePoint < 0x10000)) {
+                text += String.fromCodePoint(codePoint);
+                index += length;
+            } else {
+                text += "\uFFFD";
+                index += 1;
+            }
+        }
+        pending = pending.slice(index);
+        return text;
+    };
+    terminal.events(event => {
+        if (event.type === "input") {
+            const text = decode(event.bytes);
+            if (text.length !== 0) terminal.write(text);
+        } else if (event.type === "resize") {
+            terminal.write(`resize:${terminal.size.columns}x${terminal.size.rows}`);
+        } else if (event.type === "close") {
+            terminal.write("closed");
+        }
+    });
+}"#
+            .into(),
+        )]),
+    })
+}
+
+pub fn developer_host_services_program() -> Result<ApprovedProgram, Error> {
+    let greeting = b"asset:ready\n".to_vec();
+    ApprovedProgram::with_assets(
+        ProgramSourceSnapshot {
+            manifest: ProgramManifest {
+                version: PROGRAM_PROTOCOL_VERSION,
+                api_version: PROGRAM_API_VERSION,
+                kind: ProgramKind::TerminalProgram,
+                name: "developer-host-services".into(),
+                entry: "main.js".into(),
+                modules: vec!["main.js".into()],
+                capabilities: BTreeSet::from([
+                    ProgramCapability::TerminalInput,
+                    ProgramCapability::TerminalOutput,
+                    ProgramCapability::TerminalResize,
+                    ProgramCapability::AssetsRead,
+                    ProgramCapability::ClockNow,
+                    ProgramCapability::ClockSleep,
+                ]),
+                assets: vec![ProgramAsset {
+                    id: "greeting".into(),
+                    length: greeting.len() as u32,
+                    digest: format!("{:x}", Sha256::digest(&greeting)),
+                }],
+            },
+            modules: BTreeMap::from([(
+                "main.js".into(),
+                r#"export async function main({terminal, assets, clock, params}) {
+    let pending = [];
+    terminal.write(String.fromCharCode(...await assets.read("greeting")));
+    const started = await clock.now();
+    await clock.sleep(1);
+    if (typeof started !== "number" || params.mode !== "new") throw new Error("params");
+    const events = terminal.events();
+    while (true) {
+        const event = await events.next();
+        if (event.done) return;
+        if (event.value.type === "close") return;
+        if (event.value.type === "input") {
+            pending.push(...event.value.bytes);
+            while (pending.length > 0) {
+                const size = pending[0] <= 0x7f ? 1 :
+                    pending[0] >= 0xc2 && pending[0] <= 0xdf ? 2 :
+                    pending[0] >= 0xe0 && pending[0] <= 0xef ? 3 : 1;
+                if (pending.length < size) break;
+                const bytes = Uint8Array.from(pending.splice(0, size));
+                if (bytes.length === 1) terminal.write(String.fromCharCode(bytes[0]));
+                else {
+                    let point = bytes[0] & (0x7f >> bytes.length);
+                    for (let i = 1; i < bytes.length; ++i) point = (point << 6) | (bytes[i] & 0x3f);
+                    terminal.write(String.fromCodePoint(point));
+                }
+            }
+        }
+    }
+}"#
+                .into(),
+            )]),
+        },
+        BTreeMap::from([("greeting".into(), greeting)]),
+    )
+}
+
+pub fn developer_save_program() -> Result<ApprovedProgram, Error> {
+    ApprovedProgram::new(ProgramSourceSnapshot {
+        manifest: ProgramManifest {
+            version: PROGRAM_PROTOCOL_VERSION,
+            api_version: PROGRAM_API_VERSION,
+            kind: ProgramKind::TerminalProgram,
+            name: "developer-save-fixture".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            assets: Vec::new(),
+            capabilities: BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+                ProgramCapability::StorageLoad,
+                ProgramCapability::StorageCommit,
+            ]),
+        },
+        modules: BTreeMap::from([(
+            "main.js".into(),
+            r#"export async function main({terminal, storage, params}) {
+    const loaded = await storage.load("primary");
+    if (params.mode === "new" && loaded.status === "present") {
+        throw new Error("existing-save");
+    }
+    if (params.mode === "resume" && loaded.status === "missing") {
+        throw new Error("missing-save");
+    }
+    let revision = loaded.status === "present" ? loaded.revision : null;
+    let turn = 0;
+    terminal.write(params.mode === "new" ? "new-ready\n" : "resume-ready\n");
+    const events = terminal.events();
+    while (true) {
+        const event = await events.next();
+        if (event.done || event.value.type === "close") return;
+        if (event.value.type !== "input") continue;
+        turn += event.value.bytes.length;
+        const operation = "00000000-0000-4000-8000-" +
+            String(revision === null ? turn : revision + turn).padStart(12, "0").slice(-12);
+        const bytes = Uint8Array.from(Array.from(JSON.stringify({turn}),
+            character => character.charCodeAt(0)));
+        try {
+            const receipt = await storage.commit("primary", revision, 2, bytes, operation);
+            if (receipt.conflict === true) {
+                terminal.write("save-conflict:" + String(receipt.actualRevision) + "\n");
+                return;
+            }
+            revision = receipt.revision;
+            terminal.write("saved:" + revision + "\n");
+        } catch (error) {
+            terminal.write("save-failed:" + String(error.message).slice(0, 32) + "\n");
+            return;
+        }
+    }
+}"#
+            .into(),
+        )]),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalSize {
+    pub columns: u16,
+    pub rows: u16,
+}
+
+impl TerminalSize {
+    pub fn validate(self) -> Result<(), Error> {
+        if self.columns < 2 || self.columns > 1_000 || self.rows == 0 || self.rows > 1_000 {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramHostMessage {
+    Launch {
+        version: u16,
+        api_version: u16,
+        generation: u64,
+        bundle_digest: String,
+        initial_size: TerminalSize,
+        params: ProgramLaunchParams,
+    },
+    Input {
+        generation: u64,
+        sequence: u64,
+        bytes: Vec<u8>,
+    },
+    Resize {
+        generation: u64,
+        sequence: u64,
+        size: TerminalSize,
+    },
+    Close {
+        generation: u64,
+        sequence: u64,
+    },
+    WriteResult {
+        generation: u64,
+        write_id: u64,
+        acceptance: WriteAcceptance,
+    },
+    HostCallResult {
+        generation: u64,
+        call_id: u64,
+        result: ProgramHostResult,
+    },
+    Cancel {
+        generation: u64,
+    },
+}
+
+impl ProgramHostMessage {
+    pub fn validate(&self) -> Result<(), Error> {
+        let safe = |value: &u64| *value > 0 && *value <= MAX_SAFE_INTEGER;
+        let valid = match self {
+            Self::Launch {
+                version,
+                api_version,
+                generation,
+                bundle_digest,
+                initial_size,
+                params,
+            } => {
+                *version == PROGRAM_PROTOCOL_VERSION
+                    && *api_version == PROGRAM_API_VERSION
+                    && safe(generation)
+                    && bundle_digest.len() == 64
+                    && bundle_digest.bytes().all(|b| b.is_ascii_hexdigit())
+                    && initial_size.validate().is_ok()
+                    && params.validate().is_ok()
+            }
+            Self::Input {
+                generation,
+                sequence,
+                bytes,
+            } => {
+                safe(generation)
+                    && safe(sequence)
+                    && !bytes.is_empty()
+                    && bytes.len() <= MAX_INPUT_CHUNK_BYTES
+            }
+            Self::Resize {
+                generation,
+                sequence,
+                size,
+            } => safe(generation) && safe(sequence) && size.validate().is_ok(),
+            Self::Close {
+                generation,
+                sequence,
+            } => safe(generation) && safe(sequence),
+            Self::WriteResult {
+                generation,
+                write_id,
+                ..
+            } => safe(generation) && safe(write_id),
+            Self::HostCallResult {
+                generation,
+                call_id,
+                ..
+            } => safe(generation) && safe(call_id),
+            Self::Cancel { generation } => safe(generation),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WriteAcceptance {
+    Accepted,
+    Backpressure,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalWrite {
+    pub generation: u64,
+    pub write_id: u64,
+    pub bytes: Vec<u8>,
+}
+
+impl TerminalWrite {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.generation == 0
+            || self.generation > MAX_SAFE_INTEGER
+            || self.write_id == 0
+            || self.write_id > MAX_SAFE_INTEGER
+            || self.bytes.is_empty()
+            || self.bytes.len() > MAX_OUTPUT_CHUNK_BYTES
+            || std::str::from_utf8(&self.bytes).is_err()
+        {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramFailure {
+    Source,
+    Protocol,
+    ResourceLimit,
+    Internal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ProgramOutcome {
+    Completed {},
+    Failed { failure: ProgramFailure },
+    UnsettledWork {},
+    Cancelled {},
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramWorkerMessage {
+    Ready {
+        profile: String,
+    },
+    Started {
+        generation: u64,
+    },
+    Write {
+        generation: u64,
+        write_id: u64,
+        bytes: Vec<u8>,
+    },
+    EventCompleted {
+        generation: u64,
+        sequence: u64,
+    },
+    HostCall {
+        generation: u64,
+        call_id: u64,
+        request: ProgramHostRequest,
+    },
+    HostCallCancelled {
+        generation: u64,
+        call_id: u64,
+    },
+    Finished {
+        generation: u64,
+        outcome: ProgramOutcome,
+    },
+    Failed {
+        code: ProgramWorkerFailure,
+    },
+}
+
+impl ProgramWorkerMessage {
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::Ready { profile } if !profile.is_empty() && profile.len() <= 128 => Ok(()),
+            Self::Started { generation } if *generation > 0 && *generation <= MAX_SAFE_INTEGER => {
+                Ok(())
+            }
+            Self::Write {
+                generation,
+                write_id,
+                bytes,
+            } => TerminalWrite {
+                generation: *generation,
+                write_id: *write_id,
+                bytes: bytes.clone(),
+            }
+            .validate(),
+            Self::EventCompleted {
+                generation,
+                sequence,
+            } if *generation > 0
+                && *generation <= MAX_SAFE_INTEGER
+                && *sequence > 0
+                && *sequence <= MAX_SAFE_INTEGER =>
+            {
+                Ok(())
+            }
+            Self::HostCall {
+                generation,
+                call_id,
+                request,
+            } => {
+                if *generation == 0
+                    || *generation > MAX_SAFE_INTEGER
+                    || *call_id == 0
+                    || *call_id > MAX_SAFE_INTEGER
+                {
+                    return Err(Error::Protocol);
+                }
+                request.validate()
+            }
+            Self::HostCallCancelled {
+                generation,
+                call_id,
+            } if *generation > 0
+                && *generation <= MAX_SAFE_INTEGER
+                && *call_id > 0
+                && *call_id <= MAX_SAFE_INTEGER =>
+            {
+                Ok(())
+            }
+            Self::Finished { generation, .. }
+                if *generation > 0 && *generation <= MAX_SAFE_INTEGER =>
+            {
+                Ok(())
+            }
+            Self::Failed { .. } => Ok(()),
+            Self::Ready { .. }
+            | Self::Started { .. }
+            | Self::HostCallCancelled { .. }
+            | Self::EventCompleted { .. }
+            | Self::Finished { .. } => Err(Error::Protocol),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "method",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramHostRequest {
+    AssetsRead {
+        id: String,
+    },
+    ClockNow {},
+    ClockSleep {
+        milliseconds: u32,
+    },
+    StorageLoad {
+        slot: String,
+    },
+    StorageCommit {
+        slot: String,
+        expected_revision: Option<u64>,
+        schema_version: u32,
+        value: Vec<u8>,
+        operation_id: String,
+    },
+}
+
+impl ProgramHostRequest {
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::AssetsRead { id } if token(id) => Ok(()),
+            Self::ClockNow {} => Ok(()),
+            Self::ClockSleep { milliseconds } if *milliseconds <= MAX_SLEEP_MS => Ok(()),
+            Self::StorageLoad { slot } => validate_storage_slot(slot),
+            Self::StorageCommit {
+                slot,
+                expected_revision,
+                schema_version,
+                value,
+                operation_id,
+            } => {
+                validate_storage_slot(slot)?;
+                if expected_revision.is_some_and(|revision| revision > MAX_SAFE_INTEGER)
+                    || *schema_version == 0
+                    || value.len() > MAX_STORAGE_VALUE_BYTES
+                    || !canonical_operation_id(operation_id)
+                {
+                    Err(Error::Protocol)
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Err(Error::Protocol),
+        }
+    }
+
+    pub fn capability(&self) -> ProgramCapability {
+        match self {
+            Self::AssetsRead { .. } => ProgramCapability::AssetsRead,
+            Self::ClockNow {} => ProgramCapability::ClockNow,
+            Self::ClockSleep { .. } => ProgramCapability::ClockSleep,
+            Self::StorageLoad { .. } => ProgramCapability::StorageLoad,
+            Self::StorageCommit { .. } => ProgramCapability::StorageCommit,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramHostError {
+    Closed,
+    NotFound,
+    Revoked,
+    Cancelled,
+    ResourceLimit,
+    Invalid,
+    Corrupt,
+    Future,
+    Unavailable,
+    BusyWriter,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramHostResult {
+    Asset {
+        bytes: Vec<u8>,
+    },
+    Clock {
+        unix_milliseconds: u64,
+    },
+    Slept {},
+    Error {
+        code: ProgramHostError,
+    },
+    StorageMissing {},
+    StoragePresent {
+        schema_version: u32,
+        revision: u64,
+        value: Vec<u8>,
+    },
+    StorageCommitted {
+        revision: u64,
+    },
+    StorageConflict {
+        actual_revision: Option<u64>,
+    },
+}
+
+impl ProgramHostResult {
+    pub fn validate_for(&self, request: &ProgramHostRequest) -> Result<(), Error> {
+        let valid = match (self, request) {
+            (Self::Asset { bytes }, ProgramHostRequest::AssetsRead { .. }) => {
+                !bytes.is_empty() && bytes.len() <= MAX_ASSET_BYTES
+            }
+            (Self::Clock { .. }, ProgramHostRequest::ClockNow {}) => true,
+            (Self::Slept {}, ProgramHostRequest::ClockSleep { .. }) => true,
+            (Self::StorageMissing {}, ProgramHostRequest::StorageLoad { .. }) => true,
+            (
+                Self::StoragePresent {
+                    schema_version,
+                    revision,
+                    value,
+                },
+                ProgramHostRequest::StorageLoad { .. },
+            ) => {
+                *schema_version > 0
+                    && *revision <= MAX_SAFE_INTEGER
+                    && value.len() <= MAX_STORAGE_VALUE_BYTES
+            }
+            (Self::StorageCommitted { revision }, ProgramHostRequest::StorageCommit { .. }) => {
+                *revision > 0 && *revision <= MAX_SAFE_INTEGER
+            }
+            (
+                Self::StorageConflict { actual_revision },
+                ProgramHostRequest::StorageCommit { .. },
+            ) => actual_revision.is_none_or(|revision| revision <= MAX_SAFE_INTEGER),
+            (Self::Error { .. }, _) => true,
+            _ => false,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+}
+
+fn validate_storage_slot(slot: &str) -> Result<(), Error> {
+    if slot.is_empty() || slot.len() > MAX_STORAGE_SLOT_BYTES || !token(slot) {
+        Err(Error::Protocol)
+    } else {
+        Ok(())
+    }
+}
+
+fn canonical_operation_id(operation_id: &str) -> bool {
+    let bytes = operation_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(byte),
+        })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProgramWorkerFailure {
+    Unavailable,
+    InvalidSnapshot,
+    Protocol,
+    Io,
+    Deadline,
+    Runtime,
+}
+
+/// Strict bundle-transfer phase for the program worker. It is deliberately
+/// separate from the automation workflow's `ParentMessage`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ProgramBundleMessage {
+    Begin {
+        generation: u64,
+        bundle_digest: String,
+        snapshot_bytes: u32,
+    },
+    SourceChunk {
+        generation: u64,
+        bytes: Vec<u8>,
+    },
+}
+
+impl ProgramBundleMessage {
+    pub fn validate(&self) -> Result<(), Error> {
+        let valid_generation = |generation: u64| generation > 0 && generation <= MAX_SAFE_INTEGER;
+        let valid = match self {
+            Self::Begin {
+                generation,
+                bundle_digest,
+                snapshot_bytes,
+            } => {
+                valid_generation(*generation)
+                    && bundle_digest.len() == 64
+                    && bundle_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && *snapshot_bytes > 0
+                    && *snapshot_bytes as usize <= MAX_SNAPSHOT_BYTES
+            }
+            Self::SourceChunk { generation, bytes } => {
+                valid_generation(*generation) && !bytes.is_empty() && bytes.len() <= CHUNK_BYTES
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Submission {
+    Accepted,
+    Backpressure,
+    StaleGeneration,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProgramEvent {
+    Output(Vec<u8>),
+    ResizeApplied(TerminalSize),
+    Finished(ProgramOutcome),
+}
+
+/// Incremental strict v1 frame decoder. Its bounded buffer is intended for
+/// nonblocking input adapters and is independent of the production worker.
+#[derive(Default)]
+pub struct ProgramWireDecoder {
+    bytes: Vec<u8>,
+    messages: VecDeque<ProgramHostMessage>,
+}
+
+impl ProgramWireDecoder {
+    pub fn feed(&mut self, bytes: &[u8]) -> Result<usize, Error> {
+        if bytes.is_empty() || self.bytes.len() + bytes.len() > MAX_FRAME_BYTES + 4 {
+            return Err(Error::Protocol);
+        }
+        self.bytes.extend_from_slice(bytes);
+        let mut decoded = 0;
+        loop {
+            if self.bytes.len() < 4 {
+                break;
+            }
+            let size = u32::from_be_bytes(self.bytes[..4].try_into().unwrap()) as usize;
+            if size == 0 || size >= MAX_FRAME_BYTES {
+                return Err(Error::Protocol);
+            }
+            if self.bytes.len() < 4 + size {
+                break;
+            }
+            let message: ProgramHostMessage =
+                serde_json::from_slice(&self.bytes[4..4 + size]).map_err(|_| Error::Protocol)?;
+            message.validate()?;
+            if self.messages.len() >= MAX_PENDING_FRAMES {
+                return Err(Error::Protocol);
+            }
+            self.messages.push_back(message);
+            self.bytes.drain(..4 + size);
+            decoded += 1;
+        }
+        Ok(decoded)
+    }
+
+    pub fn pop_message(&mut self) -> Option<ProgramHostMessage> {
+        self.messages.pop_front()
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.bytes.is_empty() && self.messages.is_empty()
+    }
+}
+
+pub fn encode_program_frame(message: &ProgramHostMessage) -> Result<Vec<u8>, Error> {
+    message.validate()?;
+    encode_frame(message)
+}
+
+pub fn encode_program_worker_frame(message: &ProgramWorkerMessage) -> Result<Vec<u8>, Error> {
+    message.validate()?;
+    encode_frame(message)
+}
+
+/// Deterministic echo/menu test runner. It models ordering and bounded
+/// acceptance; it does not execute JavaScript or represent a native worker.
+pub struct InProcessProgramRunner {
+    program: ApprovedProgram,
+    generation: u64,
+    next_sequence: u64,
+    size: TerminalSize,
+    next_write_id: u64,
+    pending_writes: VecDeque<(u64, TerminalWrite)>,
+    pending_bytes: usize,
+    accepted_output: VecDeque<(u64, Vec<u8>)>,
+    accepted_output_bytes: usize,
+    resize_events: VecDeque<(u64, TerminalSize)>,
+    unsettled_host_calls: BTreeSet<u64>,
+    outcome: Option<ProgramOutcome>,
+}
+
+impl InProcessProgramRunner {
+    pub fn launch(
+        program: ApprovedProgram,
+        generation: u64,
+        initial_size: TerminalSize,
+    ) -> Result<Self, Error> {
+        if generation == 0
+            || generation > MAX_SAFE_INTEGER
+            || ![
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ]
+            .iter()
+            .all(|capability| program.manifest().capabilities.contains(capability))
+        {
+            return Err(Error::Protocol);
+        }
+        initial_size.validate()?;
+        Ok(Self {
+            program,
+            generation,
+            next_sequence: 1,
+            size: initial_size,
+            next_write_id: 1,
+            pending_writes: VecDeque::new(),
+            pending_bytes: 0,
+            accepted_output: VecDeque::new(),
+            accepted_output_bytes: 0,
+            resize_events: VecDeque::new(),
+            unsettled_host_calls: BTreeSet::new(),
+            outcome: None,
+        })
+    }
+
+    pub fn program(&self) -> &ApprovedProgram {
+        &self.program
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn size(&self) -> TerminalSize {
+        self.size
+    }
+
+    pub fn submit(&mut self, message: &ProgramHostMessage) -> Result<Submission, Error> {
+        message.validate()?;
+        if self.outcome.is_some() && !matches!(message, ProgramHostMessage::Cancel { .. }) {
+            return Err(Error::Protocol);
+        }
+        if generation(message) != self.generation {
+            return Ok(Submission::StaleGeneration);
+        }
+        match message {
+            ProgramHostMessage::Launch { .. } => {
+                let ProgramHostMessage::Launch {
+                    bundle_digest,
+                    initial_size,
+                    ..
+                } = message
+                else {
+                    unreachable!()
+                };
+                if bundle_digest != self.program.digest() || initial_size != &self.size {
+                    Err(Error::Protocol)
+                } else {
+                    Ok(Submission::Accepted)
+                }
+            }
+            ProgramHostMessage::Input {
+                sequence, bytes, ..
+            } => {
+                self.expect_sequence(*sequence)?;
+                if !self.has_write_capacity(bytes.len()) {
+                    return Ok(Submission::Backpressure);
+                }
+                self.next_sequence += 1;
+                let _ = self.enqueue_write(*sequence, bytes.clone())?;
+                Ok(Submission::Accepted)
+            }
+            ProgramHostMessage::Resize { sequence, size, .. } => {
+                self.expect_sequence(*sequence)?;
+                if self.resize_events.len() >= MAX_PENDING_EVENTS {
+                    return Ok(Submission::Backpressure);
+                }
+                self.next_sequence += 1;
+                self.size = *size;
+                self.resize_events.push_back((*sequence, *size));
+                Ok(Submission::Accepted)
+            }
+            ProgramHostMessage::Close { sequence, .. } => {
+                self.expect_sequence(*sequence)?;
+                self.next_sequence += 1;
+                self.settle()
+            }
+            ProgramHostMessage::WriteResult {
+                write_id,
+                acceptance,
+                ..
+            } => self.resolve_write(*write_id, *acceptance),
+            ProgramHostMessage::HostCallResult { .. } => Err(Error::Protocol),
+            ProgramHostMessage::Cancel { .. } => {
+                self.pending_writes.clear();
+                self.pending_bytes = 0;
+                self.accepted_output.clear();
+                self.accepted_output_bytes = 0;
+                self.resize_events.clear();
+                self.unsettled_host_calls.clear();
+                self.outcome = Some(ProgramOutcome::Cancelled {});
+                Ok(Submission::Accepted)
+            }
+        }
+    }
+
+    pub fn pending_write(&self) -> Option<&TerminalWrite> {
+        self.pending_writes.front().map(|(_, write)| write)
+    }
+
+    pub fn write_result(
+        &mut self,
+        write_id: u64,
+        acceptance: WriteAcceptance,
+    ) -> Result<Submission, Error> {
+        self.submit(&ProgramHostMessage::WriteResult {
+            generation: self.generation,
+            write_id,
+            acceptance,
+        })
+    }
+
+    pub fn next_event(&mut self) -> Option<ProgramEvent> {
+        let output_sequence = self.accepted_output.front().map(|(sequence, _)| *sequence);
+        let resize_sequence = self.resize_events.front().map(|(sequence, _)| *sequence);
+        let pending_sequence = self.pending_writes.front().map(|(sequence, _)| *sequence);
+        if let Some(sequence) = output_sequence.into_iter().chain(resize_sequence).min() {
+            if pending_sequence.is_none_or(|pending| sequence < pending) {
+                if output_sequence == Some(sequence) {
+                    let (_, bytes) = self.accepted_output.pop_front().unwrap();
+                    self.accepted_output_bytes -= bytes.len();
+                    return Some(ProgramEvent::Output(bytes));
+                }
+                let (_, size) = self.resize_events.pop_front().unwrap();
+                return Some(ProgramEvent::ResizeApplied(size));
+            }
+        }
+        self.outcome.take().map(ProgramEvent::Finished)
+    }
+
+    pub fn begin_host_call(&mut self, id: u64) -> Result<(), Error> {
+        if id == 0
+            || id > MAX_SAFE_INTEGER
+            || self.unsettled_host_calls.len() >= MAX_PENDING_HOST_CALLS
+            || !self.unsettled_host_calls.insert(id)
+        {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
+
+    pub fn settle_host_call(&mut self, id: u64) -> Result<(), Error> {
+        if !self.unsettled_host_calls.remove(&id) {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> ProgramOutcome {
+        self.settle().unwrap();
+        self.outcome.take().expect("settle produced an outcome")
+    }
+
+    pub fn fail(&mut self, failure: ProgramFailure) -> ProgramOutcome {
+        let outcome = ProgramOutcome::Failed { failure };
+        self.outcome = Some(outcome);
+        self.pending_writes.clear();
+        self.pending_bytes = 0;
+        self.accepted_output.clear();
+        self.accepted_output_bytes = 0;
+        self.resize_events.clear();
+        self.unsettled_host_calls.clear();
+        outcome
+    }
+
+    pub fn accepted_output_bytes(&self) -> usize {
+        self.accepted_output_bytes
+    }
+
+    fn enqueue_write(&mut self, sequence: u64, bytes: Vec<u8>) -> Result<u64, Error> {
+        let write = TerminalWrite {
+            generation: self.generation,
+            write_id: self.next_write_id,
+            bytes,
+        };
+        write.validate()?;
+        if self.pending_writes.len() >= MAX_PENDING_WRITES
+            || self.pending_bytes + self.accepted_output_bytes + write.bytes.len()
+                > MAX_OUTPUT_QUEUE_BYTES
+        {
+            return Err(Error::Protocol);
+        }
+        self.next_write_id += 1;
+        self.pending_bytes += write.bytes.len();
+        self.pending_writes.push_back((sequence, write));
+        Ok(self.next_write_id - 1)
+    }
+
+    fn resolve_write(
+        &mut self,
+        write_id: u64,
+        acceptance: WriteAcceptance,
+    ) -> Result<Submission, Error> {
+        let (_, write) = self.pending_writes.front().ok_or(Error::Protocol)?;
+        if write.write_id != write_id {
+            return Err(Error::Protocol);
+        }
+        if acceptance == WriteAcceptance::Backpressure {
+            return Ok(Submission::Backpressure);
+        }
+        let (sequence, write) = self.pending_writes.pop_front().unwrap();
+        self.pending_bytes -= write.bytes.len();
+        if acceptance == WriteAcceptance::Accepted {
+            if self.accepted_output_bytes + write.bytes.len() > MAX_OUTPUT_QUEUE_BYTES {
+                return Err(Error::Protocol);
+            }
+            self.accepted_output_bytes += write.bytes.len();
+            self.accepted_output.push_back((sequence, write.bytes));
+        }
+        Ok(Submission::Accepted)
+    }
+
+    fn has_write_capacity(&self, bytes: usize) -> bool {
+        self.pending_writes.len() < MAX_PENDING_WRITES
+            && self.pending_bytes + self.accepted_output_bytes + bytes <= MAX_OUTPUT_QUEUE_BYTES
+    }
+
+    fn expect_sequence(&self, sequence: u64) -> Result<(), Error> {
+        if sequence != self.next_sequence {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
+
+    fn settle(&mut self) -> Result<Submission, Error> {
+        let outcome = if self.pending_writes.is_empty() && self.unsettled_host_calls.is_empty() {
+            ProgramOutcome::Completed {}
+        } else {
+            ProgramOutcome::UnsettledWork {}
+        };
+        self.outcome = Some(outcome);
+        Ok(Submission::Accepted)
+    }
+}
+
+fn generation(message: &ProgramHostMessage) -> u64 {
+    match message {
+        ProgramHostMessage::Launch { generation, .. }
+        | ProgramHostMessage::Input { generation, .. }
+        | ProgramHostMessage::Resize { generation, .. }
+        | ProgramHostMessage::Close { generation, .. }
+        | ProgramHostMessage::WriteResult { generation, .. }
+        | ProgramHostMessage::HostCallResult { generation, .. }
+        | ProgramHostMessage::Cancel { generation } => *generation,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runner() -> InProcessProgramRunner {
+        InProcessProgramRunner::launch(
+            developer_echo_program().unwrap(),
+            7,
+            TerminalSize {
+                columns: 80,
+                rows: 24,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn program_manifest_and_wire_are_strict() {
+        let program = developer_echo_program().unwrap();
+        let mut snapshot = program.snapshot().clone();
+        snapshot.manifest.version = 2;
+        assert!(ApprovedProgram::new(snapshot).is_err());
+        assert!(serde_json::from_str::<ProgramHostMessage>(
+            r#"{"type":"cancel","generation":7,"extra":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ProgramWorkerMessage>(
+            r#"{"type":"finished","generation":7,"outcome":{"status":"completed","extra":1}}"#
+        )
+        .is_err());
+        let mut manifest = serde_json::to_value(program.manifest()).unwrap();
+        manifest["unknown"] = true.into();
+        assert!(serde_json::from_value::<ProgramManifest>(manifest).is_err());
+        let write = ProgramWorkerMessage::Write {
+            generation: 7,
+            write_id: 1,
+            bytes: b"x".to_vec(),
+        };
+        write.validate().unwrap();
+        let json = serde_json::to_string(&write).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ProgramWorkerMessage>(&json).unwrap(),
+            write
+        );
+    }
+
+    #[test]
+    fn reviewed_developer_launch_binds_exact_digest_api_and_capabilities() {
+        let launch = JavaScriptProgramLaunch::reviewed_developer_echo(19).unwrap();
+        let reviewed = developer_echo_program().unwrap();
+        assert_eq!(launch.worker_generation(), 19);
+        assert_eq!(launch.digest(), reviewed.digest());
+        assert_eq!(
+            launch.capabilities(),
+            &BTreeSet::from([
+                ProgramCapability::TerminalInput,
+                ProgramCapability::TerminalOutput,
+                ProgramCapability::TerminalResize,
+            ])
+        );
+        assert_eq!(
+            launch.program().manifest().version,
+            PROGRAM_PROTOCOL_VERSION
+        );
+        assert_eq!(launch.program().manifest().api_version, PROGRAM_API_VERSION);
+        assert!(JavaScriptProgramLaunch::reviewed_developer_echo(0).is_err());
+    }
+
+    #[test]
+    fn bundle_and_wire_limits_are_bounded() {
+        let mut source = developer_echo_program().unwrap().snapshot().clone();
+        source.modules.insert(
+            "main.js".into(),
+            format!("/*{}*/ export const x=1;", "a".repeat(1_100_000)),
+        );
+        assert!(ApprovedProgram::new(source).is_err());
+        let write = TerminalWrite {
+            generation: 7,
+            write_id: 1,
+            bytes: vec![b'x'; MAX_OUTPUT_CHUNK_BYTES + 1],
+        };
+        assert!(write.validate().is_err());
+        assert!(TerminalWrite {
+            generation: 7,
+            write_id: 1,
+            bytes: vec![0xff],
+        }
+        .validate()
+        .is_err());
+        assert!(TerminalSize {
+            columns: 1,
+            rows: 24
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn asset_inventory_is_frozen_and_covers_exact_bytes() {
+        let program = developer_host_services_program().unwrap();
+        let inventory = &program.manifest().assets[0];
+        assert_eq!(inventory.id, "greeting");
+        assert_eq!(inventory.length, b"asset:ready\n".len() as u32);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(program.asset("greeting").unwrap())),
+            inventory.digest
+        );
+        let mut substituted = program.snapshot().clone();
+        substituted.manifest.assets[0].length = 1;
+        assert!(ApprovedProgram::with_assets(
+            substituted,
+            BTreeMap::from([("greeting".into(), b"x".to_vec())])
+        )
+        .is_err());
+        assert_eq!(program.asset("greeting").unwrap(), b"asset:ready\n");
+    }
+
+    #[test]
+    fn oversized_assets_and_sleep_are_rejected() {
+        let mut snapshot = developer_host_services_program()
+            .unwrap()
+            .snapshot()
+            .clone();
+        snapshot.manifest.assets[0].length = MAX_ASSET_BYTES as u32 + 1;
+        assert!(ApprovedProgram::with_assets(
+            snapshot,
+            BTreeMap::from([("greeting".into(), vec![b'x'; MAX_ASSET_BYTES + 1])])
+        )
+        .is_err());
+        assert!(ProgramHostRequest::ClockSleep {
+            milliseconds: MAX_SLEEP_MS + 1
+        }
+        .validate()
+        .is_err());
+        assert!(ProgramHostRequest::StorageCommit {
+            slot: "primary".into(),
+            expected_revision: Some(1),
+            schema_version: 2,
+            value: vec![0; MAX_STORAGE_VALUE_BYTES + 1],
+            operation_id: "00000000-0000-4000-8000-000000000001".into(),
+        }
+        .validate()
+        .is_err());
+        assert!(ProgramHostRequest::StorageCommit {
+            slot: "primary".into(),
+            expected_revision: Some(1),
+            schema_version: 2,
+            value: vec![],
+            operation_id: "ambient-operation".into(),
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn storage_wire_results_are_typed_and_strictly_bounded() {
+        let load = ProgramHostRequest::StorageLoad {
+            slot: "primary".into(),
+        };
+        ProgramHostResult::StoragePresent {
+            schema_version: 2,
+            revision: 4,
+            value: vec![1; MAX_STORAGE_VALUE_BYTES],
+        }
+        .validate_for(&load)
+        .unwrap();
+        let encoded = encode_program_worker_frame(&ProgramWorkerMessage::HostCall {
+            generation: 7,
+            call_id: 1,
+            request: ProgramHostRequest::StorageCommit {
+                slot: "primary".into(),
+                expected_revision: Some(4),
+                schema_version: 2,
+                value: vec![255; MAX_STORAGE_VALUE_BYTES],
+                operation_id: "00000000-0000-4000-8000-000000000005".into(),
+            },
+        })
+        .unwrap();
+        assert!(encoded.len() - 4 < MAX_FRAME_BYTES);
+        let mut decoder = ProgramWireDecoder::default();
+        let exact_ceiling = {
+            let mut frame = vec![0; MAX_FRAME_BYTES + 4];
+            frame[..4].copy_from_slice(&(MAX_FRAME_BYTES as u32).to_be_bytes());
+            frame
+        };
+        assert!(decoder.feed(&exact_ceiling).is_err());
+    }
+
+    #[test]
+    fn unsettled_host_calls_are_bounded_by_the_host_call_ceiling() {
+        let mut runner = runner();
+        for id in 1..=MAX_PENDING_HOST_CALLS as u64 {
+            runner.begin_host_call(id).unwrap();
+        }
+        assert!(runner
+            .begin_host_call(MAX_PENDING_HOST_CALLS as u64 + 1)
+            .is_err());
+    }
+
+    #[test]
+    fn typed_host_results_must_match_the_original_request() {
+        let request = ProgramHostRequest::AssetsRead {
+            id: "greeting".into(),
+        };
+        assert!(ProgramHostResult::Clock {
+            unix_milliseconds: 1
+        }
+        .validate_for(&request)
+        .is_err());
+        assert!(ProgramHostResult::Asset { bytes: vec![1] }
+            .validate_for(&request)
+            .is_ok());
+        assert!(ProgramHostMessage::HostCallResult {
+            generation: 7,
+            call_id: 1,
+            result: ProgramHostResult::Slept {},
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn snapshot_and_frame_decoders_accept_split_chunks() {
+        let program = developer_echo_program().unwrap();
+        let bytes = program.snapshot_bytes().unwrap();
+        let mut loader = ProgramBundleLoader::begin(program.digest().into(), bytes.len()).unwrap();
+        for chunk in bytes.chunks(31) {
+            loader.push(chunk).unwrap();
+        }
+        assert_eq!(loader.remaining(), 0);
+        assert_eq!(loader.finish().unwrap().digest(), program.digest());
+
+        let message = ProgramHostMessage::Input {
+            generation: 7,
+            sequence: 1,
+            bytes: b"split-\xff".to_vec(),
+        };
+        let frame = encode_program_frame(&message).unwrap();
+        let mut decoder = ProgramWireDecoder::default();
+        for byte in frame {
+            decoder.feed(&[byte]).unwrap();
+        }
+        assert_eq!(decoder.pop_message(), Some(message));
+        assert!(decoder.is_idle());
+    }
+
+    #[test]
+    fn stale_generation_cannot_publish_or_advance_input() {
+        let mut runner = runner();
+        let stale = ProgramHostMessage::Input {
+            generation: 6,
+            sequence: 1,
+            bytes: b"stale".to_vec(),
+        };
+        assert_eq!(runner.submit(&stale).unwrap(), Submission::StaleGeneration);
+        assert!(runner.pending_write().is_none());
+        assert_eq!(
+            runner
+                .submit(&ProgramHostMessage::Input {
+                    generation: 7,
+                    sequence: 1,
+                    bytes: b"live".to_vec(),
+                })
+                .unwrap(),
+            Submission::Accepted
+        );
+    }
+
+    #[test]
+    fn input_and_resize_require_one_ordered_sequence() {
+        let mut runner = runner();
+        assert!(runner
+            .submit(&ProgramHostMessage::Input {
+                generation: 7,
+                sequence: 2,
+                bytes: b"x".to_vec(),
+            })
+            .is_err());
+        runner
+            .submit(&ProgramHostMessage::Resize {
+                generation: 7,
+                sequence: 1,
+                size: TerminalSize {
+                    columns: 100,
+                    rows: 40,
+                },
+            })
+            .unwrap();
+        assert_eq!(runner.size().columns, 100);
+        assert_eq!(
+            runner.next_event(),
+            Some(ProgramEvent::ResizeApplied(TerminalSize {
+                columns: 100,
+                rows: 40,
+            }))
+        );
+        assert!(runner
+            .submit(&ProgramHostMessage::Resize {
+                generation: 7,
+                sequence: 3,
+                size: TerminalSize {
+                    columns: 100,
+                    rows: 41,
+                },
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn resize_cannot_overtake_an_unaccepted_earlier_write() {
+        let mut runner = runner();
+        runner
+            .submit(&ProgramHostMessage::Input {
+                generation: 7,
+                sequence: 1,
+                bytes: b"first".to_vec(),
+            })
+            .unwrap();
+        runner
+            .submit(&ProgramHostMessage::Resize {
+                generation: 7,
+                sequence: 2,
+                size: TerminalSize {
+                    columns: 81,
+                    rows: 24,
+                },
+            })
+            .unwrap();
+        assert_eq!(runner.next_event(), None);
+        runner.write_result(1, WriteAcceptance::Accepted).unwrap();
+        assert_eq!(
+            runner.next_event(),
+            Some(ProgramEvent::Output(b"first".to_vec()))
+        );
+        assert_eq!(
+            runner.next_event(),
+            Some(ProgramEvent::ResizeApplied(TerminalSize {
+                columns: 81,
+                rows: 24,
+            }))
+        );
+    }
+
+    #[test]
+    fn writes_apply_bounded_backpressure_without_dropping_bytes() {
+        let mut runner = runner();
+        let chunk = vec![b'x'; MAX_OUTPUT_CHUNK_BYTES];
+        for sequence in 1..=4 {
+            assert_eq!(
+                runner
+                    .submit(&ProgramHostMessage::Input {
+                        generation: 7,
+                        sequence,
+                        bytes: chunk.clone(),
+                    })
+                    .unwrap(),
+                Submission::Accepted
+            );
+        }
+        assert_eq!(
+            runner
+                .submit(&ProgramHostMessage::Input {
+                    generation: 7,
+                    sequence: 5,
+                    bytes: chunk.clone(),
+                })
+                .unwrap(),
+            Submission::Backpressure
+        );
+        assert_eq!(runner.pending_write().unwrap().write_id, 1);
+        assert_eq!(
+            runner
+                .write_result(1, WriteAcceptance::Backpressure)
+                .unwrap(),
+            Submission::Backpressure
+        );
+        assert_eq!(runner.pending_write().unwrap().write_id, 1);
+        runner.write_result(1, WriteAcceptance::Accepted).unwrap();
+        assert_eq!(
+            runner.next_event(),
+            Some(ProgramEvent::Output(vec![b'x'; MAX_OUTPUT_CHUNK_BYTES]))
+        );
+        assert_eq!(
+            runner
+                .submit(&ProgramHostMessage::Input {
+                    generation: 7,
+                    sequence: 5,
+                    bytes: chunk,
+                })
+                .unwrap(),
+            Submission::Accepted
+        );
+        assert_eq!(runner.pending_write().unwrap().write_id, 2);
+    }
+
+    #[test]
+    fn normal_failed_and_unsettled_outcomes_are_distinct() {
+        let mut normal = runner();
+        assert_eq!(normal.finish(), ProgramOutcome::Completed {});
+        let mut failed = runner();
+        assert_eq!(
+            failed.fail(ProgramFailure::ResourceLimit),
+            ProgramOutcome::Failed {
+                failure: ProgramFailure::ResourceLimit
+            }
+        );
+        let mut unsettled = runner();
+        unsettled.begin_host_call(1).unwrap();
+        assert_eq!(unsettled.finish(), ProgramOutcome::UnsettledWork {});
+        unsettled = runner();
+        unsettled
+            .submit(&ProgramHostMessage::Input {
+                generation: 7,
+                sequence: 1,
+                bytes: b"x".to_vec(),
+            })
+            .unwrap();
+        assert_eq!(unsettled.finish(), ProgramOutcome::UnsettledWork {});
+    }
+
+    #[test]
+    fn cancel_is_explicit_and_discards_unaccepted_work() {
+        let mut runner = runner();
+        runner
+            .submit(&ProgramHostMessage::Input {
+                generation: 7,
+                sequence: 1,
+                bytes: b"x".to_vec(),
+            })
+            .unwrap();
+        runner.begin_host_call(2).unwrap();
+        runner
+            .submit(&ProgramHostMessage::Cancel { generation: 7 })
+            .unwrap();
+        assert_eq!(runner.pending_write(), None);
+        assert_eq!(runner.accepted_output_bytes(), 0);
+        assert_eq!(
+            runner.next_event(),
+            Some(ProgramEvent::Finished(ProgramOutcome::Cancelled {}))
+        );
+    }
+}

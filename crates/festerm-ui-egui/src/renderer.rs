@@ -169,6 +169,7 @@ pub(crate) struct GlyphCache {
     recency: lru_slab::LruSlab<u64>,
     style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
+    pub(crate) kitty: crate::kitty_graphics::KittyTextureCache,
     rows: row_cache::Rows,
     font_revision: Option<egui::epaint::FontImageRevision>,
 }
@@ -187,6 +188,7 @@ impl GlyphCache {
     pub(crate) fn clear(&mut self) {
         self.clear_layouts();
         self.color_emoji.clear();
+        self.kitty.clear();
         self.rows.clear();
         self.font_revision = None;
     }
@@ -814,6 +816,11 @@ fn paint_grid_with_clip_override(
         return GridPaintStats::default();
     };
     glyphs.begin_paint(&painter);
+    glyphs.kitty.prepare_frame(
+        paint.snapshot,
+        paint.layout,
+        painter.ctx().pixels_per_point(),
+    );
     let mut stats = GridPaintStats::default();
     let regular_selection_range = if paint.selection.is_smart() {
         None
@@ -830,10 +837,49 @@ fn paint_grid_with_clip_override(
     } else {
         crate::background::paint_background(&painter, paint.layout.rect);
     }
+    crate::kitty_graphics::paint_kitty_layer(
+        &painter,
+        paint.layout,
+        paint.snapshot,
+        &mut glyphs.kitty,
+        crate::kitty_graphics::KittyLayer::UnderBackground,
+    );
+    let has_kitty = !paint.snapshot.kitty_placements().is_empty();
+    let has_between_layer = paint.snapshot.kitty_placements().iter().any(|placement| {
+        crate::kitty_graphics::classify_layer(placement.z)
+            == crate::kitty_graphics::KittyLayer::BetweenBackgroundAndText
+    });
     let native =
         crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
     glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
     glyphs.rows.observe(paint.cache);
+    if has_between_layer {
+        for row in 0..dimensions.rows() {
+            glyphs.rows.remove(row);
+            let Some(cells) = paint.cache.row(row) else {
+                continue;
+            };
+            for (column, cell) in cells.iter().enumerate() {
+                if cell.width == festerm_core::CellWidth::Continuation {
+                    continue;
+                }
+                let position = CellPosition { column, row };
+                let columns = rendered_cell_columns(cell, dimensions, column);
+                if cell_needs_background_paint(cell, false) {
+                    let rect = grid_cell_rect(paint.layout, position, columns);
+                    let (_, background) = cell_colors_with_scheme(cell, &scheme);
+                    painter.rect_filled(rect, 0.0, background);
+                }
+            }
+        }
+        crate::kitty_graphics::paint_kitty_layer(
+            &painter,
+            paint.layout,
+            paint.snapshot,
+            &mut glyphs.kitty,
+            crate::kitty_graphics::KittyLayer::BetweenBackgroundAndText,
+        );
+    }
     for row in 0..dimensions.rows() {
         let selection_range = if paint.selection.is_smart() {
             paint.selection.row_range(paint.snapshot, row)
@@ -843,7 +889,8 @@ fn paint_grid_with_clip_override(
         let Some(cells) = paint.cache.row(row) else {
             continue;
         };
-        let key = if paint.color_scheme.is_none()
+        let key = if !has_kitty
+            && paint.color_scheme.is_none()
             && native.is_none()
             && clip_override == GridTextClipOverride::Auto
             && glyphs.rows.enabled()
@@ -910,7 +957,8 @@ fn paint_grid_with_clip_override(
                 let columns = rendered_cell_columns(cell, dimensions, column);
                 let rect = grid_cell_rect(paint.layout, position, columns);
                 let (foreground, background) = cell_colors_with_scheme(cell, &scheme);
-                let selected = rendered_cell_is_selected(selection_range, position, columns);
+                let selected =
+                    !has_kitty && rendered_cell_is_selected(selection_range, position, columns);
                 if key.is_some()
                     && !paint.shape_cell_runs
                     && cells.len() <= 1024
@@ -934,7 +982,10 @@ fn paint_grid_with_clip_override(
                         blank_background_end = end;
                     }
                 }
-                if column >= blank_background_end && cell_needs_background_paint(cell, selected) {
+                if !has_between_layer
+                    && column >= blank_background_end
+                    && cell_needs_background_paint(cell, selected)
+                {
                     painter.rect_filled(
                         rect,
                         0.0,
@@ -1064,6 +1115,46 @@ fn paint_grid_with_clip_override(
         }
         if let Some((key, start)) = key.zip(start) {
             glyphs.rows.capture(&painter, row, key, start);
+        }
+    }
+
+    crate::kitty_graphics::paint_kitty_layer(
+        &painter,
+        paint.layout,
+        paint.snapshot,
+        &mut glyphs.kitty,
+        crate::kitty_graphics::KittyLayer::AboveText,
+    );
+    if has_kitty {
+        let selection_overlay = Color32::from_rgba_unmultiplied(
+            SELECTION_BACKGROUND.r(),
+            SELECTION_BACKGROUND.g(),
+            SELECTION_BACKGROUND.b(),
+            140,
+        );
+        for row in 0..dimensions.rows() {
+            let selection_range = if paint.selection.is_smart() {
+                paint.selection.row_range(paint.snapshot, row)
+            } else {
+                regular_selection_range
+            };
+            if selection_range.is_none() {
+                continue;
+            }
+            let Some(cells) = paint.cache.row(row) else {
+                continue;
+            };
+            for (column, cell) in cells.iter().enumerate() {
+                if cell.width == festerm_core::CellWidth::Continuation {
+                    continue;
+                }
+                let position = CellPosition { column, row };
+                let columns = rendered_cell_columns(cell, dimensions, column);
+                if rendered_cell_is_selected(selection_range, position, columns) {
+                    let rect = grid_cell_rect(paint.layout, position, columns);
+                    painter.rect_filled(rect, 0.0, selection_overlay);
+                }
+            }
         }
     }
 

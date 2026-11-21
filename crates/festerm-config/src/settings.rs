@@ -5,6 +5,56 @@ use crate::{
 };
 use std::path::Path;
 
+pub const MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES: u32 = 12 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JavaScriptProgramStorageSettings {
+    digest: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    allowed: bool,
+    #[serde(default = "default_javascript_program_storage_bytes")]
+    max_bytes: u32,
+}
+
+impl JavaScriptProgramStorageSettings {
+    pub fn new(digest: String, name: String) -> Self {
+        Self {
+            digest,
+            name,
+            allowed: false,
+            max_bytes: default_javascript_program_storage_bytes(),
+        }
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn allowed(&self) -> bool {
+        self.allowed
+    }
+
+    pub const fn with_allowed(mut self, allowed: bool) -> Self {
+        self.allowed = allowed;
+        self
+    }
+
+    pub const fn max_bytes(&self) -> u32 {
+        self.max_bytes
+    }
+
+    pub const fn with_max_bytes(mut self, max_bytes: u32) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+}
+
 /// User-adjustable interface preferences that apply immediately in the UI and
 /// are intended to be saved automatically as they change
 /// (`docs/gui-design.md` "Wrapping must remain user-configurable"). Unlike
@@ -105,6 +155,13 @@ pub struct InterfaceSettings {
         skip_serializing_if = "ImageMemoryBudgetPreference::is_default"
     )]
     image_memory_budget: ImageMemoryBudgetPreference,
+    /// Whether newly created sessions may be considered for bounded inline
+    /// terminal graphics (ADR 0089). Off by default. Eligibility is still
+    /// decided once per session at creation and is limited to in-process
+    /// local PTY sessions on macOS and Linux; this preference never changes
+    /// an existing session.
+    #[serde(default, skip_serializing_if = "is_false")]
+    inline_graphics: bool,
     /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) temporarily overlays each eligible chip's quick-switch
     /// number in place of its usual status presentation (feature request
@@ -174,6 +231,8 @@ pub struct InterfaceSettings {
     mcp_enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     javascript_enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    javascript_program_storage: Vec<JavaScriptProgramStorageSettings>,
     /// How a text editor view starts out. These are per-view settings while
     /// the view is open (ADR 0034 §9), but the way a reader likes to work does
     /// not change between one file and the next, so the last answer is the
@@ -208,6 +267,7 @@ impl InterfaceSettings {
         rectangle_copy_trim_trailing_spaces: true,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
         image_memory_budget: ImageMemoryBudgetPreference::MiB512,
+        inline_graphics: false,
         quick_switch_overlay: true,
         compact_launcher_grid: true,
         legacy_pulse_new_output_dot: (),
@@ -218,6 +278,7 @@ impl InterfaceSettings {
         automatic_update_checks: true,
         mcp_enabled: false,
         javascript_enabled: false,
+        javascript_program_storage: Vec::new(),
         editor: EditorSettings::DEFAULT,
     };
 
@@ -329,6 +390,13 @@ impl InterfaceSettings {
 
     pub const fn with_image_memory_budget(mut self, budget: ImageMemoryBudgetPreference) -> Self {
         self.image_memory_budget = budget;
+        self
+    }
+
+    /// Sets whether newly created sessions may be considered for inline
+    /// terminal graphics (ADR 0089).
+    pub const fn with_inline_graphics(mut self, enabled: bool) -> Self {
+        self.inline_graphics = enabled;
         self
     }
 
@@ -453,6 +521,10 @@ impl InterfaceSettings {
         self.image_memory_budget
     }
 
+    pub const fn inline_graphics(&self) -> bool {
+        self.inline_graphics
+    }
+
     pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
@@ -496,6 +568,32 @@ impl InterfaceSettings {
         self
     }
 
+    pub fn javascript_program_storage(&self) -> &[JavaScriptProgramStorageSettings] {
+        &self.javascript_program_storage
+    }
+
+    pub fn with_javascript_program_storage(
+        mut self,
+        setting: JavaScriptProgramStorageSettings,
+    ) -> Self {
+        self.javascript_program_storage
+            .retain(|entry| entry.digest != setting.digest);
+        self.javascript_program_storage.push(setting);
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest.cmp(&right.digest));
+        self
+    }
+
+    pub fn with_javascript_program_storage_entries(
+        mut self,
+        settings: Vec<JavaScriptProgramStorageSettings>,
+    ) -> Self {
+        self.javascript_program_storage = settings;
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest.cmp(&right.digest));
+        self
+    }
+
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
         self.sftp_pane_order
     }
@@ -524,6 +622,25 @@ impl InterfaceSettings {
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings))?;
         if let Some(directory) = &self.default_sftp_local_directory {
             validate_stored_path_setting(directory)?;
+        }
+        let mut digests = std::collections::BTreeSet::new();
+        for storage in &self.javascript_program_storage {
+            if storage.digest.len() != 64
+                || !storage
+                    .digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || storage.name.is_empty()
+                || storage.name.len() > 256
+                || !storage.name.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+                })
+                || !matches!(storage.max_bytes, 4096 | 8192 | 12_288)
+                || storage.max_bytes > MAX_JAVASCRIPT_PROGRAM_STORAGE_BYTES
+                || !digests.insert(storage.digest.as_str())
+            {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings));
+            }
         }
         Ok(())
     }
@@ -896,6 +1013,35 @@ mod tests {
     }
 
     #[test]
+    fn inline_graphics_is_opt_in_and_round_trips_through_configuration() {
+        assert!(!InterfaceSettings::DEFAULT.inline_graphics());
+        assert!(!crate::Configuration::empty()
+            .interface_settings()
+            .inline_graphics());
+        let existing: InterfaceSettings = toml::from_str("show_session_details = true").unwrap();
+        assert!(!existing.inline_graphics());
+        assert!(!toml::to_string(&InterfaceSettings::DEFAULT)
+            .unwrap()
+            .contains("inline_graphics"));
+
+        let enabled = InterfaceSettings::DEFAULT.with_inline_graphics(true);
+        let written = toml::to_string(&enabled).unwrap();
+        assert!(written.contains("inline_graphics = true"));
+        let document = crate::Configuration::empty()
+            .with_interface_settings(enabled.clone())
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        let restored = crate::Configuration::parse(&document).unwrap();
+        assert!(restored.interface_settings().inline_graphics());
+        assert_eq!(restored.interface_settings(), &enabled);
+
+        let disabled: InterfaceSettings = toml::from_str("inline_graphics = false").unwrap();
+        assert!(!disabled.inline_graphics());
+        assert!(toml::from_str::<InterfaceSettings>("inline_graphics = 'yes'").is_err());
+    }
+
+    #[test]
     fn empty_interface_settings_document_deserializes_to_default() {
         let settings: InterfaceSettings = toml::from_str("").unwrap();
 
@@ -1049,6 +1195,10 @@ pub struct EditorSettings {
 
 const fn default_syntax() -> bool {
     true
+}
+
+const fn default_javascript_program_storage_bytes() -> u32 {
+    8 * 1024
 }
 
 const fn default_line_numbers() -> bool {
