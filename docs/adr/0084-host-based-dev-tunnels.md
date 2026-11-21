@@ -2995,3 +2995,16 @@ access by GUI/HOST, denied unrelated plaintext read/automatic administration,
 missing/locked/deleted behavior and stable-DR upgrade remain opt-in Mac tests.
 This source enabler does not resolve #816 or qualify a live Enable; existing
 retained R5 items are untouched and receive no automatic ACL migration.
+
+### Exact macOS stop completion after a native refusal
+
+A completed positive nonzero bootout result may be reconciled only by one fresh
+native Absent observation, with the original StopRequested snapshot, exact
+registration and valid private definition checked before and after observation.
+Execution errors and every unqualified proof preserve the original failure. No
+bootout replay, new timeout, PID kill or registration change is introduced.
+
+Validation impact: deterministic service fixtures cover the absent-job race and
+changed scope, ownership, definition and observation refusals. The original
+signed Mac Disable failure remains causally unproved; current-source native
+lifecycle/I/O qualification remains in the manual registry.

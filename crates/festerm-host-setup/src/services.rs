@@ -1175,10 +1175,47 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             self.fence(epoch, Phase::StopRequested)?;
             match self.context.platform {
                 Platform::Linux => self.run(&["--user", "stop", &record.resource])?,
-                Platform::Macos => self.run(&[
-                    "bootout",
-                    &format!("gui/{}/{}", record.user, record.resource),
-                ])?,
+                Platform::Macos => {
+                    // This exact job can become absent after the Running
+                    // observation but before launchctl bootout.
+                    // Execution errors remain uncertain; only a completed
+                    // nonzero command permits this read-only absence proof.
+                    let output = self.command(&[
+                        "bootout",
+                        &format!("gui/{}/{}", record.user, record.resource),
+                    ])?;
+                    if !output.success {
+                        let original = refused("host.service_native_operation_failed");
+                        if output.code <= 0 {
+                            // A signal or inconsistent exit is not a completed
+                            // launchctl refusal whose outcome can be reconciled.
+                            return Err(original);
+                        }
+                        let owned = || {
+                            self.with_record(|directory, current| {
+                                if current != &snapshot
+                                    || self.read_registration(directory, current)?.as_ref()
+                                        != Some(&record)
+                                    || !definitions::check_file(&self.context, &record)?
+                                {
+                                    return Err(refused("host.service_stop_not_observed"));
+                                }
+                                Ok(())
+                            })
+                        };
+                        let absent = (|| {
+                            owned()?;
+                            if self.observe(&record)? != ProcessState::Absent {
+                                return Err(refused("host.service_stop_not_observed"));
+                            }
+                            owned()
+                        })();
+                        if absent.is_ok() {
+                            return Ok(observation(&snapshot, ProcessState::Absent));
+                        }
+                        return Err(original);
+                    }
+                }
                 Platform::Windows => {
                     return Err(refused(
                         "host.service_windows_authenticated_graceful_stop_unavailable",
