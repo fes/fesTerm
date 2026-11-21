@@ -45,9 +45,59 @@ failure refuses before observation. The shared native store and foreground GUI
 getters never install this fence. It changes only the diagnostic process, grants
 no item access, and retains per-query noninteractive matching.
 
+### Additive selected macOS HOST item mechanism
+
+The additive `MacHostCreationContext` binds one already reserved HOST purpose and
+opaque reference to this executing app and one caller-authenticated immutable
+HOST executable. Before setup reserves state or starts OAuth, both the actual
+executing app and authenticated HOST must be valid, non-ad-hoc Developer ID Application code
+with the same nonempty Team identifier. Trusted applications alone do not cross
+the legacy creator partition: an ad-hoc GUI's cdhash partition refuses the signed
+HOST's Team partition. Fresh creation revalidates these identities. This signing
+precondition does not establish stored-item access or stable-DR native evidence.
+The native mechanism captures both exact trusted applications and verifies
+standard legacy ACL plaintext-read trust plus absence of automatic HOST ACL
+administration. Standard all-app ENCRYPT is not a plaintext-read grant. It does
+not promise resistance to hostile coordinated same-user modification of both
+native and private policy state (the existing ADR0053 account-trust boundary).
+
+`festerm-unix-security` owns the macOS public-API FFI and RAII handles; its small
+responsibility extension contains no HOST lifecycle, sign-in or publisher
+policy. `festerm-secret-store` remains unsafe-free and owns fixed namespace,
+reference/size checks and finite errors. Create consumes one bound context and
+refuses collisions; updates retain the exact selected logical item and never
+upsert, recreate missing items, SetAccess or migrate existing ACLs. Post-create
+verification failure leaves the reserved item intact for interrupted-publication
+recovery. Ordinary account credential paths do not select this facade.
+
+### Fresh Desktop HOST purpose wiring
+
+On macOS only, HOST owner-anchor and HOST OAuth factories retain selected-item
+updates. Fresh foreground creation additionally requires an authenticated held
+HOST stage and a reservation minted in that exact operation. An owner
+INITIALIZING receipt reloaded from disk never authorizes fresh creation, even
+when the native reference is absent. Only the live cloud Foreground that first
+published its reference can consume creation authority, before the native call;
+a failed or unknown create never rearms it. The existing receipt formats and
+non-Mac/headless selection stay unchanged. No legacy ACL migration occurs.
+
+Actual macOS Desktop start runs in the authenticated registered helper, whose
+entry disables Keychain UI before constructing stores. The GUI never changes
+its process-wide UI policy. Serving entry points also install this dedicated
+process fence before native reads. HOST retained updates never upsert. Static
+capability refusal occurs before a new setup ticket or device sign-in. This
+source wiring supplies no signed/native acceptance or new permissions.
+
 ## Validation impact
 
 Initializer ordering/refusal and setter/readback fixture logic,
 plus isolated CLI invocation, cover the boundary without proving native credential
 access. Native prompt-free qualification remains separate; see
 [ADR 0084](0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
+
+The additive mechanism has bounded policy/create/update-order fixtures and
+CoreFoundation-only retained-output cleanup tests; the facade checks exact
+purpose/reference binding and finite errors. Tests do not query the host user's
+Keychain. Actual two-identity native create/read/update, retained-item deletion,
+ACL preservation, locked/denied behavior and signed-DR updates remain opt-in
+qualification under ADR0084; no live Mac fix or successful Enable is claimed.

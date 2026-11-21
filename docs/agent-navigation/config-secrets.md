@@ -1,23 +1,23 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "6d095e7c289902652490eb0a54356498db694e68404a4142e559e5fa62f65c27"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "3a33202d317dc19975c56a0d415b9f76abe151ccfaecc53a6ee5baf036f47587"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns validated configuration and workspace metadata, opaque native credential references, and user-private file and process security boundaries for safe persistence.
+Owns config/workspace metadata, opaque references and private publication.
 
 Canonical docs: [docs/configuration.md](../../docs/configuration.md), [docs/adr/0008-versioned-toml-configuration.md](../../docs/adr/0008-versioned-toml-configuration.md), [docs/adr/0016-native-secret-store-boundary.md](../../docs/adr/0016-native-secret-store-boundary.md)
 
 ## Config startup
 
-Use for: Choose the active config source and persist automatic workspace and settings saves safely.
+Use for: Config selection and autosave.
 
-- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Chooses the env override or native path without exposing the value.
-- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Private startup loader and save gate for auto writes.
+- [`select_configuration_source`](../../app/festerm/src/configuration_startup.rs) — Selects override versus native path.
+- [`ConfigurationReloader`](../../app/festerm/src/configuration_startup.rs) — Gates startup autosave.
 
 Evidence:
-- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — The override wins before the native config directory.
-- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Only the missing native directory is created and reloads stay clean.
+- [`unicode_override_takes_precedence_over_native_location`](../../app/festerm/src/configuration_startup.rs) — Checks override precedence.
+- [`explicit_workspace_save_creates_only_the_missing_native_directory_and_loads`](../../app/festerm/src/configuration_startup.rs) — Checks private creation and reload.
 
 Caveats:
 - Diagnostics hide the selected file path and TOML.
@@ -26,15 +26,15 @@ Caveats:
 
 ## Config schema
 
-Use for: Validate saved configuration, workspace metadata, and settings without secret or runtime state.
+Use for: Validate persisted metadata.
 
-- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML schema for profiles, workspace, settings, and accounts.
-- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Metadata-only restore state with tab and window validation.
-- [`InterfaceSettings`](../../crates/festerm-config/src/settings.rs) — Persisted UI behavior and terminal defaults, not live session state.
+- [`Configuration`](../../crates/festerm-config/src/lib.rs) — Versioned TOML schema.
+- [`WorkspaceConfiguration`](../../crates/festerm-config/src/workspace.rs) — Validates metadata-only restore.
+- [`InterfaceSettings`](../../crates/festerm-config/src/settings.rs) — Persists UI defaults.
 
 Evidence:
-- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Workspace validation and profile reference checks are enforced.
-- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — It round-trips only metadata and exact workspace tab kind.
+- [`workspace_replacement_preserves_profiles_and_validates_references`](../../crates/festerm-config/src/lib.rs) — Checks workspace/profile references.
+- [`dev_tunnel_files_profile_roundtrip_keeps_only_metadata_and_exact_workspace_kind`](../../crates/festerm-config/src/lib.rs) — Checks exact metadata round-trip.
 
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
@@ -43,15 +43,15 @@ Caveats:
 
 ## Secret boundary
 
-Use for: Persist credential references in config while keeping secret bytes only inside the native store.
+Use for: Native credential references.
 
-- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque native-store reference rather than the secret itself.
-- [`SecretReference`](../../crates/festerm-secret-store/src/lib.rs) — Canonical UUIDv4 secret identifier stored in config metadata.
-- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract for create, get, update, and delete of secret bytes.
+- [`CredentialReference`](../../crates/festerm-config/src/profiles.rs) — Wraps an opaque reference.
+- [`SecretReference`](../../crates/festerm-secret-store/src/lib.rs) — Canonical UUIDv4 metadata.
+- [`SecretStore`](../../crates/festerm-secret-store/src/lib.rs) — Native store contract.
 
 Evidence:
-- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — The file stores only the opaque reference and reloads it unchanged.
-- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Persisted references are random, canonical, and opaque.
+- [`atomically_saves_and_loads_an_opaque_credential_reference`](../../crates/festerm-config/src/lib.rs) — Checks opaque-reference round-trip.
+- [`references_are_random_canonical_uuid_v4_values`](../../crates/festerm-secret-store/src/lib.rs) — Checks random canonical UUIDv4.
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
@@ -60,14 +60,14 @@ Caveats:
 
 ## File security
 
-Use for: Make config directories and save payloads private before publication on Unix or Windows.
+Use for: Private publication.
 
-- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Ensures a directory is owned and restricted to the current user.
-- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a file with a current-user-only DACL and verified publication flow.
+- [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks private ownership.
+- [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a private DACL file.
 
 Evidence:
-- [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — It validates inherited ACL cleanup before a private directory is committed.
-- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Private creation and publication preserve the current-user-only DACL.
+- [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Checks inherited ACL cleanup.
+- [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Checks DACL retention.
 
 Caveats:
 - New private objects are secured and verified; unsafe existing roots refuse access.
@@ -86,3 +86,19 @@ Evidence:
 
 Caveats:
 - Storage enablement, budgets and migration require explicit review; no path-derived authority.
+
+## Selected Mac HOST items
+
+Use for: Fresh Desktop purpose creation and retained update.
+
+- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Captures same-Team Developer ID identities before consuming one purpose/reference.
+- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps HOST updates separate from ordinary accounts.
+
+Evidence:
+- [`mac_host_item_creation_only_follows_proven_absence`](../../crates/festerm-unix-security/src/macos_keychain.rs) — Refuses error-to-create fallback.
+- [`host_cloud_fresh_creation_is_consumed_before_native_effect_and_never_rearmed`](../../crates/festerm-host-setup/src/cloud.rs) — Checks one-call creation.
+
+Caveats:
+- Existing pending receipts never reauthorize create; no native acceptance is claimed.
+- Ad-hoc self and production signed-DR qualification stay distinct.
+- No ACL migration, upsert or hostile same-user write-isolation claim.

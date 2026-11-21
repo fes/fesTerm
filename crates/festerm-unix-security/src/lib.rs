@@ -1791,3 +1791,7 @@ mod tests {
         assert!(!fixture.path("child").exists() && !fixture.path("original").exists());
     }
 }
+
+/// Narrow macOS Keychain handle operations; HOST policy remains in its caller.
+#[cfg(any(target_os = "macos", test))]
+pub mod macos_keychain;

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "2baae2f0e5060cf2a1c004a102fcca7b7dc0c5c81b887fccfc2d0175c2c7a157"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "ddf81f34bd3a15d3204f645b944acdf684b430df9fc9a167c4d124df87ad197b"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -59,11 +59,11 @@ Caveats:
 
 Use for: Host discovery, inventory, attach, and creation review
 
-- [`show_host_browser`](../../app/festerm/src/host_browser.rs)
+- [`show_inline_host_browser`](../../app/festerm/src/host_browser.rs) — Selected workspace host stays in its owning tab; profile pickers retain modal review
 
 Evidence:
-- [`selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission`](../../app/festerm/src/host_browser_tests.rs)
-- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
+- [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs) — Full-page action and seven-row scrolling at 752×516
+- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs) — Retains confirmed scope without claiming readiness
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "d821e1eba2c798ae44e74183a7d788bda7d67993789494f74369ca13d7766c28"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "c2159262d5f6553aaa2da3d07b0361cacb44ccdc7d0435c48514e8f934eac2b5"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -84,3 +84,16 @@ Evidence:
 
 Caveats:
 - Nonshipping helper only; console mediation and current-build native gates remain explicit.
+
+## Dedicated Mac HOST entry
+
+Use for: Process-local no-UI fences and static supported-helper admission.
+
+- [`initialize_serving_store`](../../app/festerm-host/src/main.rs) — Fences serving only.
+- [`execute`](../../crates/festerm-host-setup/src/desktop_start.rs) — Matches registered self and full selected scope.
+
+Evidence:
+- [`desktop_start_process_fence_refusal_precedes_selected_store_and_effects`](../../app/festerm-host/src/main.rs) — Refuses before stores/effects.
+
+Caveats:
+- No shared GUI fence, ACL migration, Ready claim or automatic retry.

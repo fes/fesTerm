@@ -10,7 +10,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal presentation and rendering: viewport caches, native and software painting, and input routing while app-owned session I/O remains outside the UI. |
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | This domain owns the session lifecycle contract, local PTY startup, daemon-backed persistence and recovery, and app-side terminal event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and GUI-backed SFTP transfer and remote-file reads. |
-| [Configuration, workspace, and secrets](config-secrets.md) | This domain owns validated configuration and workspace metadata, opaque native credential references, and user-private file and process security boundaries for safe persistence. |
+| [Configuration, workspace, and secrets](config-secrets.md) | Owns config/workspace metadata, opaque references and private publication. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns app-wide command intents, singleton-tab routing, keyboard capture scope, overlay gating, and editor command parsing. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns brokered automation authority, workflow validation, and MCP protocol gating for observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
