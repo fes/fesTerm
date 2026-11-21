@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "90878a9b3f4f210f0f0714c98c3a203817b98639f16d3068e9b6b9477ab446c4"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "aab9c3c9647e005aaff0319ca3a453bc49594e24be6d50c91875da2b3a95f881"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,10 +10,10 @@ Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.m
 
 ## Shared mobile host
 
-Use for: App launch, lifecycle, lock, and suspension policy
+Use for: What owns app launch, lifecycle, auth lock, and suspend policy?
 
-- [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Tracks active, resume, suspend, and memory-warning state.
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and shell session plumbing.
+- [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Content-free lifecycle counters for app resume, suspend, and memory warnings.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and session plumbing.
 
 Evidence:
 - [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs) — Proves content stays hidden until auth succeeds and relock hides it again.
@@ -25,7 +25,7 @@ Caveats:
 
 ## Host client flow
 
-Use for: Host discovery, inventory, and save-before-connect
+Use for: Which files handle host discovery, inventory, and save-before-connect?
 
 - [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns host inventory, reviewed creation, and local profile metadata.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
@@ -35,12 +35,12 @@ Evidence:
 
 Caveats:
 - Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration.
-- Saving a local profile grants neither host creation authority nor filesystem/observation access.
+- Saving a local profile grants neither host creation authority nor filesystem or observation access.
 - Lock and suspension fence input while committed operations retain their original identity.
 
 ## Documents and files
 
-Use for: Document preview, protected editing, and native review
+Use for: When native docs or files are previewed, edited, or saved?
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview state, and dirty-save policy.
 
@@ -54,9 +54,9 @@ Caveats:
 
 ## Live SSH shell
 
-Use for: Transient SSH trust, suspension, and reconnect
+Use for: When transient SSH trust, suspension, and reconnect are needed?
 
-- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Holds transient SSH state, prompts, and recovery logic.
+- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Holds transient SSH state, prompts, recovery logic, and tunnel attachment.
 
 Evidence:
 - [`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Proves explicit trust and password retry for loopback SSH.
@@ -68,12 +68,9 @@ Caveats:
 
 ## Android JNI bridge
 
-Use for: Android services, geometry, input, and secrets
+Use for: How does Android wire geometry, input, secrets, and callbacks into Rust?
 
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
-
-Evidence:
-- [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording service boundaries.
 
 Caveats:
 - Java forwards platform input and services; shared Rust retains UI and session policy.
@@ -82,12 +79,9 @@ Caveats:
 
 ## Legacy tunnel flow
 
-Use for: Dev Tunnel sign-in, discovery, and takeover
+Use for: When GitHub device flow and dev tunnel attach lifecycle are involved?
 
 - [`TunnelClient`](../../crates/festerm-mobile-tunnels/src/lib.rs) — Runs GitHub device flow, tunnel discovery, approval, and attach lifecycle.
-
-Evidence:
-- [`healthy_resume_retains_active_and_parked_tunnels_and_coalesces_notifications`](../../app/festerm-mobile/src/tunnel_tests.rs) — Validates tunnel resume and notification coalescing across lock and wake.
 
 Caveats:
 - Legacy exported-session approval uses its profile fingerprint; ordinary HOST discovery uses the provider route.

@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST selection, owner consent, native service state, and public metadata boundaries for enterprise dev tunnels and PowerShell sessions. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, Finder/AppKit integration, and OS wake/privacy hooks for the desktop app. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, AppKit/Finder hooks, and OS wake/privacy notifications for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns the shared mobile app runtime, protected local state, and native/SSH/HOST session flows across iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
