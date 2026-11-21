@@ -1893,8 +1893,46 @@ impl FesTermApp {
         }
     }
 
+    fn workspace_host_is_inline(&self, context: &egui::Context) -> bool {
+        self.host_browser.as_ref().is_some_and(|browser| {
+            browser.workspace
+                && !crate::screens::host_workspace::profile_request_is_current(
+                    context,
+                    browser.tab,
+                    browser.request,
+                )
+        })
+    }
+
+    pub(super) fn show_inline_host_browser(&mut self, ui: &mut egui::Ui, escape: bool) -> bool {
+        let context = ui.ctx().clone();
+        if !self.workspace_host_is_inline(&context)
+            || self.host_browser.as_ref().is_none_or(|browser| {
+                browser.tab != self.state.active() || !browser.current(&self.state, &context)
+            })
+        {
+            return false;
+        }
+        let shortcuts = self.shortcut_context(&context, false);
+        let owns_escape = ui.is_enabled()
+            && !self.pane_controls.blocks_input()
+            && !shortcuts.blocked
+            && !shortcuts.palette_open;
+        let escape = owns_escape
+            && (escape
+                || context.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                }));
+        self.show_workspace_host_surface(&context, Some(ui), escape);
+        true
+    }
+
     pub(super) fn show_host_browser(&mut self, context: &egui::Context, escape: bool) {
         use festerm_ui_egui::controls::{action_button_enabled, ActionButtonRole};
+        // Workspace selection is rendered once in its owning tab, not over it.
+        if self.workspace_host_is_inline(context) {
+            return;
+        }
 
         if self
             .host_browser
@@ -2095,6 +2133,16 @@ impl FesTermApp {
     }
 
     fn show_workspace_host(&mut self, context: &egui::Context, escape: bool) {
+        self.show_workspace_host_surface(context, None, escape);
+    }
+
+    fn show_workspace_host_surface(
+        &mut self,
+        context: &egui::Context,
+        inline_ui: Option<&mut egui::Ui>,
+        escape: bool,
+    ) {
+        let inline = inline_ui.is_some();
         use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButtonRole};
         let selection_mode = self.host_browser.as_ref().is_some_and(|browser| {
             crate::screens::host_workspace::profile_request_is_current(
@@ -2115,13 +2163,28 @@ impl FesTermApp {
         let mut open_profiles = false;
         let mut quick_create = false;
         let mut selection: Option<Option<Target>> = None;
-        egui::Modal::new(egui::Id::new("foreground_host_review")).show(context, |ui| {
+        let source_tab = browser.tab;
+        let mut render = |ui: &mut egui::Ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
-            super::confirmations::prepare_confirmation(ui, context, if selection_mode { 520.0 } else { 920.0 });
+            if !inline {
+                super::confirmations::prepare_confirmation(
+                    ui,
+                    context,
+                    if selection_mode { 520.0 } else { 920.0 },
+                );
+            }
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
-            ui.heading("Find & Connect");
+            if inline {
+                ui.label(
+                    egui::RichText::new("Find & Connect")
+                        .size(24.0)
+                        .color(festerm_ui_egui::theme::TEXT_PRIMARY),
+                );
+            } else {
+                ui.heading("Find & Connect");
+            }
             ui.add_space(8.0);
-            let compact = context.viewport_rect().width() < 760.0;
+            let compact = ui.available_width() < 760.0;
             ui.scope_builder(egui::UiBuilder::new().layout(if compact { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) }), |ui| {
             if !selection_mode {
                 ui.vertical(|ui| {
@@ -2139,7 +2202,7 @@ impl FesTermApp {
             ui.heading(browser.recipe.host_hint.as_ref().map(|hint| hint.name.as_str())
                 .unwrap_or(&browser.recipe.name));
             ui.small(format!("@{}", browser.account.login()));
-            super::confirmations::confirmation_body(ui, |ui| {
+            let mut body = |ui: &mut egui::Ui| {
                 if browser.busy() {
                     ui.horizontal(|ui| { ui.spinner(); ui.label("Connecting…"); });
                 }
@@ -2344,13 +2407,36 @@ impl FesTermApp {
                         }
                     }
                 });
-            });
+            };
+            if inline { body(ui); } else { super::confirmations::confirmation_body(ui, body); }
             }
             });
             });
             ui.add_space(12.0);
-            if !browser.new_session && browser.profile_target.is_none() && action_button(ui, ActionButtonRole::Secondary, "Done").clicked() { dismiss = true; }
-        });
+            if !browser.new_session
+                && browser.profile_target.is_none()
+                && action_button(ui, ActionButtonRole::Secondary, "Done").clicked()
+            {
+                dismiss = true;
+            }
+        };
+        if let Some(ui) = inline_ui {
+            crate::screens::show_bounded_content_scroll(
+                ui,
+                (source_tab, "selected_host_workspace"),
+                |ui| {
+                    ui.vertical(|ui| {
+                        ui.add_space(24.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(34.0);
+                            ui.vertical(&mut render);
+                        });
+                    });
+                },
+            );
+        } else {
+            egui::Modal::new(egui::Id::new("foreground_host_review")).show(context, render);
+        }
         if open_profiles {
             self.host_browser = None;
             self.state.dispatch(AppCommand::OpenProfiles, context);
