@@ -6852,7 +6852,8 @@
         "docs/native-host-services.md#native-host-process-recovery",
         "docs/manual-validation.md#native-host-process-recovery-730",
         "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
-        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision",
+        "docs/adr/0084-host-based-dev-tunnels.md#exact-macos-stop-completion-after-a-native-refusal"
       ],
       "decisions": [
         "ADR-0084",
@@ -7202,7 +7203,9 @@
         "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled",
         "desktop_remote_access_native_timeout_classification_is_exact_and_preserves_contention",
         "desktop_remote_access_native_timeout_completion_keeps_primary_result_and_recovery",
-        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery"
+        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery",
+        "native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence",
+        "native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

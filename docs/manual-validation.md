@@ -6180,3 +6180,20 @@ and submitted-unknown cleanup, then normal lifecycle and actual I/O. Retain
 old legacy items and the failed signed16 cohort unchanged; no automatic ACL
 migration, Always Allow grant, timeout increase or replay is justified by this
 source change. Ad-hoc development and production stable-DR evidence stay distinct.
+
+### macOS stop completion after a launchd refusal
+
+Portable service fixtures cover a completed positive nonzero `launchctl bootout`
+result after the exact job has become absent. Completion requires the original
+StopRequested snapshot, retained registration and valid private definition before
+and after one fresh native Absent observation. Execution errors, signal exits,
+foreign/changed/missing definitions and unqualified observations retain the
+original failure; no stop command is replayed.
+
+The signed `f3979dd8` Mac cohort passed fresh Enable, noninteractive Start and
+retained Enable with the same protected credential reference. Its first Disable
+stopped the HOST but left StopRequested; an explicitly reviewed completion
+finished Disabled at the same epoch. That failure is retained and its cause is
+unproved. The new stop-race fixture does not establish that historical cause.
+A signed current-source native Disable/Enable check, including retained shell
+identity and fresh remote I/O, remains required before qualifying this fix.

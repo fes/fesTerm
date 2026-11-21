@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "ffe912dfb5edc9912fe251798a5ef2e8833b400007a1314eb19aa34f0c338439"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "752b6d5df440e03e24b4be9ea39571bd3e9eccf8efc71f2bb100e72abe413ffe"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -48,6 +48,7 @@ Use for: When observing or starting a native service without confusing process s
 Evidence:
 - [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition state and trusts direct process observation
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies service readiness
+- [`native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence`](../../crates/festerm-host-setup/src/services/tests.rs) — Completes failed bootout only after exact fresh absence proof
 
 Caveats:
 - Running is not readiness
