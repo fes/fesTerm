@@ -93,6 +93,24 @@ published its reference can consume creation authority, before the native call;
 a failed or unknown create never rearms it. The existing receipt formats and
 non-Mac/headless selection stay unchanged. No legacy ACL migration occurs.
 
+After supported recovery of an unsubmitted, unauthenticated initial Desktop
+reservation, a strictly newer explicit Enable may reserve a **different** native
+reference. The exact old journal bytes/reference are retained in the private
+`host-cloud-initial-authorization-history.json` before atomically publishing the
+new current record. This version-1 metadata history is limited to eight entries,
+128 KiB total and 16 KiB per original record. It never reads, deletes, updates or
+asserts absence of the old native item. Existing authenticated/bound/resource
+paths and Headless behavior remain unchanged.
+
+Only a live caller that confirms both durable publications receives fresh
+creation authority; reopening the already-current reference always receives
+none. Archive-only persistence, collision, corruption, full history or uncertain
+publication fails closed without eviction, rollback or automatic repair. The
+history preserves unknown references for owner review, not an executable retry
+or recovery plan. Historical tickets are typed, ordered metadata; only the new
+Store-validated ticket supplies current approval. `Record` v1 is unchanged and
+absence of this optional private file remains compatible with older state.
+
 Actual macOS Desktop start runs in the authenticated registered helper, whose
 entry disables Keychain UI before constructing stores. The GUI never changes
 its process-wide UI policy. Serving entry points also install this dedicated

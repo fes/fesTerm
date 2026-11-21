@@ -63,6 +63,8 @@ const RECORD: &str = "host-cloud.json";
 const LOCK: &str = "host-cloud.lock";
 pub const HOST_IDENTITY_FILE: &str = "host-identity";
 
+mod initial_authorization_history;
+
 fn refused(stage: &'static str) -> io::Error {
     match stage {
         "host.cloud_cancelled" => io::Error::other(CloudCancelled(stage)),
@@ -768,6 +770,19 @@ impl<'a> CloudHostAdapter<'a> {
         ticket: &Ticket,
         expected_github_subject: u64,
     ) -> io::Result<Foreground> {
+        self.foreground_using(
+            ticket,
+            expected_github_subject,
+            initial_authorization_history::preserve_then_replace,
+        )
+    }
+
+    fn foreground_using(
+        &self,
+        ticket: &Ticket,
+        expected_github_subject: u64,
+        rotate_initial: impl FnOnce(&File, &Record, &Record) -> io::Result<()>,
+    ) -> io::Result<Foreground> {
         let _operation = self.operation()?;
         if expected_github_subject == 0 {
             return Err(refused("host.cloud_account_required"));
@@ -786,10 +801,36 @@ impl<'a> CloudHostAdapter<'a> {
                         "host.cloud_protocol_retirement_requires_new_enable",
                     ));
                 }
+                let previous = record.clone();
                 // A new foreground ticket may reuse the same disabled identity,
                 // resource and protected credential, never another account.
                 record.ticket = ticket.clone();
                 validate(&record, snapshot, directory, || self.os_user())?;
+                if snapshot.binding.is_none()
+                    && previous.ticket.epoch() < ticket.epoch()
+                    && initial_authorization_history::initial(&previous)
+                {
+                    // This is new foreground approval, not a retry of an old
+                    // unknown native creation. Preserve that exact reference
+                    // before publishing a distinct reservation. Reopening the
+                    // new ticket still cannot reconstruct this live grant.
+                    record.credential = SecretReference::generate().to_persisted_string();
+                    if retired_original(directory, &record)?.is_some() {
+                        return Err(refused(
+                            "host.cloud_initial_authorization_history_requires_reconciliation",
+                        ));
+                    }
+                    rotate_initial(directory, &previous, &record)?;
+                    if read(directory)?.as_ref() != Some(&record) {
+                        return Err(refused(
+                            "host.cloud_initial_authorization_history_requires_reconciliation",
+                        ));
+                    }
+                    return Ok(Foreground {
+                        record,
+                        fresh_creation: std::sync::atomic::AtomicBool::new(true),
+                    });
+                }
                 write(directory, &record)?;
                 return Ok(Foreground {
                     record,
@@ -2249,10 +2290,16 @@ mod tests {
     }
 
     fn fixture() -> (storage::PrivateTestDirectory, Store, MemorySecretStore) {
+        fixture_for_origin(Origin::Headless)
+    }
+
+    fn fixture_for_origin(
+        origin: Origin,
+    ) -> (storage::PrivateTestDirectory, Store, MemorySecretStore) {
         let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("host"),
-            Origin::Headless,
+            origin,
             crate::lifecycle::Settings {
                 filesystem: None,
                 ordinary_access: Default::default(),
@@ -2318,6 +2365,523 @@ mod tests {
         }
         assert_eq!(network.state.borrow().sign_ins, 1);
         assert!(!adapter.load().unwrap().authenticated);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_new_enable_after_unsubmitted_recovery_can_authorize_initial_desktop_credential(
+    ) {
+        let (_root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let original = foreground(&adapter);
+        let identity = adapter.load().unwrap();
+        let directory = storage::private_directory(&_root.path().join("host"), false).unwrap();
+        let original_bytes =
+            storage::read_private(&directory, Path::new(RECORD), 16 * 1024).unwrap();
+        let unknown_reference = reference(&identity).unwrap();
+        secrets
+            .create_reserved(
+                &unknown_reference,
+                &SecretBytes::copy_from_slice(b"UNKNOWN_OLD_NATIVE_ITEM_CANARY"),
+            )
+            .unwrap();
+        assert!(!identity.authenticated && !identity.submitted && identity.resource.is_none());
+        store.cancel_enable(&original.record.ticket).unwrap();
+        assert_eq!(
+            adapter.reconcile(&CancellationToken::new()).await.unwrap(),
+            Phase::Disabled
+        );
+        let next = foreground(&adapter);
+        assert!(next.record.ticket.epoch() > original.record.ticket.epoch());
+        assert_ne!(next.record.credential, original.record.credential);
+        assert_eq!(next.record.os_user, original.record.os_user);
+        assert_eq!(next.record.account_id, original.record.account_id);
+        let archive = storage::read_private(
+            &directory,
+            Path::new(initial_authorization_history::NAME),
+            initial_authorization_history::MAX_BYTES,
+        )
+        .unwrap();
+        let history: serde_json::Value = serde_json::from_slice(&archive).unwrap();
+        assert!(history["records"][0].as_str().unwrap().as_bytes() == original_bytes.as_slice());
+        let reopened = adapter.foreground(&next.record.ticket, 42).unwrap();
+        assert!(!reopened
+            .fresh_creation
+            .load(std::sync::atomic::Ordering::Acquire));
+        let network = FixtureNetwork::new(&store);
+        let prompts = std::cell::Cell::new(0);
+        let result = adapter
+            .sign_in_using(
+                &next,
+                &CancellationToken::new(),
+                |_| prompts.set(prompts.get() + 1),
+                &network,
+                &secrets,
+                true,
+                |reference, secret| secrets.create_reserved(reference, secret),
+            )
+            .await;
+        assert!(result.is_ok(), "new reviewed Enable after no-submission recovery must permit initial authorization: {result:?}");
+        assert_eq!(prompts.get(), 1);
+        let after = adapter.load().unwrap();
+        assert!(after.authenticated && !after.submitted && after.resource.is_none());
+        assert_eq!(after.installation, identity.installation);
+        assert_eq!(after.host_id, identity.host_id);
+        assert_eq!(after.fingerprint, identity.fingerprint);
+        assert_eq!(network.state.borrow().creates, 0);
+        assert!(secrets
+            .get(&unknown_reference)
+            .unwrap()
+            .with_bytes(|b| b == b"UNKNOWN_OLD_NATIVE_ITEM_CANARY"));
+        assert!(!next
+            .fresh_creation
+            .load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    async fn desktop_initial_recovery() -> (
+        storage::PrivateTestDirectory,
+        Store,
+        MemorySecretStore,
+        Record,
+        Ticket,
+    ) {
+        let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let original = foreground(&adapter);
+        let old = adapter.load().unwrap();
+        store.cancel_enable(&original.record.ticket).unwrap();
+        assert_eq!(
+            adapter.reconcile(&CancellationToken::new()).await.unwrap(),
+            Phase::Disabled
+        );
+        let ticket = store
+            .request_enable(&store.snapshot().unwrap().settings)
+            .unwrap();
+        (root, store, secrets, old, ticket)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_preserves_same_ticket_and_headless_refusal() {
+        for origin in [Origin::Desktop, Origin::Headless] {
+            let (root, store, secrets) = fixture_for_origin(origin);
+            let adapter = CloudHostAdapter::fixture(&store);
+            let old = foreground(&adapter);
+            let same = adapter.foreground(&old.record.ticket, 42).unwrap();
+            assert!(!same
+                .fresh_creation
+                .load(std::sync::atomic::Ordering::Acquire));
+            assert_eq!(same.record.credential, old.record.credential);
+            if origin == Origin::Headless {
+                store.cancel_enable(&old.record.ticket).unwrap();
+                adapter.reconcile(&CancellationToken::new()).await.unwrap();
+                let next = foreground(&adapter);
+                assert_eq!(next.record.credential, old.record.credential);
+                assert!(!next
+                    .fresh_creation
+                    .load(std::sync::atomic::Ordering::Acquire));
+                let network = FixtureNetwork::new(&store);
+                assert!(adapter
+                    .sign_in_using(
+                        &next,
+                        &CancellationToken::new(),
+                        |_| panic!(),
+                        &network,
+                        &secrets,
+                        true,
+                        |_, _| panic!()
+                    )
+                    .await
+                    .is_err());
+                assert_eq!(network.state.borrow().sign_ins, 0);
+            }
+            assert!(!root
+                .path()
+                .join("host")
+                .join(initial_authorization_history::NAME)
+                .exists());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_refuses_changed_scope_before_any_publication() {
+        for change in [
+            "account",
+            "installation",
+            "origin",
+            "os_user",
+            "host_id",
+            "fingerprint",
+            "submitted",
+            "creation_name",
+            "legacy",
+        ] {
+            let (root, store, _secrets, old, ticket) = desktop_initial_recovery().await;
+            let adapter = CloudHostAdapter::fixture(&store);
+            let directory = storage::private_directory(&root.path().join("host"), false).unwrap();
+            let mut record = old;
+            match change {
+                "account" => record.account_id += 1,
+                "installation" => record.installation = uuid::Uuid::new_v4().to_string(),
+                "origin" => record.origin = Origin::Headless,
+                "os_user" => record.os_user.push_str("-other"),
+                "host_id" => record.host_id.push_str("-other"),
+                "fingerprint" => record.fingerprint.push_str("-other"),
+                "submitted" => record.submitted = true,
+                "creation_name" => record.creation_name = Some("unexpected reservation".into()),
+                "legacy" => crate::protected_state::publish_new(
+                    &directory,
+                    &retirement_path(&record),
+                    b"malformed legacy marker",
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+            write(&directory, &record).unwrap();
+            let before = storage::read_private(&directory, Path::new(RECORD), 16 * 1024).unwrap();
+            assert!(
+                adapter
+                    .foreground_using(&ticket, 42, |_, _, _| panic!(
+                        "invalid scope must never archive or publish a fresh reference"
+                    ))
+                    .is_err(),
+                "{change}"
+            );
+            assert!(
+                storage::read_private(&directory, Path::new(RECORD), 16 * 1024)
+                    .unwrap()
+                    .as_slice()
+                    == before.as_slice()
+            );
+            assert!(!root
+                .path()
+                .join("host")
+                .join(initial_authorization_history::NAME)
+                .exists());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_never_grants_for_authenticated_or_bound_identity() {
+        for kind in ["authenticated", "bound", "resource"] {
+            let (root, store, _secrets, mut old, ticket) = desktop_initial_recovery().await;
+            let adapter = CloudHostAdapter::fixture(&store);
+            let directory = storage::private_directory(&root.path().join("host"), false).unwrap();
+            if kind == "authenticated" {
+                old.authenticated = true;
+            }
+            if kind == "resource" {
+                let label = format!("festerm-owned-{}", uuid::Uuid::new_v4().simple());
+                old.resource = Some(Resource {
+                    cluster: "usw2".into(),
+                    tunnel_id: format!("festerm-{}", uuid::Uuid::new_v4().simple()),
+                    account_id: 42,
+                    labels: vec![HOST_LABEL.into(), label.clone()],
+                    ownership_label: label,
+                    port: HOST_PORT,
+                    create_protocol: CreateProtocol::Auto,
+                    create_access: CreateAccess::OwnerDefault,
+                });
+            }
+            let ticket = if kind == "bound" {
+                let exact = Binding {
+                    host_id: old.host_id.clone(),
+                    account: subject(42),
+                    qualified_tunnel: "usw2/fixture".into(),
+                    cloud_incarnation: "fixture-incarnation".into(),
+                    host_key_fingerprint: old.fingerprint.clone(),
+                };
+                store.record_provisioned(&ticket, exact.clone()).unwrap();
+                store.revoke().unwrap();
+                store
+                    .confirm_stopped(store.snapshot().unwrap().epoch, &exact)
+                    .unwrap();
+                store
+                    .request_enable(&store.snapshot().unwrap().settings)
+                    .unwrap()
+            } else {
+                ticket
+            };
+            write(&directory, &old).unwrap();
+            let reopened = adapter
+                .foreground_using(&ticket, 42, |_, _, _| {
+                    panic!("retained identity must not rotate")
+                })
+                .unwrap();
+            assert!(!reopened
+                .fresh_creation
+                .load(std::sync::atomic::Ordering::Acquire));
+            assert_eq!(reopened.record.credential, old.credential);
+            assert!(!root
+                .path()
+                .join("host")
+                .join(initial_authorization_history::NAME)
+                .exists());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_preserves_authenticated_reuse_without_new_prompt() {
+        let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let original = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        adapter
+            .sign_in_with(
+                &original,
+                &CancellationToken::new(),
+                |_| {},
+                &network,
+                &secrets,
+            )
+            .await
+            .unwrap();
+        store.cancel_enable(&original.record.ticket).unwrap();
+        adapter.reconcile(&CancellationToken::new()).await.unwrap();
+        let next = foreground(&adapter);
+        assert_eq!(next.record.credential, original.record.credential);
+        adapter
+            .sign_in_using(
+                &next,
+                &CancellationToken::new(),
+                |_| panic!("retained authentication must not prompt again"),
+                &network,
+                &secrets,
+                true,
+                |_, _| panic!("retained item must not create"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert!(!root
+            .path()
+            .join("host")
+            .join(initial_authorization_history::NAME)
+            .exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_faults_never_return_or_reconstruct_fresh_grant() {
+        for fault in [
+            "archive_before",
+            "archive_after",
+            "current_before",
+            "current_false_ack",
+            "current_after",
+        ] {
+            let (root, store, secrets, old, ticket) = desktop_initial_recovery().await;
+            let adapter = CloudHostAdapter::fixture(&store);
+            let directory = storage::private_directory(&root.path().join("host"), false).unwrap();
+            let old_bytes =
+                storage::read_private(&directory, Path::new(RECORD), 16 * 1024).unwrap();
+            let result = adapter.foreground_using(&ticket, 42, |directory, previous, next| {
+                initial_authorization_history::preserve_then_replace_using(
+                    directory,
+                    previous,
+                    next,
+                    |directory, bytes, existed| {
+                        if fault == "archive_before" {
+                            return Err(io::Error::other("injected archive error"));
+                        }
+                        initial_authorization_history::publish_archive(directory, bytes, existed)?;
+                        if fault == "archive_after" {
+                            return Err(io::Error::other("injected uncertain archive sync"));
+                        }
+                        Ok(())
+                    },
+                    |directory, next| {
+                        assert!(storage::read_private(
+                            directory,
+                            Path::new(initial_authorization_history::NAME),
+                            initial_authorization_history::MAX_BYTES
+                        )
+                        .is_ok());
+                        if fault == "current_before" {
+                            return Err(io::Error::other("injected current error"));
+                        }
+                        if fault == "current_false_ack" {
+                            return Ok(());
+                        }
+                        write(directory, next)?;
+                        Err(io::Error::other("injected uncertain current sync"))
+                    },
+                )
+            });
+            assert!(result.is_err(), "{fault}");
+            let after = read(&directory).unwrap().unwrap();
+            if fault == "current_after" {
+                assert_ne!(after.credential, old.credential);
+                let reopened = adapter.foreground(&ticket, 42).unwrap();
+                assert!(!reopened
+                    .fresh_creation
+                    .load(std::sync::atomic::Ordering::Acquire));
+                let network = FixtureNetwork::new(&store);
+                assert!(adapter
+                    .sign_in_using(
+                        &reopened,
+                        &CancellationToken::new(),
+                        |_| panic!(),
+                        &network,
+                        &secrets,
+                        true,
+                        |_, _| panic!()
+                    )
+                    .await
+                    .is_err());
+                assert_eq!(network.state.borrow().sign_ins, 0);
+            } else {
+                assert!(
+                    storage::read_private(&directory, Path::new(RECORD), 16 * 1024)
+                        .unwrap()
+                        .as_slice()
+                        == old_bytes.as_slice()
+                );
+                if fault != "archive_before" {
+                    assert!(
+                        adapter.foreground(&ticket, 42).is_err(),
+                        "archive-only persistence must not silently replay"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_rejects_corruption_and_collisions_before_current_write(
+    ) {
+        for mode in [
+            "malformed",
+            "unknown_version",
+            "empty",
+            "oversize",
+            "same_reference",
+            "same_epoch",
+            "invalid_settings",
+            "other_scope",
+        ] {
+            let (root, store, _secrets, first, first_ticket) = desktop_initial_recovery().await;
+            let adapter = CloudHostAdapter::fixture(&store);
+            let current = adapter.foreground(&first_ticket, 42).unwrap();
+            let old = current.record.clone();
+            store.cancel_enable(&current.record.ticket).unwrap();
+            adapter.reconcile(&CancellationToken::new()).await.unwrap();
+            let ticket = store
+                .request_enable(&store.snapshot().unwrap().settings)
+                .unwrap();
+            let directory = storage::private_directory(&root.path().join("host"), false).unwrap();
+            let before = storage::read_private(&directory, Path::new(RECORD), 16 * 1024).unwrap();
+            let mut record = serde_json::to_value(&first).unwrap();
+            let bytes = match mode {
+                "malformed" => b"{".to_vec(),
+                "unknown_version" => br#"{"version":2,"records":[]}"#.to_vec(),
+                "empty" => br#"{"version":1,"records":[]}"#.to_vec(),
+                "oversize" => vec![b' '; initial_authorization_history::MAX_BYTES + 1],
+                _ => {
+                    if mode == "same_reference" {
+                        record["credential"] = old.credential.clone().into();
+                    }
+                    if mode == "same_epoch" {
+                        record["ticket"]["epoch"] = old.ticket.epoch().into();
+                    }
+                    if mode == "invalid_settings" {
+                        record["ticket"]["approved_settings"]["friendly_name"] = "".into();
+                    }
+                    if mode == "other_scope" {
+                        record["os_user"] = "unrelated user".into();
+                    }
+                    // An archive-only old reference or epoch is not authority to
+                    // retry the publication, regardless of otherwise valid JSON.
+                    serde_json::to_vec(&serde_json::json!({"version":1,"records":[serde_json::to_string(&record).unwrap()]})).unwrap()
+                }
+            };
+            storage::replace_private(
+                &directory,
+                Path::new(initial_authorization_history::NAME),
+                &bytes,
+            )
+            .unwrap();
+            assert!(adapter.foreground(&ticket, 42).is_err(), "{mode}");
+            assert!(
+                storage::read_private(&directory, Path::new(RECORD), 16 * 1024)
+                    .unwrap()
+                    .as_slice()
+                    == before.as_slice()
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_desktop_initial_history_enforces_count_and_byte_caps_without_eviction() {
+        for byte_cap in [false, true] {
+            let (root, store, _secrets) = fixture_for_origin(Origin::Desktop);
+            let adapter = CloudHostAdapter::fixture(&store);
+            let mut previous = foreground(&adapter);
+            let count = if byte_cap {
+                initial_authorization_history::MAX_ENTRIES - 1
+            } else {
+                initial_authorization_history::MAX_ENTRIES
+            };
+            for _ in 0..count {
+                store.cancel_enable(&previous.record.ticket).unwrap();
+                adapter.reconcile(&CancellationToken::new()).await.unwrap();
+                previous = foreground(&adapter);
+            }
+            let directory = storage::private_directory(&root.path().join("host"), false).unwrap();
+            if byte_cap {
+                let bytes = storage::read_private(
+                    &directory,
+                    Path::new(initial_authorization_history::NAME),
+                    initial_authorization_history::MAX_BYTES,
+                )
+                .unwrap();
+                let mut history: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                for record in history["records"].as_array_mut().unwrap() {
+                    let mut padded = record.as_str().unwrap().to_string();
+                    padded.extend(std::iter::repeat_n(' ', 16 * 1024 - padded.len()));
+                    *record = padded.into();
+                }
+                storage::replace_private(
+                    &directory,
+                    Path::new(initial_authorization_history::NAME),
+                    &serde_json::to_vec(&history).unwrap(),
+                )
+                .unwrap();
+            }
+            store.cancel_enable(&previous.record.ticket).unwrap();
+            adapter.reconcile(&CancellationToken::new()).await.unwrap();
+            let ticket = store
+                .request_enable(&store.snapshot().unwrap().settings)
+                .unwrap();
+            if byte_cap {
+                let mut current = storage::read_private(&directory, Path::new(RECORD), 16 * 1024)
+                    .unwrap()
+                    .to_vec();
+                current.resize(16 * 1024, b' ');
+                storage::replace_private(&directory, Path::new(RECORD), &current).unwrap();
+            }
+            let before = storage::read_private(&directory, Path::new(RECORD), 16 * 1024).unwrap();
+            let archive = storage::read_private(
+                &directory,
+                Path::new(initial_authorization_history::NAME),
+                initial_authorization_history::MAX_BYTES,
+            )
+            .unwrap();
+            assert!(adapter.foreground(&ticket, 42).is_err());
+            assert!(
+                storage::read_private(&directory, Path::new(RECORD), 16 * 1024)
+                    .unwrap()
+                    .as_slice()
+                    == before.as_slice()
+            );
+            assert!(
+                storage::read_private(
+                    &directory,
+                    Path::new(initial_authorization_history::NAME),
+                    initial_authorization_history::MAX_BYTES
+                )
+                .unwrap()
+                .as_slice()
+                    == archive.as_slice()
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]

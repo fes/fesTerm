@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "7786339126db9b52980b29558531292d8d5b341d7d77aa1be6d884e94c4a75dd"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "36a0acdf12d3e1c08f50946c3dba6a4a81144f11f46605ad121d8b873f7fd0b6"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,6 +29,7 @@ Use for: When a local owner pass is required before host replacement or admin op
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Local approval binds the reviewed owner key and granted permissions
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs) — Read-only update record; no replacement authority or execution grant
+- [`foreground`](../../crates/festerm-host-setup/src/cloud.rs) — Binds approval and distinct initial Desktop reservations.
 
 Evidence:
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs) — Status-only local evidence never implies a ready or authorized state
