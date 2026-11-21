@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "3a33202d317dc19975c56a0d415b9f76abe151ccfaecc53a6ee5baf036f47587"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "75c39e14242bf7076a04eff4130ad6d26cac966aab0b538bd4863f461ff9bedc"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -55,8 +55,8 @@ Evidence:
 
 Caveats:
 - Config files store only IDs; never secret bytes, plain values, or key material.
-- Unsupported, missing, locked, or unavailable native storage is a first-class error.
-- Secret references are opaque and must remain canonical UUIDv4 strings.
+- Background updates never unlock or fall back to interactive methods.
+- Opaque canonical refs only; native no-UI qualification remains separate.
 
 ## File security
 
@@ -92,7 +92,8 @@ Caveats:
 Use for: Fresh Desktop purpose creation and retained update.
 
 - [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Captures same-Team Developer ID identities before consuming one purpose/reference.
-- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps HOST updates separate from ordinary accounts.
+- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps foreground and fenced renewal updates on the selected HOST item.
+- [`update_existing_noninteractive`](../../crates/festerm-secret-store/src/host_items.rs) — Checks the process fence before exact-item reopen and update.
 
 Evidence:
 - [`mac_host_item_creation_only_follows_proven_absence`](../../crates/festerm-unix-security/src/macos_keychain.rs) — Refuses error-to-create fallback.

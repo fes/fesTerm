@@ -6852,7 +6852,8 @@
         "docs/native-host-services.md#native-host-process-recovery",
         "docs/manual-validation.md#native-host-process-recovery-730",
         "docs/adr/0086-provider-authorized-ordinary-remoting.md#decision",
-        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision"
+        "docs/adr/0087-macos-sessiond-socket-addresses.md#decision",
+        "docs/adr/0016-native-secret-store-boundary.md#decision"
       ],
       "decisions": [
         "ADR-0084",
@@ -7202,7 +7203,20 @@
         "desktop_remote_access_unobserved_setup_renders_unknown_instead_of_disabled",
         "desktop_remote_access_native_timeout_classification_is_exact_and_preserves_contention",
         "desktop_remote_access_native_timeout_completion_keeps_primary_result_and_recovery",
-        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery"
+        "desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_renders_recovery",
+        "ordinary_observer_refresh_persists_before_ready_and_failed_write_or_cancel_refuses",
+        "ordinary_renewal_digest_refuses_changed_snapshot_and_cancelled_scope",
+        "prepared_publication_refuses_same_value_different_arc_or_cancelled_work",
+        "ordinary_serve_end_drains_inflight_native_work_before_context_ends",
+        "ordinary_failed_renewal_drains_workers_and_is_not_relay_retryable",
+        "noninteractive_update_requires_one_unlocked_item_and_never_retries",
+        "noninteractive_update_retains_existing_reference_and_refuses_missing_or_oversize",
+        "host_noninteractive_update_admits_before_open_and_preserves_single_attempt_failure",
+        "headless_fence_requires_successful_set_and_false_readback",
+        "headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses",
+        "ordinary_successful_maintenance_keeps_same_serving_future_live",
+        "readiness_diagnostic_is_bounded_per_static_reason_without_tick_noise",
+        "ordinary_readiness_reasons_and_inplace_renewal_roundtrip_runtime_history_privately"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

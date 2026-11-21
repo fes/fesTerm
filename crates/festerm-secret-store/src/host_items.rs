@@ -96,6 +96,20 @@ impl MacHostSecretItem {
             .map_err(map)?;
         Ok(Self { item, purpose })
     }
+    /// Dedicated noninteractive process only. Verify its installed no-UI fence
+    /// before opening the selected item; update retains that exact logical item
+    /// without a get/set upsert, ACL repair or missing-item recreation.
+    pub fn update_existing_noninteractive(
+        purpose: HostSecretPurpose,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        after_noninteractive_update_admission(
+            secret,
+            super::noninteractive::headless_keychain_fenced(),
+            || Self::open_existing(purpose, reference)?.update(secret),
+        )
+    }
     #[must_use]
     pub fn purpose(&self) -> HostSecretPurpose {
         self.purpose
@@ -108,6 +122,18 @@ impl MacHostSecretItem {
             .map_err(map)
     }
 }
+fn after_noninteractive_update_admission(
+    secret: &SecretBytes,
+    fenced: bool,
+    update: impl FnOnce() -> Result<(), SecretStoreError>,
+) -> Result<(), SecretStoreError> {
+    check_size(secret)?;
+    if !fenced {
+        return Err(SecretStoreError::Unsupported);
+    }
+    update()
+}
+
 fn map(error: keychain::Error) -> SecretStoreError {
     match error {
         keychain::Error::Missing => SecretStoreError::Missing,
@@ -125,6 +151,33 @@ mod tests {
     use super::*;
     static_assertions::assert_not_impl_any!(MacHostCreationContext: std::fmt::Debug, Send, Sync);
     static_assertions::assert_not_impl_any!(MacHostSecretItem: std::fmt::Debug, Send, Sync);
+    #[test]
+    fn host_noninteractive_update_admits_before_open_and_preserves_single_attempt_failure() {
+        let secret = SecretBytes::copy_from_slice(b"fixture");
+        assert_eq!(
+            after_noninteractive_update_admission(&secret, false, || panic!("no native open")),
+            Err(SecretStoreError::Unsupported)
+        );
+        let oversized = SecretBytes::copy_from_slice(&vec![0; super::super::MAX_SECRET_BYTES + 1]);
+        assert_eq!(
+            after_noninteractive_update_admission(&oversized, true, || panic!("no native open")),
+            Err(SecretStoreError::TooLarge)
+        );
+        let attempts = std::cell::Cell::new(0);
+        for error in [
+            SecretStoreError::Missing,
+            SecretStoreError::LockedOrUnavailable,
+        ] {
+            assert_eq!(
+                after_noninteractive_update_admission(&secret, true, || {
+                    attempts.set(attempts.get() + 1);
+                    Err(error)
+                }),
+                Err(error)
+            );
+        }
+        assert_eq!(attempts.get(), 2);
+    }
     #[test]
     fn host_item_creation_binding_retains_only_selected_purpose_and_reference() {
         let selected = SecretReference::generate();

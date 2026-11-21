@@ -1325,8 +1325,18 @@ async fn run_admitted(
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
     let helper = stage.sessiond_path()?;
+    let policy_log = RuntimeLog::new(state, record);
     let policy = Arc::new(
-        CurrentHostPolicySource::prepare(store.clone(), OwnerStorage::NativeVault, &cancel).await?,
+        CurrentHostPolicySource::prepare(
+            store.clone(),
+            OwnerStorage::NativeVault,
+            expected,
+            &cancel,
+        )
+        .await?
+        .with_diagnostic(Arc::new(move |event, error| {
+            policy_log.readiness(event, error);
+        })),
     );
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
@@ -1441,7 +1451,11 @@ impl RunningHost<'_> {
         let served = async {
             // Refresh the ready observer after relay credential refresh, before
             // accepting streams, without resetting aggregate runtime budgets.
-            let refreshed = self.policy.refresh(cancel).await;
+            let refreshed = self
+                .policy
+                .refresh(self.expected, cancel)
+                .await
+                .map_err(crate::cloud::terminal_ordinary_renewal);
             log.event(
                 DiagnosticPhase::PolicyRefresh,
                 if refreshed.is_ok() {
@@ -1463,7 +1477,13 @@ impl RunningHost<'_> {
             record.failure = None;
             persist_diagnostic(self.store, record, Some(&log))?;
             reached_runtime = true;
-            Ok::<_, io::Error>(self.runtime.clone().serve(&mut relay, cancel.clone()).await)
+            let serving_cancel = cancel.child_token();
+            let served = self
+                .runtime
+                .clone()
+                .serve(&mut relay, serving_cancel.clone());
+            let maintained = self.policy.maintain(self.expected, &serving_cancel);
+            serve_with_account_maintenance(served, maintained, &serving_cancel).await
         }
         .await;
         let before = (relay.failure_category(), relay.failure_disposition());
@@ -1483,6 +1503,33 @@ impl RunningHost<'_> {
             cancel,
         )
         .await
+    }
+}
+
+async fn serve_with_account_maintenance(
+    served: impl std::future::Future<Output = Result<(), festerm_tunnel_client::host_control::Error>>,
+    maintained: impl std::future::Future<Output = io::Result<()>>,
+    cancel: &CancellationToken,
+) -> io::Result<Result<(), festerm_tunnel_client::host_control::Error>> {
+    tokio::pin!(served, maintained);
+    tokio::select! {
+        biased;
+        result = &mut served => {
+            cancel.cancel();
+            // Cancellation cannot abort a native credential mutation. Retain
+            // its owner through completion, and never retry uncertain writes.
+            // Even cancellation may follow provider-side token rotation. It
+            // stays final here; only the existing OUTER explicit shutdown can
+            // normalize a typed cancellation to stopped, never relay recovery.
+            maintained.await?;
+            Ok(result)
+        }
+        result = &mut maintained => {
+            cancel.cancel();
+            let drained = served.await;
+            result?;
+            Ok(drained)
+        }
     }
 }
 
@@ -1668,6 +1715,130 @@ async fn supervise_with_diagnostics(
 mod tests {
     use super::*;
     use crate::lifecycle::{Binding, Origin, Settings};
+
+    #[tokio::test]
+    async fn ordinary_successful_maintenance_keeps_same_serving_future_live() {
+        let cancel = CancellationToken::new();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (renewed, replacement) = tokio::sync::oneshot::channel();
+        let progressed = std::cell::Cell::new(false);
+        let served = async {
+            started.send(()).unwrap();
+            replacement.await.unwrap();
+            assert!(
+                !cancel.is_cancelled(),
+                "successful renewal must not disconnect the relay"
+            );
+            progressed.set(true);
+            Ok(())
+        };
+        let maintained = async {
+            ready.await.unwrap();
+            renewed.send(()).unwrap();
+            cancel.cancelled().await;
+            Ok(())
+        };
+        assert!(matches!(
+            serve_with_account_maintenance(served, maintained, &cancel).await,
+            Ok(Ok(()))
+        ));
+        assert!(progressed.get());
+    }
+
+    #[tokio::test]
+    async fn ordinary_serve_end_drains_inflight_native_work_before_context_ends() {
+        use festerm_tunnel_client::host_control::Error;
+        let cancel = CancellationToken::new();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (finish, finished) = std::sync::mpsc::channel();
+        let drained = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished_flag = drained.clone();
+        let served = async {
+            ready.await.unwrap();
+            Err(Error::Closed)
+        };
+        let maintained = async {
+            crate::cloud::owned_blocking(move || {
+                started.send(()).unwrap();
+                finished.recv().unwrap();
+                finished_flag.store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            })
+            .await
+        };
+        let release = async {
+            cancel.cancelled().await;
+            assert!(!drained.load(std::sync::atomic::Ordering::Acquire));
+            finish.send(()).unwrap();
+        };
+        let (result, ()) = tokio::join!(
+            serve_with_account_maintenance(served, maintained, &cancel),
+            release
+        );
+        assert!(matches!(result, Ok(Err(Error::Closed))));
+        assert!(drained.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn ordinary_failed_renewal_drains_workers_and_is_not_relay_retryable() {
+        use festerm_tunnel_client::host_control::Error;
+        let cancel = CancellationToken::new();
+        let drained = std::cell::Cell::new(false);
+        let served = async {
+            cancel.cancelled().await;
+            drained.set(true);
+            Err(Error::Cancelled)
+        };
+        let original = crate::cloud::transient_relay("host.cloud_rate_limited");
+        let maintained = async { Err(crate::cloud::terminal_ordinary_renewal(original)) };
+        let error = serve_with_account_maintenance(served, maintained, &cancel)
+            .await
+            .unwrap_err();
+        assert!(drained.get());
+        assert!(!crate::cloud::is_transient_relay(&error));
+        assert_eq!(error.to_string(), "host.ordinary_account_renewal_failed");
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, expected, mut record) = reserve(&store).unwrap();
+        let log = RuntimeLog::new(&root.path().join("host"), &record);
+        let calls = std::cell::Cell::new(0);
+        let mut failure = Some(error);
+        let result = recover_relay_with_diagnostics(
+            &store,
+            &expected,
+            &mut record,
+            &CancellationToken::new(),
+            async |_| {
+                calls.set(calls.get() + 1);
+                finish_relay_attempt(
+                    &log,
+                    true,
+                    Err(failure.take().expect("no renewal replay")),
+                    (
+                        Some("host.outer_peer_disconnected"),
+                        Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient),
+                    ),
+                    async {
+                        (
+                            Ok(()),
+                            Some("host.outer_peer_disconnected"),
+                            Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient),
+                        )
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+            },
+            Some(&log),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            calls.get(),
+            1,
+            "successful relay drain cannot authorize credential refresh replay"
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn host_runtime_diagnostics_preserve_primary_cleanup_and_original_retry_policy() {
@@ -1896,6 +2067,52 @@ mod tests {
             ]
         );
         assert_eq!(store.snapshot().unwrap(), expected);
+    }
+
+    #[test]
+    fn ordinary_readiness_reasons_and_inplace_renewal_roundtrip_runtime_history_privately() {
+        use crate::ordinary::ReadinessEvent;
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, _, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let state = root.path().join("host");
+        let log = RuntimeLog::new(&state, &record);
+        let error = io::Error::other("PRIVATE token https://invalid.example/account");
+        for event in [
+            ReadinessEvent::OwnerDigestChanged,
+            ReadinessEvent::CloudDigestChanged,
+            ReadinessEvent::IdentityNotReadyBefore,
+            ReadinessEvent::IdentityNotReadyAfter,
+            ReadinessEvent::RenewalOk,
+            ReadinessEvent::RenewalError,
+        ] {
+            log.readiness(event, Some(&error));
+        }
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(
+            rows.iter().map(|row| row.phase).collect::<Vec<_>>(),
+            vec![
+                DiagnosticPhase::OrdinaryOwnerDigest,
+                DiagnosticPhase::OrdinaryCloudDigest,
+                DiagnosticPhase::OrdinaryIdentityBefore,
+                DiagnosticPhase::OrdinaryIdentityAfter,
+                DiagnosticPhase::OrdinaryRenewal,
+                DiagnosticPhase::OrdinaryRenewal
+            ]
+        );
+        assert_eq!(rows[4].outcome, DiagnosticOutcome::Ok);
+        assert_eq!(rows[5].outcome, DiagnosticOutcome::Error);
+        assert!(rows
+            .iter()
+            .all(|row| row.run_id.to_string() == record.run_id && row.epoch == record.epoch));
+        let text = std::fs::read_to_string(state.join("worker.log")).unwrap();
+        assert!(
+            !text.contains("PRIVATE")
+                && !text.contains("https://")
+                && !text.contains("invalid.example")
+        );
     }
 
     #[test]

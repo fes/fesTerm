@@ -20,6 +20,11 @@ pub enum Phase {
     RelayCleanup,
     PolicyWatch,
     HistoryPersist,
+    OrdinaryOwnerDigest,
+    OrdinaryCloudDigest,
+    OrdinaryIdentityBefore,
+    OrdinaryIdentityAfter,
+    OrdinaryRenewal,
 }
 impl Phase {
     pub fn code(self) -> &'static str {
@@ -30,6 +35,11 @@ impl Phase {
             Self::RelayCleanup => "relay_cleanup",
             Self::PolicyWatch => "policy_watch",
             Self::HistoryPersist => "history_persist",
+            Self::OrdinaryOwnerDigest => "ordinary_owner_digest_changed",
+            Self::OrdinaryCloudDigest => "ordinary_cloud_digest_changed",
+            Self::OrdinaryIdentityBefore => "ordinary_identity_not_ready_before",
+            Self::OrdinaryIdentityAfter => "ordinary_identity_not_ready_after",
+            Self::OrdinaryRenewal => "ordinary_inplace_renewal",
         }
     }
     fn parse(code: &str) -> Option<Self> {
@@ -40,6 +50,11 @@ impl Phase {
             Self::RelayCleanup,
             Self::PolicyWatch,
             Self::HistoryPersist,
+            Self::OrdinaryOwnerDigest,
+            Self::OrdinaryCloudDigest,
+            Self::OrdinaryIdentityBefore,
+            Self::OrdinaryIdentityAfter,
+            Self::OrdinaryRenewal,
         ]
         .into_iter()
         .find(|phase| phase.code() == code)
@@ -203,6 +218,32 @@ impl Log {
                 .filter(|id| id.to_string() == run.run_id),
         }
     }
+    pub(super) fn readiness(
+        &self,
+        event: crate::ordinary::ReadinessEvent,
+        error: Option<&io::Error>,
+    ) {
+        use crate::ordinary::ReadinessEvent;
+        let phase = match event {
+            ReadinessEvent::OwnerDigestChanged => Phase::OrdinaryOwnerDigest,
+            ReadinessEvent::CloudDigestChanged => Phase::OrdinaryCloudDigest,
+            ReadinessEvent::IdentityNotReadyBefore => Phase::OrdinaryIdentityBefore,
+            ReadinessEvent::IdentityNotReadyAfter => Phase::OrdinaryIdentityAfter,
+            ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError => Phase::OrdinaryRenewal,
+        };
+        self.event(
+            phase,
+            if event == ReadinessEvent::RenewalOk {
+                Outcome::Ok
+            } else {
+                Outcome::Error
+            },
+            error,
+            None,
+            None,
+        );
+    }
+
     pub(super) fn event(
         &self,
         phase: Phase,

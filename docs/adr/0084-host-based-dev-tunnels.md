@@ -112,6 +112,24 @@ Use detached launch and platform-specific process/job/service ownership that
 survives those components exiting. This is a lifetime guarantee, not a claim
 about identical OS process ancestry on every platform.
 
+Ordinary provider readiness is renewed by the serving controller outside wire
+admission deadlines. A replacement must retain the original run snapshot,
+owner/cloud digests, account/resource and route, then publish under the current
+protected lease only if the prepared Arc is still the expected one. It cannot
+adopt a newer lifecycle/settings scope. Refreshed credentials persist at the
+same native reference before publication, with no UI or interactive fallback.
+Successful renewal retains the relay and aggregate runtime budgets. Until a
+ready replacement is published, expired observers refuse admission. Failed or
+uncertain renewal cancels/drains owned work and preserves the existing relay
+cleanup and fail-closed result; it never replays refresh or a session operation.
+This closes a source-level cached-readiness gap; it does not establish the cause
+of any historical native refusal with unchanged protected file digests.
+The existing bounded runtime history records closed owner-digest, cloud-digest
+and identity-not-ready (before/after observation) reasons, once per reason and
+prepared observer. In-place renewal records success or error, never each timer
+tick; protected guards are released before logging. No expiry values, provider
+identifiers or error bodies are added, and history grants no readiness authority.
+
 Terminal attachments exist while used. Inventory may briefly query daemon
 metadata without acquiring a frontend lease or displacing a local attachment.
 Do not keep every terminal attached merely to display inventory. Preserve the
