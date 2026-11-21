@@ -1191,25 +1191,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                             // launchctl refusal whose outcome can be reconciled.
                             return Err(original);
                         }
-                        let owned = || {
-                            self.with_record(|directory, current| {
-                                if current != &snapshot
-                                    || self.read_registration(directory, current)?.as_ref()
-                                        != Some(&record)
-                                    || !definitions::check_file(&self.context, &record)?
-                                {
-                                    return Err(refused("host.service_stop_not_observed"));
-                                }
-                                Ok(())
-                            })
-                        };
-                        let absent = (|| {
-                            owned()?;
-                            if self.observe(&record)? != ProcessState::Absent {
-                                return Err(refused("host.service_stop_not_observed"));
-                            }
-                            owned()
-                        })();
+                        let absent =
+                            self.macos_stop_observation(&snapshot, &record, deadline, true);
                         if absent.is_ok() {
                             return Ok(observation(&snapshot, ProcessState::Absent));
                         }
@@ -1223,6 +1206,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 }
             }
         }
+        if self.context.platform == Platform::Macos {
+            return self.macos_stop_observation(&snapshot, &record, deadline, false);
+        }
         self.fence(epoch, Phase::StopRequested)?;
         let process = self.observe(&record)?;
         if !matches!(
@@ -1232,6 +1218,59 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_stop_not_observed"));
         }
         Ok(observation(&snapshot, process))
+    }
+
+    // The manager mutation is outside this loop. Retain its operation lease,
+    // captured consent and registration; retry only fresh read-only checks.
+    fn macos_stop_observation(
+        &self,
+        snapshot: &Snapshot,
+        record: &Registration,
+        deadline: std::time::Instant,
+        absent_only: bool,
+    ) -> io::Result<Observation> {
+        let owned = || {
+            self.with_record(|directory, current| {
+                if current != snapshot
+                    || self.read_registration(directory, current)?.as_ref() != Some(record)
+                    || !definitions::check_file(&self.context, record)?
+                {
+                    return Err(refused("host.service_stop_not_observed"));
+                }
+                Ok(())
+            })
+        };
+        loop {
+            let result = (|| {
+                owned()?;
+                let process = self.observe(record)?;
+                if (absent_only && process != ProcessState::Absent)
+                    || !matches!(
+                        process,
+                        ProcessState::Stopped | ProcessState::Failed | ProcessState::Absent
+                    )
+                {
+                    return Err(refused("host.service_stop_not_observed"));
+                }
+                owned()?;
+                Ok(observation(snapshot, process))
+            })();
+            match result {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    #[cfg(test)]
+                    tests::macos_stop_busy_observed();
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(error);
+                    }
+                    std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+                    if std::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                }
+                result => return result,
+            }
+        }
     }
 
     #[cfg(all(feature = "cloud", feature = "host-runtime"))]

@@ -3191,3 +3191,160 @@ fn native_service_macos_failed_bootout_preserves_error_without_exact_absence_pro
         ).count(), 1);
     }
 }
+
+thread_local! {
+    static MACOS_STOP_BUSY: RefCell<Option<std::sync::mpsc::SyncSender<()>>> = const { RefCell::new(None) };
+}
+
+pub(super) fn macos_stop_busy_observed() {
+    MACOS_STOP_BUSY.with(|slot| {
+        if let Some(signal) = slot.borrow_mut().take() {
+            let _ = signal.send(());
+        }
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_completed_bootout_waits_for_same_epoch_read_lease() {
+    struct ContendedBootout {
+        native: FakeRunner,
+        release: RefCell<Option<std::thread::JoinHandle<bool>>>,
+        held: RefCell<Option<Lease>>,
+        expired: bool,
+    }
+    impl CommandRunner for ContendedBootout {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let output = self.native.execute(request)?;
+            if matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+            {
+                let directory =
+                    storage::private_directory(self.native.receipt.parent().unwrap(), false)?;
+                let lease = Lease::exclusive(storage::open_private_file(
+                    &directory,
+                    Path::new("host-lifecycle.lock"),
+                    false,
+                )?)?;
+                if self.expired {
+                    *self.held.borrow_mut() = Some(lease);
+                } else {
+                    let (send, receive) = std::sync::mpsc::sync_channel(1);
+                    MACOS_STOP_BUSY.with(|slot| *slot.borrow_mut() = Some(send));
+                    *self.release.borrow_mut() = Some(std::thread::spawn(move || {
+                        // Hold until the actual post-stop read returns Busy.
+                        // A missing notification has bounded cleanup and fails
+                        // the assertion, never silently becoming a timed release.
+                        let observed = receive
+                            .recv_timeout(std::time::Duration::from_secs(5))
+                            .is_ok();
+                        drop(lease);
+                        observed
+                    }));
+                }
+            }
+            Ok(output)
+        }
+    }
+    for expired in [false, true] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Macos);
+        base.install(&stage, snapshot.epoch).unwrap();
+        base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+        store.revoke().unwrap();
+        let revoked = store.snapshot().unwrap();
+        let receipt = std::fs::read(&base.runner.receipt).unwrap();
+        let manager = Services {
+            store: &store,
+            state: base.state,
+            context: base.context,
+            runner: ContendedBootout {
+                native: base.runner,
+                release: RefCell::new(None),
+                held: RefCell::new(None),
+                expired,
+            },
+        };
+        let result = if expired {
+            manager.stop_once(revoked.epoch, std::time::Instant::now())
+        } else {
+            manager.stop(revoked.epoch)
+        };
+        MACOS_STOP_BUSY.with(|slot| drop(slot.borrow_mut().take()));
+        if let Some(release) = manager.runner.release.borrow_mut().take() {
+            assert!(
+                release.join().unwrap(),
+                "actual WouldBlock branch must release the holder"
+            );
+        }
+        drop(manager.runner.held.borrow_mut().take());
+        if expired {
+            let error = result.err().unwrap();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert_eq!(error.to_string(), "host.installation_busy");
+        } else {
+            assert_eq!(result.unwrap().process, ProcessState::Absent);
+        }
+        assert_eq!(store.snapshot().unwrap(), revoked);
+        assert_eq!(
+            std::fs::read(&manager.runner.native.receipt).unwrap(),
+            receipt
+        );
+        assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request|
+        matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+    ).count(), 1);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_completed_bootout_refuses_changed_post_stop_proof() {
+    struct CompletedBootout<'a>(FailedBootoutRunner<'a>);
+    impl CommandRunner for CompletedBootout<'_> {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let mut output = self.0.execute(request)?;
+            if matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+            {
+                output.success = true;
+                output.code = 0;
+            }
+            Ok(output)
+        }
+    }
+    for mode in [
+        FailedBootout::Running,
+        FailedBootout::ForeignDefinition,
+        FailedBootout::MissingDefinition,
+        FailedBootout::ChangedReceipt,
+        FailedBootout::ChangedEpoch,
+        FailedBootout::ObservationError,
+        FailedBootout::ChangedEpochAfterObservation,
+        FailedBootout::ForeignDefinitionAfterObservation,
+    ] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Macos);
+        base.install(&stage, snapshot.epoch).unwrap();
+        base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+        store.revoke().unwrap();
+        let revoked = store.snapshot().unwrap();
+        let manager = failed_bootout_fixture(&store, base, mode);
+        let manager = Services {
+            store: manager.store,
+            state: manager.state,
+            context: manager.context,
+            runner: CompletedBootout(manager.runner),
+        };
+        assert!(manager.stop(revoked.epoch).is_err());
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert_eq!(manager.runner.0.native.state.borrow().calls.iter().filter(|request|
+            matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+        ).count(), 1);
+    }
+}

@@ -6301,3 +6301,20 @@ GitHub sign-in and reviewed Enable, then opt in the Remote profile and enable
 shell creation. Preserve existing durable actors and account metadata. Keep
 already-incomplete roots for manual review; this fix does not adopt or reset
 them. A portable lifecycle regression is not native GUI/provider acceptance.
+
+### macOS Disable after post-stop contention
+
+Status: deterministic source regression coverage; corrected native check pending.
+The signed 0.17.18 GUI stopped its older HOST at epoch 8 but returned a finite
+busy error, leaving StopRequested8 and runtime Stopped7. Its original daemon,
+shell births and full catalog survived normal GUI exit. The observer's unknown
+reason does not establish which lifecycle acquisition failed.
+
+With the corrected signed build, complete the existing pending Disable through
+supported review once, retaining its epoch and binding. Separately Enable, then
+confirm Disable once and preserve its first result before any Refresh or
+Recovery. Require native stop and actual Disabled completion, unchanged durable
+actors/catalog and fresh I/O after separate re-enable. Capture the finite
+`host.disable_completion` event on any failure; `installation_busy` now has an
+exact closed reason. Do not count the portable post-bootout contention fixture
+as native acceptance or as proof that final controller commit contention is fixed.
