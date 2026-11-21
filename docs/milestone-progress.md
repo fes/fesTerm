@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Wiring transactional JavaScript saves without exposing storage
+
+The JavaScript program worker now receives only opaque save slots, bounded
+typed values and operation IDs. The application owns the reviewed namespace,
+exclusive writer and schema policy; Start and Resume are distinct commands, and
+future/corrupt/unapproved saves fail without publication. Explicit schema
+migration reconciles uncertain durable state first, writes a recoverable
+pre-migration envelope and then publishes the reviewed replacement. Delivery
+fences cover storage admission, while full output queues release their permit
+before waiting so normal dequeue and close cannot deadlock. No path, picker,
+filesystem handle, generic save registry or workspace migration crossed into
+the program.
+
+## Adding the narrow JavaScript host-services boundary
+
+Terminal programs now keep the synchronous developer echo entry compatible
+while supporting an async `main` with one ordered terminal event stream. A
+reviewed manifest freezes opaque asset IDs together with byte length, digest and
+the actual bytes, so later path reads cannot substitute content. The worker can
+use only bounded `assets.read`, wall-clock `clock.now` and cancellable monotonic
+`clock.sleep`; typed, generation-bound host calls have bounded outstanding
+state and fence-checked result delivery. Saves, pickers and arbitrary
+filesystem/network authority remain explicitly absent. The repository-owned
+async fixture and confined-process test cover asset access, sleep, split UTF-8
+input, cancellation, late results, sleeps longer than a JavaScript turn,
+ambient-clock denial and normal completion without a false running state.
+
 ## Restoring mobile HOST review routes
 
 The post-redesign screenshot inventory omitted several older HOST review
@@ -5970,19 +5997,43 @@ native handoff, leases, human takeover and broker integration for SSH targets
 and real-target lifecycle evidence remain open. Text-mode SFTP, sessiond,
 tunnels and serial still refuse automation reservations.
 
-## Proposed automation authoring, application hooks and debugging
+## Partial native workflow authoring, with hooks and debugging proposed
+
+The authoring slice now also distinguishes source files, registered immutable
+artifacts and approved runs. **Register…** is explicit and available only after
+a local workflow is saved; it copies the canonical snapshot into a bounded
+private digest-addressed registry. Settings lists those entries, Review Run
+loads only the managed artifact through the existing native approval path, and
+normal startup restores inert metadata without workers, grants or source-path
+fallbacks. Removing an entry never modifies the editor source.
+
+`--safe-mode` and About's **Restart in Safe Mode…** dominate persisted MCP and
+JavaScript opt-ins for that process, preserve configuration/files/registry,
+disable automation initialization and retain inert editor validation. The
+restart route uses ordinary dirty-document and live-session confirmation.
 
 Beyond the shipped desktop JavaScript workflow beta, which runs one bundle
-captured in Settings, the automation proposal now specifies workflow authoring
-in the existing native editor, explicit immutable-version Run/Stop/status and a
+captured in Settings, the first `AUT-10` authoring subset now creates dirty
+untitled `.workflow.json` drafts, opens local workflow sources and validates
+dirty buffers in the existing native editor. This reuses the beta's JSON
+`SourceSnapshot` and `ApprovedBundle` validation, including while execution is
+disabled, without Settings capture, broker commands or execution authority.
+The authoring actions live only in More actions; opening is one atomic state
+command, `*.workflow.json` is visibly marked as `WORKFLOW`, and generic JSON
+remains ordinary. Validation runs off the UI thread and discards stale results
+after edits. The per-view marker survives ordinary Save As, duplicate and
+window moves, and measured headless containment keeps Validate visible at both
+752 and 360 px.
+
+The remaining proposal specifies explicit immutable-version Run/Stop/status and a
 discoverable catalog of application event attachment points. Editor runs reuse
 the beta's intake validation, native Run review and Stop path. Saving is not
 execution; configuring a binding is not arming it. Automatic lifecycle hooks
 retain a separate P4 authority, lifecycle, disclosure and bounded-delivery gate.
 Static built-in API completion and broader typed UI control come later.
-ADR 0065, the action graph (`AUT-10` through `AUT-12`) and deferred validation
-inventory (`AUTO-06` through `AUTO-08`) remain aligned; none of this implements
-or enables these surfaces or accepts the Proposed ADR.
+ADR 0065, the action graph (`AUT-10` through `AUT-12`) and validation inventory
+(`AUTO-06` through `AUTO-08`) remain aligned: `AUT-10` is partial only for
+authoring. Execution, status, hooks, completion and Debug remain unimplemented.
 
 The same proposal includes an explicit script Debug mode: source breakpoints,
 stepping, call stacks and read-only variable inspection in the reused editor.
@@ -15767,3 +15818,77 @@ vocabulary: Terminal, Keyboard (default keyboard, split and haptics merged),
 Security (App lock and Trusted hosts), Dev Tunnels, Recording and About, which
 now holds the offline demo. No defaults changed. Each of these behaviours is
 covered by a focused test.
+
+## Running a JavaScript program in its own terminal tab
+
+ADR 0088 separated own-terminal JavaScript programs from the existing
+automation workflow API: `sendText` controls another session, while a program
+must own an input/event stream, terminal dimensions and its display output.
+The first implementation keeps the distinction concrete with a separate
+manifest/protocol, a `JavaScriptSession` backend and a default-off developer
+echo program.
+
+The desktop developer slice now runs the frozen QuickJS bundle through an
+install-owned worker process. It has no automation target, no terminal-backend
+reply ownership and no local-file origin. Input, resize, output, stale
+generations, backpressure and cooperative close travel through the ordinary
+bounded `SessionController`; the app remains the only terminal writer. The
+command-palette route uses one centralized typed command, and focused tests
+prove real QuickJS state plus the normal-tab route. A direct in-process runtime
+remains test-only so application tests do not need to spawn the test harness as
+a worker.
+
+The authority slice now makes launch review a typed application-owned boundary:
+`JavaScriptProgramLaunch` carries the reviewed developer digest, API and exact
+terminal-only capability set plus a fresh worker generation. A central launch
+waits for OS privacy monitoring and passes one application-owned fence through
+the process runtime and session. Every process write, worker result, session
+queue publication and terminal delivery rechecks it. Privacy loss cancels and
+reaps the worker and discards output already waiting in session queues; the
+game path does not borrow an automation target, recording grant or local-file
+origin. The owned macOS development launcher exposes this only through an
+explicit `--feature javascript-program-dev` build choice while keeping its
+isolated profile directories.
+
+This is not production enablement. Interactive native CPU policy, packaged
+confinement, native privacy-event timing, keyboard/IME/paste usability,
+multi-window lifecycle and packaged filesystem/privacy qualification remain
+JSP-01/JSP-04 work. TradeWars rules, assets and provenance are a separate game
+implementation, not evidence supplied by the terminal host.
+
+The save-storage prerequisite now has a bounded core implementation. It owns
+opaque program, universe and slot identities; one exclusive writer lease; a
+single versioned envelope; revision and operation checks; payload digests; and
+atomic private publication with explicit uncertain-outcome recovery. Fault
+tests cover the publication cut. The save-integration layer above it now binds
+that core to one reviewed developer fixture, explicit Start/Resume launch
+parameters, opaque worker calls and recoverable schema migration. It still
+does not expose a general storage registry or infer a dirty heap.
+
+The lifecycle layer completes the portable ownership chain. One application
+coordinator is shared by every window and counts pending, running and closing
+programs against a four-program/512 MiB developer proxy; an independent
+supervisor quota refuses before process spawn while leaving automation
+unchanged. Tabs move by identity rather than creating a generation or writer.
+Normal close has bounded cooperative save settlement and force/reap; aggregate
+quit uses one deadline. Privacy loss is intentionally harsher: it suppresses
+queued delivery, skips checkpointing and releases the writer only after
+termination. A modeled runtime-exit wake proves session cleanup starts without
+input, and a separate storage fixture proves release/reopen retains confirmed
+data. These are not yet a single process-crash→fresh-runtime Resume proof;
+real process crash and power-loss behavior remain unqualified. Remaining packaged, real-OS timing,
+actual-memory/CPU and GUI/native usability evidence stays unaccepted.
+
+The local TradeWars port then exposed the remaining integration assumptions:
+Node-relative module imports had to be frozen to canonical snapshot paths, and
+QuickJS has no ambient `TextDecoder`. A deterministic packer and portable
+incremental decoder now run the same game through both the in-process test
+runtime and the confined program worker. Save state is not a broad extension
+filesystem: Settings registers the approved bundle digest, defaults persistence
+off, exposes a 4/8/12 KiB JSON-byte cap and provides digest-bound reveal/delete
+actions. The app translates each TW2K2 checkpoint through the existing typed
+load/commit/revision/operation protocol. Headless production-renderer captures
+drive login, movement, resize and save, and explicit Resume restores the
+confirmed checkpoint. This establishes local interactive compatibility only;
+the independently reviewed game provenance, native packaged path and full
+platform qualification remain outside this slice.

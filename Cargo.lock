@@ -2370,6 +2370,7 @@ dependencies = [
  "festerm-enterprise",
  "festerm-host-protocol",
  "festerm-host-setup",
+ "festerm-javascript-session",
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",
@@ -2686,6 +2687,14 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "zeroize",
+]
+
+[[package]]
+name = "festerm-javascript-session"
+version = "0.17.14"
+dependencies = [
+ "festerm-automation-js",
+ "festerm-session",
 ]
 
 [[package]]

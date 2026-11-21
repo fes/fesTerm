@@ -21,6 +21,8 @@ mod host_tests;
 mod remote_tests;
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "javascript-program-dev")]
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc::{self, Receiver, TryRecvError},
@@ -47,6 +49,12 @@ use festerm_core::{
     TerminalTextSnapshotScreen,
 };
 use festerm_document::{DocumentId, RemoteOrigin, SaveOutcome, TextDocument};
+#[cfg(feature = "javascript-program-dev")]
+use festerm_javascript_session::JavaScriptSession;
+#[cfg(all(feature = "javascript-program-dev", not(test)))]
+use festerm_javascript_session::ProcessJavaScriptRuntime;
+#[cfg(all(feature = "javascript-program-dev", test))]
+use festerm_javascript_session::QuickJsJavaScriptRuntime;
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
     default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
@@ -55,10 +63,10 @@ use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
     AutomationEpoch, HostKeyPrompt, PasswordPrompt, ReserveAutomationInputError,
-    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
-    SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
-    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
-    SshPortForwardState, TerminalSize,
+    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventDelivery,
+    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionSendError,
+    SessionTryReceiveError, ShutdownError, ShutdownResult, SshPortForwardDirection,
+    SshPortForwardRuntime, SshPortForwardState, TerminalSize,
 };
 use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
@@ -94,6 +102,23 @@ use crate::text_editor::TextEditorTab;
 const TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX: &str = "terminal-history";
 const NEW_TEXT_DOCUMENT_NAME_PREFIX: &str = "Untitled";
 const NEW_TEXT_DOCUMENT_LABEL: &str = "New unsaved file";
+const NEW_WORKFLOW_DOCUMENT_NAME_PREFIX: &str = "Untitled-Workflow";
+const NEW_WORKFLOW_DOCUMENT_LABEL: &str = "New unsaved JavaScript workflow";
+pub(crate) const MINIMAL_JAVASCRIPT_WORKFLOW: &str = r#"{
+  "manifest": {
+    "version": 1,
+    "apiVersion": 1,
+    "name": "untitled-workflow",
+    "entry": "main.js",
+    "modules": ["main.js"],
+    "parameters": {},
+    "capabilities": []
+  },
+  "modules": {
+    "main.js": "export async function main() {\n  return;\n}\n"
+  }
+}
+"#;
 
 /// Stable application-level tab identifier.
 ///
@@ -173,6 +198,8 @@ pub enum ApplicationSession {
     Ssh(SshSession),
     Sftp(SftpTerminalSession),
     Serial(SerialSession),
+    #[cfg(feature = "javascript-program-dev")]
+    JavaScript(JavaScriptSession),
     #[cfg(test)]
     TestSsh(crate::session_controller::fake::FakeSshSession),
     #[cfg(test)]
@@ -297,6 +324,26 @@ impl std::fmt::Display for ConfiguredSshProfileLaunchError {
 impl std::error::Error for ConfiguredSshProfileLaunchError {}
 
 impl ApplicationSession {
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn is_javascript(&self) -> bool {
+        matches!(self, Self::JavaScript(_))
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_cleanup_complete(&self) -> bool {
+        match self {
+            Self::JavaScript(session) => session.cleanup_complete(),
+            _ => true,
+        }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn force_javascript_shutdown(&self) {
+        if let Self::JavaScript(session) = self {
+            session.force_shutdown();
+        }
+    }
+
     fn take_recovered_terminal_deferred(&self) -> Option<Terminal> {
         match self {
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -305,6 +352,8 @@ impl ApplicationSession {
                 session.take_recovered_terminal_deferred()
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.take_recovered_terminal(),
             #[cfg(test)]
@@ -326,6 +375,8 @@ impl ApplicationSession {
                 session.recovery_protocol_is_authoritative()
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => false,
             #[cfg(test)]
             Self::TestSsh(session) => session.recovery_protocol_is_authoritative(),
             #[cfg(test)]
@@ -348,6 +399,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
             }
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
@@ -374,6 +427,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(PasswordResolutionError::NotRemoteSession)
             }
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => return Err(PasswordResolutionError::NotRemoteSession),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => {
                 return Err(PasswordResolutionError::NotRemoteSession)
@@ -428,6 +483,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Ok(()),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Ok(()),
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => Ok(()),
         }
@@ -448,6 +505,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => false,
         }
     }
 
@@ -469,6 +528,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -495,6 +556,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -513,6 +576,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Sftp(_)
             | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -531,6 +596,8 @@ impl ApplicationSession {
             | Self::DevTunnel(_)
             | Self::Ssh(_)
             | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
             #[cfg(test)]
@@ -545,6 +612,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.verified_host_key_fingerprint(),
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_fingerprint(),
             #[cfg(test)]
@@ -559,6 +628,8 @@ impl ApplicationSession {
             Self::Ssh(session) => Some(session.remote_file_requestor()),
             Self::Sftp(session) => Some(session.remote_file_requestor()),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(_) => None,
             #[cfg(test)]
             Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
@@ -579,6 +650,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.id(),
             Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.id(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.id(),
         }
@@ -593,6 +666,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.lifecycle(),
             Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.lifecycle(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.lifecycle(),
         }
@@ -607,6 +682,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.automation_epoch(),
             Self::Sftp(session) => session.automation_epoch(),
             Self::Serial(session) => session.automation_epoch(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.automation_epoch(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.automation_epoch(),
         }
@@ -621,6 +698,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.metrics(),
             Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.metrics(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.metrics(),
         }
@@ -635,6 +714,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_send_input(bytes),
             Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_send_input(bytes),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_send_input(bytes),
         }
@@ -664,6 +745,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_resize(size),
             Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_resize(size),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_resize(size),
         }
@@ -678,6 +761,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_shutdown(),
             Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_shutdown(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_shutdown(),
         }
@@ -713,9 +798,21 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.try_recv_event(),
             Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.try_recv_event(),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.try_recv_event(),
         }
+    }
+
+    fn try_recv_event_with_permit(
+        &self,
+    ) -> Result<SessionEventDelivery<'_>, SessionTryReceiveError> {
+        #[cfg(feature = "javascript-program-dev")]
+        if let Self::JavaScript(session) = self {
+            return session.try_recv_event_with_permit();
+        }
+        self.try_recv_event().map(SessionEventDelivery::new)
     }
 
     fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
@@ -727,6 +824,8 @@ impl Session for ApplicationSession {
             Self::Ssh(session) => session.shutdown(timeout),
             Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
+            #[cfg(feature = "javascript-program-dev")]
+            Self::JavaScript(session) => session.shutdown(timeout),
             #[cfg(test)]
             Self::TestSsh(session) | Self::TestLocal(session) => session.shutdown(timeout),
         }
@@ -803,6 +902,7 @@ pub struct SessionTab {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LiveSessionCounts {
     pub local: usize,
+    pub javascript: usize,
     pub ssh: usize,
     pub serial: usize,
     pub powershell: usize,
@@ -810,7 +910,7 @@ pub struct LiveSessionCounts {
 
 impl LiveSessionCounts {
     pub const fn total(&self) -> usize {
-        self.local + self.ssh + self.serial + self.powershell
+        self.local + self.javascript + self.ssh + self.serial + self.powershell
     }
 }
 
@@ -854,6 +954,8 @@ pub enum InspectorTransport {
         stop_bits: festerm_config::SerialStopBits,
         flow_control: festerm_config::SerialFlowControl,
     },
+    #[cfg(feature = "javascript-program-dev")]
+    JavaScript { name: String },
 }
 
 /// Non-secret durable-session facts surfaced to application chrome.
@@ -877,6 +979,8 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
         InspectorTransport::Sftp { .. }
         | InspectorTransport::Serial { .. }
         | InspectorTransport::DevTunnel { .. } => None,
+        #[cfg(feature = "javascript-program-dev")]
+        InspectorTransport::JavaScript { .. } => None,
     }?;
     Some(format!(
         "{} · {}",
@@ -1334,6 +1438,98 @@ impl SessionTab {
             launch_secondary,
             None,
             None,
+        )
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_program(
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+        launch: festerm_javascript_session::JavaScriptProgramLaunch,
+        fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence>,
+        storage_setting: Option<festerm_config::JavaScriptProgramStorageSettings>,
+    ) -> Self {
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let size = terminal_size(dimensions).expect("default dimensions fit terminal limits");
+        let storage = if launch
+            .capabilities()
+            .contains(&festerm_automation_js::program::ProgramCapability::StorageLoad)
+        {
+            crate::javascript_program_storage::application_data_root()
+                .map(|root| {
+                    if launch.program().manifest().name == "developer-save-fixture" {
+                        Arc::new(
+                            crate::javascript_program_storage::ReviewedDeveloperStorageHost::from_application_data(
+                                root,
+                                launch.params().mode,
+                            ),
+                        ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    } else if let Some(setting) = storage_setting.filter(|setting| {
+                        setting.digest() == launch.digest() && setting.allowed()
+                    }) {
+                        Arc::new(
+                            crate::javascript_program_storage::ReviewedDeveloperStorageHost::for_program(
+                                root,
+                                launch.digest(),
+                                launch.params().mode,
+                                setting.max_bytes() as usize,
+                            ),
+                        ) as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    } else {
+                        Arc::new(festerm_javascript_session::UnavailableProgramStorage)
+                            as Arc<dyn festerm_javascript_session::ProgramStorageHost>
+                    }
+                })
+                .ok_or_else(|| {
+                    festerm_javascript_session::JavaScriptSessionError::Runtime(
+                        festerm_javascript_session::JavaScriptRuntimeError::new(
+                            "Program save storage root is unavailable.",
+                        ),
+                    )
+                })
+        } else {
+            Ok(
+                Arc::new(festerm_javascript_session::UnavailableProgramStorage)
+                    as Arc<dyn festerm_javascript_session::ProgramStorageHost>,
+            )
+        };
+        #[cfg(test)]
+        let runtime = storage.and_then(|storage| {
+            QuickJsJavaScriptRuntime::reviewed_with_storage(launch.clone(), storage)
+        });
+        #[cfg(not(test))]
+        let runtime = storage.and_then(|storage| {
+            ProcessJavaScriptRuntime::current_executable_reviewed_with_storage(
+                launch.clone(),
+                fence.clone(),
+                storage,
+            )
+        });
+        let result = runtime.and_then(|runtime| {
+            JavaScriptSession::start_with_authority(runtime, size, make_notifier(context), fence)
+        });
+        let result = result.map(ApplicationSession::JavaScript);
+        Self::from_session_result(
+            result,
+            dimensions,
+            SessionResultMeta {
+                label: if launch
+                    .capabilities()
+                    .contains(&festerm_automation_js::program::ProgramCapability::StorageLoad)
+                {
+                    "JavaScript Save (developer)"
+                } else {
+                    "JavaScript Echo (developer)"
+                },
+                launch_secondary: Some("JavaScript terminal program · developer".into()),
+                profile_identifier: None,
+                session_name: "JavaScript program",
+                inspector_transport: InspectorTransport::JavaScript {
+                    name: launch.program().manifest().name.clone(),
+                },
+                ssh_password_retry: None,
+            },
         )
     }
 
@@ -2135,6 +2331,8 @@ impl SessionTab {
                     .map(|(remote, _)| remote),
             })),
             InspectorTransport::Serial { .. } => None,
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => None,
         }
     }
 
@@ -2213,6 +2411,8 @@ impl SessionTab {
             InspectorTransport::Local { .. } if cfg!(windows) => "Local · Windows",
             InspectorTransport::Local { .. } if cfg!(target_os = "macos") => "Local · macOS",
             InspectorTransport::Local { .. } => "Local · Linux",
+            #[cfg(feature = "javascript-program-dev")]
+            InspectorTransport::JavaScript { .. } => "JavaScript · Developer",
         }
     }
 
@@ -2245,6 +2445,8 @@ impl SessionTab {
             (_, ChipStatus::Failed) => "Failed",
             (_, ChipStatus::Exited) => "Exited",
             (InspectorTransport::Local { .. }, ChipStatus::Connected) => "Running",
+            #[cfg(feature = "javascript-program-dev")]
+            (InspectorTransport::JavaScript { .. }, ChipStatus::Connected) => "Running",
             (
                 InspectorTransport::Ssh { .. }
                 | InspectorTransport::Sftp { .. }
@@ -2417,6 +2619,8 @@ impl SessionTab {
             | Some(ApplicationSession::Sftp(_))
             | Some(ApplicationSession::Serial(_))
             | None => false,
+            #[cfg(feature = "javascript-program-dev")]
+            Some(ApplicationSession::JavaScript(_)) => false,
         }
     }
 
@@ -2811,6 +3015,7 @@ pub enum AppCommand {
     /// Opens the shared file picker. The composition root routes Markdown to
     /// editor Preview and other bounded text to Edit.
     OpenMarkdownWorkspace,
+    OpenJavaScriptWorkflowEditorPicker,
     OpenLocalMarkdownFile {
         path: PathBuf,
         /// Legacy caller context retained for command compatibility. Local
@@ -2862,6 +3067,17 @@ pub enum AppCommand {
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
+    #[cfg(feature = "javascript-program-dev")]
+    #[allow(dead_code)]
+    StartJavaScriptProgram,
+    #[cfg(feature = "javascript-program-dev")]
+    StartJavaScriptSave {
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    },
+    #[cfg(feature = "javascript-program-dev")]
+    StartTw2k2 {
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    },
     /// Starts one transient local session from explicit launcher metadata
     /// without creating or recording a saved profile.
     StartLocalSessionWithProfile {
@@ -2971,6 +3187,12 @@ pub enum AppCommand {
     },
     /// Opens a new empty untitled document in the native editor.
     NewTextDocument,
+    NewJavaScriptWorkflowDraft,
+    OpenJavaScriptWorkflowSource {
+        path: PathBuf,
+    },
+    ValidateJavaScriptWorkflowSource,
+    RegisterJavaScriptWorkflowSource,
     /// Freezes the active terminal's retained text into a new independent
     /// editor snapshot.
     OpenTerminalHistoryInEditor,
@@ -3225,6 +3447,15 @@ pub enum AppCommand {
     ToggleAutomaticUpdateChecks,
     ToggleMcpEnabled,
     ToggleJavascriptEnabled,
+    SetJavaScriptProgramStorage(festerm_config::JavaScriptProgramStorageSettings),
+    DeleteJavaScriptProgramStorage {
+        #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
+        digest: String,
+    },
+    RevealJavaScriptProgramStorage {
+        #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
+        digest: String,
+    },
     RetryAutomationSettings,
     OpenWorkflowPicker,
     Automation(crate::automation::NativeCommand),
@@ -3544,6 +3775,140 @@ struct PendingNativeTermination {
     handle: std::thread::JoinHandle<()>,
 }
 
+#[cfg(feature = "javascript-program-dev")]
+struct PendingJavaScriptProgram {
+    target: TabId,
+    launch_generation: u64,
+    launch: festerm_javascript_session::JavaScriptProgramLaunch,
+    dimensions: Option<Dimensions>,
+    privacy_task: crate::recording_privacy::PrivacyTask,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    delivery_gate: Arc<Mutex<()>>,
+    delivery_wake: Arc<dyn Fn() + Send + Sync>,
+    lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
+    storage_setting: Option<festerm_config::JavaScriptProgramStorageSettings>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+pub(crate) fn tw2k2_program_from_environment(
+) -> Result<festerm_automation_js::program::ApprovedProgram, String> {
+    let path = std::env::var_os("FESTERM_TW2K2_SNAPSHOT").ok_or_else(|| {
+        "Set FESTERM_TW2K2_SNAPSHOT to a reviewed TW2K2 snapshot before launching.".to_owned()
+    })?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Could not read the TW2K2 snapshot: {error}"))?;
+    let snapshot =
+        serde_json::from_slice::<festerm_automation_js::program::ProgramSourceSnapshot>(&bytes)
+            .map_err(|error| format!("The TW2K2 snapshot is invalid: {error}"))?;
+    festerm_automation_js::program::ApprovedProgram::new(snapshot)
+        .map_err(|_| "The TW2K2 snapshot does not satisfy fesTerm's bounds.".to_owned())
+}
+
+#[cfg(feature = "javascript-program-dev")]
+struct JavaScriptProgramFence {
+    launch_generation: u64,
+    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    delivery_gate: Arc<Mutex<()>>,
+    delivery_wake: Arc<dyn Fn() + Send + Sync>,
+    _privacy: crate::recording_privacy::PrivacyGuard,
+    _lease: Arc<crate::javascript_program_lifecycle::JavaScriptProgramLease>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+struct JavaScriptProgramPermit<'a> {
+    permit: Option<std::sync::MutexGuard<'a, ()>>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+impl Drop for JavaScriptProgramPermit<'_> {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        (self.wake)();
+    }
+}
+
+#[cfg(feature = "javascript-program-dev")]
+struct RetiringJavaScriptProgram {
+    controller: SessionController<ApplicationSession>,
+}
+
+#[cfg(feature = "javascript-program-dev")]
+impl festerm_javascript_session::ProgramDeliveryFence for JavaScriptProgramFence {
+    fn release(&self) {
+        self._lease.release();
+        (self.delivery_wake)();
+    }
+
+    fn is_live(&self, worker_generation: u64) -> bool {
+        worker_generation == self.launch_generation
+            && !self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            && self._lease.is_live()
+            && !self._privacy.is_lost()
+    }
+
+    fn try_enter(
+        &self,
+        worker_generation: u64,
+    ) -> Result<
+        Option<Box<dyn festerm_javascript_session::ProgramDeliveryPermit + '_>>,
+        festerm_automation_js::Error,
+    > {
+        let permit = self
+            .delivery_gate
+            .lock()
+            .map_err(|_| festerm_automation_js::Error::DisclosureRevoked)?;
+        if worker_generation != self.launch_generation
+            || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            || !self._lease.is_live()
+            || self._privacy.is_lost()
+        {
+            Err(festerm_automation_js::Error::DisclosureRevoked)
+        } else {
+            Ok(Some(Box::new(JavaScriptProgramPermit {
+                permit: Some(permit),
+                wake: self.delivery_wake.clone(),
+            })))
+        }
+    }
+
+    fn try_enter_now(
+        &self,
+        worker_generation: u64,
+    ) -> Result<
+        Option<Box<dyn festerm_javascript_session::ProgramDeliveryPermit + '_>>,
+        festerm_automation_js::Error,
+    > {
+        if worker_generation != self.launch_generation
+            || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+            || !self._lease.is_live()
+            || self._privacy.is_lost()
+        {
+            return Err(festerm_automation_js::Error::DisclosureRevoked);
+        }
+        match self.delivery_gate.try_lock() {
+            Ok(permit) => {
+                if worker_generation != self.launch_generation
+                    || self.cancellation.load(std::sync::atomic::Ordering::Acquire)
+                    || !self._lease.is_live()
+                    || self._privacy.is_lost()
+                {
+                    Err(festerm_automation_js::Error::DisclosureRevoked)
+                } else {
+                    Ok(Some(Box::new(JavaScriptProgramPermit {
+                        permit: Some(permit),
+                        wake: self.delivery_wake.clone(),
+                    })))
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                Err(festerm_automation_js::Error::DisclosureRevoked)
+            }
+        }
+    }
+}
+
 pub struct AppState {
     keyboard_bindings: festerm_config::KeyboardBindings,
     #[cfg(test)]
@@ -3551,6 +3916,13 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
+    #[cfg(feature = "javascript-program-dev")]
+    pending_javascript_program: Option<PendingJavaScriptProgram>,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_launch_generation: u64,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_program_coordinator:
+        crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
     #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -3590,6 +3962,8 @@ pub struct AppState {
     retiring_powershell_workers: Vec<crate::powershell::PowerShellShutdownHandle>,
     retiring_enterprise_workers: Vec<crate::enterprise::EnterpriseShutdownHandle>,
     retiring_remote_workers: Vec<crate::remote_sessions::RemoteSessionsShutdownHandle>,
+    #[cfg(feature = "javascript-program-dev")]
+    retiring_javascript_programs: Vec<RetiringJavaScriptProgram>,
     active: TabId,
     presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -3651,6 +4025,7 @@ pub struct AppState {
     automatic_update_checks: bool,
     mcp_enabled: bool,
     javascript_enabled: bool,
+    javascript_program_storage: Vec<festerm_config::JavaScriptProgramStorageSettings>,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -3724,6 +4099,21 @@ impl Drop for AppState {
 }
 
 impl AppState {
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_program_coordinator(
+        &self,
+    ) -> crate::javascript_program_lifecycle::JavaScriptProgramCoordinator {
+        self.javascript_program_coordinator.clone()
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn set_javascript_program_coordinator(
+        &mut self,
+        coordinator: crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
+    ) {
+        self.javascript_program_coordinator = coordinator;
+    }
+
     /// Builds the `AppState` fields derived purely from `Configuration`'s
     /// interface settings (chip layout, toggles, keyboard bindings, ...),
     /// leaving only the tab payload and active selection to the caller.
@@ -3738,6 +4128,12 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            #[cfg(feature = "javascript-program-dev")]
+            pending_javascript_program: None,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_launch_generation: 0,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_program_coordinator: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_client_budgets: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -3766,6 +4162,8 @@ impl AppState {
             retiring_powershell_workers: Vec::new(),
             retiring_enterprise_workers: Vec::new(),
             retiring_remote_workers: Vec::new(),
+            #[cfg(feature = "javascript-program-dev")]
+            retiring_javascript_programs: Vec::new(),
             active,
             presentation_workspace: None,
             activation_history: Vec::new(),
@@ -3803,6 +4201,7 @@ impl AppState {
             automatic_update_checks: settings.automatic_update_checks(),
             mcp_enabled: settings.mcp_enabled(),
             javascript_enabled: settings.javascript_enabled(),
+            javascript_program_storage: settings.javascript_program_storage().to_vec(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             #[cfg(test)]
             interface_settings_snapshot_count: std::cell::Cell::new(0),
@@ -4135,6 +4534,8 @@ impl AppState {
                         | InspectorTransport::Sftp { .. }
                         | InspectorTransport::DevTunnel { .. } => counts.ssh += 1,
                         InspectorTransport::Serial { .. } => counts.serial += 1,
+                        #[cfg(feature = "javascript-program-dev")]
+                        InspectorTransport::JavaScript { .. } => counts.javascript += 1,
                     }
                 }
                 TabContent::PowerShell(powershell) if powershell.close_requires_confirmation() => {
@@ -4255,6 +4656,7 @@ impl AppState {
         self.automatic_update_checks = settings.automatic_update_checks();
         self.mcp_enabled = settings.mcp_enabled();
         self.javascript_enabled = settings.javascript_enabled();
+        self.javascript_program_storage = settings.javascript_program_storage().to_vec();
         self.keyboard_bindings = settings.keyboard_bindings().clone();
         self.sftp_pane_order = settings.sftp_pane_order();
         self.default_sftp_local_directory = settings
@@ -4522,6 +4924,24 @@ impl AppState {
         self.javascript_enabled = javascript;
     }
 
+    #[cfg_attr(not(feature = "javascript-program-dev"), allow(dead_code))]
+    pub(crate) fn javascript_program_storage(
+        &self,
+    ) -> &[festerm_config::JavaScriptProgramStorageSettings] {
+        &self.javascript_program_storage
+    }
+
+    pub(crate) fn set_javascript_program_storage(
+        &mut self,
+        setting: festerm_config::JavaScriptProgramStorageSettings,
+    ) {
+        self.javascript_program_storage
+            .retain(|entry| entry.digest() != setting.digest());
+        self.javascript_program_storage.push(setting);
+        self.javascript_program_storage
+            .sort_by(|left, right| left.digest().cmp(right.digest()));
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -4590,6 +5010,7 @@ impl AppState {
         .with_automatic_update_checks(self.automatic_update_checks)
         .with_mcp_enabled(self.mcp_enabled)
         .with_javascript_enabled(self.javascript_enabled)
+        .with_javascript_program_storage_entries(self.javascript_program_storage.clone())
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -4746,6 +5167,9 @@ impl AppState {
     }
 
     pub fn drain_background_tabs(&mut self, context: &egui::Context) {
+        #[cfg(feature = "javascript-program-dev")]
+        self.retiring_javascript_programs
+            .retain(|retiring| !retiring.controller.javascript_cleanup_complete());
         self.retiring_powershell_workers
             .retain(|handle| !handle.is_finished());
         self.retiring_enterprise_workers
@@ -4777,6 +5201,32 @@ impl AppState {
                 .iter()
                 .filter(|handle| !handle.is_finished())
                 .count()
+            + {
+                #[cfg(feature = "javascript-program-dev")]
+                {
+                    self.retiring_javascript_programs
+                        .iter()
+                        .filter(|retiring| !retiring.controller.javascript_cleanup_complete())
+                        .count()
+                        + self
+                            .tabs
+                            .iter()
+                            .filter(|tab| {
+                                matches!(
+                                    &tab.content,
+                                    TabContent::Session(session)
+                                        if session.controller.session().is_some_and(
+                                            ApplicationSession::is_javascript
+                                        ) && !session.controller.javascript_cleanup_complete()
+                                )
+                            })
+                            .count()
+                }
+                #[cfg(not(feature = "javascript-program-dev"))]
+                {
+                    0
+                }
+            }
             + self
                 .tabs
                 .iter()
@@ -4809,6 +5259,27 @@ impl AppState {
         for handle in &self.retiring_remote_workers {
             handle.request_shutdown();
         }
+        #[cfg(feature = "javascript-program-dev")]
+        {
+            if let Some(pending) = &self.pending_javascript_program {
+                pending
+                    .cancellation
+                    .store(true, std::sync::atomic::Ordering::Release);
+                pending.lease.cancel();
+                pending.privacy_task.cancel();
+            }
+            for tab in &self.tabs {
+                if let TabContent::Session(session) = &tab.content {
+                    if session
+                        .controller
+                        .session()
+                        .is_some_and(ApplicationSession::is_javascript)
+                    {
+                        session.controller.shutdown();
+                    }
+                }
+            }
+        }
         for tab in &mut self.tabs {
             match &mut tab.content {
                 TabContent::PowerShell(tab) => tab.request_close(),
@@ -4817,6 +5288,46 @@ impl AppState {
                 _ => {}
             }
         }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn force_javascript_program_shutdown(&self) {
+        for retiring in &self.retiring_javascript_programs {
+            retiring.controller.force_javascript_shutdown();
+        }
+        for tab in &self.tabs {
+            if let TabContent::Session(session) = &tab.content {
+                session.controller.force_javascript_shutdown();
+            }
+        }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn javascript_program_worker_count(&self) -> usize {
+        self.retiring_javascript_programs
+            .iter()
+            .filter(|retiring| !retiring.controller.javascript_cleanup_complete())
+            .count()
+            + self
+                .tabs
+                .iter()
+                .filter(|tab| {
+                    matches!(
+                        &tab.content,
+                        TabContent::Session(session)
+                            if session.controller.session().is_some_and(
+                                ApplicationSession::is_javascript
+                            ) && !session.controller.javascript_cleanup_complete()
+                    )
+                })
+                .count()
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    pub(crate) fn report_javascript_program_cleanup_failure(&mut self, programs: usize) {
+        self.resume_error = Some(format!(
+            "JavaScript cleanup did not settle for {programs} program(s); worker reaping or writer release is unconfirmed. Restart fesTerm before another launch."
+        ));
     }
 
     #[cfg(test)]
@@ -4956,6 +5467,8 @@ impl AppState {
             // this command ever reaches here the picker was unavailable, so
             // there is nothing to open.
             AppCommand::OpenMarkdownWorkspace => {}
+            AppCommand::OpenJavaScriptWorkflowEditorPicker => {}
+            AppCommand::RegisterJavaScriptWorkflowSource => {}
             AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                 self.open_local_markdown(path, replacing);
             }
@@ -4990,6 +5503,12 @@ impl AppState {
             }
             AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
             AppCommand::StartLocalSession => self.start_local_session(context),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartJavaScriptProgram => self.start_javascript_program(context),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartJavaScriptSave { mode } => self.start_javascript_save(context, mode),
+            #[cfg(feature = "javascript-program-dev")]
+            AppCommand::StartTw2k2 { mode } => self.start_tw2k2_program(context, mode),
             AppCommand::StartLocalSessionWithProfile { profile } => {
                 self.start_local_session_with_profile(profile, context)
             }
@@ -5089,6 +5608,23 @@ impl AppState {
                 }
             }
             AppCommand::NewTextDocument => self.new_text_document(),
+            AppCommand::NewJavaScriptWorkflowDraft => self.new_javascript_workflow_draft(),
+            AppCommand::OpenJavaScriptWorkflowSource { path } => {
+                if let Some(failure) = self.open_text_editor(&path) {
+                    self.open_refusal = Some((path, failure));
+                } else if let Some(tab) = self.local_document_tab(&path) {
+                    self.set_active(tab);
+                    if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                        editor.mark_workflow_source();
+                    }
+                }
+            }
+            AppCommand::ValidateJavaScriptWorkflowSource => {
+                let documents = self.documents.clone();
+                if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                    editor.validate_workflow_source(&documents);
+                }
+            }
             AppCommand::OpenTerminalHistoryInEditor => self.open_terminal_history_snapshot(false),
             AppCommand::SaveTerminalHistoryAs => self.open_terminal_history_snapshot(true),
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
@@ -5359,6 +5895,11 @@ impl AppState {
             AppCommand::ToggleJavascriptEnabled => {
                 self.javascript_enabled = !self.javascript_enabled;
             }
+            AppCommand::SetJavaScriptProgramStorage(setting) => {
+                self.set_javascript_program_storage(setting);
+            }
+            AppCommand::DeleteJavaScriptProgramStorage { .. }
+            | AppCommand::RevealJavaScriptProgramStorage { .. } => {}
             AppCommand::RetryAutomationSettings => {}
             AppCommand::OpenWorkflowPicker => {}
             AppCommand::Automation(_) => {}
@@ -5493,6 +6034,7 @@ impl AppState {
                 self.automatic_update_checks = InterfaceSettings::DEFAULT.automatic_update_checks();
                 self.mcp_enabled = InterfaceSettings::DEFAULT.mcp_enabled();
                 self.javascript_enabled = InterfaceSettings::DEFAULT.javascript_enabled();
+                self.javascript_program_storage.clear();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
@@ -5865,6 +6407,19 @@ impl AppState {
         self.open_text_document(document);
     }
 
+    fn new_javascript_workflow_draft(&mut self) {
+        let document = self.documents.borrow_mut().create_untitled_with_extension(
+            NEW_WORKFLOW_DOCUMENT_NAME_PREFIX,
+            "workflow.json",
+            NEW_WORKFLOW_DOCUMENT_LABEL,
+            MINIMAL_JAVASCRIPT_WORKFLOW.as_bytes(),
+        );
+        self.open_text_document(document);
+        if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+            editor.mark_workflow_source();
+        }
+    }
+
     fn open_text_document(&mut self, document: DocumentId) {
         let id = TabId::next();
         let editor = TextEditorTab::with_options(
@@ -5912,8 +6467,17 @@ impl AppState {
         let Some(document) = self.active_document() else {
             return;
         };
+        let workflow_source = matches!(
+            &self.active_tab().content,
+            TabContent::TextEditor(editor) if editor.is_workflow_source()
+        );
         self.documents.borrow_mut().retain(document);
         self.open_text_document(document);
+        if workflow_source {
+            if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+                editor.mark_workflow_source();
+            }
+        }
     }
 
     fn active_terminal_history_snapshot(
@@ -6531,6 +7095,200 @@ impl AppState {
         ));
     }
 
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_program(&mut self, context: &egui::Context) {
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_echo(
+                launch_generation,
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed JavaScript developer program is invalid.".into());
+                    return;
+                }
+            };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_javascript_save(
+        &mut self,
+        context: &egui::Context,
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    ) {
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_save(
+                launch_generation,
+                mode,
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed JavaScript save fixture is invalid.".into());
+                    return;
+                }
+            };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn start_tw2k2_program(
+        &mut self,
+        context: &egui::Context,
+        mode: festerm_javascript_session::ProgramLaunchMode,
+    ) {
+        let program = match tw2k2_program_from_environment() {
+            Ok(program) => program,
+            Err(error) => {
+                self.resume_error = Some(error);
+                return;
+            }
+        };
+        let setting = self
+            .javascript_program_storage
+            .iter()
+            .find(|setting| setting.digest() == program.digest())
+            .cloned()
+            .unwrap_or_else(|| {
+                festerm_config::JavaScriptProgramStorageSettings::new(
+                    program.digest().to_owned(),
+                    program.manifest().name.clone(),
+                )
+            });
+        self.set_javascript_program_storage(setting.clone());
+        if !setting.allowed() {
+            self.resume_error = Some(
+                "Open Settings > Automation and allow save data for tw2k2-js before launching."
+                    .into(),
+            );
+            return;
+        }
+        let Some(launch_generation) = self.javascript_launch_generation.checked_add(1) else {
+            self.resume_error =
+                Some("JavaScript launch generation is exhausted. Restart fesTerm.".into());
+            return;
+        };
+        self.javascript_launch_generation = launch_generation;
+        let launch =
+            match festerm_javascript_session::JavaScriptProgramLaunch::reviewed_developer_program(
+                program,
+                launch_generation,
+                festerm_automation_js::program::ProgramLaunchParams::new(mode),
+            ) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    self.resume_error =
+                        Some("The reviewed TW2K2 snapshot has incompatible capabilities.".into());
+                    return;
+                }
+            };
+        self.begin_javascript_program(context, launch_generation, launch);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    fn begin_javascript_program(
+        &mut self,
+        context: &egui::Context,
+        launch_generation: u64,
+        launch: festerm_javascript_session::JavaScriptProgramLaunch,
+    ) {
+        let storage_setting = self
+            .javascript_program_storage
+            .iter()
+            .find(|setting| setting.digest() == launch.digest())
+            .cloned();
+        let lease = match self.javascript_program_coordinator.try_admit() {
+            Ok(lease) => Arc::new(lease),
+            Err(error) => {
+                self.resume_error = Some(error.to_string());
+                return;
+            }
+        };
+        let dimensions = self.current_session_dimensions();
+        let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let delivery_gate = Arc::new(Mutex::new(()));
+        let delivery_wake: Arc<dyn Fn() + Send + Sync> = {
+            let repaint = context.clone();
+            Arc::new(move || repaint.request_repaint())
+        };
+        #[cfg(test)]
+        {
+            let privacy = crate::recording_privacy::PrivacyGuard::for_test(cancellation.clone());
+            let fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence> =
+                Arc::new(JavaScriptProgramFence {
+                    launch_generation,
+                    cancellation,
+                    delivery_gate: delivery_gate.clone(),
+                    delivery_wake: delivery_wake.clone(),
+                    _privacy: privacy,
+                    _lease: lease,
+                });
+            self.place_user_session(SessionTab::start_javascript_program(
+                context,
+                dimensions,
+                launch,
+                fence,
+                storage_setting.clone(),
+            ));
+        }
+        #[cfg(not(test))]
+        {
+            let wake = {
+                let repaint = context.clone();
+                Arc::new(move || repaint.request_repaint()) as Arc<dyn Fn() + Send + Sync>
+            };
+            let on_loss = {
+                let cancellation = cancellation.clone();
+                let delivery_gate = delivery_gate.clone();
+                let lease = lease.clone();
+                Arc::new(move || {
+                    let _permit = delivery_gate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    cancellation.store(true, std::sync::atomic::Ordering::Release);
+                    lease.cancel();
+                }) as Arc<dyn Fn() + Send + Sync>
+            };
+            let task = match crate::recording_privacy::PrivacyTask::start_javascript_with_loss(
+                wake,
+                on_loss,
+                (),
+            ) {
+                Ok(task) => task,
+                Err(error) => {
+                    self.resume_error =
+                        Some(format!("JavaScript program could not start: {error}"));
+                    return;
+                }
+            };
+            self.pending_javascript_program = Some(PendingJavaScriptProgram {
+                target: self.active,
+                launch_generation,
+                launch,
+                dimensions,
+                privacy_task: task,
+                cancellation,
+                delivery_gate,
+                delivery_wake,
+                lease,
+                storage_setting,
+            });
+        }
+    }
+
     fn start_local_session_with_profile(&mut self, profile: LocalProfile, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
         let profile = crate::environment::with_corrected_local_path(profile);
@@ -6850,6 +7608,58 @@ impl AppState {
     }
 
     pub fn update_running_sessions(&mut self, context: &egui::Context) {
+        #[cfg(feature = "javascript-program-dev")]
+        let javascript_privacy = self
+            .pending_javascript_program
+            .as_ref()
+            .and_then(|pending| pending.privacy_task.poll());
+        #[cfg(feature = "javascript-program-dev")]
+        if let Some(privacy_result) = javascript_privacy {
+            let pending = self
+                .pending_javascript_program
+                .take()
+                .expect("pending JavaScript program was present");
+            let current = pending.launch_generation == self.javascript_launch_generation
+                && pending.target == self.active
+                && matches!(
+                    self.active_tab().content,
+                    TabContent::Launcher | TabContent::Session(_)
+                );
+            match privacy_result {
+                Ok(privacy)
+                    if current
+                        && pending.launch.worker_generation() == pending.launch_generation
+                        && !pending
+                            .cancellation
+                            .load(std::sync::atomic::Ordering::Acquire) =>
+                {
+                    let fence: Arc<dyn festerm_javascript_session::ProgramDeliveryFence> =
+                        Arc::new(JavaScriptProgramFence {
+                            launch_generation: pending.launch_generation,
+                            cancellation: pending.cancellation,
+                            delivery_gate: pending.delivery_gate,
+                            delivery_wake: pending.delivery_wake,
+                            _privacy: privacy,
+                            _lease: pending.lease,
+                        });
+                    self.place_user_session(SessionTab::start_javascript_program(
+                        context,
+                        pending.dimensions,
+                        pending.launch,
+                        fence,
+                        pending.storage_setting,
+                    ));
+                }
+                Ok(privacy) => {
+                    drop(privacy);
+                }
+                Err(error) if current => {
+                    self.resume_error =
+                        Some(format!("JavaScript program could not start: {error}"));
+                }
+                Err(_) => {}
+            }
+        }
         #[cfg(feature = "experimental-dev-tunnels")]
         self.invalidate_removed_host_accounts();
         // Only the Launcher shows Running Sessions, and discovery costs a
@@ -8300,7 +9110,24 @@ impl AppState {
             self.documents.borrow_mut().release(document);
         }
         match removed.content {
-            TabContent::Session(session) => session.controller.shutdown(),
+            TabContent::Session(session) => {
+                #[cfg(feature = "javascript-program-dev")]
+                if session
+                    .controller
+                    .session()
+                    .is_some_and(ApplicationSession::is_javascript)
+                {
+                    session.controller.shutdown();
+                    self.retiring_javascript_programs
+                        .push(RetiringJavaScriptProgram {
+                            controller: session.controller,
+                        });
+                } else {
+                    session.controller.shutdown();
+                }
+                #[cfg(not(feature = "javascript-program-dev"))]
+                session.controller.shutdown();
+            }
             TabContent::PowerShell(mut tab) => {
                 tab.request_close();
                 if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
@@ -8444,6 +9271,28 @@ mod tests {
         recording: festerm_recording::SharedRecording,
         ready: std::sync::mpsc::Receiver<()>,
         _directory: tempfile::TempDir,
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_permit_wakes_only_after_unlocking() {
+        let gate = Arc::new(Mutex::new(()));
+        let woke_unlocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let wake_gate = gate.clone();
+        let wake_result = woke_unlocked.clone();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let permit = wake_gate
+                .try_lock()
+                .expect("delivery wake ran before unlocking");
+            drop(permit);
+            wake_result.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let permit = JavaScriptProgramPermit {
+            permit: Some(gate.lock().unwrap()),
+            wake,
+        };
+        drop(permit);
+        assert!(woke_unlocked.load(std::sync::atomic::Ordering::Acquire));
     }
 
     impl RecordingFixture {
@@ -12519,6 +13368,81 @@ mod tests {
     }
 
     #[test]
+    fn new_javascript_workflow_draft_is_dirty_valid_and_marked() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+
+        let document = state.active_document().unwrap();
+        {
+            let registry = state.documents.borrow();
+            let open = registry.get(document).unwrap();
+            assert_eq!(
+                open.origin().file_name(),
+                "Untitled-Workflow-1.workflow.json"
+            );
+            assert!(open.text().is_dirty());
+            let snapshot: festerm_automation_js::snapshot::SourceSnapshot =
+                serde_json::from_str(open.text().text()).unwrap();
+            festerm_automation_js::snapshot::ApprovedBundle::new(snapshot).unwrap();
+        }
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("new workflow must use the shared native editor");
+        };
+        assert!(editor.is_workflow_source());
+    }
+
+    #[test]
+    fn ordinary_new_file_remains_an_unmarked_empty_text_document() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewTextDocument, &context);
+        let document = state.active_document().unwrap();
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("new file must use the shared native editor");
+        };
+        assert!(!editor.is_workflow_source());
+        assert_eq!(
+            state
+                .documents
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .text(),
+            ""
+        );
+        assert_eq!(editor.title(), "Untitled-1.txt");
+    }
+
+    #[test]
+    fn duplicate_editor_view_preserves_workflow_source_marker() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        state.dispatch(AppCommand::OpenAnotherEditorView, &context);
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("duplicate must be an editor");
+        };
+        assert!(editor.is_workflow_source());
+    }
+
+    #[test]
+    fn workflow_source_marker_survives_save_as_rebind() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("saved.workflow.json");
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        let confirmed = crate::document_store::observe_destination(&destination).unwrap();
+        state.save_active_text_document_to(&destination, &confirmed);
+        let TabContent::TextEditor(editor) = &state.active_tab().content else {
+            panic!("saved workflow must remain in the editor");
+        };
+        assert!(editor.is_workflow_source());
+    }
+
+    #[test]
     fn hard_link_save_as_rebinds_only_the_active_text_editor_view() {
         let (directory, source, _) = two_markdown_files();
         let destination = directory.path().join("destination.md");
@@ -13946,6 +14870,253 @@ mod tests {
         }
         assert!(state.resume_error.is_none());
         assert_eq!(state.tabs().len(), 1);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_launches_without_shell_or_automation_authority() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher = state.active();
+
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher);
+        let session = state.session_tab_mut(launcher).unwrap();
+        assert!(matches!(
+            session.controller.session(),
+            Some(ApplicationSession::JavaScript(_))
+        ));
+        assert!(matches!(
+            session.inspector_transport,
+            InspectorTransport::JavaScript { .. }
+        ));
+        assert!(session
+            .controller
+            .session()
+            .unwrap()
+            .automation_epoch()
+            .is_none());
+        assert!(
+            session.terminal_filesystem_origin().is_none(),
+            "a JavaScript tab must not manufacture local or remote file authority"
+        );
+        assert_eq!(session.system_label(), "JavaScript · Developer");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while session.controller.lifecycle() != Some(SessionLifecycle::Running) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript start deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+        session
+            .controller
+            .session()
+            .unwrap()
+            .try_send_input(b"hello")
+            .unwrap();
+        while !session.terminal.text_snapshot().text().contains("hello") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript input deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+        session
+            .controller
+            .session()
+            .unwrap()
+            .try_resize(TerminalSize::new(100, 30).unwrap())
+            .unwrap();
+        while !session
+            .terminal
+            .text_snapshot()
+            .text()
+            .contains("resize:100x30")
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript resize deadline"
+            );
+            session.pump_session_events();
+            std::thread::yield_now();
+        }
+
+        state.dispatch(AppCommand::CloseTab(launcher), &context);
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    #[ignore = "requires TW2K2_SNAPSHOT, TW2K2_SCREENSHOT_OUT and an isolated data root"]
+    fn capture_tw2k2_gameplay_in_festerm() {
+        use egui_kittest::Harness;
+
+        let snapshot_path =
+            std::path::PathBuf::from(std::env::var_os("TW2K2_SNAPSHOT").expect("snapshot"));
+        let snapshot: festerm_automation_js::program::ProgramSourceSnapshot =
+            serde_json::from_slice(&std::fs::read(&snapshot_path).expect("read snapshot"))
+                .expect("parse snapshot");
+        let approved =
+            festerm_automation_js::program::ApprovedProgram::new(snapshot).expect("approve");
+        let setting = festerm_config::JavaScriptProgramStorageSettings::new(
+            approved.digest().to_owned(),
+            approved.manifest().name.clone(),
+        )
+        .with_allowed(true)
+        .with_max_bytes(8 * 1024);
+        std::env::set_var("FESTERM_TW2K2_SNAPSHOT", &snapshot_path);
+
+        let context = egui::Context::default();
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_javascript_program_storage(setting),
+            )
+            .expect("store TW2K2 policy");
+        let mut app = crate::app::FesTermApp::for_test_with_configuration(configuration);
+        app.dispatch_for_test(
+            AppCommand::StartTw2k2 {
+                mode: festerm_javascript_session::ProgramLaunchMode::New,
+            },
+            &context,
+        );
+        let tab = app.state_for_test().active();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let resume_error = app.state_for_test().resume_error.clone();
+            let session = app
+                .state_mut_for_test()
+                .session_tab_mut(tab)
+                .expect("JavaScript session");
+            session.pump_session_events();
+            if session
+                .terminal
+                .text_snapshot()
+                .text()
+                .contains("Callsign:")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "TW2K2 login did not render: error={:?} lifecycle={:?} start={:?} text={:?}",
+                resume_error,
+                session.controller.lifecycle(),
+                session.controller.start_error(),
+                session.terminal.text_snapshot().text()
+            );
+            std::thread::yield_now();
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_ui_state(
+                |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+                app,
+            );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("TW2K2_SCREENSHOT_OUT").expect("screenshot output"),
+        );
+        std::fs::create_dir_all(&output).expect("create screenshot output");
+
+        harness.run();
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 login")
+            .save(output.join("tw2k2-login.png"))
+            .expect("save login screenshot");
+
+        let drive =
+            |harness: &mut Harness<'_, crate::app::FesTermApp>, input: &[u8], expected: &str| {
+                harness
+                    .state_mut()
+                    .state_mut_for_test()
+                    .session_tab_mut(tab)
+                    .expect("JavaScript session")
+                    .controller
+                    .session()
+                    .expect("live JavaScript backend")
+                    .try_send_input(input)
+                    .expect("send TW2K2 input");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let state = harness.state_mut().state_mut_for_test();
+                    let session = state.session_tab_mut(tab).expect("JavaScript session");
+                    session.pump_session_events();
+                    if session.terminal.text_snapshot().text().contains(expected) {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "missing TW2K2 output: {expected}"
+                    );
+                    std::thread::yield_now();
+                }
+                harness.run();
+            };
+
+        drive(&mut harness, b"Screen Pilot\r", "Ship");
+        drive(&mut harness, b"Far Horizons\r", "SECTOR");
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 sector")
+            .save(output.join("tw2k2-sector.png"))
+            .expect("save sector screenshot");
+
+        drive(&mut harness, b"M 2\r", "SECTOR 2");
+        drive(&mut harness, b"I\r", "Far Horizons");
+        drive(&mut harness, b"SAVE\r", "Checkpoint");
+        harness.remove_cursor();
+        harness
+            .render()
+            .expect("render TW2K2 saved status")
+            .save(output.join("tw2k2-saved-status.png"))
+            .expect("save status screenshot");
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_quota_refuses_before_a_second_session_and_releases_after_reap() {
+        let context = egui::Context::default();
+        let coordinator = crate::javascript_program_lifecycle::JavaScriptProgramCoordinator::new(
+            crate::javascript_program_lifecycle::JavaScriptProgramLimits {
+                programs: 1,
+                memory_bytes: crate::javascript_program_lifecycle::PROGRAM_MEMORY_BYTES,
+            },
+        );
+        let mut state = AppState::for_test();
+        state.set_javascript_program_coordinator(coordinator.clone());
+
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        let first = state.active();
+        assert_eq!(coordinator.active_programs(), 1);
+        state.dispatch(AppCommand::OpenLauncher, &context);
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
+        assert!(state
+            .resume_error
+            .as_deref()
+            .is_some_and(|message| message.contains("limit reached (1 programs")));
+        state.dispatch(AppCommand::CloseTab(first), &context);
+        state.request_background_shutdown();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while coordinator.active_programs() != 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "JavaScript reap deadline"
+            );
+            state.drain_background_tabs(&context);
+            std::thread::yield_now();
+        }
+        state.resume_error = None;
+        state.dispatch(AppCommand::StartJavaScriptProgram, &context);
+        assert_eq!(coordinator.active_programs(), 1);
     }
 
     #[test]

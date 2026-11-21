@@ -398,6 +398,9 @@ impl Coordinator {
         }
         match command {
             NativeCommand::StartWorkflowMonitoring => self.start_javascript_monitoring(context),
+            NativeCommand::SelectRegisteredWorkflow { digest } => {
+                self.select_registered_workflow(digest, context)
+            }
             NativeCommand::StartWorkflowRun { .. } if apps.is_empty() => {
                 self.javascript_status("Workflow refused without its originating window.");
             }

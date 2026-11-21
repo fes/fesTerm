@@ -79,7 +79,7 @@ pub(crate) use settings::RESET_ALL_SETTINGS_LABEL;
 #[cfg(feature = "local-host-settings")]
 pub(crate) use settings::{settings_note, settings_toggle_row_enabled};
 pub(crate) use settings::{
-    show_settings, SettingsViewModel, RESET_ALL_SETTINGS_CATEGORIES,
+    show_settings, JavaScriptProgramStorageView, SettingsViewModel, RESET_ALL_SETTINGS_CATEGORIES,
     RESET_ALL_SETTINGS_NOT_AFFECTED,
 };
 

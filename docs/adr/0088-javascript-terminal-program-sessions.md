@@ -40,8 +40,8 @@ written, not a claim that every platform has shipping qualification:
 | --- | --- | --- |
 | JavaScript | [`festerm-automation-js`](../../crates/festerm-automation-js/README.md), pinned `rquickjs = 0.14.0` / QuickJS-NG; static modules, Promises and async/await | A distinct program entry contract and host API |
 | Host calls | [`HostRequest`](../../crates/festerm-automation-js/src/protocol.rs): observation, terminal reads/waits, input, profile open and workflow invocation schemas | Own-session output, input/resize delivery, timers, assets and saves; schema presence alone never authorizes a call |
-| Worker policy | Isolated supervised process; 64 MiB engine heap, bounded stack and platform-specific 128 MiB process policy; at most 300,000 ms/run, 5,000 ms cumulative CPU and 1,024 host calls | A separately qualified interactive lifetime and replenishing work budgets |
-| Native limits | [`platform.rs`](../../crates/festerm-automation-js/src/platform.rs) and [`windows.rs`](../../crates/festerm-automation-js/src/windows.rs) enforce cumulative CPU ceilings as well as engine checks | A native policy that can support extended play without removing runaway protection |
+| Worker policy | Isolated supervised process; 64 MiB engine heap, bounded stack and platform-specific 128 MiB process policy; at most 300,000 ms/run, 5,000 ms cumulative CPU and 1,024 host calls | Program mode supplies separate profile negotiation and replenishing active-turn budgets without changing this automation policy |
+| Native limits | [`platform.rs`](../../crates/festerm-automation-js/src/platform.rs) and [`windows.rs`](../../crates/festerm-automation-js/src/windows.rs) enforce cumulative CPU ceilings as well as engine checks | Program-mode Linux/macOS/Windows hard fallback and parent-owned rolling enforcement, pending packaged qualification |
 | Desktop workflow | [`automation/javascript.rs`](../../app/festerm/src/automation/javascript.rs) selects a local PTY target; current run is capped at 295,000 ms and terminal sends require separate input review | A launch into a new terminal without selecting or controlling a shell |
 | Session backend | [`Session`](../../crates/festerm-session/src/lib.rs) exchanges bounded input, output, resize, shutdown and lifecycle events | An implementation backed by the JS worker |
 | Tab and display | [`ApplicationSession`](../../app/festerm/src/tabs.rs), `SessionTab` and [`SessionController`](../../app/festerm/src/session_controller.rs) already compose ordinary terminal sessions | A program variant, typed launch intent, capability policy and metadata |
@@ -114,13 +114,28 @@ methods or final wire schemas:
 | API | Proposed semantics |
 | --- | --- |
 | `terminal.write(text)` | UTF-8 text including supported ANSI sequences; resolves when accepted into the bounded output path, not when painted |
-| `terminal.events()` | One ordered async consumer of input bytes, accepted resize events and cooperative close requests |
+| `terminal.events()` | One ordered async consumer (`next()`) of input bytes, accepted resize events and cooperative close requests; the repository-owned synchronous callback fixture remains compatible |
 | `terminal.size` | Immutable initial columns/rows; subsequent size changes arrive as ordered resize events |
-| `assets.read(id)` | Bounded read of an exact read-only asset included in the reviewed bundle |
+| `assets.read(id)` | Bounded read of an exact read-only asset included in the reviewed bundle; rejects unknown or oversize inventory entries |
 | `storage.load(slot)` | Load a private save with schema metadata and an opaque revision |
 | `storage.commit(slot, expectedRevision, value, operationId)` | Atomically publish one bounded save envelope with conflict detection and recoverable outcome |
-| `clock.now()` | Host wall-clock value with documented units for game calendar decisions |
-| `clock.sleep(ms)` | Bounded, cancellable monotonic delay with no busy loop |
+| `clock.now()` | Host wall-clock Unix milliseconds |
+| `clock.sleep(ms)` | Monotonic delay bounded to 60,000 ms; cancellation/fence revocation cuts the wait |
+
+The accepted host-services slice implements only `assets.read`, `clock.now`
+and `clock.sleep`. `params` is currently an empty frozen compatibility object;
+reviewed launch payloads are deferred. The ambient `Date` API is unavailable,
+so wall time crosses only the explicitly reviewed `clock.now` capability. It does **not**
+implement saves, a file picker, arbitrary paths, network/filesystem access or
+general host timers. The repository-owned async fixture uses the same
+terminal/event ordering as the synchronous echo fixture while exercising a
+frozen asset, one sleep and split UTF-8 input.
+
+The save integration adds exactly `storage.load(slot)` and
+`storage.commit(slot, expectedRevision, schemaVersion, value, operationId)`.
+Opaque slots are application-bound: no path or handle crosses the worker.
+Launch parameters are immutable and host-created with explicit `new` or
+`resume` authority. Save frames stay strictly below the framing ceiling.
 
 Input is a byte stream after the existing keyboard/IME/paste encoding path,
 not raw OS keydown events. Chunks may split UTF-8, escape sequences and pasted
@@ -176,6 +191,15 @@ event capacities, and completion/error semantics before implementation.
 Large assets and saves require bounded streaming or an explicit smaller limit;
 they cannot bypass the existing 65,536-byte automation framing ceiling by
 being embedded in oversized JSON messages.
+
+The current implementation accepts at most eight program host calls
+outstanding. Asset inventory and bytes are frozen before review, bounded to
+12 KiB per asset, and covered by the bundle digest. Typed host requests/results
+carry the exact worker generation and call ID. Mismatched, duplicate or late
+results are protocol failures. Genuine host wait time does not consume the
+JavaScript computation deadline, while cancellation, child exit and native CPU
+evidence remain actively monitored. Result delivery re-enters the
+application-owned generation/privilege fence at the physical IPC write.
 
 `write` backpressure must suspend its Promise or reject with a typed error,
 never drop arbitrary bytes from an ANSI sequence. Preserve order across
@@ -246,13 +270,43 @@ Do not trust a worker's self-reported idle state or allow it to renew its own
 resource allowance. Universe generation may require chunked computation or a
 separately bounded startup budget, with the same cancellation guarantees.
 
-The exact numeric CPU/rate quotas and active-work timeout are a launch gate:
-implementation must record measured normal workloads, hostile-loop results,
-aggregate multi-tab limits and each native enforcement mechanism before
-enablement. Existing kernel/job cumulative limits cannot simply be removed
-without demonstrating replacement runaway/host-stall protection. If a platform
-cannot qualify extended lifetime confinement, keep this mode unavailable there.
-Do not silently run in-process or impose an undocumented five-minute exit.
+The default-off developer process policy now uses explicit, separate profiles
+(`linux-seccomp-stdio-program-rolling-v1`,
+`macos-seatbelt-program-rolling-v1`, and
+`windows-appcontainer-program-job-v1`). It retains the automation mode's
+128 MiB process policy, no filesystem/network/process authority, descriptor
+closure, no core files and one-process boundary. The program policy has a
+finite 3,600-second native CPU fallback, a 200 ms active CPU / 1 second wall
+budget per turn, a 250 ms CPU budget in each rolling 1-second window and a
+500 ms close cut. Automation continues to use its original profiles and
+5-second cumulative CPU ceiling.
+
+QuickJS interrupt checks enforce the active-turn limits. Independently, the
+parent samples process CPU every 10 ms (`/proc` on Linux,
+`proc_pid_rusage` on macOS and `GetProcessTimes` on Windows), expires old
+samples, and force-terminates/reaps a worker that exhausts the rolling window.
+Only CPU deltas enter the rolling window, and program-mode input waits block on
+the existing inherited pipe instead of polling. Thus idle input does not
+consume active work and a later command can use replenished capacity. Missing
+or regressing CPU evidence and cleanup failure fail closed. The finite native
+ceiling is a last resort if all higher-level accounting fails, not a grant to
+run for an hour.
+
+The application owns one process-wide lifecycle/quota coordinator shared by
+all tabs and windows. Its explicit developer default admits at most four
+pending, live or closing programs and accounts 128 MiB for each (512 MiB
+total). The process supervisor independently enforces the aggregate count and
+memory proxy before spawning. Permits release on every error, completion,
+cancellation and reap path. This is finite accounting, not aggregate RSS or
+CPU measurement, and does not change automation-worker admission.
+
+These values close the source-level runaway policy gap, not the launch
+qualification gate. Record measured normal workloads, hostile-loop results,
+aggregate multi-tab limits and each packaged native enforcement mechanism
+before enablement. Existing kernel/job cumulative limits must not be changed
+for automation mode. If a platform cannot qualify the extended-lifetime
+profile, keep program mode unavailable there. Do not silently run in-process
+or impose an undocumented five-minute exit.
 
 Application lock, suspension or capability revocation cuts new host-operation
 admission immediately when detected, including save reads and input delivery.
@@ -262,6 +316,21 @@ v1 policy avoids inventing a trusted pause protocol. Already admitted storage
 publication may finish; report its real outcome. Existing OS event-detection
 timing limitations still apply. Do not claim synchronous knowledge of lock or
 revoke acknowledged effects retroactively.
+
+Normal tab, window and application close cuts new input first, allows the
+500 ms cooperative path only for a bounded same-universe checkpoint commit,
+then settles or reports the operation, forces termination if needed, joins the
+worker and releases the writer. App quit observes one aggregate cleanup
+deadline rather than waiting once per program. Privacy loss instead cuts
+storage, input and output immediately, discards queued output, skips
+checkpoint close and terminates/reaps. An uncompleted lease or reap is an
+explicit cleanup failure, never an inferred successful save. The cooperative
+and force paths are bounded for the worker/control plane. A local storage
+operation that remains inside uninterruptible native I/O cannot be forcibly
+resolved without an uncertain publication policy; quit remains cancelled with
+the writer retained until that operation returns. Packaged filesystem timing
+must be qualified before enablement rather than claiming a universal I/O
+deadline.
 
 ### 5. Supply private assets and transactional saves
 
@@ -312,6 +381,19 @@ bundle cannot silently run a migration during workspace restoration. Import,
 export, delete and backup policy are explicit user operations; save data does
 not enter ordinary config, workspace metadata, logs or cloud synchronization.
 
+The implementation reviews schema 2 as current and schema 1 as approved for
+explicit migration. Future, corrupt and unapproved schemas refuse; downward
+publication refuses. Resume publishes a durable pre-migration envelope before
+the replacement. New/refused-existing and resume/refused-missing are distinct
+launch results, and the exclusive writer is held for the runtime lifetime.
+
+Unexpected worker exit is observed through a supervisor termination wake,
+drives session cleanup, drops the runtime-owned writer and allows a later
+explicit Resume to start a fresh generation. The portable storage fixture
+proves that reopening after release retains only a confirmed save; packaged
+process-crash and power-loss evidence remains native qualification. Old
+input, queued output, host calls and terminal contents are not replayed.
+
 ### 6. Define clocks, randomness and game maintenance
 
 Expose separate wall time and monotonic delays, with bounded cancellation and
@@ -343,6 +425,11 @@ existing static module/source review machinery where useful, but do not make
 Settings' local-PTY workflow selector the game-playing surface. First delivery
 can be explicit local-bundle launch; a download catalog is not a prerequisite.
 Keep the feature opt-in and show an actionable unsupported-platform error.
+The developer slice binds a `JavaScriptProgramLaunch` to the repository-owned
+program's exact immutable digest, API version, exact terminal capability set
+and one fresh worker generation. The central `StartJavaScriptProgram` command
+creates that reviewed value; UI code cannot select a path, import a bundle or
+convert an automation grant into program authority.
 
 Use ordinary tab identity, title, status indicators and focus behavior. Move
 between panes/windows transfers presentation without creating a second worker
@@ -456,26 +543,70 @@ schedules, package acquisition and public game discovery are outside this ADR.
    resource exhaustion, keyboard/IME/paste and ANSI presentation on each
    supported desktop. Review native evidence before enabling that platform.
 
-No phase in this ADR is implemented or accepted by this documentation PR.
-Keep implementation work separately scoped; do not move current roadmap
-acceptance or enable existing automation while recording this proposal.
+The current implementation branch closes none of the delivery gates. It
+contains only a default-off developer vertical slice: one repository-owned
+QuickJS echo program, ordinary session-tab composition, exact encoded
+input/resize/output checks, bounded control and a typed reviewed launch.
+The reviewed save fixture now adds opaque-slot load/commit, immutable start or
+resume parameters, exclusive writer ownership and recoverable schema migration.
+Per-program persistence is independently denied by default in Settings and is
+keyed by the approved program digest, not a mutable display name or source path.
+The reader may allow one bounded JSON byte envelope, choose a 4/8/12 KiB cap,
+inspect its disk size, reveal the exact private directory, or delete its
+confirmed payload while no writer is active. Disabling or deleting storage does
+not alter a captured bundle, source file or another digest's namespace.
+An application-owned delivery fence binds OS privacy/lock monitoring, launch
+generation and cancellation. It is checked before worker IPC, before session
+queue publication and when queued output is consumed; revocation stops and
+reaps the process and suppresses queued terminal bytes. A separate
+default-off process profile adds deterministic rolling-window and idle-
+survival limits plus force-bounded hostile-input coverage while automation
+retains its original 5-second policy. The lifecycle slice now shares one
+application-owned aggregate coordinator across windows, moves live tabs
+without re-creating workers/writers, bounds normal/quit cleanup, skips close
+checkpointing on privacy loss, and refuses a fifth 128 MiB accounted program
+before worker spawn. The branch does not make the mode generally enabled or
+qualify a packaged production worker. Keep packaged/native
+qualification, measured actual aggregate resource use, general launch review,
+TradeWars and platform acceptance in separately reviewed delivery slices.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** Proposed own-session capabilities,
-  generation-fenced worker messages, independent interactive quotas, private
-  transactional save ownership and explicit resume. Preserve the single app
+- **Invariants introduced or changed:** Own-session capabilities,
+  digest/capability-bound reviewed launches, generation-fenced worker
+  messages, independent developer-runtime budgets, application-owned privacy
+  delivery fencing and explicit close. The save slice adds private transactional
+  ownership and explicit resume while preserving the single app
   terminal writer, core-owned protocol semantics, bounded queues, event-driven
-  wakes, restricted worker, centralized commands and metadata-only workspaces.
-- **GUI/action edges affected:** None in this documentation-only change.
-  Implementation must extend the action graph and registry together before
-  adding launch/review/resume/save-failure behavior. Revalidate existing
-  `ROOT-03`, `ROOT-04`, `CLOSE-01`, `CLOSE-04` and applicable move/window/input
-  edges rather than reinterpreting them as game-specific policy. This proposal
-  does not assign new stable GUI IDs to unavailable functionality.
-- **Automated tests required:** Planned test names below describe future
-  acceptance, not tests present or passing today. Add their concrete paths and
-  trace relationships during each implementation slice:
+  wakes, restricted host API, centralized commands and metadata-only workspaces.
+  The lifecycle slice adds shared aggregate admission, one runtime through
+  cross-window moves, privacy-first termination, bounded normal close/reap,
+  explicit cleanup failure and idle-exit wakeup. Fresh-runtime Resume and
+  storage release/reopen are modeled separately; digest-bound Settings policy,
+  quota refusal, reveal and deletion are explicit. Real process-crash evidence
+  remains pending.
+- **GUI/action edges affected:** `JSP-01` launches only the repository-owned
+  developer echo program through the typed command path; `JSP-02` carries
+  ordinary encoded input, resize and output; `JSP-03` preserves close and
+  backpressure behavior. `JSP-04` exercises reviewed start/resume, writer
+  exclusion, save faults and schema migration; packaged/native filesystem
+  qualification remains open. Revalidate existing `ROOT-03`, `ROOT-04`,
+  `CLOSE-01`, `CLOSE-04` and
+  applicable move/window/input edges without reinterpreting them as game policy.
+- **Automated tests required:** The developer slice includes strict manifest
+  and protocol bounds, stale-generation refusal, ordered QuickJS echo/resize,
+  bounded backpressure, the reviewed-launch exact digest/capability/generation
+  binding, worker reaping after revocation, queued-output suppression, 10 ms
+  query gating, deterministic 200 ms turn-budget interruption, rolling
+  CPU-window expiry, compliant cumulative work beyond five seconds,
+  hostile-input forced termination, native-profile separation, idle survival
+  and the app-level
+  `javascript_program_launches_without_shell_or_automation_authority` route.
+  Aggregate parallel supervisor admission, app refusal/release, privacy
+  termination without checkpoint close, moved-tab adoption, source-window
+  removal and multi-program aggregate quit are now covered.
+  Add the following concrete paths to the trace relationships as the remaining
+  delivery slices land:
   - `javascript_program_launches_without_shell_or_target_authority`;
   - `javascript_program_stream_input_handles_split_utf8_escape_and_replies`;
   - `javascript_program_resize_and_output_preserve_accepted_order`;
@@ -495,15 +626,16 @@ acceptance or enable existing automation while recording this proposal.
   fixtures. Game rules, seeded PRNG and maintenance idempotency need separate
   game-level tests. Existing workflow tests must prove their limits and grants
   have not expanded.
-- **Native/manual evidence required:** No new evidence is claimed or required
-  to publish this proposal. Before implementation enablement, add dedicated
-  program scenarios to `docs/manual-validation.md` and classify native security,
-  filesystem durability, lifecycle, performance and usability evidence on each
-  selected platform. Existing `AUTO-01` workflow consent evidence does not
-  qualify this new execution mode. Mobile remains deferred behind a qualified
-  worker and lifecycle design.
-- **Coverage superseded:** None. `validation/traceability.json` is unchanged
-  because this proposal creates no current GUI edge, test or manual-scenario
-  relationship. Future test names above are intentionally not registered as
-  existing evidence. The PR uses an explicit documentation-only no-impact
-  declaration; acceptance and platform qualification remain open.
+- **Native/manual evidence required:** `JSP-01` records the owner-run packaged,
+  keyboard/IME/paste, multi-window, pressure, shutdown, privacy-lock and
+  confinement checks required before enablement. Existing `AUTO-01` workflow
+  consent evidence does not qualify this execution mode. Portable process
+  tests exercise the new rolling/idleness/hostile behavior on the current
+  host; macOS, Windows and Linux packaged profile qualification, real
+  lock/suspend timing, packaged confinement and actual aggregate memory/CPU
+  measurements remain open. GUI/native usability is also unqualified. Mobile
+  remains deferred behind a separately qualified worker and lifecycle design.
+- **Coverage superseded:** None. `validation/traceability.json` registers the
+  implemented developer slice as partial and retains packaged confinement,
+  aggregate quotas, lifecycle, save, resume and platform evidence as
+  prerequisites.

@@ -147,6 +147,11 @@ pub(crate) struct FesTermApplication {
     deferred_automation_commands: Vec<crate::automation::NativeWindowCommand>,
     deferred_automation_overflow: bool,
     ime_admission: ImeAdmission,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_program_coordinator:
+        crate::javascript_program_lifecycle::JavaScriptProgramCoordinator,
+    #[cfg(feature = "javascript-program-dev")]
+    javascript_shutdown_started: Option<std::time::Instant>,
     #[cfg(test)]
     after_automation_dispatch: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -170,6 +175,9 @@ impl FesTermApplication {
     }
 
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        let safe_mode = primary.safe_mode();
+        #[cfg(feature = "javascript-program-dev")]
+        let javascript_program_coordinator = primary.javascript_program_coordinator();
         let recording_allowed = primary.session_recording_allowed();
         primary.initialize_recording_preference();
         primary.set_automation_window(WindowId::PRIMARY);
@@ -177,6 +185,7 @@ impl FesTermApplication {
         let presentation_workspace = crate::automation::WorkspaceRevision::default();
         primary.set_presentation_workspace(&presentation_workspace);
         let mut automation = crate::automation::Coordinator::default();
+        automation.install_workflow_registry(safe_mode);
         automation
             .bind_presentation_workspace(&presentation_workspace)
             .expect("a new coordinator has no presentation workspace");
@@ -197,6 +206,10 @@ impl FesTermApplication {
             deferred_automation_commands: Vec::new(),
             deferred_automation_overflow: false,
             ime_admission: ImeAdmission::new(),
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_program_coordinator,
+            #[cfg(feature = "javascript-program-dev")]
+            javascript_shutdown_started: None,
             #[cfg(test)]
             after_automation_dispatch: None,
         }
@@ -565,6 +578,20 @@ impl FesTermApplication {
 
     fn settle_powershell_shutdown(&mut self, context: &egui::Context) {
         let quitting = self.windows[0].app.window_close_requested();
+        #[cfg(feature = "javascript-program-dev")]
+        if quitting {
+            self.javascript_program_coordinator.begin_quit();
+            let started = *self
+                .javascript_shutdown_started
+                .get_or_insert_with(std::time::Instant::now);
+            if started.elapsed() >= std::time::Duration::from_millis(500)
+                && self.javascript_program_coordinator.active_programs() != 0
+            {
+                for window in &self.windows {
+                    window.app.force_javascript_program_shutdown();
+                }
+            }
+        }
         let mut ready = true;
         for window in &mut self.windows {
             if quitting || window.app.window_close_requested() {
@@ -585,6 +612,27 @@ impl FesTermApplication {
             }
         }
         if quitting {
+            #[cfg(feature = "javascript-program-dev")]
+            if self.javascript_program_coordinator.active_programs() != 0 {
+                let expired = self.javascript_shutdown_started.is_some_and(|started| {
+                    started.elapsed() >= std::time::Duration::from_millis(2_500)
+                });
+                if expired {
+                    let programs = self.javascript_program_coordinator.active_programs();
+                    self.windows[0]
+                        .app
+                        .report_javascript_program_cleanup_failure(programs);
+                    tracing::error!(
+                        target: "festerm::session",
+                        programs,
+                        "JavaScript program cleanup deadline expired; writer and worker settlement is unconfirmed"
+                    );
+                    ready = false;
+                } else {
+                    ready = false;
+                    context.request_repaint_after(std::time::Duration::from_millis(25));
+                }
+            }
             context.send_viewport_cmd_to(
                 egui::ViewportId::ROOT,
                 if ready && !self.recording.blocks_quit() {
@@ -901,8 +949,11 @@ impl FesTermApplication {
             secret_store,
             documents,
         );
+        app.set_safe_mode(self.windows[0].app.safe_mode());
         app.set_automation_window(id);
         app.set_presentation_workspace(&self.presentation_workspace);
+        #[cfg(feature = "javascript-program-dev")]
+        app.set_javascript_program_coordinator(self.javascript_program_coordinator.clone());
         if let Some(tab) = detached {
             app.adopt_detached_tab(tab);
         }
@@ -964,6 +1015,22 @@ impl FesTermApplication {
         self.windows[0]
             .app
             .set_application_live_session_counts(counts);
+    }
+
+    fn route_safe_restart_requests(&mut self, context: &egui::Context) {
+        let mut requested = false;
+        let mut normal_requested = false;
+        for window in self.windows.iter_mut().skip(1) {
+            requested |= window.app.take_safe_restart_request();
+            normal_requested |= window.app.take_normal_restart_request();
+        }
+        if requested && !normal_requested {
+            self.windows[0].app.request_safe_mode_restart(context);
+            context.request_repaint();
+        } else if normal_requested {
+            self.windows[0].app.request_normal_restart(context);
+            context.request_repaint();
+        }
     }
 
     fn collect_automation_commands(
@@ -1205,6 +1272,7 @@ impl FesTermApplication {
         let choices = self.recording_choices(self.recording.recording_id(), WindowId::PRIMARY);
         self.recording.show(&context, WindowId::PRIMARY, &choices);
         self.show_secondary_windows(&context);
+        self.route_safe_restart_requests(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_recording(&context);
         self.settle_windows_and_drive_automation_inner(&context);
@@ -1280,7 +1348,116 @@ mod tests {
             Feature::Mcp => values.mcp = enabled,
             Feature::Javascript => values.javascript = enabled,
         }
+
         values
+    }
+
+    #[test]
+    fn workflow_editor_marker_survives_a_multi_window_move() {
+        let (mut application, context) = application();
+        let secondary = application.open_window(&context, None);
+        application.windows[secondary]
+            .app
+            .dispatch_for_test(AppCommand::NewJavaScriptWorkflowDraft, &context);
+        let source = application.windows[secondary].id;
+        let moved = application.windows[secondary].app.active_tab_id_for_test();
+
+        application.move_tab(
+            source,
+            TabMoveRequest {
+                moved,
+                target: Some(egui::ViewportId::ROOT),
+                before: Some(application.windows[0].app.active_tab_id_for_test()),
+                screen_position: egui::Pos2::ZERO,
+            },
+            &context,
+        );
+
+        assert!(application.windows[0]
+            .app
+            .active_editor_is_workflow_source_for_test());
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_move_adopts_one_runtime_and_source_window_close_preserves_it() {
+        let (mut application, context) = application();
+        let secondary = application.open_window(&context, None);
+        application.windows[secondary]
+            .app
+            .dispatch_for_test(AppCommand::StartJavaScriptProgram, &context);
+        let moved = application.windows[secondary].app.active_tab_id_for_test();
+        let coordinator = application.javascript_program_coordinator.clone();
+        assert_eq!(coordinator.active_programs(), 1);
+        let source = application.windows[secondary].id;
+
+        application.move_tab(
+            source,
+            TabMoveRequest {
+                moved,
+                target: Some(egui::ViewportId::ROOT),
+                before: Some(application.windows[0].app.active_tab_id_for_test()),
+                screen_position: egui::Pos2::ZERO,
+            },
+            &context,
+        );
+
+        assert!(application.window_index(source).is_none());
+        assert_eq!(coordinator.active_programs(), 1);
+        assert!(application.windows[0]
+            .app
+            .tab_ids_for_test()
+            .contains(&moved));
+
+        application.windows[0]
+            .app
+            .dispatch_for_test(AppCommand::CloseTab(moved), &context);
+        application.windows[0]
+            .app
+            .begin_javascript_cleanup_for_test(&context);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while coordinator.active_programs() != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "moved JavaScript runtime reap deadline"
+            );
+            application.windows[0]
+                .app
+                .drain_javascript_cleanup_for_test(&context);
+            std::thread::yield_now();
+        }
+    }
+
+    #[cfg(feature = "javascript-program-dev")]
+    #[test]
+    fn javascript_program_app_quit_settles_every_runtime_and_refuses_new_admission() {
+        let (mut application, context) = application();
+        application.windows[0]
+            .app
+            .dispatch_for_test(AppCommand::StartJavaScriptProgram, &context);
+        application.windows[0]
+            .app
+            .dispatch_for_test(AppCommand::OpenLauncher, &context);
+        application.windows[0]
+            .app
+            .dispatch_for_test(AppCommand::StartJavaScriptProgram, &context);
+        let coordinator = application.javascript_program_coordinator.clone();
+        assert_eq!(coordinator.active_programs(), 2);
+
+        application.windows[0].app.accept_window_close_for_test();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while coordinator.active_programs() != 0 {
+            application.settle_powershell_shutdown(&context);
+            assert!(
+                Instant::now() < deadline,
+                "aggregate JavaScript quit deadline"
+            );
+            std::thread::yield_now();
+        }
+        application.windows[0]
+            .app
+            .dispatch_for_test(AppCommand::StartJavaScriptProgram, &context);
+        assert_eq!(coordinator.active_programs(), 0);
     }
 
     fn other_feature(feature: Feature) -> Feature {
@@ -4898,6 +5075,25 @@ mod tests {
             .pending_quit_counts_for_test()
             .expect("the secondary SSH session must be included in primary quit");
         assert_eq!(counts.ssh, 1);
+    }
+
+    #[test]
+    fn secondary_safe_restart_routes_through_the_primary_aggregate_quit() {
+        let (primary, _tab, _transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut application = FesTermApplication::new(primary);
+        let context = egui::Context::default();
+        let secondary = application.open_window(&context, None);
+        application.refresh_application_close_context();
+        application.windows[secondary]
+            .app
+            .request_safe_mode_restart(&context);
+        application.route_safe_restart_requests(&context);
+
+        assert_eq!(
+            application.windows[0].app.pending_quit_purpose_for_test(),
+            Some(crate::overlay_state::QuitConfirmationPurpose::RestartInSafeMode)
+        );
+        assert!(!application.windows[1].app.window_close_accepted());
     }
 
     #[test]

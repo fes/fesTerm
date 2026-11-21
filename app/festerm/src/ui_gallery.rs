@@ -1648,6 +1648,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         automatic_update_checks: true,
+        safe_mode: false,
+        open_automation_activity: false,
         mcp_enabled: false,
         javascript_enabled: false,
         automation_mcp_enabled: false,
@@ -1658,6 +1660,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         automation_preference_retry_available: false,
         automation_window: crate::application::WindowId::PRIMARY,
         automation: Default::default(),
+        javascript_program_storage: Vec::new(),
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         session_recording_enabled: false,
@@ -3077,7 +3080,7 @@ fn capture_text_editor_save_as() -> image::RgbaImage {
     );
     harness.run();
 
-    harness.get_by_label("Save As").click();
+    harness.get_by_label("Save As\u{2026}").click();
     harness.run();
     // The listing arrives on a worker thread, so the sheet is empty for the
     // first frames after it opens.

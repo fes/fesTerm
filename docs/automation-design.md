@@ -36,8 +36,9 @@ continues through P3. PRs remain incomplete until tests, independent limited-con
 security/reliability/scope reviews and required CI pass. P4 remains deferred.
 
 The shipped [desktop JavaScript workflow beta](#desktop-javascript-workflow-beta)
-runs one user-selected bundle from Settings. A future step authors workflows in
-the existing native text editor. Built-in application events are the intended
+runs one user-selected bundle from Settings. Native editor authoring now covers
+creation, local opening and validation of that same JSON `SourceSnapshot`
+format; it does not yet create an editor execution path. Built-in application events are the intended
 future execution attachment points, not debugger breakpoints or subscriptions
 to arbitrary diagnostic logs. A separate explicit Debug mode is also proposed.
 The [authoring, debugger and hook contracts](#script-authoring-and-execution-surfaces)
@@ -753,9 +754,10 @@ targets and native qualification remain open.
 
 ## Script authoring and execution surfaces
 
-This section is future work beyond the shipped
+The editor-backed authoring subset is implemented, while Run, status, hooks and
+debugging remain future work beyond the shipped
 [desktop beta](#desktop-javascript-workflow-beta). The beta has no editor
-integration, workflow library, hook or debugger: Settings captures one
+execution integration, workflow library, hook or debugger: Settings captures one
 user-selected JSON `SourceSnapshot` through the
 [single-file intake](#user-selected-single-file-intake), and its Run button is
 the native approval of that frozen snapshot, parameters and one local PTY
@@ -764,20 +766,54 @@ broker approval, worker supervisor, per-input review and Stop path rather than
 introduce a parallel execution route.
 
 Reuse the [native text editor](text-editor-design.md), not a second embedded
-editor or a general IDE. Proposed native **New automation script** and
-**Manage workflows** commands create a draft or open an installed workflow's
-source in that editor. Creation supplies a minimal `main` template; workflow
-details expose the entry module, API version, typed parameter schema and
-maximum requested capabilities. A local file or imported bundle is not an
-installed, authorized workflow merely because it is open in the editor.
+editor or a general IDE. Native **New JavaScript Workflow** and **Open
+JavaScript Workflow Source…** commands create or open the beta's JSON
+`SourceSnapshot` format in that editor. A new draft is an untitled, dirty
+`.workflow.json` document with a bounded `main.js` template and uses ordinary
+Save/Save As. Both authoring commands remain available while JavaScript
+execution is disabled; they never enable the preference. A per-view marker adds
+an editor **Validate** action and a visible `WORKFLOW` origin label. The editor
+also recognizes `*.workflow.json` on ordinary Open File. Validation runs on a
+bounded background task, checks the current dirty buffer with the same
+`ApprovedBundle` rules and publishes success or an actionable manifest,
+module-graph, schema or JavaScript module/line diagnostic only when the
+document revision still matches. The command bar keeps Validate visible in a
+measured responsive row; secondary editor actions use an overflow at narrow
+widths. Stale work is discarded without saving, reopening a path, running code
+or granting authority. The workflow-source picker dispatches one atomic source
+open and never shares the Settings capture handler. Ordinary JSON opened
+normally retains the ordinary editor behavior. A local file or imported bundle
+is not an installed, authorized workflow merely because it is open in the
+editor.
 
-Keep the existing shared-document identity, undo, dirty/conflict state,
+The marker follows the view through Save As, duplicate view and cross-window
+moves without changing the shared document or other views. Keep the existing
+shared-document identity, undo, dirty/conflict state,
 Find/Replace, syntax-highlighting framework, Save/Save As, auto-save and
 multi-view behavior. Workflow-specific **Run**, **Stop**, **Run status** and
 **Hook bindings** actions are contextual additions using normal application
 commands, styling and accessibility. Ordinary text editing, Save, auto-save,
 opening/importing a file and closing a view never execute a script or approve
 permissions.
+
+Save/Save As remains file-only. **Register…** is offered only for a saved,
+unconflicted local workflow source and is a distinct non-authorizing command:
+it validates and copies the exact canonical snapshot into the private
+application-data workflow registry. Reimporting changed bytes creates a
+different digest-addressed version; unchanged bytes are idempotent. The editor
+then opens Settings, where the user can review the registered digest and enter
+the existing native Run approval. The mutable source path is neither retained
+nor reopened for execution. Registry entries load as inert metadata on normal
+startup, use bounded strict indexes and verified private artifact files, and
+can be individually removed. Corrupt/quarantined entries never fall back to
+source paths.
+
+`--safe-mode` and About's **Restart in Safe Mode…** create a process-local
+automation fence. It preserves configuration, source files, registry contents
+and bindings but suppresses JS/MCP listeners, registry activation, workers and
+automatic review before admission. Safe Mode leaves editor authoring and
+validation available, prevents toggles from persisting or overriding the
+fence, and ends only through a normal restart.
 
 Run selects a saved, validated workflow version and parameters, captures the
 complete bundle as the same canonical snapshot the beta intake produces, then
