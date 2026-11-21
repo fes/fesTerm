@@ -597,7 +597,16 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     }
 
     fn reopen_stage_in_phase(&self, epoch: u64, phase: Phase) -> io::Result<TrustedStage> {
-        let _lease = self.lease()?;
+        let guard = self.lease()?;
+        self.reopen_stage_admitted(epoch, phase, &guard)
+    }
+
+    fn reopen_stage_admitted(
+        &self,
+        epoch: u64,
+        phase: Phase,
+        _guard: &native::OperationGuard,
+    ) -> io::Result<TrustedStage> {
         self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, phase)?;
         let (current, record) = self.reconciled_registration()?;
@@ -994,23 +1003,29 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
-        self.start_checked(stage, epoch, credentials, || Ok(()), false)
+        self.start_checked(stage, epoch, credentials, || Ok(()))
     }
 
     #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
     pub(crate) fn start_from_desktop_parent(
         &self,
-        stage: &TrustedStage,
         epoch: u64,
         check: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
+        check()?;
+        // One existing native operation covers publisher/self admission AND
+        // actual start. Every early error drains its captured workers before
+        // this dedicated process may exit; no nested lease or deadline reset.
+        let guard = self.lease()?.drain_before_drop();
+        let stage = self.reopen_stage_admitted(epoch, Phase::Provisioned, &guard)?;
+        stage.require_current_executable()?;
         let repeated = std::cell::Cell::new(false);
-        self.start_checked(
-            stage,
+        self.start_admitted(
+            &stage,
             epoch,
             || self.require_start_credentials_observed(epoch, repeated.replace(true)),
             check,
-            true,
+            guard,
         )
     }
 
@@ -1020,7 +1035,6 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
         check: impl Fn() -> io::Result<()>,
-        drain: bool,
     ) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows
             && !cfg!(all(feature = "cloud", feature = "host-runtime"))
@@ -1030,12 +1044,18 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             ));
         }
         check()?;
-        let lease = self.lease()?;
-        let _lease = if drain {
-            lease.drain_before_drop()
-        } else {
-            lease
-        };
+        let guard = self.lease()?;
+        self.start_admitted(stage, epoch, credentials, check, guard)
+    }
+
+    fn start_admitted(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        credentials: impl Fn() -> io::Result<()>,
+        check: impl Fn() -> io::Result<()>,
+        _guard: native::OperationGuard,
+    ) -> io::Result<Observation> {
         self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         credentials()?;

@@ -5414,7 +5414,9 @@
         "protected_owner_desktop_stage_less_initialization_refuses_before_any_receipt",
         "desktop_start_process_fence_refusal_precedes_selected_store_and_effects",
         "mac_host_access_capability_is_static_and_separate_from_existing_reply",
-        "mac_host_helper_capability_refusal_has_exact_update_guidance"
+        "mac_host_helper_capability_refusal_has_exact_update_guidance",
+        "native_service_dedicated_start_reuses_existing_expired_guard_without_reset",
+        "native_service_held_start_guard_reopen_reaches_registration_without_reacquiring"
       ],
       "manual_scenarios": [
         "NP-03",

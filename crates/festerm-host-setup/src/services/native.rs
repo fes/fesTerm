@@ -44,6 +44,10 @@ impl OperationGuard {
         }
     }
 
+    #[cfg(any(
+        all(test, unix),
+        all(target_os = "macos", feature = "cloud", feature = "host-runtime")
+    ))]
     pub(super) fn drain_before_drop(mut self) -> Self {
         self.drain_before_drop = true;
         self
@@ -479,10 +483,10 @@ mod tests {
             }
         }
         let release_on_error = Release(release.clone());
-        UNTIL.with(|slot| slot.set(Some(Instant::now() + Duration::from_millis(500))));
+        UNTIL.with(|slot| slot.set(Some(Instant::now() + Duration::from_secs(2))));
         let error = NativeRunner.execute(&NativeRequest::Process {
             tool: "/bin/sh".into(), args: vec!["-c".into(),
-                "printf ready > \"$1\"; for n in 1 2 3 4 5 6 7 8 9 10; do [ -f \"$2\" ] && break; /bin/sleep 0.1; done; printf finished > \"$3\"".into(),
+                "printf ready > \"$1\"; for n in 1 2 3 4 5 6 7 8 9 10; do [ -f \"$2\" ] && break; /bin/sleep 1; done; printf finished > \"$3\"".into(),
                 "fixture".into(), ready.clone().into_os_string(), release.clone().into_os_string(), finished.clone().into_os_string()],
         }).err().unwrap();
         assert_eq!(error.to_string(), "host.service_native_timeout");

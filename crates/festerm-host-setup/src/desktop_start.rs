@@ -115,8 +115,6 @@ pub fn execute(
     let store = Store::open(state, Origin::Desktop)?;
     let before = current(&store, installation, epoch, scope)?;
     let services = Services::current_user(&store, state)?;
-    let stage = services.reopen_stage(epoch)?;
-    stage.require_current_executable()?;
     let cancel = CancellationToken::new();
     let lifetime = cancel.clone();
     std::thread::Builder::new()
@@ -130,7 +128,7 @@ pub fn execute(
             lifetime.cancel();
         })?;
     let result: io::Result<ProcessState> = (|| {
-        let observation = services.start_from_desktop_parent(&stage, epoch, || {
+        let observation = services.start_from_desktop_parent(epoch, || {
             if cancel.is_cancelled() {
                 return Err(io::Error::other("host.cloud_cancelled"));
             }

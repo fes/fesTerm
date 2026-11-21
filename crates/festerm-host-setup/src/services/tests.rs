@@ -2054,6 +2054,56 @@ fn native_service_linux_failed_cleanup_retries_removed_definition_and_resets_onl
 
 #[cfg(unix)]
 #[test]
+fn native_service_held_start_guard_reopen_reaches_registration_without_reacquiring() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let services = services(root.path(), &store, Platform::Linux);
+    let guard = services.lease().unwrap().drain_before_drop();
+    let error = services
+        .reopen_stage_admitted(snapshot.epoch, Phase::Provisioned, &guard)
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "host.service_not_installed",
+        "held guard must reach actual registration boundary rather than nested Busy"
+    );
+    assert!(services.runner.state.borrow().calls.is_empty());
+    drop(guard);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_dedicated_start_reuses_existing_expired_guard_without_reset() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    services.runner.state.borrow_mut().calls.clear();
+    let guard = services.lease().unwrap().drain_before_drop();
+    native::expire_operation_for_test();
+    let error = services
+        .start_admitted(
+            &stage,
+            snapshot.epoch,
+            native::check_operation_for_test,
+            || Ok(()),
+            guard,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "host.service_native_timeout");
+    assert!(
+        services.runner.state.borrow().calls.is_empty(),
+        "expired original operation cannot submit manager work"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn native_service_parent_revocation_after_credential_read_prevents_unsent_start() {
     let root = storage::private_test_directory();
     let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
@@ -2078,7 +2128,6 @@ fn native_service_parent_revocation_after_credential_read_prevents_unsent_start(
                     Ok(())
                 }
             },
-            false,
         )
         .err()
         .unwrap();

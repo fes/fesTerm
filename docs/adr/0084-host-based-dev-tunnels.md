@@ -2948,7 +2948,10 @@ reopen the exact logical item without an upsert or ACL repair.
 The authenticated helper advertises a separate static `mac-host-access`
 capability. A fixed `start-desktop` command binds installation, epoch, full
 snapshot digest and nonce; it verifies its registered executable and acquires
-the existing service lease and unchanged native deadline inside the child.
+the existing service lease and unchanged native deadline inside the child,
+before publisher/self authentication. The same guard enters the private start
+core without reacquisition or deadline reset; prerequisite failures also drain
+retained native workers before helper exit.
 The GUI holds no service lease while waiting. A private EOF lifetime pipe
 revokes unsent effects after credential reads and immediately before native
 requests. Submitted native-manager effects remain uncertain on timeout or lost
