@@ -63,6 +63,7 @@ fn completion_failure_code(error: Failure) -> &'static str {
         Failure::ScopeChanged => "scope_changed",
         Failure::PrivateStorage => "private_storage",
         Failure::FileAccessReview => "file_access_review",
+        Failure::MacHostHelperUnsupported => "mac_host_helper_unsupported",
         Failure::FileHelperUnsupported => "file_helper_unsupported",
         Failure::SignedBundle => "signed_bundle",
         Failure::BundleNotPublished => "bundle_not_published",
@@ -388,6 +389,13 @@ fn failure(error: io::Error) -> Failure {
             .is_some_and(|inner| inner.is::<io::Error>() || inner.source().is_some())
     {
         Failure::NativeTimeout
+    } else if error.kind() == io::ErrorKind::Other
+        && detail == "host.mac_host_access_helper_required"
+        && !error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<io::Error>() || inner.source().is_some())
+    {
+        Failure::MacHostHelperUnsupported
     } else if detail == "host.file_helper_unsupported" {
         Failure::FileHelperUnsupported
     } else if detail.contains("vault")
@@ -951,7 +959,22 @@ impl Native {
                                 snapshot.epoch,
                                 CompletionBoundary::ServiceStart,
                                 ObservationBoundary::ServiceStart,
-                                || services.start(&stage, snapshot.epoch),
+                                || {
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        festerm_host_setup::desktop_start::start(
+                                            store,
+                                            &request.root,
+                                            &stage,
+                                            snapshot.as_ref(),
+                                            cancel,
+                                        )
+                                    }
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        services.start(&stage, snapshot.epoch)
+                                    }
+                                },
                             )?;
                             if completion_io(
                                 &request.root,
@@ -1032,7 +1055,23 @@ impl Native {
                 verify(Some(store), &request.expected)?;
                 let services = Services::current_user(store, &request.root).map_err(failure)?;
                 let stage = services.reopen_stage(expected.epoch).map_err(failure)?;
-                let observation = services.start(&stage, expected.epoch).map_err(failure)?;
+                let observation = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        festerm_host_setup::desktop_start::start(
+                            store,
+                            &request.root,
+                            &stage,
+                            expected.as_ref(),
+                            cancel,
+                        )
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        services.start(&stage, expected.epoch)
+                    }
+                }
+                .map_err(failure)?;
                 let mut result = report(Some(store), &request.root)?;
                 if result.scope != request.expected {
                     return Err(Failure::ScopeChanged);

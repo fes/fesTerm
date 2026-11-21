@@ -47,7 +47,7 @@ no item access, and retains per-query noninteractive matching.
 
 ### Additive selected macOS HOST item mechanism
 
-The unwired `MacHostCreationContext` binds one already reserved HOST purpose and
+The additive `MacHostCreationContext` binds one already reserved HOST purpose and
 opaque reference to this executing app and one caller-authenticated immutable
 HOST executable. The current app may be a valid retained ad-hoc development
 build; this does not establish production stable-DR upgrade qualification.
@@ -64,10 +64,25 @@ reference/size checks and finite errors. Create consumes one bound context and
 refuses collisions; updates retain the exact selected logical item and never
 upsert, recreate missing items, SetAccess or migrate existing ACLs. Post-create
 verification failure leaves the reserved item intact for interrupted-publication
-recovery. No current HOST or ordinary credential path selects this facade.
-No shared GUI process UI fence, dependency package, permission grant, helper
-activation or read/export API is added. Future wiring must retain the reviewed
-stage/consent/reference journal binding and dedicated-process noninteraction.
+recovery. Ordinary account credential paths do not select this facade.
+
+### Fresh Desktop HOST purpose wiring
+
+On macOS only, HOST owner-anchor and HOST OAuth factories retain selected-item
+updates. Fresh foreground creation additionally requires an authenticated held
+HOST stage and a reservation minted in that exact operation. An owner
+INITIALIZING receipt reloaded from disk never authorizes fresh creation, even
+when the native reference is absent. Only the live cloud Foreground that first
+published its reference can consume creation authority, before the native call;
+a failed or unknown create never rearms it. The existing receipt formats and
+non-Mac/headless selection stay unchanged. No legacy ACL migration occurs.
+
+Actual macOS Desktop start runs in the authenticated registered helper, whose
+entry disables Keychain UI before constructing stores. The GUI never changes
+its process-wide UI policy. Serving entry points also install this dedicated
+process fence before native reads. HOST retained updates never upsert. Static
+capability refusal occurs before a new setup ticket or device sign-in. This
+source wiring supplies no signed/native acceptance or new permissions.
 
 ## Validation impact
 

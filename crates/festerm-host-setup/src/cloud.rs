@@ -32,6 +32,13 @@ pub fn initialize_owner_readiness_store() -> io::Result<()> {
         .map_err(|_| io::Error::other("host.owner_readiness_storage_unavailable"))
 }
 
+/// Dedicated serving/start process only, before threads or native stores.
+#[cfg(target_os = "macos")]
+pub fn initialize_headless_account_store() -> io::Result<()> {
+    festerm_secret_store::initialize_headless_keychain()
+        .map_err(|_| refused("host.headless_keychain_ui_fence_unavailable"))
+}
+
 const RECORD: &str = "host-cloud.json";
 const LOCK: &str = "host-cloud.lock";
 pub const HOST_IDENTITY_FILE: &str = "host-identity";
@@ -141,6 +148,9 @@ struct Record {
 /// It carries no token and cannot be deserialized from a configuration file.
 pub struct Foreground {
     record: Record,
+    // Only the handle that published this reference may attempt native create.
+    // A failed/unknown create consumes it permanently; reopening never rearms.
+    fresh_creation: std::sync::atomic::AtomicBool,
 }
 
 /// Foreground acknowledgement of retained cloud uncertainty, not absence,
@@ -377,7 +387,8 @@ impl<'a> CloudHostAdapter<'a> {
             return Err(refused("host.ordinary_policy_not_enabled"));
         }
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         let mut record = self.load()?;
         let exact = record
@@ -447,7 +458,8 @@ impl<'a> CloudHostAdapter<'a> {
         cancel: &CancellationToken,
     ) -> io::Result<festerm_tunnel_bridge::relay::HostConnection> {
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         let (snapshot, exact, token, identity) = self
             .relay_authorization_with(cancel, &network, &*secrets)
@@ -560,6 +572,31 @@ impl<'a> CloudHostAdapter<'a> {
         })
     }
 
+    #[cfg(all(
+        target_os = "macos",
+        feature = "native-services",
+        feature = "host-runtime"
+    ))]
+    pub(crate) fn is_desktop(&self) -> io::Result<bool> {
+        Ok(self.store.snapshot()?.origin == Origin::Desktop)
+    }
+
+    fn secret_store(&self) -> Result<Box<dyn SecretStore>, festerm_secret_store::SecretStoreError> {
+        #[cfg(target_os = "macos")]
+        if self
+            .store
+            .snapshot()
+            .map_err(|_| festerm_secret_store::SecretStoreError::BackendFailure)?
+            .origin
+            == Origin::Desktop
+        {
+            return Ok(Box::new(crate::host_items::HostPurposeStore::open(
+                festerm_secret_store::HostSecretPurpose::OAuthIdentity,
+            )?));
+        }
+        festerm_secret_store::native_store()
+    }
+
     /// Call only from explicit foreground account approval for the exact
     /// request_enable ticket/settings shown to this OS user. Login/display name
     /// is deliberately not an account identifier.
@@ -591,7 +628,10 @@ impl<'a> CloudHostAdapter<'a> {
                 record.ticket = ticket.clone();
                 validate(&record, snapshot, directory, || self.os_user())?;
                 write(directory, &record)?;
-                return Ok(Foreground { record });
+                return Ok(Foreground {
+                    record,
+                    fresh_creation: std::sync::atomic::AtomicBool::new(false),
+                });
             }
             if snapshot.binding.is_some() {
                 return Err(refused(
@@ -619,7 +659,10 @@ impl<'a> CloudHostAdapter<'a> {
                 receipt: None,
             };
             crate::protected_state::publish_new(directory, Path::new(RECORD), &encode(&record)?)?;
-            Ok(Foreground { record })
+            Ok(Foreground {
+                record,
+                fresh_creation: std::sync::atomic::AtomicBool::new(true),
+            })
         })
     }
 
@@ -671,7 +714,8 @@ impl<'a> CloudHostAdapter<'a> {
         prompt: impl FnOnce(DevicePrompt),
     ) -> io::Result<()> {
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         self.sign_in_with(foreground, cancel, prompt, &network, &*secrets)
             .await
@@ -684,6 +728,71 @@ impl<'a> CloudHostAdapter<'a> {
         prompt: impl FnOnce(DevicePrompt),
         network: &impl Network,
         secrets: &dyn SecretStore,
+    ) -> io::Result<()> {
+        self.sign_in_using(
+            foreground,
+            cancel,
+            prompt,
+            network,
+            secrets,
+            false,
+            |reference, secret| secrets.create_reserved(reference, secret),
+        )
+        .await
+    }
+
+    #[cfg(all(
+        target_os = "macos",
+        feature = "native-services",
+        feature = "host-runtime"
+    ))]
+    pub(crate) async fn sign_in_desktop(
+        &self,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(DevicePrompt),
+        stage: &crate::services::TrustedStage,
+    ) -> io::Result<()> {
+        if self.store.snapshot()?.origin != Origin::Desktop {
+            return Err(refused("host.desktop_consent_required"));
+        }
+        let network = NativeNetwork::new()?;
+        let secrets = self
+            .secret_store()
+            .map_err(|_| refused("host.secure_store_unavailable"))?;
+        self.sign_in_using(
+            foreground,
+            cancel,
+            prompt,
+            &network,
+            &*secrets,
+            true,
+            |reference, secret| {
+                stage
+                    .create_host_item(
+                        festerm_secret_store::HostSecretPurpose::OAuthIdentity,
+                        reference,
+                        secret,
+                    )
+                    .map_err(|_| festerm_secret_store::SecretStoreError::BackendFailure)
+            },
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn sign_in_using(
+        &self,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(DevicePrompt),
+        network: &impl Network,
+        secrets: &dyn SecretStore,
+        require_fresh: bool,
+        create: impl FnOnce(
+            &SecretReference,
+            &SecretBytes,
+        ) -> Result<(), festerm_secret_store::SecretStoreError>,
     ) -> io::Result<()> {
         let _operation = self.operation()?;
         let mut record = self.load()?;
@@ -734,6 +843,14 @@ impl<'a> CloudHostAdapter<'a> {
             Err(festerm_secret_store::SecretStoreError::Missing) => false,
             Err(_) => return Err(refused("host.secure_store_unavailable")),
         };
+        if require_fresh
+            && !existing
+            && !foreground
+                .fresh_creation
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(refused("host.cloud_credential_requires_reconciliation"));
+        }
         let result = network.sign_in(record.account_id, cancel, prompt).await;
         self.check_cancelled(&record, cancel)?;
         let identity = result.map_err(account_error)?;
@@ -750,7 +867,14 @@ impl<'a> CloudHostAdapter<'a> {
             if existing {
                 secrets.update(&reference, &secret)
             } else {
-                secrets.create_reserved(&reference, &secret)
+                if require_fresh
+                    && !foreground
+                        .fresh_creation
+                        .swap(false, std::sync::atomic::Ordering::AcqRel)
+                {
+                    return Err(refused("host.cloud_credential_requires_reconciliation"));
+                }
+                create(&reference, &secret)
             }
             .map_err(|_| refused("host.secure_store_unavailable"))?;
             record.authenticated = true;
@@ -799,7 +923,8 @@ impl<'a> CloudHostAdapter<'a> {
         cancel: &CancellationToken,
     ) -> io::Result<Phase> {
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         self.provision_with(foreground, cancel, &network, &*secrets)
             .await
@@ -1015,7 +1140,8 @@ impl<'a> CloudHostAdapter<'a> {
             }
         }
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         self.reconcile_with(cancel, &network, &*secrets).await
     }
@@ -1207,7 +1333,8 @@ impl<'a> CloudHostAdapter<'a> {
 
     pub async fn health(&self, cancel: &CancellationToken) -> io::Result<Health> {
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         self.health_with(cancel, &network, &*secrets).await
     }
@@ -1220,8 +1347,9 @@ impl<'a> CloudHostAdapter<'a> {
         cancel: &CancellationToken,
     ) -> io::Result<Phase> {
         let network = NativeNetwork::new()?;
-        let secrets =
-            festerm_secret_store::native_store().map_err(|_| refused("host.sign_in_required"))?;
+        let secrets = self
+            .secret_store()
+            .map_err(|_| refused("host.sign_in_required"))?;
         self.adopt_uncertain_for_cleanup_with(cancel, &network, &*secrets)
             .await
     }
@@ -1308,7 +1436,8 @@ impl<'a> CloudHostAdapter<'a> {
     /// obtain exact native stop evidence and request_cleanup in the lifecycle.
     pub async fn cleanup(&self, cancel: &CancellationToken) -> io::Result<Cleanup> {
         let network = NativeNetwork::new()?;
-        let secrets = festerm_secret_store::native_store()
+        let secrets = self
+            .secret_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
         self.cleanup_with(cancel, &network, &*secrets).await
     }
@@ -1974,6 +2103,89 @@ mod tests {
         adapter.foreground(&ticket, 42).unwrap()
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_fresh_creation_is_consumed_before_native_effect_and_never_rearmed() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let original = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        let calls = std::cell::Cell::new(0);
+        let create = |reference: &SecretReference, _: &SecretBytes| {
+            calls.set(calls.get() + 1);
+            assert!(!original
+                .fresh_creation
+                .load(std::sync::atomic::Ordering::Acquire));
+            let directory = storage::private_directory(&_root.path().join("host"), false).unwrap();
+            assert_eq!(
+                read(&directory).unwrap().unwrap().credential,
+                reference.to_persisted_string()
+            );
+            Err(festerm_secret_store::SecretStoreError::BackendFailure)
+        };
+        assert!(adapter
+            .sign_in_using(&original, &cancel, |_| {}, &network, &secrets, true, create)
+            .await
+            .is_err());
+        assert_eq!(calls.get(), 1);
+        for approval in [
+            &original,
+            &adapter.foreground(&original.record.ticket, 42).unwrap(),
+        ] {
+            let error = adapter
+                .sign_in_using(
+                    approval,
+                    &cancel,
+                    |_| panic!(),
+                    &network,
+                    &secrets,
+                    true,
+                    |_, _| panic!("unknown/failed creation must not replay"),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "host.cloud_credential_requires_reconciliation"
+            );
+        }
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert!(!adapter.load().unwrap().authenticated);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_fresh_creation_publishes_final_authentication_after_selected_native_create()
+    {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let original = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        adapter
+            .sign_in_using(
+                &original,
+                &CancellationToken::new(),
+                |_| {},
+                &network,
+                &secrets,
+                true,
+                |reference, secret| {
+                    let directory =
+                        storage::private_directory(&_root.path().join("host"), false).unwrap();
+                    assert!(!read(&directory).unwrap().unwrap().authenticated);
+                    assert!(!original
+                        .fresh_creation
+                        .load(std::sync::atomic::Ordering::Acquire));
+                    secrets.create_reserved(reference, secret)
+                },
+            )
+            .await
+            .unwrap();
+        assert!(adapter.load().unwrap().authenticated);
+        assert!(secrets
+            .get(&reference(&adapter.load().unwrap()).unwrap())
+            .is_ok());
+    }
+
     #[test]
     fn host_cloud_diagnostics_preserve_recovery_error_keys_and_semantic_markers() {
         use crate::diagnostics::{from_io_error, Recovery, Stage};
@@ -2072,11 +2284,23 @@ mod tests {
         secrets: MemorySecretStore,
         events: std::cell::RefCell<Vec<&'static str>>,
         fail_install: std::cell::Cell<bool>,
+        fail_host_items: std::cell::Cell<bool>,
         desktop_vault: Option<std::sync::Arc<crate::enrollment::tests::Vault>>,
     }
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     impl crate::controller::SetupBoundary for ControllerBoundary<'_> {
+        fn host_item_admission(
+            &self,
+            _: &Store,
+            _: &crate::services::TrustedStage,
+        ) -> io::Result<()> {
+            if self.fail_host_items.get() {
+                Err(refused("host.mac_host_access_helper_required"))
+            } else {
+                Ok(())
+            }
+        }
         fn fixture_cloud<'a>(&self, store: &'a Store) -> CloudHostAdapter<'a> {
             CloudHostAdapter::fixture(store)
         }
@@ -2176,6 +2400,7 @@ mod tests {
             secrets,
             events: Default::default(),
             fail_install: Default::default(),
+            fail_host_items: Default::default(),
             desktop_vault: None,
         }
     }
@@ -2195,6 +2420,34 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_owner_setup_missing_mac_helper_capability_refuses_before_ticket_or_sign_in() {
+        let (root, store, secrets) = fixture();
+        let before = store.snapshot().unwrap();
+        let boundary = controller_boundary(&store, secrets);
+        boundary.fail_host_items.set(true);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        let error = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| panic!("no device sign-in"),
+            &boundary,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), "host.mac_host_access_helper_required");
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(!root.path().join("host").join(RECORD).exists());
+        assert!(boundary.events.borrow().is_empty());
     }
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]

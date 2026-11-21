@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "69a33160bd938b2db4617426b8fbc448ad03d71ee2c2759c1ac0d7866e07edea"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "8a9a8e452b7557ed830b91d6120de7e92364000f46f10fd7ba00b3a401dae3b4"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -71,3 +71,16 @@ Caveats:
 - Resume is treated as wake; suspend is intentionally ignored.
 - Linux privacy depends on logind and compatible GNOME session semantics.
 - Unknown or broken bus state counts as privacy loss.
+
+## Dedicated Mac HOST entry
+
+Use for: Process-local no-UI fences and static supported-helper admission.
+
+- [`initialize_serving_store`](../../app/festerm-host/src/main.rs) — Fences serving only.
+- [`execute`](../../crates/festerm-host-setup/src/desktop_start.rs) — Matches registered self and full selected scope.
+
+Evidence:
+- [`desktop_start_process_fence_refusal_precedes_selected_store_and_effects`](../../app/festerm-host/src/main.rs) — Refuses before stores/effects.
+
+Caveats:
+- No shared GUI fence, ACL migration, Ready claim or automatic retry.

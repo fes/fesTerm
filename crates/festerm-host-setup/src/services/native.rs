@@ -21,6 +21,7 @@ thread_local! {
 pub(super) struct OperationGuard {
     previous: Option<Arc<Lease>>,
     previous_until: Option<Instant>,
+    drain_before_drop: bool,
     _thread: PhantomData<Rc<()>>,
 }
 
@@ -38,15 +39,30 @@ impl OperationGuard {
         Self {
             previous: OWNERSHIP.with(|slot| slot.replace(Some(Arc::new(lease)))),
             previous_until: UNTIL.with(|slot| slot.replace(Some(Instant::now() + DEADLINE))),
+            drain_before_drop: false,
             _thread: PhantomData,
         }
+    }
+
+    pub(super) fn drain_before_drop(mut self) -> Self {
+        self.drain_before_drop = true;
+        self
     }
 }
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        drop(OWNERSHIP.with(|slot| slot.replace(self.previous.take())));
+        // Restore the previous thread context first. Only native workers that
+        // captured THIS operation can keep its lease alive during drain.
+        let current = OWNERSHIP.with(|slot| slot.replace(self.previous.take()));
         UNTIL.with(|slot| slot.set(self.previous_until));
+        if self.drain_before_drop {
+            if let Some(current) = current {
+                while Arc::strong_count(&current) > 1 {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
     }
 }
 
@@ -438,6 +454,55 @@ mod tests {
             Unknown.execute_read_only(&request).err().unwrap().kind(),
             io::ErrorKind::Unsupported
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_service_dedicated_guard_drains_late_manager_before_process_completion() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let directory =
+            festerm_sessiond::private_storage::private_directory(root.path(), false).unwrap();
+        let file = festerm_sessiond::private_storage::open_private_file(
+            &directory,
+            std::path::Path::new("lease"),
+            true,
+        )
+        .unwrap();
+        let guard = OperationGuard::enter(Lease::exclusive(file).unwrap()).drain_before_drop();
+        let ready = root.path().join("ready");
+        let release = root.path().join("release");
+        let finished = root.path().join("finished");
+        struct Release(std::path::PathBuf);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                let _ = std::fs::write(&self.0, b"release");
+            }
+        }
+        let release_on_error = Release(release.clone());
+        UNTIL.with(|slot| slot.set(Some(Instant::now() + Duration::from_millis(500))));
+        let error = NativeRunner.execute(&NativeRequest::Process {
+            tool: "/bin/sh".into(), args: vec!["-c".into(),
+                "printf ready > \"$1\"; for n in 1 2 3 4 5 6 7 8 9 10; do [ -f \"$2\" ] && break; /bin/sleep 0.1; done; printf finished > \"$3\"".into(),
+                "fixture".into(), ready.clone().into_os_string(), release.clone().into_os_string(), finished.clone().into_os_string()],
+        }).err().unwrap();
+        assert_eq!(error.to_string(), "host.service_native_timeout");
+        assert!(ready.exists(), "owned native fixture actually started");
+        assert!(
+            !finished.exists(),
+            "late native work still outstanding at timeout"
+        );
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            std::fs::write(release, b"release").unwrap();
+        });
+        drop(guard);
+        assert_eq!(
+            std::fs::read(finished).unwrap(),
+            b"finished",
+            "guard exit waits actual native completion"
+        );
+        releaser.join().unwrap();
+        drop(release_on_error);
     }
 
     #[test]

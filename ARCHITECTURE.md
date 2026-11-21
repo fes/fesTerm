@@ -1048,3 +1048,14 @@ configuration; iOS persistent native storage remains Unsupported. This changes
 the mobile composition dependency graph and requires the ADR/architecture
 review before merge. It does not accept device networking, native input or
 physical iOS feasibility. Desktop contracts are unchanged.
+
+
+For fresh macOS Desktop HOST credentials, host-setup owns the purpose and live
+creation reservation while the unsafe-free secret-store facade owns namespace
+and native-handle use. The selected immutable authenticated stage supplies the
+second application identity; ordinary account stores are unchanged. Actual
+Desktop start crosses a fixed one-shot helper command, not a generic broker:
+the registered helper owns the existing native lease/deadline and process-wide
+no-UI fence, the GUI owns exact snapshot/nonce correlation and parent lifetime,
+and submitted uncertainty retains independent lifecycle revocation. See
+[ADR0016](docs/adr/0016-native-secret-store-boundary.md) and ADR0084.

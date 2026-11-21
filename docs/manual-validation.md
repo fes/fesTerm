@@ -6090,11 +6090,11 @@ automatic retry and provides no signed/native qualification. Existing release
 controls and owner authorization govern later exact-candidate runs; see
 [ADR 0084](adr/0084-host-based-dev-tunnels.md#dedicated-read-only-diagnostic-process-fence).
 
-### #816 additive macOS HOST item enabler (unwired)
+### #816 macOS HOST item mechanism native qualification
 
 The selected-item mechanism/facade has policy, ordering, ownership and finite
-error unit coverage; it is not selected by current HOST setup. No automated test
-opens the host user's Keychain. Under the existing opt-in Mac HOST native gate,
+error unit coverage; the fresh Desktop wiring below selects it only with its
+reviewed creation reservation. No automated test opens the host user's Keychain. Under the existing opt-in Mac HOST native gate,
 use disposable selected canaries and explicitly qualified GUI/HOST identities to
 verify create/read/required update, ACL preservation, unrelated plaintext-read
 and automatic HOST-administration refusal, missing/locked/deleted failure and
@@ -6102,5 +6102,21 @@ same-DR update behavior. Keep current ad-hoc development identity separate from
 production signed-DR qualification. Existing reserved items are never migrated,
 recreated after absence or SetAccess-repaired. Hostile coordinated same-user
 vault plus policy overwrite resistance is not claimed. Actual #816 native and
-complete Enable/listener/I/O qualification remain open; this enabler adds no
-activation, permission or retry authority.
+complete Enable/listener/I/O qualification remain open; the mechanism supplies
+no permission or automatic retry authority.
+
+
+### #816 fresh macOS purpose/start wiring
+
+Source fixtures cover newly minted versus reloaded creation reservations,
+prepared-before-create/final-after-publication ordering, full-snapshot reply
+correlation, closed bounded DTOs, parent EOF, and revocation after credential
+reads before native requests. The ordinary account and non-Mac/headless paths
+remain separate. These tests do not open the host user's Keychain or establish
+native HOST acceptance. The existing disposable native gate must exercise a
+fresh exact GUI/authenticated-HOST cohort through create/read/retained update,
+noninteractive actual start, missing/locked/deleted refusal, cancel/parent death
+and submitted-unknown cleanup, then normal lifecycle and actual I/O. Retain
+old legacy items and the failed signed16 cohort unchanged; no automatic ACL
+migration, Always Allow grant, timeout increase or replay is justified by this
+source change. Ad-hoc development and production stable-DR evidence stay distinct.

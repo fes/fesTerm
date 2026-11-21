@@ -149,7 +149,7 @@ struct Registration {
 }
 
 /// Observed local manager state only; no cloud, vault or endpoint availability.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProcessState {
     Absent,
@@ -994,6 +994,34 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
+        self.start_checked(stage, epoch, credentials, || Ok(()), false)
+    }
+
+    #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn start_from_desktop_parent(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        check: impl Fn() -> io::Result<()>,
+    ) -> io::Result<Observation> {
+        let repeated = std::cell::Cell::new(false);
+        self.start_checked(
+            stage,
+            epoch,
+            || self.require_start_credentials_observed(epoch, repeated.replace(true)),
+            check,
+            true,
+        )
+    }
+
+    fn start_checked(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        credentials: impl Fn() -> io::Result<()>,
+        check: impl Fn() -> io::Result<()>,
+        drain: bool,
+    ) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows
             && !cfg!(all(feature = "cloud", feature = "host-runtime"))
         {
@@ -1001,10 +1029,17 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 "host.service_windows_authenticated_graceful_stop_unavailable",
             ));
         }
-        let _lease = self.lease()?;
+        check()?;
+        let lease = self.lease()?;
+        let _lease = if drain {
+            lease.drain_before_drop()
+        } else {
+            lease
+        };
         self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         credentials()?;
+        check()?;
         stage.revalidate()?;
         let (_, record) = self.reconciled_registration()?;
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
@@ -1024,6 +1059,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         if before != ProcessState::Running {
             self.fence(epoch, Phase::Provisioned)?;
             credentials()?;
+            check()?;
+            check()?;
             match self.context.platform {
                 Platform::Linux => self.run(&["--user", "start", &record.resource])?,
                 Platform::Macos => {
@@ -1036,6 +1073,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                         ])?;
                     }
                     self.fence(epoch, Phase::Provisioned)?;
+                    check()?;
                     self.run(&[
                         "kickstart",
                         &format!("gui/{}/{}", record.user, record.resource),
@@ -1063,6 +1101,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         if process != ProcessState::Running {
             return Err(refused("host.service_start_not_observed_running"));
         }
+        check()?;
         Ok(observation(&snapshot, process))
     }
 

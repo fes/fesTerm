@@ -2054,6 +2054,43 @@ fn native_service_linux_failed_cleanup_retries_removed_definition_and_resets_onl
 
 #[cfg(unix)]
 #[test]
+fn native_service_parent_revocation_after_credential_read_prevents_unsent_start() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    let revoked = std::cell::Cell::new(false);
+    services.runner.state.borrow_mut().calls.clear();
+    let error = services
+        .start_checked(
+            &stage,
+            snapshot.epoch,
+            || {
+                revoked.set(true);
+                Ok(())
+            },
+            || {
+                if revoked.get() {
+                    Err(refused("host.cloud_cancelled"))
+                } else {
+                    Ok(())
+                }
+            },
+            false,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "host.cloud_cancelled");
+    assert!(
+        services.runner.state.borrow().calls.is_empty(),
+        "no manager request after revoked read"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn native_service_start_reconciles_bounded_transitions_without_duplicate_start() {
     let root = storage::private_test_directory();
     let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();

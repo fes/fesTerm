@@ -990,7 +990,7 @@ mod native {
     }
 }
 
-/// Additive macOS HOST item mechanism; no current product path selects it.
+/// Selected macOS HOST item mechanism; ordinary account stores are unchanged.
 #[cfg(target_os = "macos")]
 mod host_items;
 #[cfg(target_os = "macos")]

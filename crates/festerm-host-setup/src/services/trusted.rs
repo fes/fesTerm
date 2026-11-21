@@ -444,6 +444,46 @@ impl TrustedStage {
         Ok(())
     }
 
+    #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn revalidate_for_desktop_start(&self) -> io::Result<()> {
+        self.revalidate()
+    }
+
+    #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn require_current_executable(&self) -> io::Result<()> {
+        self.revalidate()?;
+        if std::env::current_exe()? != self.path {
+            return Err(refused("host.service_registered_helper_required"));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn require_mac_host_access(&self) -> io::Result<()> {
+        use super::native::{CommandRunner, NativeRequest, NativeRunner};
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Reply {
+            schema: u16,
+            mac_host_access_v1: bool,
+            desktop_start_v1: bool,
+        }
+        self.revalidate()?;
+        let reply = NativeRunner.execute_read_only(&NativeRequest::Process {
+            tool: self.path.clone(),
+            args: vec!["capabilities".into(), "mac-host-access".into()],
+        })?;
+        if !reply.success || reply.code != 0 || reply.stdout.len() > 1024 {
+            return Err(refused("host.mac_host_access_helper_required"));
+        }
+        let reply: Reply = serde_json::from_slice(&reply.stdout)
+            .map_err(|_| refused("host.mac_host_access_helper_required"))?;
+        if reply.schema != 1 || !reply.mac_host_access_v1 || !reply.desktop_start_v1 {
+            return Err(refused("host.mac_host_access_helper_required"));
+        }
+        self.revalidate()
+    }
+
     pub fn version(&self) -> &str {
         &self.release_version
     }
@@ -454,6 +494,26 @@ impl TrustedStage {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    #[cfg(all(target_os = "macos", feature = "cloud", feature = "host-runtime"))]
+    pub(crate) fn create_host_item(
+        &self,
+        purpose: festerm_secret_store::HostSecretPurpose,
+        reference: &festerm_secret_store::SecretReference,
+        secret: &festerm_secret_store::SecretBytes,
+    ) -> io::Result<()> {
+        self.revalidate()?;
+        let context = festerm_secret_store::MacHostCreationContext::capture(
+            purpose, reference, &self.path, &self.file,
+        )
+        .map_err(|_| io::Error::other("host.secure_store_unavailable"))?;
+        // Capture/use/drop stays in this synchronous owned worker: native
+        // handles never enter the Send + Sync store or an async suspension.
+        context
+            .create_reserved(secret)
+            .map_err(|_| io::Error::other("host.secure_store_unavailable"))?;
+        self.revalidate()
     }
 
     pub(super) fn authenticate_registered(

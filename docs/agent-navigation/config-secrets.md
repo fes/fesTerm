@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "61f501d87ab6e2569e047e63ffb206e650ee7369a008ab849a5cf1f4237f004f"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "d36187b0ba432feba7d33943b204747a9b0408cc29dccbae24134ca9ae8278fb"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -87,18 +87,18 @@ Evidence:
 Caveats:
 - Context equality and WMI PIDs confer no creation consent, session or termination authority.
 
-## Selected Mac HOST items (unwired)
+## Selected Mac HOST items
 
-Use for: Additive fresh-item creation and retained update mechanisms.
+Use for: Fresh Desktop purpose creation and retained update.
 
-- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Consumes one bound purpose/reference.
-- [`Applications`](../../crates/festerm-unix-security/src/macos_keychain/native.rs) — Captures and checks exact native identities.
+- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Consumes one purpose/reference.
+- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps HOST updates separate from ordinary accounts.
 
 Evidence:
 - [`mac_host_item_creation_only_follows_proven_absence`](../../crates/festerm-unix-security/src/macos_keychain.rs) — Refuses error-to-create fallback.
-- [`host_item_creation_binding_retains_only_selected_purpose_and_reference`](../../crates/festerm-secret-store/src/host_items.rs) — Checks exact reference binding.
+- [`host_cloud_fresh_creation_is_consumed_before_native_effect_and_never_rearmed`](../../crates/festerm-host-setup/src/cloud.rs) — Checks one-call creation.
 
 Caveats:
-- Current HOST paths do not select this facade; no live Mac fix is qualified.
-- Ad-hoc self is distinct from production signed-DR native qualification.
-- No automatic ACL migration, upsert or hostile same-user write-isolation claim.
+- Existing pending receipts never reauthorize create; no native acceptance is claimed.
+- Ad-hoc self and production signed-DR qualification stay distinct.
+- No ACL migration, upsert or hostile same-user write-isolation claim.

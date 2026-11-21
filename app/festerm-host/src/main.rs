@@ -10,8 +10,10 @@ use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::Exit
 const HELP: &str = "\
 festerm-host — ADR 0084 headless lifecycle boundary
 
-capabilities [files-delete]
+capabilities [files-delete|mac-host-access]
     Read static compiled helper capabilities only; no state, account or service is accessed.
+start-desktop --state-dir PATH --installation UUID --epoch U64 --scope-digest SHA256 --nonce UUID --consent start
+    macOS authenticated registered helper only, noninteractive one-shot native start with parent-lifetime pipe; Running is not Ready.
 configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in] [--ordinary-access owner-only|provider-owner]
     Save disabled host-local settings only; no sign-in, service or shell is started.
 status --state-dir PATH
@@ -103,12 +105,26 @@ impl std::fmt::Display for ManualCleanupRequired {
 impl std::error::Error for ManualCleanupRequired {}
 
 #[cfg(any(feature = "owner-routing", test))]
-fn owner_readiness_after_fence<T>(
+fn after_process_keychain_fence<T>(
     initialize: impl FnOnce() -> io::Result<()>,
     observe: impl FnOnce() -> io::Result<T>,
 ) -> io::Result<T> {
     initialize()?;
     observe()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn initialize_serving_store(
+    command: &str,
+    initialize: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    if matches!(
+        command,
+        "run" | "run-desktop" | "run-managed" | "run-desktop-managed"
+    ) {
+        initialize()?;
+    }
+    Ok(())
 }
 
 fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
@@ -128,6 +144,11 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 "{{\"schema\":1,\"host_files_delete_v3\":{}}}\n",
                 cfg!(feature = "owner-routing")
             )),
+            Some(feature) if feature == "mac-host-access" => Ok(format!(
+                "{{\"schema\":1,\"mac_host_access_v1\":{},\"desktop_start_v1\":{}}}\n",
+                cfg!(all(target_os = "macos", feature = "owner-routing")),
+                cfg!(all(target_os = "macos", feature = "owner-routing")),
+            )),
             _ => Err(invalid()),
         };
     }
@@ -141,6 +162,15 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let allowed: &[&str] = match command {
         #[cfg(feature = "owner-routing")]
         "owner-readiness" => &["--state-dir", "--origin"],
+        #[cfg(feature = "owner-routing")]
+        "start-desktop" => &[
+            "--state-dir",
+            "--installation",
+            "--epoch",
+            "--scope-digest",
+            "--nonce",
+            "--consent",
+        ],
         "configure" => &[
             "--state-dir",
             "--name",
@@ -243,6 +273,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "update-status" => &["--state-dir"],
         #[cfg(not(feature = "owner-routing"))]
         "owner-readiness"
+        | "start-desktop"
         | "setup"
         | "run"
         | "run-desktop"
@@ -274,6 +305,39 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     };
     match command {
         #[cfg(feature = "owner-routing")]
+        "start-desktop" => {
+            #[cfg(target_os = "macos")]
+            {
+                let text = |key: &str| {
+                    options
+                        .get(key)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)
+                };
+                if text("--consent")? != "start" {
+                    return Err(invalid());
+                }
+                let epoch = text("--epoch")?.parse::<u64>().map_err(|_| invalid())?;
+                if epoch.to_string() != text("--epoch")? {
+                    return Err(invalid());
+                }
+                after_process_keychain_fence(
+                    festerm_host_setup::cloud::initialize_headless_account_store,
+                    || {
+                        festerm_host_setup::desktop_start::execute(
+                            &path("--state-dir")?,
+                            text("--installation")?,
+                            epoch,
+                            text("--scope-digest")?,
+                            text("--nonce")?,
+                        )
+                    },
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            Err(unavailable())
+        }
+        #[cfg(feature = "owner-routing")]
         "owner-readiness" => {
             let state = path("--state-dir")?;
             let origin = match options.get("--origin").and_then(|value| value.to_str()) {
@@ -281,7 +345,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 Some("headless") => Origin::Headless,
                 _ => return Err(invalid()),
             };
-            owner_readiness_after_fence(
+            after_process_keychain_fence(
                 || {
                     #[cfg(target_os = "macos")]
                     festerm_host_setup::cloud::initialize_owner_readiness_store()?;
@@ -601,6 +665,11 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             } else {
                 Origin::Headless
             };
+            #[cfg(target_os = "macos")]
+            initialize_serving_store(
+                command,
+                festerm_host_setup::cloud::initialize_headless_account_store,
+            )?;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -1118,10 +1187,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn desktop_start_process_fence_refusal_precedes_selected_store_and_effects() {
+        let error = after_process_keychain_fence(
+            || Err(io::Error::other("fixture.no_ui_fence")),
+            || -> io::Result<()> { panic!("must not construct selected store or start") },
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "fixture.no_ui_fence");
+    }
+
+    #[test]
+    fn mac_host_access_capability_is_static_and_separate_from_existing_reply() {
+        let reply = execute(arguments(&["capabilities", "mac-host-access"])).unwrap();
+        assert!(reply.len() <= 1024);
+        let value: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(
+            value["mac_host_access_v1"],
+            cfg!(all(target_os = "macos", feature = "owner-routing"))
+        );
+        assert_eq!(value["desktop_start_v1"], value["mac_host_access_v1"]);
+        assert!(value.get("host_files_v2").is_none());
+        assert!(execute(arguments(&["capabilities", "mac-host-access", "extra"])).is_err());
+    }
+
+    #[test]
+    fn headless_keychain_fence_is_only_for_serving_commands_and_failure_refuses() {
+        for command in [
+            "capabilities",
+            "owner-readiness",
+            "start-desktop",
+            "setup",
+            "disable",
+            "update",
+            "run-status",
+            "run-desktop-status",
+        ] {
+            initialize_serving_store(command, || panic!("foreground must not change process UI"))
+                .unwrap();
+        }
+        for command in ["run", "run-desktop", "run-managed", "run-desktop-managed"] {
+            assert!(
+                initialize_serving_store(command, || Err(io::Error::other("fixture"))).is_err()
+            );
+        }
+    }
+
+    #[test]
     fn owner_readiness_fence_precedes_observation_and_refuses_failed_initialization() {
         use std::cell::RefCell;
         let order = RefCell::new(Vec::new());
-        let result = owner_readiness_after_fence(
+        let result = after_process_keychain_fence(
             || {
                 order.borrow_mut().push("fence");
                 Ok(())
@@ -1135,7 +1251,7 @@ mod tests {
         assert_eq!(result, 7);
         assert_eq!(*order.borrow(), ["fence", "observe"]);
         let observed = std::cell::Cell::new(false);
-        assert!(owner_readiness_after_fence(
+        assert!(after_process_keychain_fence(
             || Err(io::Error::other("fixture fence refusal")),
             || {
                 observed.set(true);

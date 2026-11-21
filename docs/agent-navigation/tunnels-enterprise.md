@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "f093251399bc1f16f04259c47e42b719803e1f9267a2880a044b6b7094e4fcfe"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "989e7b08bafa13a372d3709b40a32de7393162bb4c0ebf8d6b48cb2ddd46cf86"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -44,6 +44,7 @@ Use for: When observing or starting a native service without confusing process s
 
 - [`current_user`](../../crates/festerm-host-setup/src/services.rs) — Loads same-user native service state from the host registry
 - [`ProcessState`](../../crates/festerm-host-setup/src/services.rs) — Observes Absent, Stopped, Running, Failed, and Transitioning states
+- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Exact registered Mac helper owns actual start; no GUI service lease.
 
 Evidence:
 - [`native_service_macos_observation_ignores_nested_coalition_fields`](../../crates/festerm-host-setup/src/services/tests.rs) — Ignores nested coalition state and trusts direct process observation
@@ -52,6 +53,7 @@ Evidence:
 Caveats:
 - Running is not readiness
 - Native process observation is separate from cloud or endpoint health
+- Parent EOF fences unsent work; submitted uncertainty retains the GUI permit through actual helper/native drain.
 
 ## Portable Metadata
 

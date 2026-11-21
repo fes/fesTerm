@@ -1,4 +1,4 @@
-//! Unwired HOST-only Keychain facade. Ordinary SecretStore selection is unchanged.
+//! HOST-only Keychain facade. Ordinary account-store selection is unchanged.
 use super::{check_size, SecretBytes, SecretReference, SecretStoreError, SERVICE_NAMESPACE};
 use festerm_unix_security::macos_keychain as keychain;
 use std::{fs::File, path::Path};
@@ -45,7 +45,8 @@ impl MacHostCreationContext {
     }
     /// Consumes this context for its one bound purpose/reference under the caller's lease.
     /// On any failure the reference remains reserved; do not retry/recreate or
-    /// discard interrupted-publication evidence. No current HOST caller is wired.
+    /// discard interrupted-publication evidence. Host-setup owns the consumed
+    /// fresh reservation and authenticated stage binding.
     pub fn create_reserved(
         self,
         secret: &SecretBytes,

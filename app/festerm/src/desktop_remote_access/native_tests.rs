@@ -1491,3 +1491,25 @@ fn desktop_remote_access_native_timeout_completion_keeps_primary_result_and_reco
     assert!(error.message().contains("Nothing is retried automatically"));
     assert!(Failure::Timeout.message().contains("five-minute"));
 }
+
+#[test]
+fn mac_host_helper_capability_refusal_has_exact_update_guidance() {
+    let observed = failure(std::io::Error::other(
+        "host.mac_host_access_helper_required",
+    ));
+    assert_eq!(observed, Failure::MacHostHelperUnsupported);
+    assert!(observed.notice().contains("Update"));
+    assert!(observed.message().contains("matching signed"));
+    for error in [
+        std::io::Error::other("prefix host.mac_host_access_helper_required"),
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "host.mac_host_access_helper_required",
+        ),
+        std::io::Error::other(std::io::Error::other(
+            "host.mac_host_access_helper_required",
+        )),
+    ] {
+        assert_ne!(failure(error), Failure::MacHostHelperUnsupported);
+    }
+}
