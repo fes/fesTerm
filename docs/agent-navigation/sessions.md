@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "a2f064f6426f6724586b627798fc070a82b1775767922dbe1e2599c0a7f81146"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "d69fe0d1363a67e451cf5fbae6cee2405f7d4c90e7d8ba747686d9ae7437bbe4"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -76,7 +76,7 @@ Evidence:
 Caveats:
 - terminal_replies_owned_by_backend blocks duplicate forwarding.
 - pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
-- Controller shutdown and reconnect preserve generation and recovery invariants.
+- Catalog observation never initializes storage; reconnect preserves generation.
 
 ## JavaScript session backend
 

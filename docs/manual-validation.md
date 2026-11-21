@@ -6272,3 +6272,18 @@ The real signed 5590 GUI reached retained Listening without a Keychain/sign-in
 prompt but still failed first Disable at epoch 6. Supported same-epoch completion
 and retained Enable at epoch 7 preserved its shell and binding. This observer has
 not yet captured that failure and does not establish its cause.
+
+
+### Startup catalog observation and first host setup
+
+Status: regression coverage added; fixed native build pending. Release 0.17.15
+reproduced a startup failure: inspecting an old local hosting binding created a
+daemon-only host root, which the lifecycle correctly refused as incomplete.
+
+With a fixed native build and a reviewed fresh host data location, retain an old
+saved local hosting binding and relaunch. Before enabling Remote access, confirm
+that profile inspection creates no host root or catalog. Complete ordinary
+GitHub sign-in and reviewed Enable, then opt in the Remote profile and enable
+shell creation. Preserve existing durable actors and account metadata. Keep
+already-incomplete roots for manual review; this fix does not adopt or reset
+them. A portable lifecycle regression is not native GUI/provider acceptance.

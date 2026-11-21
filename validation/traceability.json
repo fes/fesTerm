@@ -6872,7 +6872,9 @@
         "docs/adr/0016-native-secret-store-boundary.md#decision",
         "docs/adr/0084-host-based-dev-tunnels.md#exact-macos-stop-completion-after-a-native-refusal",
         "docs/adr/0084-host-based-dev-tunnels.md#desktop-disable-failure-evidence",
-        "docs/manual-validation.md#desktop-disable-failure-observer"
+        "docs/manual-validation.md#desktop-disable-failure-observer",
+        "docs/adr/0084-host-based-dev-tunnels.md#noninitializing-local-catalog-observation",
+        "docs/manual-validation.md#startup-catalog-observation-and-first-host-setup"
       ],
       "decisions": [
         "ADR-0084",
@@ -7240,7 +7242,12 @@
         "native_service_macos_failed_bootout_preserves_error_without_exact_absence_proof",
         "desktop_remote_access_disable_error_observer_preserves_owned_result_and_log_failure",
         "desktop_remote_access_disable_error_observer_redacts_and_preserves_inner_error",
-        "desktop_remote_access_disable_error_observer_localizes_known_failure_without_remapping"
+        "desktop_remote_access_disable_error_observer_localizes_known_failure_without_remapping",
+        "profile_status_does_not_create_missing_host_root_or_empty_catalog",
+        "profile_status_refuses_half_journals_and_orphan_namespace_without_repair",
+        "profile_status_preserves_consent_validation_contention_and_journal_bytes",
+        "profile_status_refuses_symlink_catalog_without_touching_target",
+        "startup_catalog_observation_leaves_fresh_desktop_host_initializable"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

@@ -90,3 +90,117 @@ fn profile_catalog_rejects_changed_policy_at_publication_without_leaking_catalog
     );
     exclusive_policy(&private).unwrap();
 }
+
+#[test]
+fn profile_status_does_not_create_missing_host_root_or_empty_catalog() {
+    let directory = storage::private_test_directory();
+    let logical = LogicalSessionId::new();
+    let consent = OperationId::new().to_string();
+    let root = directory.path().join("host").join("daemon");
+    let control = SessionControl::retained_namespace(&root).unwrap();
+    assert_eq!(control.profile_status(&logical, &consent), Ok(None));
+    assert!(!directory.path().join("host").exists());
+    drop(storage::private_directory(&directory.path().join("host"), true).unwrap());
+    drop(storage::private_directory(&root, true).unwrap());
+    assert_eq!(control.profile_status(&logical, &consent), Ok(None));
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    // Explicit catalog writes retain their ordinary initialization path.
+    let revision = control
+        .set_profile(
+            logical.clone(),
+            &consent,
+            "Remote",
+            Recipe::default(),
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        control.profile_status(&logical, &consent),
+        Ok(Some((revision, false)))
+    );
+}
+
+#[test]
+fn profile_status_refuses_half_journals_and_orphan_namespace_without_repair() {
+    for name in [
+        "host-sessions.lock",
+        STATE_FILE,
+        "host-binding-namespace.json",
+    ] {
+        let directory = storage::private_test_directory();
+        let private = storage::private_directory(directory.path(), false).unwrap();
+        let mut file = storage::open_private_file(&private, Path::new(name), true).unwrap();
+        use std::io::Write;
+        file.write_all(b"preserved-evidence").unwrap();
+        drop(file);
+        let control = SessionControl::retained_namespace(directory.path()).unwrap();
+        assert_eq!(
+            control.profile_status(&LogicalSessionId::new(), &OperationId::new().to_string()),
+            Err(ControlError::Storage),
+            "{name}"
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(directory.path().join(name)).unwrap(),
+            b"preserved-evidence"
+        );
+    }
+}
+
+#[test]
+fn profile_status_preserves_consent_validation_contention_and_journal_bytes() {
+    let (directory, control, _private, logical, revision) = fixture();
+    let consent = control
+        .transaction()
+        .unwrap()
+        .state
+        .profiles
+        .get(&logical)
+        .unwrap()
+        .consent
+        .clone();
+    let before = std::fs::read(directory.path().join(STATE_FILE)).unwrap();
+    assert_eq!(
+        control.profile_status(&logical, &consent),
+        Ok(Some((revision, true)))
+    );
+    assert_eq!(
+        control.profile_status(&logical, &OperationId::new().to_string()),
+        Err(ControlError::Denied)
+    );
+    let lease = control.transaction().unwrap();
+    assert_eq!(
+        control.profile_status(&logical, &consent),
+        Err(ControlError::Busy)
+    );
+    drop(lease);
+    assert_eq!(
+        std::fs::read(directory.path().join(STATE_FILE)).unwrap(),
+        before
+    );
+    std::fs::write(directory.path().join(STATE_FILE), b"invalid").unwrap();
+    assert_eq!(
+        control.profile_status(&logical, &consent),
+        Err(ControlError::Storage)
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join(STATE_FILE)).unwrap(),
+        b"invalid"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_status_refuses_symlink_catalog_without_touching_target() {
+    let directory = storage::private_test_directory();
+    let target = storage::private_test_directory();
+    let root = directory.path().join("daemon");
+    std::os::unix::fs::symlink(target.path(), &root).unwrap();
+    let control = SessionControl::retained_namespace(&root).unwrap();
+    assert_eq!(
+        control.profile_status(&LogicalSessionId::new(), &OperationId::new().to_string()),
+        Err(ControlError::Storage)
+    );
+    assert!(root.is_symlink());
+    assert_eq!(std::fs::read_dir(target.path()).unwrap().count(), 0);
+}

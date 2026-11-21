@@ -175,6 +175,27 @@ fn catalog_control() -> Result<festerm_sessiond::host_control::SessionControl, &
     Err("Computer-level local hosting is unavailable in this build.")
 }
 
+#[cfg(feature = "local-host-settings")]
+fn catalog_observer() -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
+    let root = super::desktop_remote_access::Controller::state_root()
+        .ok_or("Remote-access storage is unavailable on this system.")?
+        .join("daemon");
+    catalog_observer_at(&root)
+}
+
+#[cfg(feature = "local-host-settings")]
+fn catalog_observer_at(
+    root: &Path,
+) -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
+    festerm_sessiond::host_control::SessionControl::retained_namespace(root)
+        .map_err(|_| "The protected remote profile catalog is unavailable.")
+}
+
+#[cfg(not(feature = "local-host-settings"))]
+fn catalog_observer() -> Result<festerm_sessiond::host_control::SessionControl, &'static str> {
+    Err("Computer-level local hosting is unavailable in this build.")
+}
+
 fn catalog_recipe(profile: &Profile) -> Result<festerm_host_protocol::Recipe, &'static str> {
     let local = profile.as_local().ok_or("Select a local profile.")?;
     let cwd = local
@@ -203,7 +224,7 @@ fn catalog_status(
         .to_owned()
         .try_into()
         .map_err(|_| "The local profile identity is invalid.")?;
-    catalog_control()?
+    catalog_observer()?
         .profile_status(&logical, binding.consent())
         .map_err(|_| "The protected remote profile catalog could not be verified.")
 }
@@ -2458,6 +2479,44 @@ mod tests {
         assert!(
             unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell").is_err()
         );
+    }
+
+    #[cfg(feature = "local-host-settings")]
+    #[test]
+    fn startup_catalog_observation_leaves_fresh_desktop_host_initializable() {
+        use festerm_host_setup::lifecycle::{
+            OrdinaryAccess, Origin as HostOrigin, Phase as HostPhase, Settings, Startup,
+            Store as HostStore,
+        };
+        let fixture = tempfile::tempdir().unwrap();
+        let parent = trusted_hosting_root(&fixture);
+        let host = parent.join("desktop-host");
+        let catalog = catalog_observer_at(&host.join("daemon")).unwrap();
+        assert_eq!(
+            catalog.profile_status(
+                &festerm_host_protocol::LogicalSessionId::new(),
+                &festerm_host_protocol::OperationId::new().to_string()
+            ),
+            Ok(None)
+        );
+        assert!(
+            !host.exists(),
+            "startup inspection must not strand a recordless host root"
+        );
+        let store = HostStore::create(
+            &host,
+            HostOrigin::Desktop,
+            Settings {
+                friendly_name: "Local host".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+                ordinary_access: OrdinaryAccess::ProviderOwner,
+                filesystem: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(store.snapshot().unwrap().phase, HostPhase::Disabled);
+        assert!(!host.join("daemon").exists());
     }
 
     #[test]
