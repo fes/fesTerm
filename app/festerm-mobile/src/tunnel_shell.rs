@@ -24,7 +24,7 @@ impl MobileApp {
         self
     }
 
-    fn tunnel_client(&mut self) -> Option<Arc<TunnelClient>> {
+    pub(super) fn tunnel_client(&mut self) -> Option<Arc<TunnelClient>> {
         if self.tunnel.client.is_none() {
             let store = self.profiles.as_ref()?.store_handle();
             self.tunnel.client = TunnelClient::new(store).ok().map(Arc::new);

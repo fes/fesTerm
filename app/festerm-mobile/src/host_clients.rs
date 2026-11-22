@@ -26,7 +26,6 @@ use festerm_tunnel_bridge::{
 };
 use festerm_tunnel_client::{
     host_control::{Binding, ConnectionPermit},
-    identity::{self, Identity},
     service::{self, ResolvedTunnel, TunnelSummary},
 };
 use host_client::originals::{
@@ -1812,28 +1811,23 @@ impl MobileApp {
         let budgets = self.hosts.budgets.clone();
         #[cfg(test)]
         let ordinary_service = self.hosts.ordinary_service.clone();
+        let identity_client = self
+            .tunnel_client()
+            .ok_or("Foreground account sign-in is not configured.")?;
         let job = Job::spawn(ctx, move |legacy_cancel| {
             if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
                 return Err("Host expansion cancelled.".into());
             }
-            let (credential, secrets) = {
-                let store = store.lock().map_err(|_| "Account store unavailable.")?;
-                if !store.accounts().contains(&snapshot) {
-                    return Err("Account credential changed.".into());
-                }
-                (snapshot.credential.to_reference(), store.secrets().clone())
-            };
-            let native = secrets
-                .get(&credential)
-                .map_err(|_| "Native account vault unavailable; no fallback.")?;
-            let client_id = identity::registered_client_id()
-                .ok_or("Foreground account sign-in is not configured.")?;
-            let identity = native
-                .with_bytes(|bytes| Identity::decode_private(bytes, snapshot.account_id, client_id))
-                .map_err(|_| "Sign in again from Settings.")?;
-            if identity.needs_sign_in() {
-                return Err("Sign in again from Settings.".into());
-            }
+            let identity = identity_client
+                .prepare_account_identity(&snapshot, &cancel, &|| {
+                    if legacy_cancel.is_cancelled() {
+                        return Err(festerm_mobile_tunnels::TunnelError::Cancelled);
+                    }
+                    guard
+                        .check()
+                        .map_err(|_| festerm_mobile_tunnels::TunnelError::Cancelled)
+                })
+                .map_err(|error| error.to_string())?;
             // Identity native work is complete before the ordinary facade owns its charges.
             drop(permit);
             #[cfg(not(test))]
@@ -3229,6 +3223,14 @@ impl MobileApp {
         let generation = self.hosts.generation;
         #[cfg(test)]
         let discovery_service = self.hosts.discovery_service.clone();
+        let identity_client = if matches!(action, Action::Find | Action::Resolve) {
+            Some(
+                self.tunnel_client()
+                    .ok_or("Foreground account sign-in is not configured.")?,
+            )
+        } else {
+            None
+        };
         let job = Job::spawn(ctx, move |legacy_cancel| {
             let _permit = permit;
             if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
@@ -3302,31 +3304,22 @@ impl MobileApp {
                         .map_err(|error| error.message().into())
                 }
                 Action::Find | Action::Resolve => {
-                    let (credential, secrets) = {
-                        let store = store.lock().map_err(|_| "Account store unavailable.")?;
-                        if store
-                            .accounts()
-                            .iter()
-                            .find(|current| current.id == snapshot.id)
-                            != Some(&snapshot)
-                        {
-                            return Err("Account credential changed.".into());
-                        }
-                        (snapshot.credential.to_reference(), store.secrets().clone())
-                    };
-                    let native = secrets
-                        .get(&credential)
-                        .map_err(|_| "Native account vault unavailable; no fallback.")?;
-                    let client_id = identity::registered_client_id()
-                        .ok_or("Foreground account sign-in is not configured.")?;
-                    let identity = native
-                        .with_bytes(|bytes| {
-                            Identity::decode_private(bytes, snapshot.account_id, client_id)
+                    let identity = identity_client
+                        .as_ref()
+                        .expect("identity action")
+                        .prepare_account_identity(&snapshot, &cancel, &|| {
+                            if legacy_cancel.is_cancelled() {
+                                return Err(festerm_mobile_tunnels::TunnelError::Cancelled);
+                            }
+                            let current = store
+                                .lock()
+                                .map_err(|_| festerm_mobile_tunnels::TunnelError::SecureStorage)?;
+                            if current.account(&snapshot.id) != Some(&snapshot) {
+                                return Err(festerm_mobile_tunnels::TunnelError::AccountChanged);
+                            }
+                            Ok(())
                         })
-                        .map_err(|_| "Sign in again from Settings.")?;
-                    if identity.needs_sign_in() {
-                        return Err("Sign in again from Settings.".into());
-                    }
+                        .map_err(|error| error.to_string())?;
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
