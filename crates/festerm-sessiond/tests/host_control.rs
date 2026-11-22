@@ -1869,10 +1869,12 @@ fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_re
     .unwrap();
     // Lease publication committed, but model a crash before journal publication.
     fixture.save_state(&before_revoke);
-    let observation = fixture
-        .control()
-        .observe_local(&fixture.owner, &running.target)
-        .unwrap();
+    let observation = retry_busy(|| {
+        fixture
+            .control()
+            .observe_local(&fixture.owner, &running.target)
+    })
+    .unwrap();
     assert!(observation.revoked);
     assert_eq!(observation.state, Lookup::Running(running.target.clone()));
     assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
