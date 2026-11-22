@@ -76,7 +76,9 @@ integration has focused regression and controlled native-helper coverage. The
 [Windows-client/Linux-server](validation/dev-tunnels/windows-client-linux-0.17.12.json)
 and [Linux-client/Windows-server](validation/dev-tunnels/linux-client-windows-native.json)
 records cover both creation policies and matched-grid Copilot comparisons.
-These four accepted cases use pinned cohorts; the full 24-case matrix and
+The [Mac-client/Windows-server creation-ON record](validation/dev-tunnels/mac-client-windows-native.json)
+adds named creation, saved exact-generation reconnect and two fresh Copilot pairs.
+These five accepted cases use pinned cohorts; the full 24-case matrix and
 combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
