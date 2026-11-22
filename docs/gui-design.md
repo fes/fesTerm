@@ -1285,6 +1285,14 @@ two-line-chip mode.
 - Client clock/date, shell version, encoding, line-ending convention, command
   timing, and last-input/output timestamps are absent.
 
+The connection-state band is reserved at the right edge before laying out
+left-side facts. At narrow widths, left labels stay on one clipped line and
+truncate with an ellipsis; hovering a visible label reveals its complete value.
+Long remote paths, titles and durable-session names must not paint beneath the
+state label or indicator. Keep the existing 20 px leading inset, 8 px segment
+gaps and 24 px footer height; a neutral surface may still show its plain state
+label without a dot.
+
 The implementation follows this content contract. Terminal ANSI/indexed and
 explicit RGB colors remain unrelated to these application status roles.
 
