@@ -3004,14 +3004,6 @@ impl SftpFileManagerTab {
                                 // separator has to be added explicitly. Without it
                                 // the label ran together as "LOCAL· This computer".
                                 ui.add_space(7.0);
-                                ui.label(
-                                    RichText::new(match focus {
-                                        PaneFocus::Local => "· This computer".to_owned(),
-                                        PaneFocus::Remote => remote_identity.clone(),
-                                    })
-                                    .font(font_for_text_role(SftpTextRole::PaneMeta))
-                                    .color(theme::TEXT_SECONDARY),
-                                );
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     // Mockup `.fsftp-pane-head { padding: 0 11px }`
                                     // -- the right inset has to be added by hand
@@ -3049,6 +3041,28 @@ impl SftpFileManagerTab {
                                             .color(theme::TEXT_SECONDARY),
                                         );
                                     }
+                                    ui.add_space(7.0);
+                                    // Reserve status/actions before allowing the identity
+                                    // to consume the remaining header width.
+                                    ui.allocate_ui_with_layout(
+                                        ui.available_size_before_wrap(),
+                                        Layout::left_to_right(Align::Center),
+                                        |ui| {
+                                            let identity = match focus {
+                                                PaneFocus::Local => "· This computer".to_owned(),
+                                                PaneFocus::Remote => remote_identity.clone(),
+                                            };
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&identity)
+                                                        .font(font_for_text_role(SftpTextRole::PaneMeta))
+                                                        .color(theme::TEXT_SECONDARY),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(identity);
+                                        },
+                                    );
                                 });
                             });
                         });
@@ -8679,6 +8693,54 @@ pub(crate) mod tests {
             }
         }
         tab
+    }
+
+    #[test]
+    fn long_remote_identity_keeps_connection_status_and_reconnect_in_the_pane() {
+        for width in [280.0, 460.0, 900.0] {
+            for disconnected in [false, true] {
+                let mut tab = paint_fixture(&egui::Context::default(), 0);
+                let FileManagerLaunchTarget::Sftp(target) = &mut tab.launch_target else {
+                    unreachable!();
+                };
+                target.host = "festerm-90d265f22b4e46f0a046be499b4a6650.usw2.example.test".into();
+                let identity = format!("· {}", tab.launch_target.identity_label());
+                if disconnected {
+                    tab.connection_state = SftpConnectionState::Disconnected {
+                        summary: "Disconnected fixture".into(),
+                        details: String::new(),
+                    };
+                }
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 500.0))
+                    .build_ui_state(
+                        |ui, tab: &mut SftpFileManagerTab| {
+                            tab.show_pane(ui, PaneFocus::Remote);
+                        },
+                        tab,
+                    );
+                harness.run();
+                let identity_rect = harness.get_by_label(&identity).rect();
+                let status_rect = harness
+                    .get_by_label(if disconnected {
+                        "Disconnected"
+                    } else {
+                        "Connected"
+                    })
+                    .rect();
+                assert!(
+                    identity_rect.right() < status_rect.left(),
+                    "identity overlaps status at width {width}: {identity_rect:?}, {status_rect:?}"
+                );
+                assert!(
+                    status_rect.right() <= width,
+                    "status escapes pane at width {width}"
+                );
+                if disconnected {
+                    assert!(harness.get_by_label("Reconnect").rect().right() <= width);
+                }
+            }
+        }
     }
 
     #[test]

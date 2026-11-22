@@ -1,0 +1,131 @@
+{
+  "scope": "Bounded native Mac777 client to Linux19/source566 rootedFiles RW functional check; F9 foreground owner grant update. No full matrix/release/mobile/MCP claim.",
+  "sources": {
+    "owner_GUI": "f9da836c2190a907315a2c4d53fc96521980366a",
+    "owner_retained12_support": "e2a6783928d5d58684be34dceaf415865ceec49a",
+    "client_GUI": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+    "HOST": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1"
+  },
+  "normal_owner_sequence": {
+    "Disabled44": {
+      "actual": true,
+      "pending": null,
+      "prior_HOST1728279_absent": true,
+      "FIRST_UI": "20-FIRST-DISABLE-RESULT.png"
+    },
+    "Enable45": {
+      "actualProvisioned": true,
+      "pending": null,
+      "FIRST_service_start": "ok",
+      "FIRST_final_scope": "ok",
+      "Refresh_Retry_recovery": false
+    },
+    "current": {
+      "pid": 1745107,
+      "birth_ticks": "41059503",
+      "epoch": 45,
+      "run": "c71e4832-8031-486a-add7-e00adc61fe69",
+      "state": "listening",
+      "failure": null,
+      "same_authenticated_executable_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2"
+    },
+    "settings": {
+      "changed_only": "filesystem.write false\u2192true",
+      "root": "/home/evidence/festermfiles18",
+      "write": true,
+      "delete": false,
+      "delete_serialization": "omitted; defaultfalse",
+      "creation": false,
+      "same_name_account_provider_owner_manualstartup_binding": true
+    }
+  },
+  "client": {
+    "entry": "normal top-level DevTunnelsFiles /Findhosts, tooltip exact90d beforeselection, Connectonce",
+    "locator": "festerm-90d265f22b4e46f0a046be499b4a6650.usw2",
+    "host_id_from_authoritative_server_binding": "ec4179ea-a8aa-4cd1-97cc-65dc66500825",
+    "observed_connected_locator_matches": true,
+    "root_list": true,
+    "original_readme_preview": true,
+    "remote_mkdir_once": "/r36rw",
+    "upload_once_completed": true,
+    "uploaded_markdown_preview": true,
+    "download_once_completed": true,
+    "final_queue": "2completed /100%",
+    "remote_Delete_selected_payload_disabled_tooltip": true,
+    "direct_native_delete_attempt": "NOT RUN; SDK is shellonly; no direct typed Denied claim"
+  },
+  "payload": {
+    "bytes": 1872,
+    "sha256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+    "source": {
+      "leaf": "source/r36payload.md",
+      "bytes": 1872,
+      "SHA256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "inode": 1047907,
+      "mode": "0o644"
+    },
+    "server": {
+      "relative": "r36rw/r36payload.md",
+      "bytes": 1872,
+      "sha256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "dev": 2050,
+      "inode": 3439264,
+      "uid": 1000,
+      "mode": "0o600",
+      "nlink": 1
+    },
+    "download": {
+      "leaf": "downloads/r36payload.md",
+      "bytes": 1872,
+      "SHA256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "inode": 1048380,
+      "mode": "0o600"
+    },
+    "all_three_equal": true
+  },
+  "preservation": {
+    "Linux_original20_birth_executable_hashes": true,
+    "Linux_fullcatalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "profiles": 8,
+    "sessions": 13,
+    "operations": 38,
+    "catalog_delta": null,
+    "original_root_dev_inode_uid_mode_preserved": true,
+    "old_root_children": [
+      "readme.md50B/3d84cf37",
+      "download.txt33B/23027bc3",
+      "empty"
+    ],
+    "all_old_child_inode_uid_mode_mtime_bytes_SHA_unchanged": true,
+    "only_new_remote_entries": [
+      "r36rw",
+      "r36rw/r36payload.md"
+    ],
+    "new_directory_inode": 3439216,
+    "root_mtime_allowed_for_intended_new_child": true,
+    "Mac_originals_HOST11_pair_catalog1a202": true,
+    "source_configs_immutable": true,
+    "private_clone_delta": "workspace persistence only; accounts/allprofiles/recipes exact"
+  },
+  "cleanup": {
+    "owner_GUI_exit0_and_owned_group_drained": true,
+    "owner_closed_unix": 1795351657.8344994,
+    "Mac_GUI4622_exit0_helpers_empty_wrapperabsent_carrierunloaded": true,
+    "Mac_closed_unix": 1795352142.861005
+  },
+  "resources": {
+    "Linux_entry": 3234828288,
+    "Linux_final_free": 3234455552,
+    "whole_increment_growth_bytes": 372736,
+    "whole_increment18MiB_budget": 18874368,
+    "effective_floor": 3215953920,
+    "continuing_floor": 3203010560,
+    "no_reset": true
+  },
+  "limits": [
+    "Actual777 remote header longlocator overlaps Connected; originals retained, no perfect-layout claim.",
+    "Remote listing size and modified metadata are dashes; selectedremotefooter shows0B; native1872B/SHA separatelyverified.",
+    "No native Delete Denied, rootescape, revoke, interrupted/large/throttled transfer or throughput/progress-performance qualification.",
+    "No sourceconfig export, credential read/export, OS permission/resource/servicepolicy change, builds or newbinarypayload."
+  ]
+}

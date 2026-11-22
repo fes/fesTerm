@@ -4723,6 +4723,7 @@
         "ADR-0030"
       ],
       "automated_tests": [
+        "long_remote_identity_keeps_connection_status_and_reconnect_in_the_pane",
         "authentication_surface_allows_connecting_before_host_trust_is_persisted",
         "unknown_host_key_prompt_shows_inline_trust_actions",
         "gui_sftp_connect_without_a_prompt_returns_connected_immediately",

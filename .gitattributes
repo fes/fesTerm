@@ -34,3 +34,7 @@ validation/dev-tunnels/mac-client-linux-native-off/*-capabilities.json -text
 
 # Preserve native lifecycle diagnostics and SDK result bytes.
 validation/dev-tunnels/linux-owner-first-result-0.17.19/*.json -text
+
+# Preserve original rooted Files native proof and uploaded public payload bytes.
+validation/dev-tunnels/linux-files-native-readwrite/*.json -text
+validation/dev-tunnels/linux-files-native-readwrite/r36payload.md -text
