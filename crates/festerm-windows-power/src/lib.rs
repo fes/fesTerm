@@ -103,6 +103,11 @@ impl PrivacyRevocation {
 mod privacy_lifecycle;
 
 #[cfg(any(windows, test))]
+mod privacy_startup;
+#[cfg(windows)]
+pub use privacy_startup::PrivacyStartupDiagnostic;
+
+#[cfg(any(windows, test))]
 mod privacy_shared;
 
 #[cfg(windows)]
@@ -391,7 +396,8 @@ mod privacy {
     use std::time::Duration;
 
     use windows_sys::Win32::Foundation::{
-        HANDLE, HWND, LPARAM, LRESULT, WAIT_IO_COMPLETION, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
+        GetLastError, HANDLE, HWND, LPARAM, LRESULT, WAIT_IO_COMPLETION, WAIT_OBJECT_0,
+        WAIT_TIMEOUT, WPARAM,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Power::{
@@ -421,6 +427,7 @@ mod privacy {
     };
 
     use super::privacy_lifecycle::{self, invoke_revocation, Lifecycle, PrivacyCleanupStatus};
+    use super::privacy_startup::{PrivacyStartupDiagnostic, PrivacyStartupStage as Stage};
     use super::{session_is_available, PrivacyRevocation};
 
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -587,22 +594,32 @@ mod privacy {
         io::Error::new(io::ErrorKind::NotConnected, "native Windows privacy monitoring unavailable (WTS session/service or suspend registration)")
     }
 
-    fn active_session() -> io::Result<()> {
+    fn active_session(lifecycle: &Lifecycle) -> io::Result<()> {
         let mut session_id = 0;
         let mut buffer = std::ptr::null_mut();
         let mut bytes = 0;
         // SAFETY: output pointers are writable and the WTS result is released
         // using the matching WTS allocator after checking its size and level.
         unsafe {
-            if ProcessIdToSessionId(std::process::id(), &mut session_id) == 0
-                || WTSQuerySessionInformationW(
-                    WTS_CURRENT_SERVER_HANDLE,
-                    session_id,
-                    WTSSessionInfoEx,
-                    &mut buffer,
-                    &mut bytes,
-                ) == 0
+            if ProcessIdToSessionId(std::process::id(), &mut session_id) == 0 {
+                lifecycle.record_startup_failure(PrivacyStartupDiagnostic::new(
+                    Stage::ProcessSession,
+                    Some(GetLastError()),
+                ));
+                return Err(unavailable());
+            }
+            if WTSQuerySessionInformationW(
+                WTS_CURRENT_SERVER_HANDLE,
+                session_id,
+                WTSSessionInfoEx,
+                &mut buffer,
+                &mut bytes,
+            ) == 0
             {
+                lifecycle.record_startup_failure(PrivacyStartupDiagnostic::new(
+                    Stage::SessionQuery,
+                    Some(GetLastError()),
+                ));
                 if !buffer.is_null() {
                     WTSFreeMemory(buffer.cast());
                 }
@@ -632,6 +649,10 @@ mod privacy {
             if active {
                 Ok(())
             } else {
+                lifecycle.record_startup_failure(PrivacyStartupDiagnostic::new(
+                    Stage::SessionState,
+                    None,
+                ));
                 Err(unavailable())
             }
         }
@@ -646,7 +667,13 @@ mod privacy {
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                     current.checked_add(1)
                 })
-                .map_err(|_| unavailable())?;
+                .map_err(|_| {
+                    lifecycle.record_startup_failure(PrivacyStartupDiagnostic::new(
+                        Stage::ClassId,
+                        None,
+                    ));
+                    unavailable()
+                })?;
             let class: Vec<u16> = format!(
                 "fesTermPrivacyMonitor-{}-{}\0",
                 std::process::id(),
@@ -657,6 +684,10 @@ mod privacy {
             // SAFETY: null requests the current executable's module handle.
             let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
             if instance.is_null() {
+                lifecycle.record_startup_failure(PrivacyStartupDiagnostic::new(
+                    Stage::Module,
+                    Some(unsafe { GetLastError() }),
+                ));
                 return Err(unavailable());
             }
             let mut registration = Self {
@@ -680,6 +711,12 @@ mod privacy {
             };
             // SAFETY: the class has a valid procedure and NUL-terminated name.
             if unsafe { RegisterClassExW(&descriptor) } == 0 {
+                registration
+                    .lifecycle
+                    .record_startup_failure(PrivacyStartupDiagnostic::new(
+                        Stage::WindowClass,
+                        Some(unsafe { GetLastError() }),
+                    ));
                 registration.quarantine();
             }
             registration.class_registered = true;
@@ -701,6 +738,12 @@ mod privacy {
                 )
             };
             if registration.window.is_null() {
+                registration
+                    .lifecycle
+                    .record_startup_failure(PrivacyStartupDiagnostic::new(
+                        Stage::Window,
+                        Some(unsafe { GetLastError() }),
+                    ));
                 return Err(unavailable());
             }
             // SAFETY: a valid message-only window is the native notification
@@ -708,6 +751,12 @@ mod privacy {
             unsafe {
                 if WTSRegisterSessionNotification(registration.window, NOTIFY_FOR_THIS_SESSION) == 0
                 {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::WtsRegistration,
+                            Some(GetLastError()),
+                        ));
                     registration.quarantine();
                 }
                 registration.wts = true;
@@ -716,11 +765,23 @@ mod privacy {
                     DEVICE_NOTIFY_WINDOW_HANDLE,
                 );
                 if registration.power == 0 {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::SuspendRegistration,
+                            Some(GetLastError()),
+                        ));
                     registration.quarantine();
                 }
                 registration.manager =
                     OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
                 if registration.manager.is_null() {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::ServiceManager,
+                            Some(GetLastError()),
+                        ));
                     return Err(unavailable());
                 }
                 let service_name: Vec<u16> = "TermService\0".encode_utf16().collect();
@@ -729,7 +790,21 @@ mod privacy {
                     service_name.as_ptr(),
                     SERVICE_QUERY_STATUS,
                 );
+                if registration.service.is_null() {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::ServiceOpen,
+                            Some(GetLastError()),
+                        ));
+                }
                 if CloseServiceHandle(registration.manager) == 0 {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::ServiceManagerClose,
+                            Some(GetLastError()),
+                        ));
                     registration.quarantine();
                 }
                 registration.manager = std::ptr::null_mut();
@@ -738,7 +813,7 @@ mod privacy {
                 }
                 // This service-only mask excludes CREATED/DELETED, whose
                 // notification would allocate a service-name list.
-                if NotifyServiceStatusChangeW(
+                let notification_error = NotifyServiceStatusChangeW(
                     registration.service,
                     SERVICE_NOTIFY_STOPPED
                         | SERVICE_NOTIFY_STOP_PENDING
@@ -746,8 +821,14 @@ mod privacy {
                         | SERVICE_NOTIFY_PAUSED
                         | SERVICE_NOTIFY_PAUSE_PENDING,
                     service_notification(),
-                ) != 0
-                {
+                );
+                if notification_error != 0 {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::ServiceNotification,
+                            Some(notification_error),
+                        ));
                     return Err(unavailable());
                 }
                 let mut status = SERVICE_STATUS_PROCESS::default();
@@ -759,12 +840,23 @@ mod privacy {
                     std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
                     &mut needed,
                 ) == 0
-                    || status.dwCurrentState != SERVICE_RUNNING
                 {
+                    registration
+                        .lifecycle
+                        .record_startup_failure(PrivacyStartupDiagnostic::new(
+                            Stage::ServiceQuery,
+                            Some(GetLastError()),
+                        ));
+                    return Err(unavailable());
+                }
+                if status.dwCurrentState != SERVICE_RUNNING {
+                    registration.lifecycle.record_startup_failure(
+                        PrivacyStartupDiagnostic::service_state(status.dwCurrentState),
+                    );
                     return Err(unavailable());
                 }
             }
-            active_session()?;
+            active_session(&registration.lifecycle)?;
             Ok(registration)
         }
     }

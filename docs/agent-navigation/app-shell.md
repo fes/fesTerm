@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "aab9fe8225600a4201a1e0c6afd4758ad0d38d537f5c775b04241b2d0f4b151f"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "5983690fff52b403629b755d05154b5e0bae505d51b5bdd04916223cfe7af84e"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -60,6 +60,7 @@ Caveats:
 Use for: Host discovery, inventory, attach, and creation review
 
 - [`show_inline_host_browser`](../../app/festerm/src/host_browser.rs) — Selected workspace host stays in its owning tab; profile pickers retain modal review
+- [`record_privacy_preparation_report`](../../app/festerm/src/host_browser.rs) — Keeps optional native detail with the first current-attempt failure.
 
 Evidence:
 - [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs) — Full-page action and seven-row scrolling at 752×516

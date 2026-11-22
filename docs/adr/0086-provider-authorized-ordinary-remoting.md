@@ -406,6 +406,14 @@ existing deadline/guards without replay or changed authorization. Held-journal
 contention, retained raw/custom errors, log failure and no-extra-manager-call
 regressions cover the diagnostic contract, not native resolution of #842.
 
+Windows privacy preparation retains optional first-failure stage/code/service-state
+metadata on the existing monitor lifecycle, without changing readiness, cleanup,
+quarantine, deadlines or the running-service gate. The application copies only
+that finite context into its current generation's collapsed Diagnostics before
+cleanup; stale or user-cancelled attempts cannot publish it. Native privacy or
+service availability is not inferred from a local terminal or a generic failure.
+No service, RDP policy or permission changes are performed by this diagnostic path.
+
 The opt-in service-client fixture adds an optional stopped shared-profile name.
 Creation OFF native acceptance requires its exact server Denied and complete
 pre/post NotStarted inventory, plus a separate completion marker; legacy

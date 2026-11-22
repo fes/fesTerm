@@ -2363,4 +2363,7 @@ HOST-01/HOST-02 selected-host privacy preparation failures remain available in
 Diagnostics after cancellation discards the authority result. Fixed unavailable,
 timeout and cleanup-unresolved outcomes are scoped to the current account and
 request generation. They neither revive admission nor admit late success;
-ordinary user cancellation is not classified as an OS preparation failure.
+ordinary user cancellation is not classified as an OS preparation failure. Windows may
+also retain a first fixed native stage, numeric OS code and closed service state
+in that same disclosure; a confirmed non-running service names the prerequisite
+without service/RDP/permission changes. Unknown evidence cannot identify a cause.

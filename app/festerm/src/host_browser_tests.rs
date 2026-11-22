@@ -1789,6 +1789,7 @@ fn ordinary_desktop_privacy_preparation_error_after_loss_survives_result_discard
         let diagnostic = PrivacyPreparationDiagnostic {
             generation: 9,
             failure: Arc::new(OnceLock::new()),
+            windows_startup: Arc::new(OnceLock::new()),
         };
         let parent_cancel;
         let (send, receiver) = mpsc::sync_channel(1);
@@ -1841,6 +1842,7 @@ fn ordinary_desktop_privacy_preparation_diagnostic_cannot_cross_generation_or_ac
     let old = PrivacyPreparationDiagnostic {
         generation: 7,
         failure: Arc::new(OnceLock::new()),
+        windows_startup: Arc::new(OnceLock::new()),
     };
     let old_cancel = app.host_browser.as_ref().unwrap().cancel.clone();
     {
@@ -1864,6 +1866,7 @@ fn ordinary_desktop_privacy_preparation_diagnostic_cannot_cross_generation_or_ac
     let fresh = PrivacyPreparationDiagnostic {
         generation: 8,
         failure: Arc::new(OnceLock::new()),
+        windows_startup: Arc::new(OnceLock::new()),
     };
     app.host_browser.as_mut().unwrap().privacy_preparation = Some(fresh);
     let account = app.host_browser.as_ref().unwrap().account.clone();
@@ -1899,6 +1902,7 @@ fn ordinary_desktop_user_cancel_does_not_report_privacy_preparation_failure() {
     let diagnostic = PrivacyPreparationDiagnostic {
         generation: 0,
         failure: Arc::new(OnceLock::new()),
+        windows_startup: Arc::new(OnceLock::new()),
     };
     let browser = app.host_browser.as_mut().unwrap();
     browser.privacy_preparation = Some(diagnostic.clone());
@@ -1929,6 +1933,7 @@ fn ordinary_desktop_retry_clears_preparation_diagnostic_before_new_validation() 
     let diagnostic = PrivacyPreparationDiagnostic {
         generation: 0,
         failure: Arc::new(OnceLock::new()),
+        windows_startup: Arc::new(OnceLock::new()),
     };
     diagnostic
         .failure
@@ -1955,6 +1960,7 @@ fn ordinary_desktop_preparation_failure_remains_in_diagnostics_disclosure() {
     let diagnostic = PrivacyPreparationDiagnostic {
         generation: browser.generation,
         failure: Arc::new(OnceLock::new()),
+        windows_startup: Arc::new(OnceLock::new()),
     };
     diagnostic
         .failure
@@ -2186,4 +2192,128 @@ fn inline_host_workspace_preserves_pending_automation_settings_until_settings_re
         "normal Settings rendering consumes its pending route"
     );
     assert!(harness.query_by_label("Keyboard shortcuts").is_none());
+}
+
+#[test]
+fn ordinary_desktop_windows_privacy_detail_is_finite_fenced_and_preserves_cleanup_notice() {
+    use crate::recording_privacy::{PreparationFailureReport, WindowsPrivacyDiagnostic};
+    use egui_kittest::{kittest::Queryable, Harness};
+    let (mut app, context) = fixture();
+    let mut browser = app.host_browser.take().unwrap();
+    let diagnostic = PrivacyPreparationDiagnostic::new(browser.generation);
+    let detail = WindowsPrivacyDiagnostic {
+        stage: "service_state",
+        code: None,
+        service_state: Some("stopped"),
+        service_not_running: true,
+    };
+    record_privacy_preparation_report(
+        &diagnostic,
+        &CancellationToken::new(),
+        PreparationFailureReport {
+            cleanup_unresolved: true,
+            windows_startup: Some(detail),
+        },
+        &context,
+    );
+    assert_eq!(
+        diagnostic.failure.get(),
+        Some(&PrivacyPreparationFailure::CleanupUnresolved)
+    );
+    browser.privacy_preparation = Some(diagnostic.clone());
+    let mut harness = Harness::builder().build_ui(move |ui| browser.privacy_diagnostics(ui));
+    assert!(harness.query_by_label(&detail.detail()).is_none());
+    harness.get_by_label("Diagnostics").click();
+    harness.run();
+    harness.get_by_label(&detail.detail());
+    harness.get_by_label(PrivacyPreparationFailure::CleanupUnresolved.notice());
+    harness.get_by_label("Remote Desktop Services (TermService) is not running. Review Windows privacy-monitor prerequisites before retrying. fesTerm does not start the service or enable Remote Desktop.");
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let ignored = PrivacyPreparationDiagnostic::new(0);
+    record_privacy_preparation_report(
+        &ignored,
+        &cancelled,
+        PreparationFailureReport {
+            cleanup_unresolved: false,
+            windows_startup: Some(detail),
+        },
+        &context,
+    );
+    assert!(ignored.failure.get().is_none() && ignored.windows_startup.get().is_none());
+}
+
+#[test]
+fn ordinary_desktop_windows_privacy_detail_never_relabels_other_native_failures() {
+    use crate::recording_privacy::WindowsPrivacyDiagnostic;
+    let detail = WindowsPrivacyDiagnostic {
+        stage: "wts_registration",
+        code: Some(1722),
+        service_state: None,
+        service_not_running: false,
+    };
+    assert_eq!(detail.detail(), "Windows privacy startup: stage=wts_registration; OS code=1722; TermService state=not-recorded.");
+    assert!(!detail.service_not_running);
+    let (mut app, _) = fixture();
+    let mut browser = app.host_browser.take().unwrap();
+    let diagnostic = PrivacyPreparationDiagnostic::new(browser.generation + 1);
+    diagnostic
+        .failure
+        .set(PrivacyPreparationFailure::Unavailable)
+        .unwrap();
+    diagnostic.windows_startup.set(detail).unwrap();
+    browser.privacy_preparation = Some(diagnostic);
+    assert!(browser.privacy_preparation_failure().is_none());
+}
+
+#[test]
+fn ordinary_desktop_windows_privacy_detail_stays_with_first_failure() {
+    use crate::recording_privacy::{PreparationFailureReport, WindowsPrivacyDiagnostic};
+    let context = egui::Context::default();
+    let cancel = CancellationToken::new();
+    let detail = WindowsPrivacyDiagnostic {
+        stage: "service_state",
+        code: None,
+        service_state: Some("stopped"),
+        service_not_running: true,
+    };
+    for first_generic in [false, true] {
+        let diagnostic = PrivacyPreparationDiagnostic::new(0);
+        if first_generic {
+            record_privacy_preparation_failure(
+                &diagnostic,
+                &cancel,
+                PrivacyPreparationFailure::Timeout,
+                &context,
+            );
+        } else {
+            record_privacy_preparation_report(
+                &diagnostic,
+                &cancel,
+                PreparationFailureReport::default(),
+                &context,
+            );
+        }
+        record_privacy_preparation_report(
+            &diagnostic,
+            &cancel,
+            PreparationFailureReport {
+                cleanup_unresolved: true,
+                windows_startup: Some(detail),
+            },
+            &context,
+        );
+        assert!(
+            diagnostic.windows_startup.get().is_none(),
+            "late detail cannot join an earlier failure"
+        );
+        assert_eq!(
+            diagnostic.failure.get().copied(),
+            Some(if first_generic {
+                PrivacyPreparationFailure::Timeout
+            } else {
+                PrivacyPreparationFailure::Unavailable
+            })
+        );
+    }
 }

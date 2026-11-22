@@ -28,7 +28,31 @@ enum Monitor {
 type Monitor = festerm_windows_power::SharedPrivacyMonitor;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
-type PreparationFailure = Arc<dyn Fn(bool) + Send + Sync>;
+type PreparationFailure = Arc<dyn Fn(PreparationFailureReport) + Send + Sync>;
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PreparationFailureReport {
+    pub(crate) cleanup_unresolved: bool,
+    pub(crate) windows_startup: Option<WindowsPrivacyDiagnostic>,
+}
+/// Copied only from the native facade's closed diagnostic accessor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WindowsPrivacyDiagnostic {
+    pub(crate) stage: &'static str,
+    pub(crate) code: Option<u32>,
+    pub(crate) service_state: Option<&'static str>,
+    pub(crate) service_not_running: bool,
+}
+impl WindowsPrivacyDiagnostic {
+    pub(crate) fn detail(self) -> String {
+        format!(
+            "Windows privacy startup: stage={}; OS code={}; TermService state={}.",
+            self.stage,
+            self.code
+                .map_or_else(|| "not-recorded".into(), |code| code.to_string()),
+            self.service_state.unwrap_or("not-recorded")
+        )
+    }
+}
 type Slot = Arc<Mutex<Option<SharedRecording>>>;
 
 pub(crate) struct PrivacyGuard {
@@ -288,6 +312,21 @@ fn install(
     };
     let monitor = monitor.map_err(|mut error| {
         #[cfg(windows)]
+        let windows_startup = error
+            .get_ref()
+            .and_then(|source| {
+                source.downcast_ref::<festerm_windows_power::PrivacyInstallFailure>()
+            })
+            .and_then(|failure| failure.startup_diagnostic())
+            .map(|diagnostic| WindowsPrivacyDiagnostic {
+                stage: diagnostic.stage_code(),
+                code: diagnostic.win32_code(),
+                service_state: diagnostic.service_state_code(),
+                service_not_running: diagnostic.service_not_running(),
+            });
+        #[cfg(not(windows))]
+        let windows_startup = None;
+        #[cfg(windows)]
         let unresolved = {
             let (cleanup, rejected) = error
                 .get_mut()
@@ -304,7 +343,10 @@ fn install(
         #[cfg(not(windows))]
         let unresolved = false;
         if let Some(report) = &on_preparation_failure {
-            report(unresolved);
+            report(PreparationFailureReport {
+                cleanup_unresolved: unresolved,
+                windows_startup,
+            });
         }
         #[cfg(not(windows))]
         let _ = &mut error;
@@ -320,7 +362,7 @@ fn install(
     })?;
     if loss.load(Ordering::Acquire) {
         if let Some(report) = &on_preparation_failure {
-            report(false);
+            report(PreparationFailureReport::default());
         }
         return Err(format!(
             "{activity} cannot start because device privacy is unavailable"
