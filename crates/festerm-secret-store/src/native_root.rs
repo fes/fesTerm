@@ -180,16 +180,46 @@ fn ios_selected_path(path: &Path) -> io::Result<std::path::PathBuf> {
 }
 
 #[cfg(any(target_os = "ios", test))]
+fn open_ios_traversal_root() -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let flags = nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC;
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let flags = flags | nix::libc::O_SEARCH;
+    #[cfg(target_os = "linux")]
+    let flags = flags | nix::libc::O_PATH;
+    // Rust requires an access mode; Apple O_SEARCH (and Linux O_PATH in
+    // fixtures) selects search-only authority rather than directory reading.
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open("/")?;
+    let metadata = directory.metadata()?;
+    if !metadata.is_dir() || metadata.nlink() == 0 || metadata.uid() != 0 {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(directory)
+}
+
+#[cfg(any(target_os = "ios", test))]
 fn open_ios_selected_directory(path: &Path) -> io::Result<File> {
     // Only the documented native /var alias is normalized. All remaining
     // components, including the selected app/profile root, stay no-follow.
     let path = ios_selected_path(path)?;
-    let mut directory = File::open("/")?;
-    for component in path.components() {
+    let mut directory = open_ios_traversal_root()?;
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
         match component {
             Component::RootDir => {}
             Component::Normal(name) => {
-                directory = unix::open_directory_read_nofollow(&directory, Path::new(name))?;
+                // OS-managed ancestors need search, not directory enumeration.
+                // The selected application/profile directory remains readable
+                // for metadata, private child creation and synchronization.
+                directory = if components.peek().is_some() {
+                    unix::open_directory_search_nofollow(&directory, Path::new(name))?
+                } else {
+                    unix::open_directory_read_nofollow(&directory, Path::new(name))?
+                };
             }
             _ => return Err(io::ErrorKind::PermissionDenied.into()),
         }
@@ -276,6 +306,60 @@ mod tests {
         );
         assert_eq!(fs::metadata(&fixture.0).unwrap().mode() & 0o777, 0o775);
         assert_eq!(fs::metadata(&profile).unwrap().mode() & 0o777, 0o755);
+    }
+
+    #[test]
+    fn ios_native_root_traverses_search_only_ancestor_without_reading_it() {
+        let fixture = Fixture::new();
+        let support = fixture.0.join("Application Support");
+        let profile = support.join("festerm");
+        fs::create_dir_all(&profile).unwrap();
+        fs::set_permissions(&support, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+        // Only this fresh owned fixture changes mode. The selected namespace
+        // remains readable; an OS-managed ancestor need only permit search.
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o111)).unwrap();
+        let ancestor_read = File::open(&fixture.0);
+        let opened = open_ios_application_root(&support);
+        let matched = opened
+            .as_ref()
+            .map(|root| root.matches_profile_directory(&profile));
+        let child = opened
+            .as_ref()
+            .map(|root| root.open_host_approval_directory(true));
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            ancestor_read.unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(
+            opened.is_ok(),
+            "search-only ancestor must not require read access"
+        );
+        assert!(matched.unwrap().unwrap());
+        assert_eq!(
+            child.unwrap().unwrap().metadata().unwrap().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&support).unwrap().mode() & 0o777, 0o755);
+        assert_eq!(fs::metadata(&profile).unwrap().mode() & 0o777, 0o755);
+    }
+
+    #[test]
+    fn ios_native_root_still_requires_search_and_selected_directory_read_access() {
+        for (ancestor_mode, selected_mode) in [(0o000, 0o755), (0o700, 0o111)] {
+            let fixture = Fixture::new();
+            let support = fixture.0.join("Application Support");
+            let profile = support.join("festerm");
+            fs::create_dir_all(&profile).unwrap();
+            fs::set_permissions(&support, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&profile, fs::Permissions::from_mode(selected_mode)).unwrap();
+            fs::set_permissions(&fixture.0, fs::Permissions::from_mode(ancestor_mode)).unwrap();
+            let opened = open_ios_selected_directory(&profile);
+            fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(opened.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        }
     }
 
     #[test]

@@ -264,10 +264,6 @@ fn profiles_screen(
             }
         });
     });
-    #[cfg(feature = "host-clients")]
-    if button(ui, ButtonKind::Secondary, "Dev Tunnel hosts…", true).clicked() {
-        actions.push(ShellAction::OpenHosts);
-    }
     search_field(ui, &mut state.search, "Find a profile");
     if let Some(notice) = data.notice {
         ui.add(
@@ -1034,6 +1030,18 @@ pub fn show_tabs(ui: &mut Ui, state: &mut ShellState, data: &ShellData<'_>) -> V
                 state.tab = Tab::ALL[index];
             }
         });
+    // Keep host discovery above the tabs, outside the saved-profile scroll area.
+    #[cfg(feature = "host-clients")]
+    if state.tab == Tab::Profiles {
+        egui::Panel::bottom("shell-host-entry")
+            .frame(egui::Frame::new().inner_margin(Margin::symmetric(16, 8)))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                if button(ui, ButtonKind::Secondary, "Dev Tunnel hosts…", true).clicked() {
+                    actions.push(ShellAction::OpenHosts);
+                }
+            });
+    }
     if state.tab != Tab::Profiles {
         state.reorder = None;
     }

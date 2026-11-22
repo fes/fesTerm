@@ -52,6 +52,12 @@ The builders check the selected feature graph, retain network purpose strings,
 and record `host-clients` in the local build receipt. Signing and packaging do not
 establish native/runtime acceptance.
 
+Native iOS HOST receipt storage uses the Foundation-selected application
+namespace. OS-managed traversal needs search access only; the final namespace
+and private receipt child retain their existing ownership and no-follow checks.
+A local-storage refusal does not authorize another path, permission repair or
+data reset. Filesystem fixtures do not qualify a physical-device build.
+
 Clients list authorized shared profiles and can connect/start them independently
 of permission for arbitrary new shells. Host selection, inventory refresh and
 creation require explicit user actions. Profile opening and Save remain local;

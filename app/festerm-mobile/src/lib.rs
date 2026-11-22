@@ -4299,6 +4299,45 @@ mod tests {
         assert!(!persisted.delete_source_after_export);
     }
 
+    #[cfg(feature = "host-clients")]
+    #[test]
+    fn host_entry_stays_above_tabs_with_a_long_saved_profile_list() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        for count in [0, 30] {
+            let mut store = profiles::testing::profiles();
+            for index in 0..count {
+                store
+                    .save_ssh(
+                        None,
+                        &format!("Saved {index}"),
+                        festerm_mobile_profiles::SshProfile::new("example.test", "test"),
+                    )
+                    .unwrap();
+            }
+            let app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })))
+            .with_profiles(store);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(390.0, 640.0))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run();
+            let entry = harness.get_by_label("Dev Tunnel hosts…").rect();
+            let tabs = harness.get_by_label("Sessions").rect();
+            assert!(entry.bottom() <= tabs.top());
+            assert!(entry.left() >= 16.0 && entry.right() <= 374.0);
+            assert!(entry.top() > 450.0 && entry.bottom() < 640.0);
+            harness.get_by_label("Dev Tunnel hosts…").click();
+            harness.run();
+            assert!(harness.state().hosts.open);
+        }
+    }
+
     #[test]
     fn touch_and_hold_drags_a_saved_profile_into_a_new_order() {
         use egui_kittest::{kittest::Queryable, Harness};

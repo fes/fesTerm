@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "0a77fc6842da58bdb3c008485c29875d4346e18df8fc7509b093f28da31c2c19"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "acf72004c1f7c9d3d99f4ed664e6da7702faccfc6ba54cf054e685ecb51c5176"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -64,13 +64,14 @@ Use for: Private publication.
 
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks private ownership.
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a private DACL file.
+- [`open_ios_selected_directory`](../../crates/festerm-secret-store/src/native_root.rs) — Searches ancestors; reads the selected root.
 
 Evidence:
 - [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Checks inherited ACL cleanup.
 - [`private_creation_and_conditional_publication_keep_the_current_user_only_dacl`](../../crates/festerm-windows-security/src/lib.rs) — Checks DACL retention.
 
 Caveats:
-- New private objects are secured and verified; unsafe existing roots refuse access.
+- Private creation retains owner, ACL, no-follow, descriptor and receipt-child checks.
 - Configuration and workspace files contain metadata, never credential or terminal content.
 - File-security helpers are about publication safety, not connection authority.
 
@@ -91,9 +92,9 @@ Caveats:
 
 Use for: Fresh Desktop purpose creation and retained update.
 
-- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs) — Captures same-Team Developer ID identities before consuming one purpose/reference.
-- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs) — Keeps foreground and fenced renewal updates on the selected HOST item.
-- [`update_existing_noninteractive`](../../crates/festerm-secret-store/src/host_items.rs) — Checks the process fence before exact-item reopen and update.
+- [`MacHostCreationContext`](../../crates/festerm-secret-store/src/host_items.rs)
+- [`HostPurposeStore`](../../crates/festerm-host-setup/src/host_items.rs)
+- [`update_existing_noninteractive`](../../crates/festerm-secret-store/src/host_items.rs)
 
 Evidence:
 - [`mac_host_item_creation_only_follows_proven_absence`](../../crates/festerm-unix-security/src/macos_keychain.rs) — Refuses error-to-create fallback.

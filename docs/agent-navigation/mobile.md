@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "d30325945306d94c92ee57f03f8fd7f679e2755de9a0f43b35d4a54821f14b15"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "3672125446457422a590ea4946383f6db780766885153d43ee6bf8beed6232c0"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,9 +29,12 @@ Use for: Which files handle host discovery, inventory, and save-before-connect?
 
 - [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns host inventory, reviewed creation, and local profile metadata.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
+- [`show_tabs`](../../app/festerm-mobile/src/shell.rs) — Keeps the Profiles host-browser entry above tabs, outside the saved-profile scroller.
+- [`NativeAppPrivateRoot`](../../crates/festerm-secret-store/src/native_root.rs) — Pins the Foundation-selected iOS app namespace; no alternate storage path is tried.
 
 Evidence:
 - [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Checks adoption before Running and lock fencing.
+- [`host_entry_stays_above_tabs_with_a_long_saved_profile_list`](../../app/festerm-mobile/src/lib.rs) — Checks empty and overflowing profile lists keep the host-browser action visible above tabs.
 
 Caveats:
 - Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration.

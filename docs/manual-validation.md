@@ -5936,8 +5936,15 @@ versus Simulator/emulator explicitly; portable tests and packaging receipts do
 not complete these cases or physical-device acceptance. See
 [the campaign matrix](dev-tunnel-workflow-lab.md#desktop-and-mobile-matrix).
 
-For iOS HOST-02 / MOB-06 index storage, preserve the existing profile directory
-and test-account credentials beneath the OS-managed sandbox. After normal
+On mobile Profiles, check **Dev Tunnel hosts…** remains above the bottom tabs
+and outside the saved-profile scroller, including a long list and a device with
+a bottom safe-area inset. Tapping it opens the same account-scoped host browser.
+
+For iOS HOST-01 / HOST-02 / MOB-06 index storage, preserve the existing profile directory
+and test-account credentials beneath the OS-managed sandbox. Record the app
+version and build, then capture any visible local-storage failure and its Details
+before retrying. Ancestors require search access only; the selected namespace
+remains readable and its receipt child stays private. After normal
 GitHub sign-in and automatic host listing, expand a host and verify native key
 preparation reaches the server. An older server may return the typed update
 requirement; it must not require manual pairing or OS permission repair. Record
@@ -5946,6 +5953,8 @@ that its fixed receipt child is private, and that re-opening retains the same
 key. A changed root, symlink, writable root, permissive ACL or missing ready key
 must refuse without creating a replacement. Label Simulator and physical-device
 evidence separately; controlled filesystem fixtures do not complete this gate.
+A search-only traversal regression establishes filesystem semantics, not the
+precise cause of a physical-device storage refusal or successful device recovery.
 
 HOSTSETUP-01 / DIAG-01 also requires a native capture of the typed last-setup
 diagnostic in About and Remote access: stage, actual HTTP status when available,
