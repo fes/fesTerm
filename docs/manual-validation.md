@@ -954,7 +954,10 @@ close only that overlay and retain the selected host. The profile editor’s
 host/session picker remains a modal owned by that draft. Also check narrow reflow and separately collapsed
 Advanced legacy form. Focused CPU regressions cover the
 route and request witnesses; native visual/keyboard/real-provider checks remain
-required and are not established by those regressions.
+required and are not established by those regressions. Hover duplicate friendly-name rows and verify each
+public Dev Tunnel locator is distinct and readable without selecting or refreshing.
+Check both the normal host sidebar and profile host picker; native hover/DPI and
+accessibility delivery remain manual.
 
 Automatic directory and denied-by-default route/proof primitives have portable
 regressions. Ordinary server/client and host-expansion integration have focused
