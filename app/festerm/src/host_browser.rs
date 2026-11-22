@@ -11,7 +11,7 @@ use festerm_config::{
     },
     DevTunnelAccount,
 };
-use festerm_secret_store::{SecretReference, SecretStore};
+use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 use festerm_tunnel_bridge::host_client::{
     self,
     approvals::{Receipt, ReceiptIndex, ReviewedOwner},
@@ -53,6 +53,20 @@ impl RequestFailure {
             failure.message.push_str(" Account renewal did not complete. Sign in again in Settings; no credential exchange was replayed.");
         }
         failure
+    }
+
+    // Initial account reads only. A later refresh fence/publication Store error
+    // retains its existing uncertain-outcome and recovery semantics.
+    fn credential_read(error: SecretStoreError) -> Self {
+        let message = match error {
+            SecretStoreError::Missing => "Saved sign-in is missing. Sign in again in Settings.",
+            SecretStoreError::LockedOrUnavailable => "Secure storage is locked or unavailable. Unlock it or check its service, then retry.",
+            SecretStoreError::Unsupported => "Secure storage is not supported in this build.",
+            SecretStoreError::BackendFailure => "Secure storage could not be read. Check your system credential storage, then retry.",
+            SecretStoreError::InvalidReference => "Saved sign-in data is invalid. Review this account in Settings.",
+            SecretStoreError::TooLarge => "Saved sign-in data exceeds the supported limit. Review this account in Settings.",
+        };
+        Self::from(message)
     }
 
     fn expired() -> Self {
@@ -1191,14 +1205,14 @@ impl FesTermApp {
             }
             let store = match &self.secret_store {
                 Ok(store) => Arc::clone(store),
-                Err(_) => {
+                Err(error) => {
                     let next = self.host_discovery_queue.pop_front().expect("queued");
                     crate::screens::host_workspace::report_discovery(
                         context,
                         next.tab,
                         next.request,
                         next.account.identifier(),
-                        Err("Unlock secure storage and try again.".into()),
+                        Err(RequestFailure::credential_read(*error).message),
                     );
                     continue;
                 }
@@ -1220,7 +1234,7 @@ impl FesTermApp {
                 if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let client = identity::registered_client_id().ok_or("GitHub sign-in is unavailable.")?;
                 let secret = store.get(work_account.credential_reference())
-                    .map_err(|_| "Unlock secure storage and try again.")?;
+                    .map_err(RequestFailure::credential_read)?;
                 if work_cancel.is_cancelled() { return Err("Discovery cancelled.".into()); }
                 let identity = secret.with_bytes(|bytes| Identity::decode_private(bytes,
                     work_account.account_id(), client)).map_err(RequestFailure::from)?;
@@ -3124,7 +3138,9 @@ fn load_host_identity(
     check().map_err(RequestFailure::from)?;
     let client = identity::registered_client_id()
         .ok_or("Account sign-in is not configured in this build.")?;
-    let secret = store.get(account.credential_reference()).map_err(|_| "The selected account's native credential is unavailable. No sign-in or fallback was attempted.")?;
+    let secret = store
+        .get(account.credential_reference())
+        .map_err(RequestFailure::credential_read)?;
     let identity = secret
         .with_bytes(|bytes| Identity::decode_private(bytes, account.account_id(), client))
         .map_err(RequestFailure::from)?;

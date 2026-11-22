@@ -2317,3 +2317,157 @@ fn ordinary_desktop_windows_privacy_detail_stays_with_first_failure() {
         );
     }
 }
+
+struct CredentialReadFailureStore {
+    reference: SecretReference,
+    error: festerm_secret_store::SecretStoreError,
+    reads: std::sync::atomic::AtomicUsize,
+}
+impl SecretStore for CredentialReadFailureStore {
+    fn put(
+        &self,
+        _: &festerm_secret_store::SecretBytes,
+    ) -> Result<SecretReference, festerm_secret_store::SecretStoreError> {
+        panic!("initial read failure must not create credentials")
+    }
+    fn get(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<festerm_secret_store::SecretBytes, festerm_secret_store::SecretStoreError> {
+        assert!(
+            reference == &self.reference,
+            "selected opaque reference must match"
+        );
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(self.error)
+    }
+    fn update(
+        &self,
+        _: &SecretReference,
+        _: &festerm_secret_store::SecretBytes,
+    ) -> Result<(), festerm_secret_store::SecretStoreError> {
+        panic!("initial read failure must not publish or renew credentials")
+    }
+    fn delete(&self, _: &SecretReference) -> Result<bool, festerm_secret_store::SecretStoreError> {
+        panic!("initial read failure must not delete credentials")
+    }
+}
+
+fn credential_read_failure_cases() -> [(festerm_secret_store::SecretStoreError, &'static str); 6] {
+    use festerm_secret_store::SecretStoreError;
+    [
+        (
+            SecretStoreError::Missing,
+            "Saved sign-in is missing. Sign in again in Settings.",
+        ),
+        (
+            SecretStoreError::LockedOrUnavailable,
+            "Secure storage is locked or unavailable. Unlock it or check its service, then retry.",
+        ),
+        (
+            SecretStoreError::Unsupported,
+            "Secure storage is not supported in this build.",
+        ),
+        (
+            SecretStoreError::BackendFailure,
+            "Secure storage could not be read. Check your system credential storage, then retry.",
+        ),
+        (
+            SecretStoreError::InvalidReference,
+            "Saved sign-in data is invalid. Review this account in Settings.",
+        ),
+        (
+            SecretStoreError::TooLarge,
+            "Saved sign-in data exceeds the supported limit. Review this account in Settings.",
+        ),
+    ]
+}
+
+#[test]
+fn account_credential_discovery_read_failure_keeps_typed_guidance_without_new_authorization() {
+    use egui_kittest::kittest::Queryable;
+    for factory_failure in [false, true] {
+        for (error, message) in credential_read_failure_cases() {
+            let (mut app, mut harness) = discovery_failure_fixture("Previous attempt".into());
+            let account = app
+                .state
+                .configuration()
+                .account("github-user")
+                .unwrap()
+                .clone();
+            let store = Arc::new(CredentialReadFailureStore {
+                reference: account.credential_reference().duplicate_for_transport(),
+                error,
+                reads: std::sync::atomic::AtomicUsize::new(0),
+            });
+            app.secret_store = if factory_failure {
+                Err(error)
+            } else {
+                Ok(store.clone())
+            };
+            harness.get_by_label("Refresh hosts").click();
+            harness.run_steps(1);
+            let Some(AppCommand::FindDevTunnelHosts { request, .. }) = harness.state_mut().take()
+            else {
+                panic!("normal discovery retry")
+            };
+            let tab = app.state.active();
+            app.find_host_tunnels(tab, request, account.identifier(), &harness.ctx);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !app.host_discovery.is_empty() || !app.host_discovery_queue.is_empty() {
+                app.poll_host_discovery(&harness.ctx);
+                assert!(Instant::now() < deadline, "discovery failure must complete");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            harness.run();
+            harness.get_by_label(message);
+            assert!(harness.query_by_label("Sign in again").is_none());
+            assert_eq!(
+                store.reads.load(std::sync::atomic::Ordering::SeqCst),
+                usize::from(!factory_failure)
+            );
+            assert!(
+                app.host_browser.is_none()
+                    && app.tunnel_browser.is_none()
+                    && app.native_tunnel.is_none()
+            );
+            assert!(app.state.host_creation_intents.is_empty());
+            assert_eq!(
+                app.state.configuration().account(account.identifier()),
+                Some(&account)
+            );
+            assert_unallocated(&app);
+        }
+    }
+}
+
+#[test]
+fn account_credential_foreground_read_failure_keeps_typed_guidance_before_provider_work() {
+    for (error, message) in credential_read_failure_cases() {
+        let (mut app, context) = ordinary_ui_fixture(Arc::new(|_, _, _| {
+            panic!("credential read failure must precede provider work")
+        }));
+        let account = app.host_browser.as_ref().unwrap().account.clone();
+        let store = Arc::new(CredentialReadFailureStore {
+            reference: account.credential_reference().duplicate_for_transport(),
+            error,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        });
+        app.secret_store = Ok(store.clone());
+        app.begin_ordinary_host(&context);
+        wait_ordinary_ui(&mut app, &context);
+        let browser = app.host_browser.as_ref().unwrap();
+        assert_eq!(browser.feedback.as_deref(), Some(message));
+        assert!(!browser.needs_sign_in);
+        assert!(
+            browser.receipt.is_none() && browser.ordinary.is_none() && browser.inventory.is_none()
+        );
+        assert_eq!(store.reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(app.state.host_creation_intents.is_empty());
+        assert_eq!(
+            app.state.configuration().account(account.identifier()),
+            Some(&account)
+        );
+        assert_unallocated(&app);
+    }
+}
