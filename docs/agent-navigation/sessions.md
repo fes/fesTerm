@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "8364c987e6799014294216e861b7b527d8ecd816bf8d36fe6a6a8aed26148512"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "1007fd9c49474432d4026cc6b4702c87d91f78cbff43e577e1c96bd6db22c305"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -27,7 +27,7 @@ Caveats:
 
 ## Local PTY
 
-Use for: How does a local shell get started, resized, and shut down safely?
+Use for: Local shell startup, resize and shutdown.
 
 - [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated local shell bootstrap with explicit env and working directory
 - [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Canonical Windows cwd normalization at the spawn boundary
@@ -44,9 +44,10 @@ Caveats:
 
 ## Persistent daemon
 
-Use for: How is a named session resumed, reconnected, or mirrored for persistence?
+Use for: Named session persistence and local startup diagnostics.
 
 - [`PersistentSession`](../../crates/festerm-sessiond/src/lib.rs) — Daemon-backed client for resume, reconnect, and recovery synchronization
+- [`StartupDiagnostics`](../../crates/festerm-sessiond/src/startup_diagnostics.rs)
 - [`readmit_attachment_publication_until`](../../crates/festerm-sessiond/src/host_control.rs) — Rechecks fresh policy without native-effect replay.
 - [`mirror_terminal_output`](../../crates/festerm-sessiond/src/main.rs) — Backend-owned mirror drains replies while ingesting terminal bytes
 
@@ -64,7 +65,7 @@ Caveats:
 
 ## Terminal flow
 
-Use for: How are backend bytes and resize events turned into terminal updates without duplicate replies?
+Use for: App-owned output, resize and reply ordering.
 
 - [`SessionController`](../../app/festerm/src/session_controller.rs) — App-owned terminal writer with pending input and generation tracking
 - [`pump_session_events`](../../app/festerm/src/session_controller.rs) — Applies output, resize, recovery, and lifecycle events in wire order

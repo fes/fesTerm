@@ -2721,6 +2721,12 @@ viewport. Its section order is: an actionable state message when one exists,
 section, **Trust** when applicable, **Actions**, then collapsed **Diagnostics**.
 The inspector follows the active chip while open. Its heading may repeat stable
 identity because that identifies the temporary panel's subject.
+A newly placed failed local persistent start with a typed backend snapshot is
+an exception to hidden/collapsed defaults: it opens this Inspector once and
+initially expands Diagnostics for that controller attempt. Close/collapse is
+respected on return; replacement generations clear that snapshot. Only fixed
+parent phases and actually known numeric starter/OS/exit facts are added, with
+unavailable ring/daemon attribution explicit. No startup retry is implied.
 
 Only applicable sections appear. A normal SSH inspector may show destination,
 username, connected state, reliably known remote platform, actual grid, full

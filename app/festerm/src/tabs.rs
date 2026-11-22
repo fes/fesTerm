@@ -1634,15 +1634,22 @@ impl SessionTab {
             Some(persistence)
                 if persistence.provider() == PersistenceProviderKind::FestermSessiond =>
             {
-                PersistentSession::start_with_notifier(
+                let result = PersistentSession::start_with_notifier(
                     persistence.session_name(),
                     &profile,
                     size,
                     scrollback_limit.bytes(),
                     make_notifier(context),
                 )
-                .map(ApplicationSession::Persistent)
-                .map_err(|error| error.to_string())
+                .map(ApplicationSession::Persistent);
+                return Self::from_local_persistent_session_result(
+                    result,
+                    dimensions,
+                    profile_id,
+                    launch_secondary,
+                    Some(profile_id.to_owned()),
+                    inspector_persistence,
+                );
             }
             _ => LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
                 .map(ApplicationSession::Local)
@@ -1983,6 +1990,31 @@ impl SessionTab {
             profile_id.map(str::to_owned),
             inspector_transport,
         )
+    }
+
+    fn from_local_persistent_session_result(
+        result: Result<ApplicationSession, festerm_sessiond::PersistentSessionError>,
+        dimensions: Dimensions,
+        label: &str,
+        launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
+        persistence: Option<InspectorPersistence>,
+    ) -> Self {
+        let diagnostics = result
+            .as_ref()
+            .err()
+            .and_then(|error| error.startup_diagnostics())
+            .cloned();
+        let mut tab = Self::from_local_session_result(
+            result,
+            dimensions,
+            label,
+            launch_secondary,
+            profile_identifier,
+            persistence,
+        );
+        tab.controller.retain_startup_diagnostics(diagnostics);
+        tab
     }
 
     fn from_local_session_result<E: std::fmt::Display>(
@@ -4313,6 +4345,9 @@ impl AppState {
         let settings = configuration.interface_settings().clone();
         let session_recording_allowed = configuration.session_recording_enabled();
         let (sftp_cleanup_sender, sftp_cleanup_receiver) = mpsc::sync_channel(8);
+        let inspector_open = tabs.iter().find(|tab| tab.id == active).is_some_and(|tab| {
+            matches!(&tab.content, TabContent::Session(session) if session.controller.startup_diagnostics().is_some())
+        });
         Self {
             discovery: Default::default(),
             resume_error: None,
@@ -4358,7 +4393,7 @@ impl AppState {
             activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
             configuration,
-            inspector_open: false,
+            inspector_open,
             input_ownership_epoch: 0,
             #[cfg(feature = "local-host-settings")]
             local_sharing_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -8858,6 +8893,7 @@ impl AppState {
         recording: Option<&festerm_recording::SharedRecording>,
         replace_surface: bool,
     ) {
+        let open_startup_diagnostics = session.controller.startup_diagnostics().is_some();
         session.freeze_inline_graphics(self.inline_graphics_policy(recording));
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
         if let Some(recording) = recording {
@@ -8906,6 +8942,9 @@ impl AppState {
                     session.seed_native_alias(&self.configuration);
                 }
                 tab.content = TabContent::Session(Box::new(session));
+                if open_startup_diagnostics {
+                    self.inspector_open = true;
+                }
                 return;
             }
         }
@@ -8918,6 +8957,9 @@ impl AppState {
             content: TabContent::Session(Box::new(session)),
         });
         self.set_active(id);
+        if open_startup_diagnostics {
+            self.inspector_open = true;
+        }
     }
 
     fn place_powershell(&mut self, powershell: PowerShellTab) {
@@ -15048,6 +15090,104 @@ mod tests {
             panic!("expected a session tab");
         };
         assert!(!session.has_new_output_since_active);
+    }
+
+    #[test]
+    fn startup_snapshot_restore_opens_only_the_initial_selected_failure() {
+        for selected_failure in [true, false] {
+            let failed_id = TabId::next();
+            let sibling_id = TabId::next();
+            let failure = SessionTab::from_local_persistent_session_result(
+                Err(festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture()),
+                Dimensions::new(80, 24).unwrap(),
+                "local",
+                None,
+                None,
+                None,
+            );
+            let tabs = vec![
+                Tab {
+                    id: failed_id,
+                    durable_id: uuid::Uuid::new_v4().to_string(),
+                    pane_id: uuid::Uuid::new_v4().to_string(),
+                    content: TabContent::Session(Box::new(failure)),
+                },
+                Tab {
+                    id: sibling_id,
+                    durable_id: uuid::Uuid::new_v4().to_string(),
+                    pane_id: uuid::Uuid::new_v4().to_string(),
+                    content: TabContent::Launcher,
+                },
+            ];
+            let mut state = AppState::new_with_tabs(
+                Configuration::empty(),
+                tabs,
+                if selected_failure {
+                    failed_id
+                } else {
+                    sibling_id
+                },
+            );
+            assert_eq!(state.inspector_open(), selected_failure);
+            let context = egui::Context::default();
+            if selected_failure {
+                state.dispatch(AppCommand::ToggleSessionInspector, &context);
+            }
+            state.dispatch(AppCommand::ActivateTab(sibling_id), &context);
+            state.dispatch(AppCommand::ActivateTab(failed_id), &context);
+            assert!(
+                !state.inspector_open(),
+                "unselected/old restore failure cannot raise a later panel"
+            );
+        }
+    }
+
+    #[test]
+    fn local_startup_snapshot_opens_only_its_failed_attempt_once() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let failed = SessionTab::from_local_persistent_session_result(
+            Err(festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture()),
+            Dimensions::new(80, 24).unwrap(),
+            "local",
+            None,
+            None,
+            None,
+        );
+        assert!(failed.controller.start_error().unwrap().contains("secret"));
+        assert!(failed.controller.diagnostics_line().contains("phase=Spawn"));
+        assert!(!failed.controller.diagnostics_line().contains("secret"));
+        state.place_session(failed);
+        let failed_id = state.active();
+        assert!(state.inspector_open());
+        state.dispatch(AppCommand::ToggleSessionInspector, &context);
+        assert!(!state.inspector_open());
+        state.dispatch(AppCommand::OpenSettings, &context);
+        state.dispatch(AppCommand::ActivateTab(failed_id), &context);
+        assert!(
+            !state.inspector_open(),
+            "returning to an old failure cannot reopen the panel"
+        );
+        let sibling = SessionTab::from_local_session_result(
+            Err::<ApplicationSession, _>("ordinary failure"),
+            Dimensions::new(80, 24).unwrap(),
+            "sibling",
+            None,
+            None,
+            None,
+        );
+        state.place_session(sibling);
+        let TabContent::Session(sibling) = &state.active_tab().content else {
+            panic!("session");
+        };
+        assert!(sibling.controller.startup_diagnostics().is_none());
+        assert!(!sibling
+            .controller
+            .diagnostics_line()
+            .contains("phase=Spawn"));
+        assert!(!state.inspector_open());
+        state.dispatch(AppCommand::CloseTab(failed_id), &context);
+        assert!(!state.inspector_open());
     }
 
     #[test]

@@ -580,3 +580,36 @@ installer/application cleanup.
 The ADR remains Proposed while this implementation is evaluated.
 `validation/traceability.json` maps `PROF-06` to ADR-0025, deterministic
 coverage, and native scenario `CP-11`.
+
+## Local failed-start diagnostic snapshot addendum
+
+The backend may attach a bounded, content-free snapshot to the original local
+persistent-start error. The app receives fixed parent-boundary phases, an owned
+starter PID when spawning succeeded, and numeric OS/child-exit codes when actually
+known. It receives no runtime path, session name, command, environment, stderr,
+terminal content or inferred daemon/endpoint identity. The original error,
+launch arguments/stdio, blocking wait, attach deadline, cancellation and cleanup
+semantics remain unchanged. Evidence never authorizes replacement or retry.
+
+A starter is distinct from a daemon. A backend-only reader may observe the
+existing 64-entry/32 KiB ring once using the exact owned starter PID and an
+already trusted caller-issued generation. It opens validated private storage
+without creation and uses one nonwaiting lock attempt; missing, busy, corrupt or
+unattributable data is unavailable. The existing daemon-only history contract
+remains intact. Ordinary local startup currently supplies no trusted generation,
+so its snapshot explicitly marks lifecycle evidence unavailable. Inherited
+environment and name/latest-registry searches cannot fill that gap; generation
+issuance and child/WMI successor attribution are not changed by this addendum.
+
+Synchronous failed-tab construction preserves this typed snapshot in its own
+controller. Selecting that newly placed failed attempt opens the existing
+Inspector once, with Diagnostics initially expanded for that controller identity.
+Closing it and returning to the tab does not reopen it. New controller generations
+clear the snapshot; connected/sibling controllers cannot adopt it. This is a
+local-only presentation increment, not remote HOST wire delivery.
+
+Validation impact: GUI:LOCAL-04, GUI:INSP-02, GUI:DIAG-01; actual child/spawn,
+actor/generation, bounds, noncreating/refusal, redaction, original-error and
+failed-tab/generation isolation fixtures. CP-11 native rendering and actual
+pre-Ready failure classification remain pending; portable tests do not establish
+a native failure cause or remote diagnostic coverage.
