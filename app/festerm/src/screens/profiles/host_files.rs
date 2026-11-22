@@ -120,7 +120,7 @@ pub(super) fn show(
         ui.label("Connecting Files requires a Dev Tunnels-enabled build.");
     }
     ui.label("File access must be enabled on the host. Uploads and new folders also require its write permission.");
-    ui.label("Remote delete, rename and permission changes are unavailable.");
+    ui.label("Deleting files and empty folders requires write access and the host's separate delete permission. Rename and permission changes are unavailable.");
     if let Some(error) = &draft.error {
         ui.colored_label(theme::STATUS_ERROR, error);
     }

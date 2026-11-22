@@ -636,3 +636,12 @@ one exact-parent directory read. It neither reconnects nor retries, and stale
 completion cannot navigate. This read-only convenience preserves the report and
 adds no delete/resume or credential authority. Native restart/inspection/manual
 confirmed deletion remains `SFTP-05` evidence, not a completed recovery claim.
+
+
+For `SFTPG-01`, selection totals omit bytes when any selected size is unknown,
+the listing/selection is stale or mismatched, or the sum overflows. Known zero
+and complete sums retain their existing display. Portable footer fixtures cover
+these states without changing listing metadata, remote operations or permissions.
+Files profile help describes the existing separate write/delete grant; rename
+and permission changes remain unavailable. Native metadata completeness and
+footer/help accessibility remain manual qualification.
