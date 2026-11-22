@@ -1360,9 +1360,18 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 Ok(observation(snapshot, process))
             })();
             match result {
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock
+                        || (error.kind() == io::ErrorKind::Other
+                            && error.to_string() == "host.service_observation_unqualified") =>
+                {
+                    // launchd may return a definition whose state cannot yet
+                    // qualify the stop. Never accept it as stopped: obtain a
+                    // new read under the same deadline and authority checks.
                     #[cfg(test)]
-                    tests::macos_stop_busy_observed();
+                    if error.kind() == io::ErrorKind::WouldBlock {
+                        tests::macos_stop_busy_observed();
+                    }
                     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                     if remaining.is_zero() {
                         return Err(error);

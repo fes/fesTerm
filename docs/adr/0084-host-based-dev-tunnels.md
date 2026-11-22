@@ -3130,6 +3130,29 @@ controller's final lifecycle commit remains a separate possible contention
 point. Native first-confirmation Disable, retained Enable and session I/O with
 the corrected build remain pending.
 
+### macOS post-stop unqualified observations
+
+After a completed stop command, an exact native definition can temporarily
+return a state that the strict parser cannot qualify. The existing read-only
+stop-proof loop may wait on the exact `host.service_observation_unqualified`
+error as well as Busy, within its original deadline and captured authority.
+An unqualified state never counts as stopped. Each fresh read retains the full
+snapshot, registration and private-definition fences; other errors and changed
+authority remain final. There is no second stop command, epoch, registration
+change or new timeout. Deadline exhaustion preserves the original read error.
+
+Validation impact: GUI:HOST-04/05. A deterministic fixture covers an exact
+native definition with an unknown state followed by absence, with one bootout
+and an unchanged revoked snapshot. Additional fixtures reject an exhausted
+deadline, mismatched error kind/reason, fatal or malformed reads, and changed
+epoch, registration or definition without another manager command.
+Native 0.17.19 GUI97dd first Disable left
+StopRequested12 with `observation_unqualified`; a later read found the job
+absent and supported completion retained epoch12. The original native state
+was not captured, so that evidence does not prove this precise parser path or
+qualify the corrected native build. First-confirmation native validation remains
+required separately from supported recovery completion.
+
 ### Final native start observation contention
 
 After the manager start and native observation have completed, the final
