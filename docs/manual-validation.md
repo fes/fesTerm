@@ -1155,7 +1155,7 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has seven accepted pinned functional cases, six preliminary cases and eleven
+has eight accepted pinned functional cases, six preliminary cases and ten
 unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
@@ -1192,6 +1192,14 @@ and mistakenly routed restore text are retained; the unauthenticated CLI refused
 that text locally, and subsequent normal exit/restoration passed. Initial visual
 captures precede the mistake; the second comparison uses corrected fail-closed
 sequencing. No creation-OFF, mobile or combined-release completion is implied.
+
+The [Mac-client/Linux creation-OFF record](../validation/dev-tunnels/mac-client-linux-native-off.json)
+qualifies normal selection/OFF affordances, exact generic and stopped-profile
+denial, same-generation saved reconnect and fresh74×20/70×19 comparisons.
+This is the eighth pinned functional case, with mixed cohorts and original
+local-reference attribution retained. The preceding first Enable observation
+warning remains separate from functional-case acceptance.
+
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair

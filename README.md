@@ -84,7 +84,10 @@ reconnection and two fresh Copilot pairs.
 The [Mac-client/Linux-server creation-ON record](validation/dev-tunnels/mac-client-linux-native.json)
 adds named creation, saved generation-pinned reconnection, two fresh Copilot pairs
 and a current-server controlled service check.
-These seven accepted cases use pinned cohorts; the full 24-case matrix and
+The [Mac-client/Linux-server creation-OFF record](validation/dev-tunnels/mac-client-linux-native-off.json)
+adds disabled stopped-profile/generic creation, retained-session reconnection
+and two fresh Copilot pairs.
+These eight accepted cases use pinned cohorts; the full 24-case matrix and
 combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit

@@ -28,3 +28,6 @@ crates/*/tests/fixtures/**/*.raw binary
 # Preserve original native probe JSON bytes, including transport-added final LF.
 validation/dev-tunnels/linux-client-mac-native-off/*-capabilities.json -text whitespace=-blank-at-eof
 validation/dev-tunnels/mac-client-linux-native-on/*-capabilities.json -text
+
+# Preserve original native OFF-case capability reports on every checkout.
+validation/dev-tunnels/mac-client-linux-native-off/*-capabilities.json -text
