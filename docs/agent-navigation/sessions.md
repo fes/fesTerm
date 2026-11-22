@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "ff5e7bb5615f537cbfbda4ae1a28dda28f70171fe36984f8f562e47bf75db117"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "758b0785b9a131ac1bfb54fef17bdc530bec36e77924db02f5b763e78b7dab2b"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,9 +29,10 @@ Caveats:
 
 Use for: Local shell startup, resize and shutdown.
 
-- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Validated local shell bootstrap with explicit env and working directory
-- [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Canonical Windows cwd normalization at the spawn boundary
-- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Native PTY worker with bounded queues and process-tree cleanup
+- [`LocalProfile`](../../crates/festerm-pty/src/lib.rs) — Explicit shell, environment and cwd
+- [`shell_working_directory`](../../crates/festerm-pty/src/lib.rs) — Windows spawn cwd normalization
+- [Login PATH/locale](../../crates/festerm-pty/src/login_environment.rs)
+- [`LocalPtySession`](../../crates/festerm-pty/src/lib.rs) — Bounded PTY worker and process-tree cleanup
 - [`Replies`](../../crates/festerm-pty-test-child/src/terminal_capability_probe.rs) — Bounded fixed-query parser in the opt-in nonshipping console collector.
 
 Evidence:

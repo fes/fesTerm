@@ -613,3 +613,28 @@ actor/generation, bounds, noncreating/refusal, redaction, original-error and
 failed-tab/generation isolation fixtures. CP-11 native rendering and actual
 pre-Ready failure classification remain pending; portable tests do not establish
 a native failure cause or remote diagnostic coverage.
+
+## Host account launch defaults
+
+Fresh hosted launches share the local PTY default-shell policy and bounded
+per-child Unix login PATH/locale resolver. The service resolves its own account
+home and login shell locally; Windows obtains the current token's profile and
+only PATH from an OS-owned environment block. The complete block is released
+without copying other values. No global environment is changed. The local-only
+environment allowlist additionally forwards native HOME (Unix) or USERPROFILE
+(Windows), retaining explicit overrides and Clear. Arbitrary environment fields
+remain refused and are absent from the remote recipe protocol.
+
+Omitted cwd uses that account home before canonical spawn fingerprinting. An
+explicit program/argv/cwd remains exact; generic Unix defaults retain login
+arguments and Windows defaults retain normal PowerShell profile loading. Hosted
+Windows selection skips unprovable app aliases and chooses a verifiable installed
+PowerShell candidate without relaxing the daemon's reparse checks. The existing
+effective recipe and fingerprint freeze executable, argv and cwd before issuing a
+generation. Resume/reconciliation never applies new defaults to a running shell.
+
+Validation impact: GUI:HOST-02/03 and ADR-0084. Deterministic host defaults,
+explicit settings, bare executable/fingerprint, environment preservation, bounded
+startup and private-home native zsh fixtures cover source behavior. Managed
+macOS/Linux/Windows fresh-shell HOME/PATH and retained-generation I/O remain
+separate native checks; this does not qualify a release or alter existing shells.

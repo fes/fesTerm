@@ -3800,24 +3800,90 @@ fn terminal_size() -> TerminalSize {
 }
 
 fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
-    // Resolve the host default once for a fresh creation. Stored request intent
-    // stays structural; existing shells never change when a profile is edited.
-    let shell = recipe
-        .shell
-        .as_ref()
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os(if cfg!(windows) { "COMSPEC" } else { "SHELL" }).map(PathBuf::from)
+    // Resolve only a fresh launch. Existing generations retain their original
+    // executable/arguments/cwd and never rerun shell startup on attachment.
+    #[cfg(unix)]
+    let (home, shell, path) = (
+        festerm_unix_security::current_user_home().map_err(|_| ControlError::Invalid)?,
+        Some(festerm_unix_security::current_user_shell().map_err(|_| ControlError::Invalid)?),
+        None::<std::ffi::OsString>,
+    );
+    #[cfg(windows)]
+    let (home, shell, path) = {
+        let (home, path) = festerm_windows_security::current_user_profile_and_path()
+            .map_err(|_| ControlError::Invalid)?;
+        (home, None::<PathBuf>, path)
+    };
+    let local = profile_with_defaults(recipe, &home, shell.as_deref(), path.as_deref())?;
+    #[cfg(unix)]
+    let local = if let Some(shell) = shell {
+        festerm_pty::login_environment::with_corrected_local_path(local, shell.as_os_str(), &home)
+    } else {
+        local
+    };
+    detached::normalize_spawn_profile(&local).map_err(|_| ControlError::Invalid)
+}
+
+fn profile_with_defaults(
+    recipe: &Recipe,
+    home: &Path,
+    shell: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+) -> Result<LocalProfile, ControlError> {
+    let mut local = match &recipe.shell {
+        Some(program) => LocalProfile::new(program)
+            .with_arguments(recipe.args.iter().map(std::ffi::OsString::from)),
+        None => {
+            let defaults =
+                festerm_pty::default_local_profile_for_user(true, shell.map(Path::as_os_str), path)
+                    .map_err(|_| ControlError::Invalid)?;
+            if recipe.args.is_empty() {
+                defaults
+            } else {
+                defaults.with_arguments(recipe.args.iter().map(std::ffi::OsString::from))
+            }
+        }
+    };
+    local = local.with_working_directory(recipe.cwd.as_deref().map(Path::new).unwrap_or(home));
+    Ok(with_host_environment_defaults(local, home, path))
+}
+
+fn with_host_environment_defaults(
+    local: LocalProfile,
+    home: &Path,
+    path: Option<&std::ffi::OsStr>,
+) -> LocalProfile {
+    use festerm_pty::EnvironmentPolicy;
+    let mut overrides = match local.environment() {
+        EnvironmentPolicy::Clear(_) => return local,
+        EnvironmentPolicy::InheritWith(existing) => existing.clone(),
+        EnvironmentPolicy::Inherit => BTreeMap::new(),
+    };
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let present = |values: &BTreeMap<std::ffi::OsString, std::ffi::OsString>, name: &str| {
+        values.keys().any(|key| {
+            if cfg!(windows) {
+                key.to_string_lossy().eq_ignore_ascii_case(name)
+            } else {
+                key == name
+            }
         })
-        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }));
-    let mut profile =
-        LocalProfile::new(shell).with_arguments(recipe.args.iter().map(std::ffi::OsString::from));
-    if let Some(cwd) = &recipe.cwd {
-        profile = profile.with_working_directory(cwd);
+    };
+    if !present(&overrides, key) {
+        overrides.insert(key.into(), home.as_os_str().to_owned());
     }
-    detached::normalize_spawn_profile(&profile).map_err(|_| ControlError::Invalid)
+    if let Some(path) = path {
+        if !present(&overrides, "PATH") {
+            overrides.insert("PATH".into(), path.to_owned());
+        }
+    }
+    local.with_environment(EnvironmentPolicy::InheritWith(overrides))
 }
 
 #[cfg(test)]
 #[path = "host_profile_admission_tests.rs"]
 mod profile_admission_tests;
+
+#[cfg(test)]
+#[path = "host_shell_defaults_tests.rs"]
+mod shell_defaults_tests;

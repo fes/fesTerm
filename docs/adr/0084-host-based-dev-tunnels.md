@@ -3194,3 +3194,15 @@ later replaces the transport lifecycle. Failed attempts remain in the terminal;
 Close retires only the local attachment. See ADR 0086's foreground recovery
 amendment. Portable regressions and iOS compilation do not establish physical
 app-switch acceptance.
+
+## Host-owned shell startup defaults
+
+HOST-02/03 fresh generic/profile launches default to the host account's home,
+using local PTY shell selection and normal user PATH/startup behavior rather than
+the service's directory/minimal PATH. Explicit programs, arguments and cwd stay
+unchanged; already-issued effective recipes, generations and sessions are not
+retargeted. Public recipes gain no environment field or client-home authority.
+See ADR-0025's host account launch defaults for bounded resolution and native
+validation limits. Validation impact: GUI:HOST-02/03; portable defaults, explicit
+launch choices, private-home startup/PATH and canonical fingerprint regressions.
+Managed native qualification on all three server platforms remains open.

@@ -37,6 +37,18 @@ mod imp {
         Ok(user.dir)
     }
 
+    /// Resolves the ordinary user's login shell from the OS account database.
+    pub fn current_user_shell() -> io::Result<std::path::PathBuf> {
+        let uid = nix::unistd::Uid::from_raw(current_user_id()?);
+        let user = nix::unistd::User::from_uid(uid)
+            .map_err(io::Error::from)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        if !user.shell.is_absolute() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        Ok(user.shell)
+    }
+
     /// Resolves Apple's account-scoped cache location without trusting TMPDIR.
     /// The public confstr API may initialize the OS base directory. This helper
     /// creates no application/generation child and never repairs permissions.
@@ -1260,14 +1272,14 @@ mod imp {
 #[cfg(unix)]
 pub use imp::{
     create_download_file, create_private_directory, current_user_home, current_user_id,
-    download_file_matches, is_current_user_only, is_current_user_only_executable, make_private,
-    make_private_directory, open_directory_read_nofollow, open_directory_search_nofollow,
-    open_download_parent, open_file_nofollow, open_private_file, preserve_security_metadata,
-    remove_download_file, remove_empty_private_directory, remove_private_staging_file,
-    rename_noreplace, reopen_directory_read, replace_private_file, secure_staging_parent,
-    security_metadata, security_metadata_matches, staging_parent_matches,
-    trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
-    SecurityMetadata, StagingParentSecurity,
+    current_user_shell, download_file_matches, is_current_user_only,
+    is_current_user_only_executable, make_private, make_private_directory,
+    open_directory_read_nofollow, open_directory_search_nofollow, open_download_parent,
+    open_file_nofollow, open_private_file, preserve_security_metadata, remove_download_file,
+    remove_empty_private_directory, remove_private_staging_file, rename_noreplace,
+    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
+    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
+    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(target_os = "macos")]
