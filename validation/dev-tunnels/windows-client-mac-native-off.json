@@ -1,0 +1,326 @@
+{
+  "record_version": 1,
+  "status": "root-accepted pinned Windows-client/Mac-server creation-OFF workflow; original resource exception retained",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "windows-arm64",
+    "server": "macos-arm64"
+  },
+  "creation_policy": "off",
+  "case_complete": true,
+  "matrix_complete": false,
+  "matrix_status_after_root_acceptance": {
+    "accepted": 11,
+    "partial": 5,
+    "unstarted": 8,
+    "desktop_accepted": 11,
+    "desktop_total": 12,
+    "mobile_accepted": 0,
+    "mobile_total": 12,
+    "matrix_total": 24
+  },
+  "root_acceptance_sha256": "f6a9c0cb461bd1328643285af0ceae7208afe136bccb842bc2faaa1a138bd95e",
+  "cohort_boundary": "Pinned signed Windows20/sourcec0f MAIN plus retained7 client-only; genuine MacHOST20/sourcec0f; older Mac19/source566 local R22 references and separate SDK777. No combined-current-release/updater/mobile acceptance.",
+  "sources": {
+    "Windows_GUI": {
+      "version": "0.17.20",
+      "source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+      "tree": "0afb1e0f44d202020a762837277c194baee59383",
+      "release_run": 45040645041,
+      "attempt": 1,
+      "GUI_artifact": 14763237380,
+      "MAIN_bytes": 89764624,
+      "MAIN_sha256": "fe3f7f187d11380740fef2352ba57c0d5f9c043b4f9cf6fc6795db087acf0ce8",
+      "mixed8_map_sha256": "1a388b4a3ecd4dd024f4aa5fa5c1fdefdb33c07c757c4774d4610d964c6b718f",
+      "mixed_runtime": "Signed MAIN c0f plus seven retained source566 project/Microsoft/notice support files. Client-only; no old setup/bridge/local persistent helper execution."
+    },
+    "Mac_HOST": {
+      "version": "0.17.20",
+      "source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+      "run": 45040645041,
+      "epoch": 17,
+      "PID": 52914,
+      "run_id": "c15d2dfa-c093-48c7-af79-9a24bb271552",
+      "host_id": "847d1db1-267a-49b8-8f68-1a19d02c6155",
+      "locator": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+      "account": "github:356686928",
+      "archive_sha256": "68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e",
+      "new_sessiond_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61",
+      "HOST_image_sha256": "b0e0730e4fbe5597349f995c1435bc5fbee899ef431cfa542e8cd51c4aa0ff6d",
+      "creation_allowed": false,
+      "files_enabled": false
+    },
+    "Mac_local_reference": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "release_run": 44955636986,
+      "GUI_artifact": 14728951461,
+      "role": "Historical local R22 GUI/query/TUI only; current remote HOST20 identity is separately pinned above."
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "bytes": 21693888,
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    }
+  },
+  "workflow": {
+    "phase_A": {
+      "status": "NATIVE_FUNCTIONAL_PASS_NORMAL_DRAIN_WITH_SEPARATE_MAC_RESOURCE_EXCEPTION",
+      "ordinary_account": "fes-festerm1",
+      "normal_discovery_exact_public_locator": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+      "creation_OFF_inventory": {
+        "shared_stopped_logical": "0c89dc7e-6293-49ee-9cb2-c91893359ee8",
+        "revision": 1,
+        "enabled": true,
+        "label": "Lab stopped shared OFF20",
+        "actual_state": "NotStarted",
+        "Start_Connect_disabled": true,
+        "explanation": "New shell creation is disabled by this host.",
+        "New_host_shell_absent": true,
+        "private_885_rev2_omitted": true,
+        "no_Create_Ensure_Start_attempts": true,
+        "typed_denial_proof": "pending separate SDK C; disabled UI is not typed transport denial"
+      },
+      "retained_session": {
+        "logical": "4860b8f9-fba8-4741-8958-08d0e60b71a1",
+        "generation": "1795368647682026198",
+        "daemon": 35409,
+        "shell": 35414,
+        "saved_profile_id": "7b7205b5-5a84-4ccc-85e9-eeb42c1c0f1d",
+        "saved_behavior": "AttachOnly",
+        "A": "WIN20_MAC20_OFF_RETAINED_A",
+        "normal_detach_then_saved_profile_reconnect": true,
+        "B": "WIN20_MAC20_OFF_RECONNECT_B",
+        "same_generation": true,
+        "server_profiles_sessions_operations_actors_delta": 0
+      },
+      "normal_GUI_exit": 0,
+      "owned_helpers_jobs_tasks_drained": true,
+      "temporary_Manual_TermService_restored": "Stopped/Manual/PID0; RDPdeny1 unchanged"
+    }
+  },
+  "comparisons": {
+    "local_reference": "Historical Mac local R22/source566/version19; source attribution is not current combined-release qualification",
+    "Copilot": {
+      "version": "1.0.112",
+      "Mac_binary_sha256": "a29f5a52ac73cbd707fa4855939f1fe6a7e3bd44a6a9f577dbe7f7754a4b8424",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/Users/evidence/.ft-copilot-reference-native19-r22",
+      "state": "Fresh unauthenticated initial prompt after one-session folder trust; no login/model/paid request."
+    },
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "child_locale_precondition": {
+      "LANG": "en_US.UTF-8",
+      "LC_ALL": "en_US.UTF-8",
+      "probe_and_CLI": true,
+      "persistent_shell_profile_OS_environment_changed": false,
+      "default_locale_invariance_claimed": false
+    },
+    "P1_74x20": {
+      "status": "PASS",
+      "raw_equal_except_case_elapsed_ms": true,
+      "all6_environment_10_terminal_replies_202_input_bytes_and_flags": true,
+      "raw_original_sha256": "353f3a8e8444e4a632e44fcf793ab4bb112fd8076581fb3e35daf3aace91b455",
+      "local_original_sha256": "d9e27a0a4a979a6290061a1f85ed133954e8d02f7020401fa8709c342b5bcb1a",
+      "raw_before_CLI": true,
+      "visual": "Manually inspected originalimages: equalterminalcontent layout, banner/icon/tabs/0MCPevent/loginprompt/input/footer; no rasteridentityclaim; frame/statusbardifferexpected",
+      "actual_status_and_stty": [
+        74,
+        20
+      ],
+      "normal_CLI_interrupt_positive_absence_CWD_restore_detach_and_GUI_drain": true,
+      "same_saved_logical_and_generation": true
+    },
+    "P2_70x19": {
+      "status": "PASS",
+      "raw_equal_except_case_elapsed_ms": true,
+      "all6_environment_10_terminal_replies_202_input_bytes_and_flags": true,
+      "raw_original_sha256": "ffdba88c7ed7726ae9aaf42d6d8c4b33042472034f8467d18707ca0c8d0c15c6",
+      "local_original_sha256": "b7d930b3c93b6e3c28f976217aff4957df09adb0560be6d097291fb8418599c7",
+      "raw_before_CLI": true,
+      "visual": "Original local and remote images manually inspected: same TUI content/layout, tabs/banner/icon/0MCP/login/input/footer; expected OS frame offsets, no raster identity claim",
+      "actual_status_and_stty": [
+        70,
+        19
+      ],
+      "same_saved_logical_and_generation": true,
+      "normal_CLI_interrupt_positive_absence_CWD_restore_detach_and_GUI_drain": true
+    },
+    "originals_already_public": {
+      "local74x20.png": {
+        "path": "linux-client-mac-native-off/local74x20.png",
+        "bytes": 126085,
+        "sha256": "2eaa101886415d461bd211193237feb1e5d7483664146c6ff18debd5a27c5d6e"
+      },
+      "local74x20-capabilities.json": {
+        "path": "linux-client-mac-native-off/local74x20-capabilities.json",
+        "bytes": 1383,
+        "sha256": "d9e27a0a4a979a6290061a1f85ed133954e8d02f7020401fa8709c342b5bcb1a"
+      },
+      "local70x19.png": {
+        "path": "linux-client-mac-native-off/local70x19.png",
+        "bytes": 102967,
+        "sha256": "dc151593fd88cba79e5ce5058ef93cf5d3758cab1c2d753f9887aa07c32e4435"
+      },
+      "local70x19-capabilities.json": {
+        "path": "linux-client-mac-native-off/local70x19-capabilities.json",
+        "bytes": 1383,
+        "sha256": "b7d930b3c93b6e3c28f976217aff4957df09adb0560be6d097291fb8418599c7"
+      },
+      "Windows-first-diagnostic": {
+        "path": "windows-client-privacy-0.17.20/first-finite-detail.png",
+        "bytes": 2926188,
+        "sha256": "784ea27792e1767c5af1bdf0d8b0ff108da3a83e8647dde678d3bf94bcdf3209"
+      },
+      "Mac-server-first-enable": {
+        "path": "mac-owner-stopped-update-0.17.20/first-enable.png",
+        "bytes": 1184254,
+        "sha256": "e50598305b9f727bc9d17c5e5c45322887c0ea83ee024d186ce32e81af47c6f9"
+      }
+    },
+    "source_compatibility_reference": {
+      "path": "windows-client-mac-native-on/immutable-source-reference-compatibility.json",
+      "sha256": "a417404a10f9f918bfefcd8f3e08a58535caf34e55fd08a94d85b32da6b0d01b"
+    }
+  },
+  "service_proof": {
+    "status": "PASS; separately attributed supporting Linux SDK777 service proof, not native Windows SDK or a new matrix row",
+    "SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "bytes": 21693888,
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    },
+    "exit": 0,
+    "elapsed_seconds": 18.032,
+    "typed_refusals": "private885rev2 accepted union{Denied,Stale}; freshstopped0c89rev1 and missinggeneric exactDenied; same existing source/test, no fallback/retry",
+    "only_two_same_generation_resume_operations": {
+      "9bbdf42e-5735-4f70-89f8-7dd28a65ae37": {
+        "logical": "1615504f-c562-46a5-aa16-673c1d07599f",
+        "generation": "1795361438188135134",
+        "created": false,
+        "recreated": false
+      },
+      "c18fc85e-5da9-4c07-b8d3-511201d61876": {
+        "logical": "1615504f-c562-46a5-aa16-673c1d07599f",
+        "generation": "1795361438188135134",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "all_old16_operations_preserved": true,
+    "profiles_sessions_operations_after": [
+      5,
+      7,
+      18
+    ],
+    "actual_post_catalog_sha256": "7859d8597d81f08311e12563b169f9dc679f8c7d2d6336792b3007fbb3d4274c",
+    "no_new_session_profile_generation_or_durable_actor": true,
+    "actual_unit_group_drain": {
+      "MainPID": 0,
+      "unit_inactive_and_removed": true,
+      "actual_cgroup_removed": true,
+      "remaining_owned_members": [],
+      "wrapper_and_SDK_absent": true
+    },
+    "first_result_original_sha256": "5a8456f552edb6ec20b2bac2e4ec16c26793f36185b0cd70e4c2c6e81dd8bf58",
+    "finite_test_result_original_sha256": "6f697d3d9f641bd300a2bbedd19584a91b44d28c51825010b942c00ee408cb0f",
+    "no_retry": true
+  },
+  "owner_component": {
+    "path": "windows-client-mac-native-off/mac20-owner-off-component.json",
+    "sha256": "d6d3859f3a651c2b202bb4077efbe259fd5e92882400d316c20ec88da9025430",
+    "component_only": true
+  },
+  "preservation": {
+    "phase_A_and_B1": "Mac14/profiles5/sessions7/operations16/catalog01059 unchanged; Windows27/full9/protected7/HOST15epoch38/Task preserved; Linux20/HOST49/catalog/settings/old3 preserved",
+    "Mac_catalog_before_C_sha256": "01059b2b0af720c8541e4158bbce07814ae7012579513dce5c86299023a230b8",
+    "phase_A_normal_GUI_drain": "functional PASS; full Mac resource guard failed separately, not a full-guard PASS",
+    "phase_B1_normal_GUI_drain": "PASS under prospective recorded policy",
+    "B2_C_final_preservation": "PASS; Mac all14/profiles5/sessions7/old16operations exact plus only2 shared161 resume receipts to18, catalog7859; Windows27/full9/protected7/HOST38/Task/StoppedManual0/RDPdeny1; Linux20/HOST49 preserved; positive GUI/SDK drain"
+  },
+  "first_results_and_limits": {
+    "phase_A_resource_exception": {
+      "functional_result": "PASS and normal drain",
+      "original_carried_Mac_threshold_bytes": 20406219278,
+      "first_observed_free_bytes": 20368916480,
+      "original_carried_guard": "FAILED; state-only all14/catalog/native preservation verified separately",
+      "whole_volume_decline_cause": "UNPROVED",
+      "not_retroactively_relabelled_PASS": true
+    },
+    "prospective_B_resource_policy": {
+      "Mac_original_operational_reserve_bytes": 8589934592,
+      "stage_entry_threshold_is_not_retroactively_rewritten": true,
+      "Windows_original_floor_bytes": 1366339584,
+      "Windows_stronger_carried_floor_bytes": 1486176256,
+      "Windows_phase_carried_floor_bytes": 1737416704,
+      "Windows_effective_floor": "max(all carried floors, fresh entry minus128MiB)",
+      "Windows_whole_volume_allowance": "min(128MiB, fresh entry minus effective floor)",
+      "Windows_intentional_campaign_cap_bytes": 18874368,
+      "Windows_output_cap_bytes": 9437184,
+      "Windows_controls_cap_bytes": 1048576,
+      "phase_B1_initial_admission": "Changed prospectively from full128MiB upfront reservation to intentional18MiB admission; ongoing floors and actual whole-volume cap unchanged",
+      "original_prelease_refusal_retained": true
+    },
+    "B1_control_limit": "First Ctrl+C did not exit; terminal focus plus existing Ctrl+C twice then positive CLI absence/cwd restore. No CLI replay/new CLI.",
+    "public_assets": "Private128MiB capture caps do not authorize public repository asset size; target OFF additions below15,000,000 bytes",
+    "no_OS_Keychain_firewall_or_RDP_permission_changes": true,
+    "root_case11_acceptance": "Pinned case11 accepted with original A resource exception retained; no combined-current-release or mobile qualification",
+    "B2_control_limit": "Immediate cwd read raced asynchronous public delivery; later settled read proved original cwd; no command replay"
+  },
+  "private_evidence_receipts_sha256": {
+    "A_functional_with_resource_exception": "7baded15606d45c594a89756d2058b5051e239ff97313d4750c381c470fcfc2b",
+    "B1_74x20": "1f82a765867ea4bd015d3602d14ffbec1a260a1cb15592c86568683389c895a1",
+    "prospective_resource_policy": "3fd184924f199d9616ca86d3f0030573febd23842afdd349041cb79d4d1c6801",
+    "B2": "0265f2fa82789bef522489e2ecfd5d40c123f0f6e8602811df3113f390e1ecec",
+    "C": "4bcae74b19f925bd09fa47aa44b390fdf18e92961b7dffcbca89c4661c82d39e"
+  },
+  "original_artifacts": {
+    "client-creation-disabled.png": {
+      "bytes": 2805105,
+      "sha256": "d1fa39d1676bd074f01df5b653c42c5dad8991a6b75b0a09c94d678b32801ee6"
+    },
+    "client-saved-reconnect-AB.png": {
+      "bytes": 2908349,
+      "sha256": "faf0b5a27a52a740a515980ed942d478b25f96092f55adbbb306352671a47d1a"
+    },
+    "mac20-owner-off-component.json": {
+      "bytes": 2439,
+      "sha256": "d6d3859f3a651c2b202bb4077efbe259fd5e92882400d316c20ec88da9025430"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1382,
+      "sha256": "ffdba88c7ed7726ae9aaf42d6d8c4b33042472034f8467d18707ca0c8d0c15c6"
+    },
+    "remote70x19.png": {
+      "bytes": 2879121,
+      "sha256": "28126b1ba286a0df2b15e7519cd8180ac8f5268988ad709b7dc4b2757501da70"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 1382,
+      "sha256": "353f3a8e8444e4a632e44fcf793ab4bb112fd8076581fb3e35daf3aace91b455"
+    },
+    "remote74x20.png": {
+      "bytes": 2791244,
+      "sha256": "c93ebbc5f4880b489b3fbaa73f70fc76778a0705635e8c9b500fb1efc2b12db2"
+    },
+    "sdk-first-result.json": {
+      "bytes": 404,
+      "sha256": "5a8456f552edb6ec20b2bac2e4ec16c26793f36185b0cd70e4c2c6e81dd8bf58"
+    },
+    "sdk-native-result.log": {
+      "bytes": 267,
+      "sha256": "6f697d3d9f641bd300a2bbedd19584a91b44d28c51825010b942c00ee408cb0f"
+    }
+  }
+}

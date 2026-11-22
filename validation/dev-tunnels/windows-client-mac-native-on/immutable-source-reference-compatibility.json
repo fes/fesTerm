@@ -1,0 +1,88 @@
+{
+  "old_source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+  "current_source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+  "paths": [
+    {
+      "path": "crates/festerm-core",
+      "objects": [
+        "8362202cab63d4a29e01c10051934f980d364634",
+        "8362202cab63d4a29e01c10051934f980d364634"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-host-protocol",
+      "objects": [
+        "e5c5ba0b14b5af14c4154dc618ee1348ec07d108",
+        "e5c5ba0b14b5af14c4154dc618ee1348ec07d108"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/renderer.rs",
+      "objects": [
+        "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556",
+        "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/renderer",
+      "objects": [
+        "7dd98d142ac7454e091ee15bf881a52f8c255113",
+        "7dd98d142ac7454e091ee15bf881a52f8c255113"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-tunnel-bridge/src/host_terminal.rs",
+      "objects": [
+        "080ae9f50e8c297222e24f2e69de0ec67c055b2f",
+        "080ae9f50e8c297222e24f2e69de0ec67c055b2f"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-tunnel-bridge/src/host_terminal/client.rs",
+      "objects": [
+        "53f092aa04495b878fcff25649cb25a0a963fb3b",
+        "53f092aa04495b878fcff25649cb25a0a963fb3b"
+      ],
+      "equal": true
+    },
+    {
+      "path": "assets/fonts",
+      "objects": [
+        "7b95cd8780461b8b485c31faadc674331fa91702",
+        "7b95cd8780461b8b485c31faadc674331fa91702"
+      ],
+      "equal": true
+    },
+    {
+      "path": "vendor/epaint/src/text",
+      "objects": [
+        "8d4a9e387e5d429fb3909c4a8b15d034429f60c8",
+        "8d4a9e387e5d429fb3909c4a8b15d034429f60c8"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/theme.rs",
+      "objects": [
+        "2a4838a4da90a410ae6127f90065faad414f9bd6",
+        "2a4838a4da90a410ae6127f90065faad414f9bd6"
+      ],
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/fonts.rs",
+      "objects": [
+        "fd66e481fb560a8323846460f9a9099ec51b9a5d",
+        "fd66e481fb560a8323846460f9a9099ec51b9a5d"
+      ],
+      "equal": true
+    }
+  ],
+  "all_identical": true,
+  "limit": "Source equality supports reference reuse, actual raw query/grid/environment comparison remains required; Windows/mac raster identity not claimed."
+}

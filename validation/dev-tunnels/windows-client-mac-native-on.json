@@ -1,0 +1,505 @@
+{
+  "record_version": 1,
+  "status": "root-accepted pinned Windows-client/Mac-server creation-ON workflow",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "windows-arm64",
+    "server": "macos-arm64"
+  },
+  "creation_policy": "on",
+  "case_complete": true,
+  "matrix_complete": false,
+  "matrix_status_after_root_acceptance": {
+    "accepted": 10,
+    "partial": 6,
+    "unstarted": 8,
+    "desktop_accepted": 10,
+    "desktop_total": 12,
+    "matrix_total": 24
+  },
+  "cohort_boundary": "Pinned signed test binaries, historical Mac local references and separate Linux SDK service proof. No combined official-release/updater/mobile acceptance.",
+  "sources": {
+    "Windows_GUI": {
+      "version": "0.17.20",
+      "source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+      "tree": "0afb1e0f44d202020a762837277c194baee59383",
+      "release_run": 45040645041,
+      "attempt": 1,
+      "GUI_artifact": 14763237380,
+      "MAIN_bytes": 89764624,
+      "MAIN_sha256": "fe3f7f187d11380740fef2352ba57c0d5f9c043b4f9cf6fc6795db087acf0ce8",
+      "mixed8_map_sha256": "1a388b4a3ecd4dd024f4aa5fa5c1fdefdb33c07c757c4774d4610d964c6b718f",
+      "mixed_runtime": "Signed MAIN c0f plus seven retained source566 project/Microsoft/notice support files. Client-only; no old setup/bridge/local persistent helper execution."
+    },
+    "Mac_HOST": {
+      "version": "0.17.20",
+      "source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+      "run": 45040645041,
+      "epoch": 15,
+      "PID": 33743,
+      "run_id": "9f0b19e8-203d-43f1-a61e-33ed759d86c0",
+      "host_id": "847d1db1-267a-49b8-8f68-1a19d02c6155",
+      "locator": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+      "account": "github:356686928",
+      "archive_sha256": "68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e",
+      "new_sessiond_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61"
+    },
+    "Mac_local_reference": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "release_run": 44955636986,
+      "GUI_artifact": 14728951461,
+      "role": "Historical local R22 GUI/query/TUI only; current remote HOST20 identity is separately pinned above."
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "bytes": 21693888,
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    }
+  },
+  "workflow": {
+    "ordinary_account": "fes-festerm1",
+    "normal_discovery_exact_tooltip_before_selection": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+    "retained_session_IO": {
+      "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+      "generation": "1795272479437293009",
+      "daemon": 64358,
+      "shell": 64364,
+      "both_birth": "Sat Nov 21 06:48:00 2026",
+      "fresh_output": "WIN20_MAC20_RETAINED_IO",
+      "normal_detach": true,
+      "catalog9bdc_byte_identical_after_attach": true,
+      "new_resume_operations": 0
+    },
+    "new_named_session": {
+      "logical": "4860b8f9-fba8-4741-8958-08d0e60b71a1",
+      "generation": "1795368647682026198",
+      "operations": {
+        "223a8e80-8e80-4c45-b84d-9bd138278542": {
+          "logical": "4860b8f9-fba8-4741-8958-08d0e60b71a1",
+          "generation": "1795368647682026198",
+          "created": true,
+          "recreated": false
+        }
+      },
+      "daemon": {
+        "pid": 35409,
+        "birth": "Sun Nov 22 09:30:48 2026",
+        "exe": "/Users/evidence/Library/Application Support/com.fes.fesTerm/remote-access-desktop-v1/signed-release-cache/executable-68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e/festerm-sessiond",
+        "sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61"
+      },
+      "shell": {
+        "pid": 35414,
+        "birth": "Sun Nov 22 09:30:48 2026",
+        "exe": "/bin/zsh"
+      }
+    },
+    "saved_profile": {
+      "id": "7b7205b5-5a84-4ccc-85e9-eeb42c1c0f1d",
+      "name": "Windows Mac20 ON A1",
+      "behavior": "AttachOnly",
+      "serialized_target": "Exact host and logical4860b8f9; no claim generation is serialized.",
+      "observed_reconnect_generation": "1795368647682026198"
+    },
+    "A_B_detach_saved_C": {
+      "A": "WIN20_MAC20_A1_A",
+      "B": "WIN20_MAC20_A1_B",
+      "detach_then_saved_profile_reconnect": true,
+      "C": "WIN20_MAC20_A1_C",
+      "fresh_C_and_A_B_scrollback_visible": true,
+      "same_generation_and_pair": true,
+      "additional_creation_or_resume_operations": 0
+    },
+    "save_only_new_stopped_shared": {
+      "Save_count": 1,
+      "route": "More→OpenProfiles→NewProfile→Local; freshname /bin/sh,args[]/cwdblank; durablefesTermnative; uniqueauto sessionname; remoteON; SaveONLY",
+      "new_profile": {
+        "id": "Lab stopped shared 20",
+        "kind": "local",
+        "executable": "/bin/sh",
+        "arguments": [],
+        "persistence": {
+          "provider": "festerm-sessiond",
+          "session_name": "lab-stopped-shared-20"
+        },
+        "remote_enabled": true,
+        "logical": "cfa65401-46c0-4ee3-ab54-1cae90744d0a"
+      },
+      "logical": "cfa65401-46c0-4ee3-ab54-1cae90744d0a",
+      "revision": 1,
+      "enabled": true,
+      "no_session": true,
+      "new_operations": 0,
+      "new_durable_actors": 0,
+      "original_profiles3_sessions6_operations15_exact": true,
+      "catalog_sha256": "b132adf018f19a68e14d64a589eded801e533a6bccf2bc3c9825444c20c09f22"
+    },
+    "fresh_Windows_Start_Connect": {
+      "normal_f1_directory": true,
+      "duplicate_names_disambiguated_by_exact_public_tooltip": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+      "target_public_name": "Lab stopped shared 20",
+      "fresh_NotStarted_visible": true,
+      "visible_Start_Connect_clicks": 1,
+      "noSave_generic_retry_or_profilepolicychanges": true,
+      "first_screenshot_result": "16 is ordinaryinflight;18settledConnected/bin/shprompt;19freshpublicmarker",
+      "public_real_output": "WIN20_MAC20_FRESH_SHARED_IO",
+      "same_target": "cfa65401-46c0-4ee3-ab54-1cae90744d0a",
+      "revision": 1,
+      "new_generation": "1795375452681027650",
+      "only_new_operation": {
+        "e829e3fc-8f54-48f5-90ea-ce234cec702b": {
+          "logical": "cfa65401-46c0-4ee3-ab54-1cae90744d0a",
+          "generation": "1795375452681027650",
+          "created": true,
+          "recreated": false
+        }
+      },
+      "new_pair": {
+        "daemon": {
+          "pid": 43619,
+          "birth": "Sun Nov 22 11:24:12 2026",
+          "exe": "/Users/evidence/Library/Application Support/com.fes.fesTerm/remote-access-desktop-v1/signed-release-cache/executable-68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e/festerm-sessiond",
+          "exe_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61"
+        },
+        "shell": {
+          "pid": 43620,
+          "birth": "Sun Nov 22 11:24:12 2026",
+          "exe": "/bin/sh",
+          "exe_sha256": "f338dc2ba97328cb8aa29c57a348abf3267de71ef42ee1adf293b179542f2962"
+        }
+      },
+      "Mac_total_durable_actors": 14,
+      "old4profiles6sessions15ops_all12_exact": true,
+      "catalog_sha256": "1b924b4fe86cb709348493ce63e1a4aa0407ec23139a62f3dcd895a6470eef99"
+    }
+  },
+  "service_proof": {
+    "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+    "binary_sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+    "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4",
+    "ordinary_current777_SDK_PASS": true,
+    "exit": 0,
+    "elapsed_seconds": 22.782,
+    "private_gate": "Exact real private885883d3/rev2 hidden and direct typed Refusal::{Denied,Stale} union; exact member not logged.",
+    "shared_gate": "Existing161 Running Ensure twice same generation; no replacement.",
+    "generic_gate": "Fresh4ac87611 Ensure twice same generation with exactly one creation; native I/O.",
+    "fresh_NotStarted_gate": "SDK fixture161 already Running, so fresh stopped-profile Start is proven separately by Windows normal UI cfa65401/rev1. No stopped-profile-denied SDK claim under creationON.",
+    "new_pair": {
+      "4ac87611-8580-4d11-bf79-7df88b99d507": {
+        "generation": "1795372731334357643",
+        "phase": "Running",
+        "record_sha256": "e5536e8cd4abd53ec0635697d3094254328bc48f686fc9ca1ae68ff031a8df80",
+        "daemon": {
+          "pid": 39519,
+          "birth": "Sun Nov 22 10:38:51 2026",
+          "exe": "/Users/evidence/Library/Application Support/com.fes.fesTerm/remote-access-desktop-v1/signed-release-cache/executable-68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e/festerm-sessiond",
+          "exe_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61"
+        },
+        "shell": {
+          "pid": 39520,
+          "birth": "Sun Nov 22 10:38:51 2026",
+          "exe": "/bin/zsh",
+          "exe_sha256": "82bab4884831effc95a1d22db7d0b71c0fb38363abf5e8228fdae5f7844ac175"
+        }
+      }
+    },
+    "operations": {
+      "458adf35-c9fd-438c-8ce1-7b5b4a8f2124": {
+        "logical": "1615504f-c562-46a5-aa16-673c1d07599f",
+        "generation": "1795361438188135134",
+        "created": false,
+        "recreated": false
+      },
+      "645ec24a-98c3-4d24-a770-11ebe5c21071": {
+        "logical": "4ac87611-8580-4d11-bf79-7df88b99d507",
+        "generation": "1795372731334357643",
+        "created": true,
+        "recreated": false
+      },
+      "a38d5e1a-bddf-44aa-8244-f71ec4846c61": {
+        "logical": "1615504f-c562-46a5-aa16-673c1d07599f",
+        "generation": "1795361438188135134",
+        "created": false,
+        "recreated": false
+      },
+      "cb560d74-6ab1-4e30-aaa7-b4b2fb3e03d7": {
+        "logical": "4ac87611-8580-4d11-bf79-7df88b99d507",
+        "generation": "1795372731334357643",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "actual_cgroup_removed_wrapper_and_SDK_absent": true
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "local_reference_version": "0.17.19/source566 Mac local R22, older HOST13 cohort",
+    "remote_frontend_version": "Windows0.17.20/sourcec0f",
+    "Copilot": {
+      "version": "1.0.112",
+      "Mac_binary_sha256": "a29f5a52ac73cbd707fa4855939f1fe6a7e3bd44a6a9f577dbe7f7754a4b8424",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/Users/evidence/.ft-copilot-reference-native19-r22",
+      "state": "Fresh unauthenticated initial prompt after one-session folder trust; no login/model/paid request."
+    },
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "child_locale_precondition": {
+      "LANG": "en_US.UTF-8",
+      "LC_ALL": "en_US.UTF-8",
+      "probe_and_CLI": true,
+      "persistent_shell_profile_OS_environment_changed": false,
+      "default_locale_invariance_claimed": false
+    },
+    "raw_results": "Every field except case/elapsed_ms equal: six raw environment fields, ten single terminal replies,202input bytes; terminal/descriptor flags restored. No normalization.",
+    "immutable_source_reference_compatibility": "See original10-path identity proof; source equality supports reuse, actual raw/capture results remain acceptance evidence.",
+    "visual_review": "Root independently viewed both local/remote original pairs: matching semantic layout/card/header/banner/MCP/login/cwd/prompt/footer/colors/wrapping. Windows/macOS chrome and one-pixel frame origin differ; no raster identity.",
+    "actual_grid_resize": "New named same-generation PTY observed70x19 on initial P1 attach, ordinary Windows resize→74x20; later fresh attach→70x19. No additional shell generation.",
+    "P1_geometry": {
+      "fresh_actual_grid": [
+        70,
+        19
+      ],
+      "single_measured_resize_physical": [
+        1280,
+        904
+      ],
+      "post_resize_actual_status_and_stty": [
+        74,
+        20
+      ],
+      "actual_client": [
+        0,
+        1,
+        1280,
+        904,
+        192
+      ],
+      "terminal_content_physical": [
+        1276,
+        778
+      ],
+      "terminal_content_logical": [
+        638,
+        389
+      ],
+      "local_reference_same_logical_viewport": true,
+      "ordinary_resize_count": 1,
+      "no_geometry_search": true
+    },
+    "P2_geometry": {
+      "fresh_actual_status_and_stty": [
+        70,
+        19
+      ],
+      "actual_client": [
+        0,
+        81,
+        1212,
+        866,
+        192
+      ],
+      "terminal_content_physical": [
+        1208,
+        740
+      ],
+      "terminal_content_logical": [
+        604,
+        370
+      ],
+      "local_reference_same_logical_viewport": true,
+      "ordinary_resize_count": 0,
+      "no_geometry_search": true
+    },
+    "positive_CLI_absence_before_restore_text": true,
+    "normal_CtrlC2_CWD_restored_own_variables_unset": true,
+    "originals_already_public": {
+      "local74x20.png": {
+        "path": "linux-client-mac-native-off/local74x20.png",
+        "bytes": 126085,
+        "sha256": "2eaa101886415d461bd211193237feb1e5d7483664146c6ff18debd5a27c5d6e"
+      },
+      "local74x20-capabilities.json": {
+        "path": "linux-client-mac-native-off/local74x20-capabilities.json",
+        "bytes": 1383,
+        "sha256": "d9e27a0a4a979a6290061a1f85ed133954e8d02f7020401fa8709c342b5bcb1a"
+      },
+      "local70x19.png": {
+        "path": "linux-client-mac-native-off/local70x19.png",
+        "bytes": 102967,
+        "sha256": "dc151593fd88cba79e5ce5058ef93cf5d3758cab1c2d753f9887aa07c32e4435"
+      },
+      "local70x19-capabilities.json": {
+        "path": "linux-client-mac-native-off/local70x19-capabilities.json",
+        "bytes": 1383,
+        "sha256": "b7d930b3c93b6e3c28f976217aff4957df09adb0560be6d097291fb8418599c7"
+      },
+      "retained-I-O": {
+        "path": "mac20-retained-shell-io/retained-shell-io.png",
+        "bytes": 2976078,
+        "sha256": "97acc7c27b7fb2b24a0fbc6f259f9c25d9565f6d8d0f2a4b761794d938910e86"
+      },
+      "Windows-first-diagnostic": {
+        "path": "windows-client-privacy-0.17.20/first-finite-detail.png",
+        "bytes": 2926188,
+        "sha256": "784ea27792e1767c5af1bdf0d8b0ff108da3a83e8647dde678d3bf94bcdf3209"
+      },
+      "Mac-server-first-enable": {
+        "path": "mac-owner-stopped-update-0.17.20/first-enable.png",
+        "bytes": 1184254,
+        "sha256": "e50598305b9f727bc9d17c5e5c45322887c0ea83ee024d186ce32e81af47c6f9"
+      }
+    }
+  },
+  "preservation": {
+    "Windows": "All27/full9/protected7/HOST15epoch38/nativeTask preserved; no Windows HOST update in this case.",
+    "Mac": "Original8 durable actors preserved; intended GUI-created pair→10, SDKgeneric pair→12, freshsharedStart pair→14; no End/recreation.",
+    "Mac_final_catalog_sha256": "1b924b4fe86cb709348493ce63e1a4aa0407ec23139a62f3dcd895a6470eef99",
+    "Mac_final_profiles_sessions_operations": [
+      4,
+      7,
+      16
+    ],
+    "Linux": "Original20/HOST49/settings/binding/catalog/old3 preserved. P2 had separate disk-only refusal; later separately approved cache recovery restored floors before SDK phase.",
+    "service_prerequisite": "Default-Stopped service_state refusal remains failed. Separately authorized Manual TermService started for each GUI phase; visible Retry once in A; RDPdeny1 unchanged. Exact test service stopped after positive normal GUI/Job/input/helper drain.",
+    "normal_client_exit_and_owned_drain": true,
+    "no_Keychain_firewall_OS_permission_or_RDP_enable_changes": true
+  },
+  "first_results_and_limits": {
+    "Windows_initial_privacy_refusal": {
+      "stage": "service_state",
+      "TermService": "stopped",
+      "OS_code": "not-recorded",
+      "connection_admission": "closed; no session result or absence accepted",
+      "native_diagnostic_attribution": "#853 finite GUI diagnostic exercised; not treated as a successful default-Stopped connection"
+    },
+    "manual_prerequisite_phaseA": {
+      "authorized_Manual_start": true,
+      "PID": 1136,
+      "birth_unix_ms": 1795368278799,
+      "RDPdeny": 1,
+      "RDP_enabled": false,
+      "visible_Retry_count": 1,
+      "subsequent_inventory_and_connections": "PASS",
+      "restored_after_owned_GUI_and_input_drain": {
+        "state": "Stopped",
+        "mode": "Manual",
+        "pid": 0,
+        "RDPdeny": 1
+      }
+    },
+    "Linux_P2_resource_exception": {
+      "native_product_or_capability_failure": false,
+      "initial_free": 3230785536,
+      "first_final_free": 2641412096,
+      "delta": 589373440,
+      "continuing_floor": 3203010560,
+      "carried_stronger_floor": 3213766656,
+      "fresh_diagnostic_free": 2641358848,
+      "read_only_diagnosis": "OS snap change6 automatically downloaded/mounted gnome-46-2404 revision185 at10:03–10:04PST. Its file size589295616 / allocated589299712B, mtime1795370646, explains delta to within73728B. This is strongly supported attribution, not exact full filesystem accounting. No other active systemd jobs/new campaign actor; no observed campaign size growth across two reads.",
+      "diagnostic_limit": "Some OS subdirectories unreadable; sudo -n refused password and was not retried. No user content read.",
+      "cleanup_stops_deletions_or_permission_changes": false,
+      "SDK_or_new_Linux_test_launched": false,
+      "floor_waiver": false
+    },
+    "Windows_initial_fresh_Start_phase": "Original18MiB whole-volume monitor stopped GUI before host selection/Ensure/Start after39,182,336B unrelated/unidentified drop; no successful connection or normal exit claimed. Later distinct root-approved128MiB whole-volume/18MiB intentional-data phase passed; no floor waiver/lease extension.",
+    "fresh_Start_success_budget": {
+      "explicit_new_volume_cap": 134217728,
+      "intentional_campaign_cap": 18874368,
+      "controls_cap": 1048576,
+      "outputs_cap": 9437184,
+      "original_floor": 1366339584,
+      "carried_floor": 1486176256,
+      "effective_floor": 1737416704,
+      "actual_enforcement": "available>=original AND>=carried AND>=freshentry−128MiB; actualstatusreportsmax; no floorwaiver",
+      "previousfailed_scope_remains_closed_and_preserved": true
+    },
+    "read_only_control_refusals": "Source reader/schema errors and initial public guard interpretation errors retained in private receipts; no failed issued Create/Ensure/Start replay.",
+    "later_HOST20_disable_enable": {
+      "status": "subsequent component evidence; historical ON case scope unchanged",
+      "record": "windows-client-mac-native-off/mac20-owner-off-component.json",
+      "sha256": "d6d3859f3a651c2b202bb4077efbe259fd5e92882400d316c20ec88da9025430",
+      "postcycle_policy": "creationOFF at epoch17; does not retroactively change epoch15 ON qualification"
+    },
+    "limits": [
+      "Explicit child LANG/LC_ALL=en_US.UTF-8; no default-locale/raster-identity/paid-Copilot qualification.",
+      "Windows requires temporary Manual TermService; default-Stopped refusal remains a refusal and RDP remained disabled.",
+      "Linux Snap resource failure, original18MiB Windows resource stop-before-action, read-only validator errors and guard-report interpretation correction remain retained; no failed product action was replayed.",
+      "Mixed pinned build cohorts; not a combined current-release qualification or any mobile matrix acceptance."
+    ]
+  },
+  "private_evidence_receipts_sha256": {
+    "create_save_reconnect": "5415ecada3b52f840f893cb5638086d8c2a8191736e001bb513d1056a2ca9d75",
+    "visual_74x20": "1c742e5d4d9a06f700405b9569889adfcb6a9207459cbc042a3cb5c6b740ca7a",
+    "visual_70x19": "ad5ecdd1345980103cf2506191c91f741170dea9c21cc5d2efada72d892e7c02",
+    "supporting_SDK": "cf7aa4db2979e51eaf5e3258887c77d52fa1f210d43323830e25b23dd70e8ace",
+    "save_only_shared": "23b4ffd3e76426a2c3352386ada7e0ba125408c983944931914a20ef60a61ba8",
+    "fresh_shared_start": "be6da5d9909397e3f77c4ec6196dd3ba7e29a7c4ad47fcc448e25fe8818b2e3c"
+  },
+  "original_artifacts": {
+    "client-exact-locator.png": {
+      "bytes": 2836237,
+      "sha256": "1c5d308d00dcc4e07dd18cb61a234a4900199e0c51de6b74976a63528c5a7128"
+    },
+    "client-create-save-review.png": {
+      "bytes": 2844693,
+      "sha256": "e40c78b0fd0021336194912a5be49c9bbabad43d49aceb27ab7943ab5352bcc4"
+    },
+    "client-saved-reconnect-ABC.png": {
+      "bytes": 2885860,
+      "sha256": "47f4be1436ef512d0593ba7c524857f804611d689e3526d4c6d93a5ae8391933"
+    },
+    "client-fresh-NotStarted.png": {
+      "bytes": 2803581,
+      "sha256": "9f119387936ba6912759d691a913c040fe628e6cb08eb0c57e417942ea958e89"
+    },
+    "client-fresh-shared-start-IO.png": {
+      "bytes": 2819688,
+      "sha256": "29b5515e5a5c8d5f13dfe55f50353c732f9b49b97979896418c3a3b66ba3aaf3"
+    },
+    "remote74x20.png": {
+      "bytes": 2791040,
+      "sha256": "a33f8e8b2b58c60f1639e5e0366620cc11b0169009f84363b4c52a4acf08f509"
+    },
+    "remote70x19.png": {
+      "bytes": 2878893,
+      "sha256": "634f1593cae7f6e7e1e4a2dd303070ad9851bfda8ae6ba97123ad7e37deb6896"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 1381,
+      "sha256": "189b5440c27f73fc21c9d33051f256decb8d823fd6fa822d2a9530350206d353"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1381,
+      "sha256": "bd67bcab5a0d878fec45d46ee651c2a79df4cf9f42dd803e0f3ebbedab708e84"
+    },
+    "sdk-native-result.log": {
+      "bytes": 216,
+      "sha256": "55328084b3d147098298e151d9221f6c689bfd404484dc0e8cc33c09f112015e"
+    },
+    "sdk-first-result.json": {
+      "bytes": 404,
+      "sha256": "b173bda233f74157c65338d11f6693ff60d647fe24b56886a6596c8848b75b04"
+    },
+    "immutable-source-reference-compatibility.json": {
+      "bytes": 2478,
+      "sha256": "a417404a10f9f918bfefcd8f3e08a58535caf34e55fd08a94d85b32da6b0d01b"
+    }
+  },
+  "root_acceptance_sha256": "efc37c6742e72ff965da2eb4ea3522ba41d5ba8f963e9109dfe814006fa59dcc"
+}

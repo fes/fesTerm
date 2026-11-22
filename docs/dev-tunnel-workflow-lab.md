@@ -9,8 +9,9 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** two controlled Windows-client/Linux-server OFF/ON cases
-are qualified below; the full 24-case native matrix remains incomplete. The
+**Current coverage:** eleven pinned cases are accepted (desktop 11/12), five
+are partial and eight are unstarted. The full 24-case native matrix and
+combined-current-release qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
 fixture rejects the old manual-pairing fixture and uses a distinct completion
@@ -84,6 +85,29 @@ the expected generic-creation permission, exact detach and durable reconnect,
 and screenshots on both server and client. Preserve issued identities after
 uncertain results; expanding the matrix never authorizes replacement creates.
 
+The accepted desktop cases are separately pinned cohorts, not one current
+release. Historical local references and supporting SDK routes stay attributed.
+
+| Client → server | Creation OFF | Creation ON |
+| --- | --- | --- |
+| Windows → Linux | [Accepted](../validation/dev-tunnels/windows-client-linux-0.17.12.json) | [Accepted](../validation/dev-tunnels/windows-client-linux-0.17.12.json) |
+| Linux → Windows | [Accepted](../validation/dev-tunnels/linux-client-windows-native.json) | [Accepted](../validation/dev-tunnels/linux-client-windows-native.json) |
+| macOS → Windows | Blocked: stopped HOST20 verification after Disable39, then separate reviewed Enable-OFF | [Accepted](../validation/dev-tunnels/mac-client-windows-native.json) |
+| Linux → macOS | [Accepted](../validation/dev-tunnels/linux-client-mac-native.json) | [Accepted](../validation/dev-tunnels/linux-client-mac-native-on.json) |
+| macOS → Linux | [Accepted](../validation/dev-tunnels/mac-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-linux-native.json) |
+| Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
+
+The last Windows owner phase preserved all27 durable actors after Disable39;
+this table does not claim the HOST20 update or subsequent Enable has succeeded.
+The Windows→Mac pair uses signed test GUI/HOST20 with retained client support
+files, older Mac local R22 references and a separate SDK777 service check. The
+first OFF phase completed functional I/O and normal drain but failed its carried
+Mac disk threshold after an unproved whole-volume decline. That original failure
+remains; later phases used an explicitly reviewed prospective8GiB operational
+reserve and Windows admission policy with all continuing floors retained. The
+128MiB private capture cap is not a public repository asset allowance. Later Mac
+Disable/Enable and existing I/O are component evidence, not a combined release.
+
 Mobile cases run the actual shared mobile client using `--host-clients` with
 `scripts/build-ios-spike.py` or `scripts/build-android.py`. Record the exact app
 source/build and whether execution used hardware, Simulator or emulator. Include
@@ -92,7 +116,7 @@ results do not qualify physical-device lock, biometric or lifecycle gates.
 The desktop service-client runner below cannot qualify mobile cases. Packaging,
 headless fixtures and an available device do not count as a completed case.
 
-The [current 0.17.12 Windows-client/Linux-server record](../validation/dev-tunnels/windows-client-linux-0.17.12.json)
+The [pinned 0.17.12 Windows-client/Linux-server record](../validation/dev-tunnels/windows-client-linux-0.17.12.json)
 qualifies the two existing controlled OFF/ON cases using composed functional,
 visual and persistence evidence. It retains the original cleanup uncertainty
 and the separate successful followup; it does not complete the 24-case matrix.
@@ -104,7 +128,7 @@ qualification does not execute the full Linux-client/Windows-server pair.
 The [Windows 0.17.13 cwd record](../validation/dev-tunnels/windows-cwd-0.17.13.json)
 qualifies fresh signed-daemon `cmd.exe` startup in the selected directory on
 Windows ARM64 (`HOST-02`/`HOST-03`). It does not qualify the full remote pair or
-its `DT-02` Copilot comparisons; the accepted matrix count remains two.
+its `DT-02` Copilot comparisons; it adds no matrix case.
 
 ## Fresh Copilot visual parity in every case
 
