@@ -374,6 +374,7 @@ fn desktop_remote_access_metadata_and_unreviewed_commands_are_inert() {
         Action::Edit(Draft {
             friendly_name: "Edited metadata".into(),
             allow_creation: true,
+            allow_session_termination: false,
             ..Draft::default()
         }),
         &context,
@@ -599,6 +600,7 @@ fn desktop_remote_access_busy_never_edits_or_replaces_pending_consent() {
     controller.action(
         Action::Edit(Draft {
             allow_creation: true,
+            allow_session_termination: false,
             ..Draft::default()
         }),
         &context,
@@ -2002,6 +2004,7 @@ fn desktop_remote_access_enable_confirmation_uses_task_copy_and_retains_disclosu
                             account: "42".into(),
                             ordinary_access,
                             allow_creation: false,
+                            allow_session_termination: false,
                             startup_at_sign_in: false,
                             ..Draft::default()
                         },

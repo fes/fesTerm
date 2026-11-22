@@ -329,6 +329,7 @@ mod tests {
                 ordinary_access: Default::default(),
                 friendly_name: "fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: crate::lifecycle::Startup::Manual,
             },
         )

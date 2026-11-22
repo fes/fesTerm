@@ -2390,3 +2390,15 @@ launch fields remain exact; reconnect uses the already-issued generation. This
 changes launch defaults on the existing edges, not discovery or authority.
 See ADR-0025/0084 and the manual fresh-shell HOME/PATH scenario; native managed
 qualification remains separate from deterministic launch fixtures.
+
+
+HOST-03 / MOB-06 ordinary termination: running session card → **Terminate…** →
+named Cancel-default confirmation → protected original checkpoint → exact End.
+The independently reviewed HOST-01/02 `allow_session_termination` setting defaults
+off and is unrelated to creation. Fresh advertised permission and current
+account/host/epoch/session selection are required. Cancel/back/lock/selection
+change before issuance sends no End. A matching authoritative Ended result removes
+only its generation; uncertain results retain the original operation without
+automatic retry. Stopped profiles and imported local-bound generations cannot be
+terminated through this ordinary flow. Close retains its separate local detach
+edge; retirement diagnostics do not appear as normal Profiles notices.

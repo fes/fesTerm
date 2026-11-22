@@ -88,6 +88,7 @@ public class OwnedSetupProbe {
             filesystem: None,
             friendly_name: "windowless refusal fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: festerm_host_setup::lifecycle::Startup::Manual,
             ordinary_access: Default::default(),
         },

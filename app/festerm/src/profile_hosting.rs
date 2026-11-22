@@ -2508,6 +2508,7 @@ mod tests {
             Settings {
                 friendly_name: "Local host".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
                 ordinary_access: OrdinaryAccess::ProviderOwner,
                 filesystem: None,

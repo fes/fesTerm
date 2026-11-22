@@ -15,8 +15,8 @@ use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 use festerm_tunnel_bridge::host_client::{
     self,
     approvals::{Receipt, ReceiptIndex, ReviewedOwner},
-    ApprovedAttachment, ApprovedContext, ClientContext, CreationIntent, CreationMode, Inventory,
-    Outcome, Scope, Target, Worker,
+    ApprovedAttachment, ApprovedContext, ClientContext, CreationIntent, CreationMode, EndIntent,
+    Inventory, Outcome, Scope, Target, Worker,
 };
 use festerm_tunnel_client::{
     host_control::{Binding, ConnectionPermit},
@@ -60,11 +60,19 @@ impl RequestFailure {
     fn credential_read(error: SecretStoreError) -> Self {
         let message = match error {
             SecretStoreError::Missing => "Saved sign-in is missing. Sign in again in Settings.",
-            SecretStoreError::LockedOrUnavailable => "Secure storage is locked or unavailable. Unlock it or check its service, then retry.",
+            SecretStoreError::LockedOrUnavailable => {
+                "Secure storage is locked or unavailable. Unlock it or check its service, then retry."
+            }
             SecretStoreError::Unsupported => "Secure storage is not supported in this build.",
-            SecretStoreError::BackendFailure => "Secure storage could not be read. Check your system credential storage, then retry.",
-            SecretStoreError::InvalidReference => "Saved sign-in data is invalid. Review this account in Settings.",
-            SecretStoreError::TooLarge => "Saved sign-in data exceeds the supported limit. Review this account in Settings.",
+            SecretStoreError::BackendFailure => {
+                "Secure storage could not be read. Check your system credential storage, then retry."
+            }
+            SecretStoreError::InvalidReference => {
+                "Saved sign-in data is invalid. Review this account in Settings."
+            }
+            SecretStoreError::TooLarge => {
+                "Saved sign-in data exceeds the supported limit. Review this account in Settings."
+            }
         };
         Self::from(message)
     }
@@ -130,6 +138,7 @@ enum ResultEvent {
     Prepared(Receipt),
     Resolved(Box<(Receipt, ResolvedTunnel)>),
     Ordinary(Box<(host_client::ordinary::OrdinaryContext, Inventory)>),
+    EndPrepared(festerm_host_protocol::OperationId, Arc<EndIntent>),
 }
 
 enum Action {
@@ -140,6 +149,9 @@ enum Action {
     Prepare,
     Inventory,
     Attach(Target),
+    ReviewEnd(Target),
+    ConfirmEnd,
+    CancelEnd,
     EnsureProfile {
         logical: host_client::LogicalSessionId,
         revision: festerm_host_protocol::Epoch,
@@ -199,9 +211,15 @@ enum PrivacyPreparationFailure {
 impl PrivacyPreparationFailure {
     fn notice(self) -> &'static str {
         match self {
-            Self::Unavailable => "Device privacy monitoring could not start. Check Diagnostics before retrying.",
-            Self::Timeout => "Device privacy monitoring did not become ready. Retry explicitly after preparation finishes.",
-            Self::CleanupUnresolved => "Device privacy cleanup is unresolved. Restart fesTerm before connecting again.",
+            Self::Unavailable => {
+                "Device privacy monitoring could not start. Check Diagnostics before retrying."
+            }
+            Self::Timeout => {
+                "Device privacy monitoring did not become ready. Retry explicitly after preparation finishes."
+            }
+            Self::CleanupUnresolved => {
+                "Device privacy cleanup is unresolved. Restart fesTerm before connecting again."
+            }
         }
     }
 }
@@ -295,6 +313,45 @@ fn deliver_owner_completion<T>(
     !cancel.is_cancelled() && sender.try_send(result).is_ok()
 }
 
+// Reuse the checkpoint's immutable review as well as its original operation.
+// Display names can change independently of the confirmed exact target.
+fn prepare_end_original(
+    approved: &ClientContext,
+    intent: Arc<EndIntent>,
+    store: Arc<host_client::originals::OriginalStore>,
+    originals: Vec<host_client::originals::RecoveredOriginal>,
+    review_text: String,
+) -> Result<Arc<EndIntent>, RequestFailure> {
+    let mut previous = originals
+        .into_iter()
+        .filter_map(|original| match original.intent {
+            host_client::originals::RecoveredIntent::End(previous)
+                if previous.target() == intent.target() =>
+            {
+                Some((previous, original.review))
+            }
+            _ => None,
+        });
+    let selected = previous.next();
+    if previous.next().is_some() {
+        return Err("A previous termination needs attention.".into());
+    }
+    let (intent, review) = if let Some((previous, captured_review)) = selected {
+        if !previous.matches_context(approved)
+            || intent.is_issued() && intent.operation() != previous.operation()
+        {
+            return Err("A previous termination needs attention.".into());
+        }
+        (previous, captured_review)
+    } else {
+        (intent, review_text)
+    };
+    intent
+        .protect_original(store, review)
+        .map_err(|_| RequestFailure::from("Couldn’t prepare session termination."))?;
+    Ok(intent)
+}
+
 /// Reserves a discovery permit only when another permit would still remain,
 /// so background host refreshes never take the last connection slot.
 fn reserve_with_headroom(budgets: &host_client::Budgets) -> Option<ConnectionPermit> {
@@ -337,6 +394,14 @@ type OrdinaryFuture = std::pin::Pin<
 #[cfg(test)]
 type OrdinaryService = Arc<dyn Fn(u64, String, CancellationToken) -> OrdinaryFuture + Send + Sync>;
 
+struct EndReview {
+    intent: Arc<EndIntent>,
+    name: String,
+    host_name: String,
+    generation: u64,
+    cancel_focused: bool,
+}
+
 pub(super) struct Browser {
     tab: TabId,
     request: egui::Id,
@@ -368,6 +433,8 @@ pub(super) struct Browser {
     pending_deadline: Option<(Instant, CancellationToken)>,
     worker: Option<Worker>,
     inventory: Option<Inventory>,
+    end_review: Option<EndReview>,
+    ending: Option<Target>,
     generation: u64,
     feedback: Option<String>,
     needs_sign_in: bool,
@@ -470,6 +537,8 @@ impl FesTermApp {
             pending_deadline: None,
             worker: None,
             inventory: None,
+            end_review: None,
+            ending: None,
             generation: 1,
             feedback: None,
             needs_sign_in: false,
@@ -562,7 +631,10 @@ impl FesTermApp {
         match requested_scene {
             "retry-original" | "resolved-original" => {
                 browser.gallery_original = Some((
-                    format!("Original action · logical {} · attachment 77777777-7777-4777-8777-777777777777 · issued None", browser.recipe.logical_session),
+                    format!(
+                        "Original action · logical {} · attachment 77777777-7777-4777-8777-777777777777 · issued None",
+                        browser.recipe.logical_session
+                    ),
                     requested_scene == "resolved-original",
                 ));
             }
@@ -670,7 +742,14 @@ impl Browser {
         context: &egui::Context,
     ) {
         if !self.workspace {
-            crate::screens::report_host_recipe_outcome(context, self.tab, self.request, Err("The saved-profile connection was cancelled by account selection. Select a host in Find & Connect."));
+            crate::screens::report_host_recipe_outcome(
+                context,
+                self.tab,
+                self.request,
+                Err(
+                    "The saved-profile connection was cancelled by account selection. Select a host in Find & Connect.",
+                ),
+            );
         }
         self.workspace = true;
         // Retire only this host operation. The account lifetime token is shared by
@@ -698,6 +777,7 @@ impl Browser {
         self.receipt = None;
         self.resolved = None;
         self.inventory = None;
+        self.end_review = None;
         self.host_approved = false;
         self.consent = false;
         self.creation_confirmed = false;
@@ -964,8 +1044,14 @@ impl FesTermApp {
             .find(|account| account.account_id() == account_id)
             .cloned()
         else {
-            crate::screens::report_host_recipe_outcome(context, tab, request,
-                Err("This recipe's account is not signed in locally. Add or select that account explicitly in Profiles; no sign-in was started."));
+            crate::screens::report_host_recipe_outcome(
+                context,
+                tab,
+                request,
+                Err(
+                    "This recipe's account is not signed in locally. Add or select that account explicitly in Profiles; no sign-in was started.",
+                ),
+            );
             return;
         };
         if let Some(previous) = self.host_browser.take() {
@@ -1013,6 +1099,8 @@ impl FesTermApp {
             pending_deadline: None,
             worker: None,
             inventory: None,
+            end_review: None,
+            ending: None,
             generation: 0,
             feedback: None,
             needs_sign_in: false,
@@ -1462,6 +1550,8 @@ impl FesTermApp {
             pending_deadline: None,
             worker: None,
             inventory: None,
+            end_review: None,
+            ending: None,
             generation: 0,
             feedback: None,
             needs_sign_in: false,
@@ -1653,8 +1743,14 @@ impl FesTermApp {
             .is_some_and(|browser| !browser.current(&self.state, context))
         {
             let browser = self.host_browser.take().expect("checked browser");
-            crate::screens::report_host_recipe_outcome(context, browser.tab, browser.request,
-                Err("Host review cancelled because its editor, recipe or account credential changed. No result was installed."));
+            crate::screens::report_host_recipe_outcome(
+                context,
+                browser.tab,
+                browser.request,
+                Err(
+                    "Host review cancelled because its editor, recipe or account credential changed. No result was installed.",
+                ),
+            );
             crate::screens::host_workspace::report_outcome(
                 context,
                 browser.tab,
@@ -1725,6 +1821,46 @@ impl FesTermApp {
                         });
                     }
                 }
+                Ok(ResultEvent::EndPrepared(review_operation, intent)) => {
+                    let current = browser.end_review.as_ref().is_some_and(|review| {
+                        review.generation == browser.generation
+                            && review.intent.operation() == &review_operation
+                            && review.intent.target() == intent.target()
+                    });
+                    let ending_target = intent.target().clone();
+                    let result = browser.context().and_then(|approved| {
+                        if !current || !intent.matches_context(&approved) {
+                            return Err("Session termination was cancelled.".into());
+                        }
+                        let wake = context.clone();
+                        let scope = browser.scope(&approved);
+                        self.state.host_end_intents.retain(|old| !old.is_resolved());
+                        if !self.state.host_end_intents.iter().any(|old| {
+                            old.operation() == intent.operation() && old.matches_context(&approved)
+                        }) {
+                            if self.state.host_end_intents.len() >= 16 {
+                                return Err("Finish the pending session actions first.".into());
+                            }
+                            self.state.host_end_intents.push(intent.clone());
+                        }
+                        Worker::start(
+                            approved,
+                            scope,
+                            host_client::Operation::End(intent),
+                            &self.state.host_client_budgets,
+                            Arc::new(move || wake.request_repaint()),
+                        )
+                        .map_err(|error| error.message().to_owned())
+                    });
+                    browser.end_review = None;
+                    match result {
+                        Ok(worker) => {
+                            browser.ending = Some(ending_target);
+                            browser.worker = Some(worker);
+                        }
+                        Err(error) => browser.feedback = Some(error),
+                    }
+                }
                 Ok(ResultEvent::Prepared(receipt)) => {
                     browser.receipt = Some(receipt);
                     browser.feedback = Some("Protected local key ready. This does not enroll or authorize it on the host. Review its public key below.".into());
@@ -1770,6 +1906,7 @@ impl FesTermApp {
         if let Some(completion) = completion {
             let completed_scope = completion.scope;
             browser.worker = None;
+            let ending = std::mem::take(&mut browser.ending);
             match completion.outcome {
                 Outcome::Inventory(inventory) => {
                     if let Some(hint) = &browser.recipe.host_hint {
@@ -1834,7 +1971,43 @@ impl FesTermApp {
                         }
                     }
                 }
-                Outcome::Failed(error) => browser.feedback = Some(error.message().into()),
+                Outcome::Ended { target } => {
+                    if let Some(inventory) = &mut browser.inventory {
+                        inventory
+                            .sessions
+                            .retain(|session| session.target != target);
+                        inventory.unknown.retain(|unknown| unknown != &target);
+                    }
+                    browser.feedback = Some("Session terminated.".into());
+                }
+                Outcome::Failed(error) => {
+                    let denied = matches!(
+                        &error,
+                        host_client::Failure::Control(
+                            festerm_tunnel_client::host_control::Error::Refused(
+                                festerm_host_protocol::Refusal::Denied
+                            )
+                        )
+                    );
+                    if let Some(target) = ending.as_ref().filter(|_| !denied) {
+                        if let Some(inventory) = &mut browser.inventory {
+                            inventory
+                                .sessions
+                                .retain(|session| &session.target != target);
+                            if !inventory.unknown.contains(target) {
+                                inventory.unknown.push(target.clone());
+                            }
+                        }
+                    }
+                    browser.feedback = Some(if ending.is_some() && denied {
+                        "This session can’t be terminated remotely.".into()
+                    } else if ending.is_some() {
+                        "Couldn’t confirm termination. Check the session before trying again."
+                            .into()
+                    } else {
+                        error.message().into()
+                    })
+                }
                 Outcome::Created(created) => {
                     let created_session = created.session().clone();
                     if created.disposition() == host_client::EnsureDisposition::Recreated {
@@ -2014,7 +2187,7 @@ impl FesTermApp {
         let Some(browser) = self.host_browser.as_mut() else {
             return;
         };
-        let mut dismiss = escape;
+        let mut dismiss = escape && browser.end_review.is_none();
         let mut action = None;
         egui::Modal::new(egui::Id::new("foreground_host_review")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 620.0);
@@ -2196,9 +2369,55 @@ impl FesTermApp {
             );
             return;
         }
+        action = self.show_host_termination_review(context).or(action);
         if let Some(action) = action {
             self.apply_host_review_action(action, context);
         }
+    }
+
+    fn show_host_termination_review(&mut self, context: &egui::Context) -> Option<Action> {
+        use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButtonRole};
+        let mut action = None;
+        let busy = self.host_browser.as_ref().is_some_and(Browser::busy);
+        if let Some(review) = self
+            .host_browser
+            .as_mut()
+            .and_then(|browser| browser.end_review.as_mut())
+        {
+            let modal = egui::Modal::new(egui::Id::new((
+                "terminate_remote_session",
+                review.intent.operation().to_string(),
+            )))
+            .show(context, |ui| {
+                super::confirmations::prepare_confirmation(ui, context, 400.0);
+                ui.heading(format!(
+                    "Terminate {} on {}?",
+                    review.name, review.host_name
+                ));
+                ui.label("This ends the shell and stops programs running in it.");
+                let cancel = action_button(ui, ActionButtonRole::Secondary, "Cancel");
+                if !review.cancel_focused {
+                    cancel.request_focus();
+                    review.cancel_focused = true;
+                }
+                if cancel.clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    action = Some(Action::CancelEnd);
+                } else if action_button_enabled(
+                    ui,
+                    !busy,
+                    ActionButtonRole::DangerOutline,
+                    "Terminate",
+                )
+                .clicked()
+                {
+                    action = Some(Action::ConfirmEnd);
+                }
+            });
+            if modal.should_close() {
+                action = Some(Action::CancelEnd);
+            }
+        }
+        action
     }
 
     fn show_workspace_host(&mut self, context: &egui::Context, escape: bool) {
@@ -2225,7 +2444,7 @@ impl FesTermApp {
         let Some(browser) = self.host_browser.as_mut() else {
             return;
         };
-        let mut dismiss = escape;
+        let mut dismiss = escape && browser.end_review.is_none();
         let mut action = None;
         let mut save = None;
         let mut cancel_profile = false;
@@ -2381,11 +2600,18 @@ impl FesTermApp {
                                         browser.profile_name = session.name.clone();
                                     } else if selection_mode { ui.label("—"); }
                                     if stacked { ui.end_row(); }
+                                    ui.vertical(|ui| {
                                     if selection_mode {
                                         if action_button(ui, ActionButtonRole::Accent, "Select session").clicked() { selection = Some(Some(session.target.clone())); }
                                     } else if action_button_enabled(ui, !session.attached && inventory.capabilities.attach && browser.allows_target(&session.target), ActionButtonRole::Accent, "Connect").clicked() {
                                         action = Some(Action::Attach(session.target.clone()));
                                     }
+                                    if !selection_mode && inventory.capabilities.explicit_end
+                                        && !inventory.unknown.iter().any(|unknown| unknown.logical == session.target.logical)
+                                        && action_button(ui, ActionButtonRole::DangerOutline, "Terminate…").clicked() {
+                                        action = Some(Action::ReviewEnd(session.target.clone()));
+                                    }
+                                    });
                                     ui.end_row();
                             }
                             if inventory.capabilities.profiles {
@@ -2660,15 +2886,180 @@ impl FesTermApp {
             if saved {
                 browser.profile_target = None;
             }
-        } else if let Some(action) = action {
+        } else if let Some(action) = self.show_host_termination_review(context).or(action) {
             self.apply_host_review_action(action, context);
         }
     }
 
+    fn review_remote_termination(&mut self, target: Target) {
+        let Some(browser) = self.host_browser.as_mut() else {
+            return;
+        };
+        let selected = browser
+            .inventory
+            .as_ref()
+            .filter(|inventory| {
+                inventory.capabilities.explicit_end
+                    && !inventory
+                        .unknown
+                        .iter()
+                        .any(|unknown| unknown.logical == target.logical)
+            })
+            .and_then(|inventory| {
+                inventory
+                    .sessions
+                    .iter()
+                    .find(|session| session.target == target)
+            });
+        let Some(selected) = selected else {
+            browser.feedback = Some("This session can’t be terminated remotely.".into());
+            return;
+        };
+        let name = selected.name.clone();
+        let approved = match browser.context() {
+            Ok(approved) => approved,
+            Err(error) => {
+                browser.feedback = Some(error);
+                return;
+            }
+        };
+        self.state
+            .host_end_intents
+            .retain(|intent| !intent.is_resolved());
+        let original = self
+            .state
+            .host_end_intents
+            .iter()
+            .find(|intent| intent.target() == &target && intent.matches_context(&approved));
+        let intent = original
+            .cloned()
+            .unwrap_or_else(|| Arc::new(EndIntent::new(&approved, target)));
+        browser.end_review = Some(EndReview {
+            intent,
+            name,
+            host_name: browser
+                .recipe
+                .host_hint
+                .as_ref()
+                .map(|hint| hint.name.clone())
+                .unwrap_or_else(|| browser.recipe.name.clone()),
+            generation: browser.generation,
+            cancel_focused: false,
+        });
+    }
+
+    fn prepare_remote_termination(&mut self, context: &egui::Context) {
+        let Some(browser) = self.host_browser.as_mut() else {
+            return;
+        };
+        let Some(review) = &browser.end_review else {
+            return;
+        };
+        let target = review.intent.target().clone();
+        if review.generation != browser.generation
+            || !browser.inventory.as_ref().is_some_and(|inventory| {
+                inventory.capabilities.explicit_end
+                    && inventory
+                        .sessions
+                        .iter()
+                        .any(|session| session.target == target)
+                    && !inventory
+                        .unknown
+                        .iter()
+                        .any(|unknown| unknown.logical == target.logical)
+            })
+        {
+            browser.end_review = None;
+            browser.feedback = Some("This session changed. Refresh the session list.".into());
+            return;
+        }
+        let approved = match browser.context() {
+            Ok(approved) if review.intent.matches_context(&approved) => approved,
+            _ => {
+                browser.end_review = None;
+                browser.feedback = Some("Session termination was cancelled.".into());
+                return;
+            }
+        };
+        let permit = match ConnectionPermit::reserve(&self.state.host_client_budgets) {
+            Ok(permit) => permit,
+            Err(_) => {
+                browser.feedback = Some("Another session action is still running.".into());
+                return;
+            }
+        };
+        let intent = review.intent.clone();
+        let operation = intent.operation().clone();
+        let review_text = serde_json::json!({"name":review.name,"host":review.host_name,"account":browser.account.account_id()}).to_string();
+        let cancel = browser.cancel.child_token();
+        let pending_cancel = cancel.clone();
+        let wake = context.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let spawn = std::thread::Builder::new()
+            .name("host-terminate-review".into())
+            .spawn(move || {
+                let _permit = permit;
+                let result = (|| {
+                    if cancel.is_cancelled() {
+                        return Err(RequestFailure::from("Session termination was cancelled."));
+                    }
+                    let (store, originals) = host_client::originals::OriginalStore::recover_native(
+                        &approved,
+                    )
+                    .map_err(|_| RequestFailure::from("Couldn’t prepare session termination."))?;
+                    if cancel.is_cancelled() {
+                        return Err(RequestFailure::from("Session termination was cancelled."));
+                    }
+                    let intent =
+                        prepare_end_original(&approved, intent, store, originals, review_text)?;
+                    if cancel.is_cancelled() {
+                        return Err(RequestFailure::from("Session termination was cancelled."));
+                    }
+                    Ok(ResultEvent::EndPrepared(operation, intent))
+                })();
+                if deliver_owner_completion(&sender, &cancel, result) {
+                    wake.request_repaint();
+                }
+            });
+        match spawn {
+            Ok(_) => {
+                browser.receiver = Some(receiver);
+                browser.pending_deadline =
+                    Some((Instant::now() + OWNER_VAULT_BUDGET, pending_cancel));
+            }
+            Err(_) => {
+                browser.end_review = None;
+                browser.feedback = Some("Couldn’t prepare session termination.".into());
+            }
+        }
+    }
+
     fn apply_host_review_action(&mut self, action: Action, context: &egui::Context) {
+        if matches!(action, Action::CancelEnd) {
+            if let Some(browser) = self
+                .host_browser
+                .as_mut()
+                .filter(|browser| browser.current(&self.state, context))
+            {
+                if let Some((_, token)) = browser.pending_deadline.take() {
+                    token.cancel();
+                }
+                browser.receiver = None;
+                browser.end_review = None;
+            }
+            return;
+        }
         if !self.host_browser.as_ref().is_some_and(|browser| {
             browser.current(&self.state, context) && !browser.busy() && !browser.directory_only
         }) {
+            return;
+        }
+        if let Action::ReviewEnd(target) = &action {
+            self.review_remote_termination(target.clone());
+            return;
+        }
+        if matches!(action, Action::ConfirmEnd) {
+            self.prepare_remote_termination(context);
             return;
         }
         if matches!(action, Action::Ordinary)

@@ -77,7 +77,7 @@ pub(super) fn host_display_name(host: &TunnelSummary) -> &str {
         .unwrap_or(&host.locator)
 }
 
-fn selected_host_title(hosts: &HostUi) -> &str {
+pub(super) fn selected_host_title(hosts: &HostUi) -> &str {
     hosts
         .hosts
         .iter()
@@ -522,6 +522,31 @@ impl MobileApp {
             self.hosts.clear_approval();
             action = None;
         }
+        if let Some(review) = &mut self.hosts.end_review {
+            let response = egui::Modal::new(egui::Id::new((
+                "terminate_host_session",
+                review.intent.operation().to_string(),
+            )))
+            .show(ctx, |ui| {
+                let (confirm, cancel) = display::end_review(
+                    ui,
+                    display::EndDisplay {
+                        name: &review.name,
+                        host: &review.host_name,
+                    },
+                    &mut review.confirmed,
+                    &mut review.cancel_focused,
+                );
+                if cancel {
+                    action = Some(Action::CancelEnd);
+                } else if confirm {
+                    action = Some(Action::ConfirmEnd);
+                }
+            });
+            if response.should_close() {
+                action = Some(Action::CancelEnd);
+            }
+        }
         if let Some(action) = action {
             self.hosts.error = None;
             if let Err(error) = self.host_action(ctx, action) {
@@ -737,17 +762,20 @@ impl MobileApp {
                                     session.target.logical,
                                     session.target.generation.get()
                                 ));
-                                if secondary(
-                                    ui,
-                                    "End session…",
-                                    !self.hosts.ordinary_selected
-                                        && inventory.capabilities.explicit_end
-                                        && !busy,
-                                ) {
-                                    *action = Some(Action::ReviewEnd(index));
-                                }
                             });
                         });
+                        if inventory.capabilities.explicit_end
+                            && !inventory
+                                .unknown
+                                .iter()
+                                .any(|unknown| unknown.logical == session.target.logical)
+                        {
+                            ui.add_space(12.0);
+                            if button(ui, ButtonKind::Destructive, "Terminate…", !busy).clicked()
+                            {
+                                *action = Some(Action::ReviewEnd(index));
+                            }
+                        }
                     });
                 },
             );
@@ -1047,7 +1075,10 @@ impl MobileApp {
                     }
                 }
             } else {
-                footnote(ui, "The saved session identity is kept. List authorized sessions to choose another.");
+                footnote(
+                    ui,
+                    "The saved session identity is kept. List authorized sessions to choose another.",
+                );
             }
         }
         let valid = self.hosts.profile_draft().is_ok();

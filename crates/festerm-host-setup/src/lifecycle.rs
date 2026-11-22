@@ -24,6 +24,10 @@ pub enum Origin {
     Headless,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Startup {
@@ -39,6 +43,9 @@ pub struct Settings {
     pub friendly_name: String,
     #[serde(default)]
     pub allow_creation: bool,
+    /// Separate explicit consent; old installations never gain End on upgrade.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_session_termination: bool,
     #[serde(default)]
     pub startup: Startup,
     /// Protected Enable consent; absent legacy fields never grant ordinary access.
@@ -727,6 +734,7 @@ mod tests {
         let approved = Settings {
             friendly_name: "Explicit desktop consent".into(),
             allow_creation: true,
+            allow_session_termination: false,
             ..settings()
         };
         let ticket = store
@@ -879,6 +887,7 @@ mod tests {
             ordinary_access: Default::default(),
             friendly_name: "Fixture host".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: Startup::Manual,
         }
     }
@@ -951,7 +960,23 @@ mod tests {
         });
         let settings: Settings = serde_json::from_value(legacy.clone()).unwrap();
         assert_eq!(settings.ordinary_access, OrdinaryAccess::OwnerOnly);
+        assert!(!settings.allow_session_termination);
         assert_eq!(serde_json::to_value(settings).unwrap(), legacy);
+    }
+
+    #[test]
+    fn termination_consent_is_default_off_and_preserves_legacy_canonical_bytes() {
+        let legacy = r#"{"friendly_name":"Legacy host","allow_creation":false,"startup":"manual"}"#;
+        let mut settings: Settings = serde_json::from_str(legacy).unwrap();
+        assert!(!settings.allow_session_termination);
+        assert_eq!(serde_json::to_string(&settings).unwrap(), legacy);
+        settings.allow_session_termination = true;
+        let encoded = serde_json::to_vec(&settings).unwrap();
+        let decoded: Settings = serde_json::from_slice(&encoded).unwrap();
+        assert!(decoded.allow_session_termination);
+        assert!(!decoded.allow_creation);
+        settings.allow_session_termination = false;
+        assert_eq!(serde_json::to_string(&settings).unwrap(), legacy);
     }
 
     #[test]
@@ -984,6 +1009,14 @@ mod tests {
         }
         let owner_only = serde_json::to_value(settings()).unwrap();
         assert!(serde_json::from_value::<LegacySettings>(owner_only.clone()).is_ok());
+        let mut termination = owner_only.clone();
+        termination["allow_session_termination"] = true.into();
+        assert!(
+            serde_json::from_value::<Settings>(termination.clone())
+                .unwrap()
+                .allow_session_termination
+        );
+        assert!(serde_json::from_value::<LegacySettings>(termination).is_err());
         let mut provider = owner_only;
         provider["ordinary_access"] = "provider-owner".into();
         assert!(serde_json::from_value::<Settings>(provider.clone()).is_ok());
@@ -1222,6 +1255,7 @@ mod tests {
         for changed in [
             Settings {
                 allow_creation: true,
+                allow_session_termination: false,
                 ..settings()
             },
             Settings {

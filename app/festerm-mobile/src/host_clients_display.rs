@@ -54,11 +54,8 @@ pub(super) struct ForgetDisplay<'a> {
 }
 
 pub(super) struct EndDisplay<'a> {
-    pub account: u64,
-    pub target: &'a Target,
-    pub operation: &'a OperationId,
-    pub epoch: u64,
-    pub generation: u64,
+    pub name: &'a str,
+    pub host: &'a str,
 }
 
 pub(super) fn forget_review(
@@ -102,29 +99,21 @@ pub(super) fn end_review(
     ui: &mut egui::Ui,
     display: EndDisplay<'_>,
     confirmed: &mut bool,
+    cancel_focused: &mut bool,
 ) -> (bool, bool) {
-    ui.separator();
-    ui.heading("Confirm End session — not Close tab");
-    ui.label(format!(
-        "Account github:{} · logical {} · native generation {} · original operation {}",
-        display.account,
-        display.target.logical,
-        display.target.generation.get(),
-        display.operation
-    ));
-    ui.label(format!(
-        "Native privacy epoch {} · foreground request generation {}",
-        display.epoch, display.generation
-    ));
-    ui.label("The protected host/installation/principal above and this exact generation are fixed. Native PID/namespace stay host-journal-owned; inventory does not expose a PID.");
-    ui.label("End stops the remote process. Closing a persistent attachment does not. Stop-requested/timeout/denial is NOT confirmation that it ended or is absent.");
-    ui.checkbox(
-        confirmed,
-        "I explicitly authorize End for this exact host and generation",
-    );
-    let confirm = ui
-        .add_enabled(*confirmed, egui::Button::new("Confirm exact End once"))
-        .clicked();
-    let cancel = ui.button("Cancel End (no request)").clicked();
-    (confirm, cancel)
+    use crate::widgets::{button, ButtonKind};
+    ui.set_max_width((ui.ctx().content_rect().width() - 48.0).clamp(160.0, 400.0));
+    ui.spacing_mut().item_spacing.y = 12.0;
+    ui.heading(format!("Terminate {} on {}?", display.name, display.host));
+    ui.label("This ends the shell and stops programs running in it.");
+    let cancel_response = button(ui, ButtonKind::Secondary, "Cancel", true);
+    if !*cancel_focused {
+        cancel_response.request_focus();
+        *cancel_focused = true;
+    }
+    let cancel =
+        cancel_response.clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let confirm = button(ui, ButtonKind::Destructive, "Terminate", true).clicked();
+    *confirmed = confirm && !cancel;
+    (confirm && !cancel, cancel)
 }

@@ -1196,7 +1196,9 @@ fn ordinary_desktop_privacy_callback_cancels_pending_without_frame_and_blocks_la
     assert!(browser.ordinary.is_none() && browser.inventory.is_none());
     assert_eq!(
         browser.feedback.as_deref(),
-        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+        Some(
+            "Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking."
+        )
     );
     let explicit_fresh = app.state.ordinary_account_token(&account).unwrap();
     assert!(!explicit_fresh.is_cancelled());
@@ -1243,7 +1245,9 @@ fn ordinary_desktop_privacy_unavailable_refuses_before_bootstrap() {
     let browser = app.host_browser.as_ref().unwrap();
     assert_eq!(
         browser.feedback.as_deref(),
-        Some("Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking.")
+        Some(
+            "Host connection cancelled because account or device privacy changed. Retry explicitly after unlocking."
+        )
     );
     assert!(browser.receipt.is_none() && browser.ordinary.is_none() && browser.inventory.is_none());
     assert!(app.state.host_creation_intents.is_empty());
@@ -2038,8 +2042,10 @@ fn full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_wind
         (selected_heading.left() - directory_heading.left()).abs() < 0.5,
         "selected host keeps the full-page left inset: {selected_heading:?}, {directory_heading:?}"
     );
-    assert!((selected_heading.height() - directory_heading.height()).abs() < 0.5,
-        "selected host keeps the full-page title style: {selected_heading:?}, {directory_heading:?}");
+    assert!(
+        (selected_heading.height() - directory_heading.height()).abs() < 0.5,
+        "selected host keeps the full-page title style: {selected_heading:?}, {directory_heading:?}"
+    );
     assert!(harness.query_by_label("Choose a host").is_none());
     // Inject the existing authorized inventory DTO, not a new transport or UI route.
     let mut inventory = FesTermApp::gallery_host_browser("sessions")
@@ -2252,7 +2258,10 @@ fn ordinary_desktop_windows_privacy_detail_never_relabels_other_native_failures(
         service_state: None,
         service_not_running: false,
     };
-    assert_eq!(detail.detail(), "Windows privacy startup: stage=wts_registration; OS code=1722; TermService state=not-recorded.");
+    assert_eq!(
+        detail.detail(),
+        "Windows privacy startup: stage=wts_registration; OS code=1722; TermService state=not-recorded."
+    );
     assert!(!detail.service_not_running);
     let (mut app, _) = fixture();
     let mut browser = app.host_browser.take().unwrap();
@@ -2470,4 +2479,194 @@ fn account_credential_foreground_read_failure_keeps_typed_guidance_before_provid
         );
         assert_unallocated(&app);
     }
+}
+
+#[test]
+fn remote_terminate_review_is_cancel_default_and_cancel_retires_preparation_without_end() {
+    use egui_kittest::kittest::Queryable;
+    let mut app = FesTermApp::gallery_host_browser("workspace-sessions");
+    let (_root, ordinary) = ordinary_fixture_context(42);
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.recipe.host.id = ordinary.binding().host().clone();
+    browser.ordinary = Some(ordinary);
+    browser
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .explicit_end = true;
+    let target = browser.inventory.as_ref().unwrap().sessions[0]
+        .target
+        .clone();
+    app.review_remote_termination(target);
+    let original = app
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .end_review
+        .as_ref()
+        .unwrap()
+        .intent
+        .clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(752.0, 516.0))
+        .build_ui_state(
+            |ui, app: &mut FesTermApp| {
+                let browser = app.host_browser.as_ref().unwrap();
+                crate::screens::host_workspace::install_browser_request_for_test(
+                    ui.ctx(),
+                    browser.tab,
+                    browser.request,
+                );
+                if let Some(action) = app.show_host_termination_review(ui.ctx()) {
+                    app.apply_host_review_action(action, ui.ctx());
+                }
+            },
+            app,
+        );
+    harness.run_steps(3);
+    assert!(!original.is_issued());
+    let cancel = CancellationToken::new();
+    harness
+        .state_mut()
+        .host_browser
+        .as_mut()
+        .unwrap()
+        .pending_deadline = Some((Instant::now() + Duration::from_secs(30), cancel.clone()));
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(3);
+    assert!(cancel.is_cancelled());
+    assert!(harness
+        .state()
+        .host_browser
+        .as_ref()
+        .unwrap()
+        .end_review
+        .is_none());
+    assert!(!original.is_issued());
+}
+
+#[tokio::test]
+async fn remote_termination_reopens_unknown_original_and_ui_consumes_same_operation() {
+    use festerm_host_protocol::{Capabilities, Envelope, Request, Response};
+    use festerm_tunnel_client::host_control::{read_frame, write_frame};
+    use host_client::originals::{OriginalStore, RecoveredIntent, RecoveredOriginal};
+    let (root, ordinary) = ordinary_fixture_context(42);
+    let approved: ClientContext = ordinary.clone().into();
+    let target = Target {
+        logical: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        generation: "7".to_owned().try_into().unwrap(),
+    };
+    let original = Arc::new(EndIntent::new(&approved, target.clone()));
+    let operation = original.operation().clone();
+    let (store, _) = OriginalStore::recover(root.path(), &approved).unwrap();
+    original
+        .protect_original(store.clone(), "Original host and shell name".into())
+        .unwrap();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let server = tokio::spawn(async move {
+        let request = read_frame(&mut peer, &host_client::Budgets::default())
+            .await
+            .unwrap()
+            .decode::<Envelope<Request>>()
+            .unwrap();
+        let response = Envelope::new(
+            request.host,
+            request.operation,
+            Response::Capabilities {
+                capabilities: Capabilities {
+                    explicit_end: true,
+                    ..Default::default()
+                },
+            },
+        );
+        write_frame(&mut peer, &host_client::Budgets::default(), &response)
+            .await
+            .unwrap();
+        let end = read_frame(&mut peer, &host_client::Budgets::default())
+            .await
+            .unwrap()
+            .decode::<Envelope<Request>>()
+            .unwrap();
+        assert!(matches!(end.body, Request::ExplicitEnd { .. }));
+    });
+    assert!(host_client::testing::end_from_stream(
+        stream,
+        ConnectionPermit::reserve(&host_client::Budgets::default()).unwrap(),
+        approved.binding().clone(),
+        original,
+        &CancellationToken::new()
+    )
+    .await
+    .is_err());
+    server.await.unwrap();
+    let fresh = Arc::new(EndIntent::new(&approved, target.clone()));
+    let (store, originals) = OriginalStore::recover(root.path(), &approved).unwrap();
+    let recovered = prepare_end_original(
+        &approved,
+        fresh.clone(),
+        store.clone(),
+        originals,
+        "Renamed host and shell".into(),
+    )
+    .map_err(|error| error.message)
+    .unwrap();
+    assert_eq!(recovered.operation(), &operation);
+    assert!(recovered.is_issued() && !recovered.is_resolved());
+    let duplicate = || RecoveredOriginal {
+        review: "Original host and shell name".into(),
+        intent: RecoveredIntent::End(recovered.clone()),
+    };
+    assert!(prepare_end_original(
+        &approved,
+        fresh.clone(),
+        store.clone(),
+        vec![duplicate(), duplicate()],
+        "unused".into()
+    )
+    .is_err());
+    let (_other_root, other) = ordinary_fixture_context(43);
+    assert!(prepare_end_original(
+        &other.into(),
+        fresh.clone(),
+        store,
+        vec![duplicate()],
+        "unused".into()
+    )
+    .is_err());
+
+    let mut app = FesTermApp::gallery_host_browser("workspace-sessions");
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.recipe.host.id = ordinary.binding().host().clone();
+    browser.ordinary = Some(ordinary);
+    let inventory = browser.inventory.as_mut().unwrap();
+    inventory.capabilities.explicit_end = true;
+    inventory.sessions[0].target = target;
+    app.review_remote_termination(fresh.target().clone());
+    let ctx = egui::Context::default();
+    let browser = app.host_browser.as_mut().unwrap();
+    let review = browser
+        .end_review
+        .as_ref()
+        .unwrap()
+        .intent
+        .operation()
+        .clone();
+    crate::screens::host_workspace::install_browser_request_for_test(
+        &ctx,
+        browser.tab,
+        browser.request,
+    );
+    let (sender, receiver) = mpsc::sync_channel(1);
+    sender
+        .send(Ok(ResultEvent::EndPrepared(review, recovered)))
+        .unwrap_or_else(|_| panic!("bounded prepared result"));
+    browser.receiver = Some(receiver);
+    app.poll_host_browser(&ctx);
+    assert_eq!(app.state.host_end_intents.len(), 1);
+    assert_eq!(app.state.host_end_intents[0].operation(), &operation);
+    assert!(app.host_browser.as_ref().unwrap().end_review.is_none());
+    // The ordinary fixture refuses all transport; this is production UI/result
+    // routing, not provider/native termination qualification.
+    app.host_browser.take();
 }

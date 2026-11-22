@@ -146,6 +146,7 @@ impl Fixture {
                     ordinary_access: Default::default(),
                     friendly_name: "Windows update model".into(),
                     allow_creation: false,
+                    allow_session_termination: false,
                     startup: Startup::Manual,
                 },
             )
@@ -885,6 +886,7 @@ fn desktop_worker_update_fixture() -> Fixture {
                 ordinary_access: Default::default(),
                 friendly_name: "Desktop worker update model".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )

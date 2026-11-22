@@ -345,6 +345,7 @@ fn settings() -> Settings {
         ordinary_access: Default::default(),
         friendly_name: "Native fixture".into(),
         allow_creation: false,
+        allow_session_termination: false,
         startup: Startup::Manual,
     }
 }
@@ -4009,5 +4010,67 @@ fn native_service_macos_unqualified_stop_preserves_deadline_fatal_and_scope_refu
                 "{case}"
             );
         }
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
+fn native_service_stopped_termination_projection_requires_review_and_preserves_other_settings() {
+    use crate::enrollment::OwnerStorage;
+    let (root, store, _) = crate::enrollment::tests::setup_origin(Origin::Headless);
+    let owners = store
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    owners
+        .initialize(Path::new("host-identity"), "github:1234".into())
+        .unwrap();
+    let mut services = services(root.path(), &store, Platform::Linux);
+    services.state = root.path().join("installation");
+    services.runner.receipt = services.state.join(RECORD);
+    let stage = trusted::fixture(root.path());
+    services
+        .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+        .unwrap();
+    let original = services.registration().unwrap().1.unwrap();
+    let definition = std::fs::read(&services.runner.definition).unwrap();
+    for (creation, termination) in [(false, true), (true, true), (true, false), (false, false)] {
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        let mut settings = before.settings.clone();
+        settings.allow_creation = creation;
+        settings.allow_session_termination = termination;
+        settings.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
+        let ticket = store.request_enable_if_current(&before, &settings).unwrap();
+        store
+            .record_provisioned(&ticket, before.binding.unwrap())
+            .unwrap();
+        let expected = store.snapshot().unwrap();
+        let owner = owners.snapshot().unwrap();
+        assert_eq!(
+            services
+                .complete_setup_with(
+                    &stage,
+                    &expected,
+                    &owner,
+                    &owners,
+                    &tokio_util::sync::CancellationToken::new(),
+                    |_| Ok(trusted::fixture(root.path()))
+                )
+                .unwrap()
+                .process,
+            ProcessState::Stopped
+        );
+        let mut wanted = original.clone();
+        wanted.settings = settings;
+        assert_eq!(services.registration().unwrap().1.unwrap(), wanted);
+        assert_eq!(
+            std::fs::read(&services.runner.definition).unwrap(),
+            definition
+        );
+        assert_eq!(owners.snapshot().unwrap(), owner);
     }
 }

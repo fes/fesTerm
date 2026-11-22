@@ -297,6 +297,9 @@ struct EndReview {
     epoch: u64,
     generation: u64,
     confirmed: bool,
+    name: String,
+    host_name: String,
+    cancel_focused: bool,
     source: Option<(u64, festerm_session::SessionId)>,
 }
 
@@ -420,12 +423,14 @@ pub(super) struct HostUi {
     worker: Option<Arc<Worker>>,
     worker_account: Option<TunnelAccount>,
     worker_creation: Option<(Scope, Arc<CreationIntent>)>,
+    worker_end: Option<host_client::Target>,
     session_accounts: Vec<SessionAccount>,
     originals: Vec<Original>,
     original_store: Option<Arc<OriginalStore>>,
     selected_original: Option<String>,
     ends: Vec<OriginalEnd>,
     end_review: Option<EndReview>,
+    end_selection: Option<host_client::Target>,
     forget_review: Option<ForgetReview>,
     retirements: Vec<Retirement>,
     budgets: Budgets,
@@ -1065,16 +1070,14 @@ impl HostUi {
             }
             return Ok(original.intent.clone());
         }
-        let owner = context
-            .as_enrolled_owner()
-            .ok_or("Ordinary access does not authorize End.")?;
-        Ok(Arc::new(EndIntent::new(owner, target)))
+        Ok(Arc::new(EndIntent::new(context, target)))
     }
 
     fn cancel(&mut self) {
         self.quick_check = None;
         self.saved_connect = None;
         self.forget_review = None;
+        self.end_selection = None;
         if let Some(pending) = self.pending.take() {
             pending.token.cancel();
         }
@@ -1083,6 +1086,7 @@ impl HostUi {
         }
         self.worker_account = None;
         self.worker_creation = None;
+        self.worker_end = None;
     }
 
     fn clear_approval(&mut self) {
@@ -1425,10 +1429,24 @@ impl MobileApp {
     fn review_end(&mut self, account: TunnelAccount, intent: Arc<EndIntent>) {
         self.hosts.end_review = Some(EndReview {
             account,
-            intent,
+            intent: intent.clone(),
             epoch: self.hosts.epoch,
             generation: self.hosts.generation,
             confirmed: false,
+            name: self
+                .hosts
+                .inventory
+                .as_ref()
+                .and_then(|inventory| {
+                    inventory
+                        .sessions
+                        .iter()
+                        .find(|s| &s.target == intent.target())
+                })
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "this session".into()),
+            host_name: view::selected_host_title(&self.hosts).to_owned(),
+            cancel_focused: false,
             source: None,
         });
         self.hosts.open = true;
@@ -1955,42 +1973,30 @@ impl MobileApp {
     }
 
     pub(super) fn poll_hosts(&mut self, ctx: &egui::Context) {
-        self.hosts.retirements.retain(|retirement| {
-            match retirement.job.poll() {
+        self.hosts
+            .retirements
+            .retain(|retirement| match retirement.job.poll() {
                 Poll::Pending => true,
                 Poll::Done(result) => {
-                    self.notice = Some(match result {
-                        Ok(ShutdownResult::Stopped) => format!(
-                            "HOST tab {}: correlated attachment detach confirmed; no End was issued.",
-                            retirement.tab
-                        ),
-                        Ok(ShutdownResult::AlreadyStopped) => format!(
-                            "HOST tab {}: attachment already stopped; no detach receipt or End inferred.",
-                            retirement.tab
-                        ),
-                        Err(_) => format!(
-                            "HOST tab {}: detach unconfirmed; daemon owns transport-loss grace. No End or retry.",
-                            retirement.tab
-                        ),
-                    });
+                    let category = match result {
+                        Ok(ShutdownResult::Stopped) => "confirmed",
+                        Ok(ShutdownResult::AlreadyStopped) => "already_stopped",
+                        Err(_) => "unconfirmed",
+                    };
+                    log::debug!(
+                        "HOST attachment retirement tab={} result={category}",
+                        retirement.tab
+                    );
                     false
                 }
                 Poll::Lost => {
-                    self.notice = Some("HOST retirement worker lost; no detach or End success inferred.".into());
+                    log::debug!(
+                        "HOST attachment retirement tab={} result=worker_lost",
+                        retirement.tab
+                    );
                     false
                 }
-            }
-        });
-        if let Some(error) = self
-            .sink
-            .live
-            .connection
-            .borrow()
-            .as_ref()
-            .and_then(live_ssh::LiveSsh::host_error)
-        {
-            self.notice = Some(error.to_owned());
-        }
+            });
         self.hosts
             .session_accounts
             .retain(|owner| owner.session.strong_count() > 0);
@@ -2141,9 +2147,26 @@ impl MobileApp {
                 Ok(ResultEvent::Originals(store, originals)) => match account.as_ref() {
                     Some(account) => {
                         if let Err(error) = self.hosts.accept_recovered(store, originals, account) {
+                            self.hosts.end_selection = None;
                             self.hosts.saved_connect = None;
                             self.hosts.quick_check = None;
                             self.hosts.error = Some(error);
+                        } else if let Some(target) = self.hosts.end_selection.take() {
+                            let index = self.hosts.inventory.as_ref().and_then(|inventory| {
+                                inventory
+                                    .sessions
+                                    .iter()
+                                    .position(|session| session.target == target)
+                            });
+                            if let Some(index) = index {
+                                if let Err(error) = self.host_action(ctx, Action::ReviewEnd(index))
+                                {
+                                    self.hosts.error = Some(error);
+                                }
+                            } else {
+                                self.hosts.error =
+                                    Some("This session changed. Refresh the session list.".into());
+                            }
                         } else if self.hosts.saved_connect == Some(SavedConnect::Originals) {
                             if let Err(error) = self.continue_saved_originals(ctx) {
                                 self.hosts.error = Some(error);
@@ -2195,6 +2218,7 @@ impl MobileApp {
             .and_then(|worker| worker.try_receive(worker.scope()));
         if let Some(result) = result {
             let creation_review = self.hosts.worker_creation.take();
+            let end_target = self.hosts.worker_end.take();
             self.hosts.prune_confirmed_ends();
             self.hosts.worker = None;
             self.hosts.worker_account = None;
@@ -2258,16 +2282,44 @@ impl MobileApp {
                     }
                 }
                 Outcome::Failed(error) => {
+                    if let Some(target) = end_target {
+                        if matches!(
+                            &error,
+                            host_client::Failure::Control(
+                                festerm_tunnel_client::host_control::Error::Refused(
+                                    festerm_host_protocol::Refusal::Denied
+                                )
+                            )
+                        ) {
+                            self.hosts.error =
+                                Some("This session can’t be terminated remotely.".into());
+                            return;
+                        }
+
+                        if let Some(inventory) = &mut self.hosts.inventory {
+                            inventory
+                                .sessions
+                                .retain(|session| session.target != target);
+                            if !inventory.unknown.contains(&target) {
+                                inventory.unknown.push(target);
+                            }
+                        }
+                        self.hosts.error =
+                            Some("Couldn’t confirm termination. Refresh the session list.".into());
+                        return;
+                    }
+
                     self.hosts.saved_connect = None;
                     self.hosts.error = Some(error.message().into());
                 }
                 Outcome::Ended { target } => {
-                    self.hosts.inventory = None;
-                    self.hosts.error = Some(format!(
-                        "Host confirmed End for logical {} generation {}. No replacement was touched.",
-                        target.logical,
-                        target.generation.get()
-                    ));
+                    if let Some(inventory) = &mut self.hosts.inventory {
+                        inventory
+                            .sessions
+                            .retain(|session| session.target != target);
+                        inventory.unknown.retain(|unknown| unknown != &target);
+                    }
+                    self.hosts.error = None;
                 }
                 _ => {
                     self.hosts.error =
@@ -2369,6 +2421,10 @@ impl MobileApp {
             generation: self.hosts.generation,
             binding: context.binding().clone(),
         };
+        let end_target = match &operation {
+            host_client::Operation::End(intent) => Some(intent.target().clone()),
+            _ => None,
+        };
         let creation_review = match &operation {
             host_client::Operation::Create(intent) => Some((scope.clone(), intent.clone())),
             _ => None,
@@ -2389,6 +2445,7 @@ impl MobileApp {
         self.sink.live.host.worker(self.hosts.epoch, &worker);
         self.hosts.worker_account = Some(account);
         self.hosts.worker_creation = creation_review;
+        self.hosts.worker_end = end_target;
         self.hosts.worker = Some(worker);
         Ok(())
     }
@@ -3058,6 +3115,19 @@ impl MobileApp {
                     .ok_or("End selection expired.")?
                     .target
                     .clone();
+                if inventory
+                    .unknown
+                    .iter()
+                    .any(|unknown| unknown.logical == target.logical)
+                {
+                    return Err(
+                        "This session's status is unavailable. Refresh the session list.".into(),
+                    );
+                }
+                if self.hosts.original_store.is_none() {
+                    self.hosts.end_selection = Some(target);
+                    return self.host_action(ctx, Action::RecoverOriginals);
+                }
                 let context = self.hosts.context()?;
                 let intent = self.hosts.end_intent(&context, target, &account)?;
                 self.review_end(account, intent);
@@ -3449,25 +3519,6 @@ impl MobileApp {
             }
             if cancel {
                 *action = Some(Action::CancelForget);
-            }
-        }
-        if let Some(review) = &mut self.hosts.end_review {
-            let (confirm, cancel) = display::end_review(
-                ui,
-                display::EndDisplay {
-                    account: review.account.account_id,
-                    target: review.intent.target(),
-                    operation: review.intent.operation(),
-                    epoch: review.epoch,
-                    generation: review.generation,
-                },
-                &mut review.confirmed,
-            );
-            if confirm {
-                *action = Some(Action::ConfirmEnd);
-            }
-            if cancel {
-                *action = Some(Action::CancelEnd);
             }
         }
         ui.label("Originals are protected in the native vault before a mutation can be sent. After restart connect explicitly to the same host/account, reopen originals, then review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");

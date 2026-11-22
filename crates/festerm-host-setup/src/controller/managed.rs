@@ -281,6 +281,7 @@ mod tests {
                 ordinary_access: Default::default(),
                 friendly_name: "managed fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )

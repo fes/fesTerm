@@ -2305,6 +2305,7 @@ mod tests {
                 ordinary_access: Default::default(),
                 friendly_name: "Fixture HOST".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: crate::lifecycle::Startup::Manual,
             },
         )
@@ -3350,6 +3351,7 @@ mod tests {
                     ordinary_access: Default::default(),
                     friendly_name: "Desktop fixture".into(),
                     allow_creation: false,
+                    allow_session_termination: false,
                     startup: crate::lifecycle::Startup::Manual,
                 },
             )
@@ -3366,6 +3368,7 @@ mod tests {
                     ordinary_access: Default::default(),
                     friendly_name: "Reviewed desktop setup".into(),
                     allow_creation: false,
+                    allow_session_termination: false,
                     startup: crate::lifecycle::Startup::Manual,
                 },
                 account: 42,

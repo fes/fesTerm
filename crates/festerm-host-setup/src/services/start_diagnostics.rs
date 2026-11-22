@@ -134,6 +134,7 @@ mod tests {
             Settings {
                 friendly_name: "Journal fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
                 ordinary_access: Default::default(),
                 filesystem: None,

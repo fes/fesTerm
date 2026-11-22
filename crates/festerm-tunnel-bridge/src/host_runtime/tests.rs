@@ -4858,3 +4858,76 @@ async fn ordinary_files_connector_cancelled_or_stale_open_never_publishes_a_hand
     }
     fixture.assert_no_session_effect();
 }
+
+#[tokio::test]
+async fn ordinary_runtime_advertises_independent_termination_consent_on_real_control_channel() {
+    use crate::ordinary_auth::OrdinaryDeviceKey;
+    for (creation, termination) in [(false, false), (false, true), (true, false), (true, true)] {
+        let fixture = Fixture::new();
+        let mut policy = ordinary_policy(&fixture);
+        policy.session.capabilities.explicit_end = termination;
+        policy.session.capabilities.creation_allowed = creation;
+        policy.session.capabilities.ensure = true;
+        policy.session.capabilities.create = true;
+        let source = Arc::new(OrdinaryFixturePolicy {
+            policy: std::sync::Mutex::new(policy.clone()),
+            observations: 0.into(),
+            refuse_observation: false.into(),
+        });
+        let sessions =
+            SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+        let runtime = Arc::new(HostRuntime::new(sessions, source));
+        let (client, stream, ssh) = crate::relay_host::tests::admitted_ordinary_pair(
+            fixture.ssh_key.clone(),
+            policy.host_info.route.clone(),
+        )
+        .await;
+        let server =
+            tokio::spawn(
+                async move { runtime.serve_stream(stream, CancellationToken::new()).await },
+            );
+        let route = policy.host_info.route.clone();
+        let expected = route.clone();
+        let (client, permit, info) = authenticate_ordinary_client_using_guard(
+            client,
+            ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+            route,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                OrdinaryDeviceKey::from_seed(&[31; 32]).prove(
+                    stream,
+                    &expected,
+                    challenge,
+                    StreamRole::Control,
+                )
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+        let binding = Binding::new(
+            info.route.host.host,
+            "github:runtime-test".into(),
+            "ordinary-runtime-test".into(),
+        )
+        .unwrap();
+        let mut client = ControlClient::on_authenticated_stream(client, binding, permit);
+        let inventory = crate::host_client::inventory_authenticated(
+            &mut client,
+            OperationId::new(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(inventory.capabilities.explicit_end, termination);
+        assert_eq!(inventory.capabilities.creation_allowed, creation);
+        assert!(!inventory.capabilities.temporary);
+        assert!(inventory.sessions.is_empty() && inventory.profiles.is_empty());
+        drop(client);
+        let _ = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap();
+        ssh.abort();
+    }
+}

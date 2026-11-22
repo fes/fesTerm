@@ -4150,6 +4150,8 @@ pub struct AppState {
         std::sync::Arc<festerm_tunnel_bridge::host_client::CreationIntent>,
     )>,
     #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) host_end_intents: Vec<std::sync::Arc<festerm_tunnel_bridge::host_client::EndIntent>>,
+    #[cfg(feature = "experimental-dev-tunnels")]
     host_account_bindings:
         std::collections::HashMap<SessionId, festerm_secret_store::SecretReference>,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -4362,6 +4364,8 @@ impl AppState {
             host_client_budgets: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_creation_intents: Vec::new(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_end_intents: Vec::new(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_account_bindings: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]

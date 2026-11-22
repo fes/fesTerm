@@ -123,12 +123,12 @@ impl CreationIntent {
 
     pub(super) fn settled_by(
         &self,
-        owner: &OwnerBinding,
+        owner: &client_context::Issuer,
         key: &SecretReference,
         binding: &Binding,
         target: &Target,
     ) -> bool {
-        self.owner == client_context::Issuer::EnrolledOwner(owner.clone())
+        self.owner == *owner
             && self.reference == *key
             && self.binding == *binding
             && self.confirmed_target().as_ref() == Some(target)

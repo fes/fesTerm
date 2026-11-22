@@ -2616,6 +2616,7 @@ mod tests {
                     friendly_name: "Runtime fixture".into(),
                     startup,
                     allow_creation: false,
+                    allow_session_termination: false,
                 },
             )
             .unwrap(),

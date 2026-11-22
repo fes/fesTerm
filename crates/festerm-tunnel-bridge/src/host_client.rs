@@ -585,7 +585,7 @@ impl Worker {
             }
         }
         if let Operation::End(intent) = &operation {
-            if !intent.matches_context(context.as_enrolled_owner().ok_or(ContractError::Denied)?) {
+            if !intent.matches_context(&context) {
                 return Err(Failure::BindingMismatch);
             }
         }
