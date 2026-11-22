@@ -393,6 +393,10 @@ raw errors and no-overwrite/security semantics remain unchanged. Source error st
 paths, records, references, accounts and seeds never enter that context. This
 reporting does not establish the physical-device cause or initiate repair,
 replacement, fallback or an automatic retry.
+On Apple platforms, private storage reads the current descriptor ACL before
+clearing it. An already-empty ACL needs no setter; a nonempty ACL still follows
+the existing clearing path, and a read error refuses the operation. Mode
+restriction, strict mode/ACL verification and synchronization remain mandatory.
 
 The opt-in service-client fixture adds an optional stopped shared-profile name.
 Creation OFF native acceptance requires its exact server Denied and complete
