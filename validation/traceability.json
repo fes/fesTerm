@@ -7239,6 +7239,8 @@
         "start_observation_log_failure_does_not_replace_error_or_log_success",
         "native_start_failure_diagnostics_keep_runner_error_and_never_replay_manager",
         "native_start_registration_read_reports_real_post_fence_journal_contention",
+        "native_start_post_manager_fence_waits_for_same_snapshot_without_replaying_manager",
+        "native_start_post_manager_fence_refuses_expired_cancelled_fatal_and_superseded_reads",
         "native_start_final_fence_waits_for_same_snapshot_without_replaying_manager",
         "native_start_final_fence_refuses_expired_cancelled_fatal_and_superseded_reads",
         "private_sharing_native_provider_owner_zero_admin_publish_unpublish_preserves_frontend",

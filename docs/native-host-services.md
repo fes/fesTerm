@@ -696,6 +696,10 @@ drop-ins, names or missing retirement evidence refuse. It never resets all units
 or kills the retained daemon cgroup.
 
 Control uses structured argv or native COM, no shell/PowerShell/fetched script.
+Post-manager lifecycle reads and the final observation fence wait only for
+transient Busy under the original budget and exact captured snapshot. They do
+not replay manager/credential work; changed scope and other failures still refuse.
+
 Observation/start reconciliation shares one 15-second native-operation budget;
 it does not refresh the timeout on each poll. Linux start/stop and macOS exit
 windows are configured to 10 seconds, below that budget. Linux uses

@@ -1,0 +1,71 @@
+{
+  "record_version": 1,
+  "status": "Observed native failure; corrected source has deterministic regression coverage; corrected native qualification pending",
+  "tracker": "https://github.com/fes/fesTerm/issues/842",
+  "stable_edge": "HOST-04",
+  "source_attribution": {
+    "Linux_owner_frontend": "f9da836c2190a907315a2c4d53fc96521980366a",
+    "Linux_retained12": "e2a6783928d5d58684be34dceaf415865ceec49a",
+    "HOST": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1"
+  },
+  "observed_operation": "ONE Disable45\u2192actualDisabled46/pendingnull/HOST1745107 absent; disabled-onlydeleteON/rootwritecreationunchanged; ONE separateEnable47 samegenuineHOST19 public3",
+  "finite_first_failure": [
+    {
+      "time": "2026-11-22T13:17:22Z",
+      "pid": 1751605,
+      "code": "host.start_observation",
+      "stage": "after_manager_fence",
+      "kind": "busy",
+      "os": "none"
+    },
+    {
+      "time": "2026-11-22T13:17:22Z",
+      "pid": 1751605,
+      "code": "host.enable_completion",
+      "epoch": "47",
+      "stage": "service_start",
+      "outcome": "error",
+      "kind": "busy",
+      "failure": "observation",
+      "os": "none",
+      "reason": "unknown"
+    }
+  ],
+  "backend_after_first_warning": {
+    "epoch": 47,
+    "pid": 1756588,
+    "birth_ticks": "41241392",
+    "run": "47fb87bb-80f9-4edd-a8e8-f15a1173cd33",
+    "state": "listening",
+    "pending": null
+  },
+  "preservation": {
+    "all20_actor_birth_executable_hashes_unchanged": true,
+    "full_catalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "original3_filesystem_entries_and_R36_file_directory_preserved_at_capture": true,
+    "normal_owner_exit0_and_owned_group_drained": true,
+    "Mac_originals_unchanged_no_client_started_at_failure": true
+  },
+  "no_Refresh_Start_Enable_replay": true,
+  "distinct_from_prior_final_fence_failure": true,
+  "internal_lock_holder_not_identified": true,
+  "fix_scope": "Reuse the existing same-snapshot Busy-only wait at the two post-manager lifecycle read fences; original operation budget and error/authority checks remain, manager and credential work are not replayed.",
+  "qualification_limits": [
+    "This source fixture reproduces actual journal lock contention but does not identify the native holder.",
+    "The native observation predates this fix and is a failure, not a corrected native pass.",
+    "No Windows/macOS lifecycle, old HOST-exit cause, extra shell matrix case or mobile acceptance follows.",
+    "Subsequent explicitly authorized client-only file checks are a separate result."
+  ],
+  "artifact_directory": "linux-owner-after-manager-busy",
+  "original_artifacts": {
+    "first-enable-warning.png": {
+      "bytes": 174463,
+      "sha256": "edff308b89a8196745da1733da3c542d43cb0bc3a39800458531aa2b9b3990a8"
+    },
+    "finite-start-phases.json": {
+      "bytes": 10362,
+      "sha256": "bffb8b5820d61696738e4d7593e2c6b5bfa5713c54461e0ffd9e64241bb0f7bf"
+    }
+  },
+  "private_original_receipt_sha256": "6a6e3f4cf25ad587e6109745dceecab864cd729fbb6e3a89348508631d734226"
+}

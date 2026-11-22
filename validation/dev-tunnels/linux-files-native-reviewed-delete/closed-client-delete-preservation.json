@@ -1,0 +1,136 @@
+{
+  "scope": "Pinned native optional reviewed Files deletion, Mac777 client\u2192Linux signedHOST19/source566. Owner first completion FAILED; separate explicitly authorized client functionalPASS.",
+  "source_GUI_owner": "f9da836c2190a907315a2c4d53fc96521980366a",
+  "source_GUI_client": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+  "source_HOST": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+  "owner_first_result": {
+    "Disable45_to_actualDisabled46": true,
+    "separate_Enable47_delete_only_grant": "actual Provisioned47/Listening47 but FIRST GUI owner observation FAILED",
+    "diagnostic": [
+      {
+        "time": "2026-11-22T13:17:22Z",
+        "pid": 1751605,
+        "code": "host.start_observation",
+        "stage": "after_manager_fence",
+        "kind": "busy",
+        "os": "none"
+      },
+      {
+        "time": "2026-11-22T13:17:22Z",
+        "pid": 1751605,
+        "code": "host.enable_completion",
+        "epoch": "47",
+        "stage": "service_start",
+        "outcome": "error",
+        "kind": "busy",
+        "failure": "observation",
+        "os": "none",
+        "reason": "unknown"
+      }
+    ],
+    "no_Refresh_Start_Enable_replay": true,
+    "exact_failure_boundary": "host.start_observation after_manager_fence busy; enable_completion service_start observation error. Exact contentioncause unproved.",
+    "first_failure_receipt_sha256": "6a6e3f4cf25ad587e6109745dceecab864cd729fbb6e3a89348508631d734226"
+  },
+  "client_authorization": {
+    "source": "Parent/root explicit new disposition after independently reviewing captured R37 owner failure and actual backend47 preservation.",
+    "scope": "CLIENT ONLY against already running authorized write/delete grant47; no owner retry, Refresh or Enable; original18MiB entryfloor without reset; newclientlease1800/1605/195, firstfailurestop.",
+    "not_fallback_or_owner_success": true
+  },
+  "current_backend": {
+    "pid": 1756588,
+    "birth_ticks": "41241392",
+    "epoch": 47,
+    "run": "47fb87bb-80f9-4edd-a8e8-f15a1173cd33",
+    "state": "listening",
+    "failure": null,
+    "host_id": "ec4179ea-a8aa-4cd1-97cc-65dc66500825",
+    "installation": "b3f5bf16-dbae-4ad2-892d-115890b1f130",
+    "locator": "festerm-90d265f22b4e46f0a046be499b4a6650.usw2",
+    "root": "/home/evidence/festermfiles18",
+    "write": true,
+    "delete": true,
+    "creation": false,
+    "other_settings_binding_unchanged": true
+  },
+  "client_functional": {
+    "normal_top_level_Files_discovery_exact_locator_beforeselection": true,
+    "existing_account_noauthloop": true,
+    "native_review_count": 4,
+    "file": {
+      "path": "/r36rw/r36payload.md",
+      "dev": 2050,
+      "inode": 3439264,
+      "uid": 1000,
+      "mode": "0600",
+      "bytes": 1872,
+      "sha256_before": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "UIreview": "Exactpath, File1.8KiB andmodifiedtime; roundeddisplay, native1872B/identity/hash readback independentlypinned.",
+      "first_review_Cancel_initially_focused": true,
+      "explicit_Cancel_preserved_sameinode_andbytes": true,
+      "fresh_review_ONE_Confirm": true,
+      "native_after": "file absent; same parentdirectoryinode3439216 empty"
+    },
+    "directory": {
+      "path": "/r36rw",
+      "dev": 2050,
+      "inode": 3439216,
+      "uid": 1000,
+      "mode": "0700",
+      "UIreview": "Exactpath, Folder0B andmodifiedtime; nativeemptydirectory sameinode independentlypinned.",
+      "first_review_Cancel_initially_focused": true,
+      "explicit_Cancel_preserved_sameemptyinode": true,
+      "fresh_review_ONE_Confirm": true,
+      "native_after": "directory absent; only original3rootentries remain"
+    },
+    "capability_attribution": "Pinned566 ReadyV3 advertises delete iffwrite&&delete;777 open_files_reviewed passes advertisedcapability into liveFilesSource. Successful exact server-backed EntryReview dialogs demonstrate reviewedrole functionality; no rawwirecapture or capabilityclaim frombuttoncoloralone.",
+    "Delete_or_review_retry_on_uncertain": false
+  },
+  "preservation": {
+    "Linux20_actor_birth_exe_SHA_exact": true,
+    "full_catalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "profiles": 8,
+    "sessions": 13,
+    "operations": 38,
+    "catalog_oractor_delta": null,
+    "protected7_unchanged_through_clientphase": true,
+    "root_dev_inode_uid_mode_unchanged": true,
+    "allold3children_inode_uid_mode_mtime_bytes_SHA_exact": true,
+    "oldchildren": [
+      "readme.md50B/3d84cf37",
+      "download.txt33B/23027bc3",
+      "emptydir"
+    ],
+    "only_approved_removed": [
+      "r36rw/r36payload.md",
+      "r36rw"
+    ],
+    "Mac_originals_HOST11_pair_catalog1a202_exact": true,
+    "source_configs_immutable": "R36ownerdd930/client0db6 unchanged; newprivateclones workspace only, accounts/profiles/recipes exact"
+  },
+  "cleanup": {
+    "ownerGUI1751605_exit0_drained_beforeclient": true,
+    "clientGUI9405_exit0": true,
+    "helpers_empty": true,
+    "wrapper_absent": true,
+    "carrier_unloaded": true,
+    "closed_unix": 1795354157.34909,
+    "work_cutoff": 1795355502,
+    "hard": 1795355697
+  },
+  "budget": {
+    "entry": 3234357248,
+    "effective_floor": 3215482880,
+    "whole_increment_budget": 18874368,
+    "continuing_floor": 3203010560,
+    "no_reset": true,
+    "finalfree": 3233968128,
+    "whole_increment_growth_bytes": 389120
+  },
+  "limits": [
+    "OwnerfirstobservationFAILED remainsunqualified; this client result is not an owner lifecyclePASS or corrected-source nativequalification.",
+    "Client777 predates PR862 headerfix; overlappingremoteheader/unknownlistingmetadata retained.",
+    "No native directDenied/rootescape/rootreplacement/revocation/interruption/nonemptydirectory/link substitution/otherOSmatrix qualification.",
+    "No newdesktopcase/mobile/MCP/fullrelease, account/model/paidrequest or credentialexport claim."
+  ]
+}
