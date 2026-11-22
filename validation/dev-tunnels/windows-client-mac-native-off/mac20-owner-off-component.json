@@ -1,0 +1,52 @@
+{
+  "record_version": 1,
+  "status": "component evidence only; not a combined-current-release or additional matrix acceptance",
+  "source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+  "run": 45040645041,
+  "first_actual_HOST20_disable": {
+    "review_confirm_count": 1,
+    "from_epoch": 15,
+    "actual_Disabled_epoch": 16,
+    "pending": null,
+    "oldHOST33743_absent": true,
+    "runtime15": "Stopped",
+    "first_GUI_no_warning": true,
+    "noRefresh_Recovery_retry": true
+  },
+  "first_separate_online_enable": {
+    "result": "signed bundle for this build not published; refused before lifecycle reservation",
+    "actual": "Disabled16, no pending operation; creationOFF not applied",
+    "retained_as_failure": true
+  },
+  "later_explicit_manual_authenticated_public3_enable": {
+    "from": "Disabled16",
+    "to": "Provisioned/Listening17",
+    "creation_allowed": false,
+    "files_enabled": false,
+    "HOST_pid": 52914,
+    "run_id": "c15d2dfa-c093-48c7-af79-9a24bb271552",
+    "HOST_image_sha256": "b0e0730e4fbe5597349f995c1435bc5fbee899ef431cfa542e8cd51c4aa0ff6d",
+    "archive_sha256": "68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e",
+    "sessiond_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61"
+  },
+  "postcycle_existing_session_IO": {
+    "status": "phase A functional PASS with separately retained Mac resource exception",
+    "logical": "4860b8f9-fba8-4741-8958-08d0e60b71a1",
+    "generation": "1795368647682026198",
+    "A": "WIN20_MAC20_OFF_RETAINED_A",
+    "normal_detach_saved_reconnect_B": "WIN20_MAC20_OFF_RECONNECT_B",
+    "new_server_profiles_sessions_operations_actors": 0
+  },
+  "normal_GUI_drain": true,
+  "all14_and_catalog01059_preserved": true,
+  "underlying_receipts_sha256": {
+    "disable_and_online_refusal": "d66aa3449dd029b61ad3305a59225f368a3e0f30cac89778130f246a55d19f79",
+    "explicit_manual_enable": "c8c5dd7c7e4f126f25564bfc3a435c38b0f0710a3c67116fcebe7ed3f04f7a04",
+    "postcycle_existing_IO_with_resource_exception": "7baded15606d45c594a89756d2058b5051e239ff97313d4750c381c470fcfc2b"
+  },
+  "limits": [
+    "Later owner cycle is component evidence, not an automatic full release/matrix claim",
+    "The first online acquisition refusal and phase A resource refusal remain failures in their original scopes",
+    "No new OS/Keychain/firewall/RDP permission grants; temporary Windows Manual service restoration is separately recorded"
+  ]
+}

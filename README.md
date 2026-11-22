@@ -95,12 +95,21 @@ sessions; it adds no matrix case or endpoint test.
 The [Linux-client/Mac-server creation-ON record](validation/dev-tunnels/linux-client-mac-native-on.json)
 adds named creation, saved exact-generation reconnect, stopped-profile Start,
 two matched-grid Copilot pairs and direct private-profile refusal.
+The [Windows-client/Mac-server creation-ON record](validation/dev-tunnels/windows-client-mac-native-on.json)
+and [creation-OFF record](validation/dev-tunnels/windows-client-mac-native-off.json)
+add named creation or disabled creation, saved-profile reconnect to the same observed generation,
+two matched-grid Copilot/query pairs and separately attributed SDK policy proof.
+The OFF record retains its first Mac resource-guard exception and the subsequent
+explicit prospective resource policy; it does not relabel that guard as passed.
 Separate attributed native components cover the [Mac 20 stopped HOST update and retained-shell I/O](validation/dev-tunnels/mac-owner-stopped-update-0.17.20.json),
 the [Windows 20 stopped-service diagnostic and explicit prerequisite restoration](validation/dev-tunnels/windows-client-privacy-0.17.20.json),
 and [physical iPhone saved-account reopening](validation/dev-tunnels/ios-saved-account-reopen-0.17.20.json).
 They add no full matrix case.
-These nine accepted cases use pinned cohorts; the full 24-case matrix and
-combined-release qualification remain incomplete. A separate
+There are eleven accepted pinned cases (desktop 11/12), five partial cases
+and eight unstarted cases. The full 24-case matrix and combined-release
+qualification remain incomplete. Mac-client/Windows-server creation-OFF still
+requires verification of the stopped Windows HOST20 transition after Disable39
+and a separate reviewed Enable-OFF; no successful update/start is claimed. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
 creation keeps its issued action after an uncertain result, with no replacement

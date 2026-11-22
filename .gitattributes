@@ -58,3 +58,9 @@ validation/dev-tunnels/mac-owner-stopped-update-0.17.20/*.json -text
 validation/dev-tunnels/windows-client-privacy-0.17.20/*.json -text
 validation/dev-tunnels/ios-saved-account-reopen-0.17.20/*.json -text
 validation/dev-tunnels/mac-owner-stopped-update-0.17.20/*.jsonl -text
+
+# Preserve original paired Windows/Mac policy-case raw reports and SDK results.
+validation/dev-tunnels/windows-client-mac-native-on/*.json -text whitespace=-blank-at-eof
+validation/dev-tunnels/windows-client-mac-native-on/*.log -text whitespace=-blank-at-eof
+validation/dev-tunnels/windows-client-mac-native-off/*.json -text whitespace=-blank-at-eof
+validation/dev-tunnels/windows-client-mac-native-off/*.log -text whitespace=-blank-at-eof

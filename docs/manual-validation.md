@@ -1162,8 +1162,8 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has nine accepted pinned functional cases, six preliminary cases and nine
-unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has eleven accepted pinned functional cases (desktop11/12), five partial cases
+and eight unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -1222,6 +1222,35 @@ shared/generic idempotence, I/O and survival. All old actors and records survive
 plus six intended Mac actors; normal GUI/SDK cleanup passes. Mixed GUI78/HOST566/
 SDK777/local-reference cohorts and native DPI limits are explicit. Neither mobile,
 Mac owner-first-result nor combined-release acceptance follows from this row.
+
+The [Windows-client/Mac creation-ON record](../validation/dev-tunnels/windows-client-mac-native-on.json)
+and [creation-OFF record](../validation/dev-tunnels/windows-client-mac-native-off.json)
+are the tenth and eleventh pinned functional cases. Signed Windows GUI20/sourcec0f
+with seven retained client support files reaches genuine Mac HOST20/sourcec0f.
+ON adds one named persistent session, saved AttachOnly A/B/C reconnect, a fresh
+stopped shared-profile Start and separately attributed SDK create/resume proof.
+OFF shows creation disabled, stopped shared Start unavailable and private
+exclusion; retained-session I/O/detach/saved reconnect and both74×20/70×19 raw
+query/environment/Copilot pairs pass. Its SDK proves exact stopped/generic
+Denied, private Denied-or-Stale and two same-generation shared resume receipts;
+all old16 operations survive, with no new session/generation/durable actor.
+
+The OFF phaseA native functional result and normal drain passed, while the first
+Mac carried disk-threshold guard failed after a whole-volume decline whose cause
+remains unproved. State-only preservation is not a full guard pass. Later phases
+used the explicitly reviewed original8GiB operational reserve and prospective
+Windows admission policy; all continuing floors, intentional-data/output caps,
+actor/catalog guards and lease cutoffs remained enforced. No cleanup or
+retroactive first-guard PASS is claimed. Original screenshots/raw files remain
+unchanged; earlier Mac local R22 images are referenced rather than republished.
+The later Mac first Disable15→16, initial unpublished-online-bundle Enable
+refusal, explicit authenticated manual Enable17 and postcycle existing I/O are
+separate component evidence. Temporary Windows Manual TermService use was
+explicitly authorized and exactly restored to Stopped/Manual/PID0 with RDPdeny1;
+default-Stopped remote admission remains unqualified. No combined-current-release
+or mobile matrix acceptance follows. The remaining desktop case is macOS→Windows
+OFF, blocked on stopped Windows HOST20 verification after Disable39 and a separate
+reviewed Enable-OFF; all27 actors are preserved, no update/start success claimed.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
