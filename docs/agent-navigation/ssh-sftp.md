@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5d82d1781af51a25655843b18967f22cd19412abceedbb17b3e728ca5e8eb515"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "111f5ed6fd59e93a87fd80387d33019f9e9e83de65eab5d7b9838a44d67f456c"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,12 +46,13 @@ Use for: When a bounded copy queue needs collision decisions, retries, or public
 
 - [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, events, batches, and commit logic.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
-- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the planner and queue.
+- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the planner and queue. Files opts into idle Ping; other endpoints default off.
 
 Evidence:
 - [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost OPEN reply preserves the primary error and reports uncertainty without deletion.
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
+- [`files_transfer_stays_live_while_browsing_beyond_server_idle_deadline`](../../app/festerm/src/host_files.rs) — Actual paired servers retain the first transfer after idle browsing.
 
 Caveats:
 - Uncertain output is preserved and reported without claiming ownership or authorizing deletion.

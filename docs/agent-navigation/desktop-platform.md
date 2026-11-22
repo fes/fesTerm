@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "47a11869882b297c1989131a15f3ebc3d45ba8b14c4af179904fe8ce583f77ef"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "d0b90a238c5cb3c57cdcb52bc47537440dd276bd528a8c1a7c7d31f7999e9323"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

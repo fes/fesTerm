@@ -2728,6 +2728,12 @@ account/scope retirement, late completions and disconnected workspace restore.
 Do not retry an unobserved publication. Confirm that remote delete is unavailable under an old write-only grant,
 rename and permissions remain unavailable, and old terminal/Control behavior is
 unchanged.
+Wait beyond the server's 30-second idle deadline while browsing/previewing,
+then start the first transfer. Verify both independent streams stay live. Lose
+a transfer Ping while a collision is pending: only that Files tab should become
+disconnected, with queued/collision work cancelled, siblings preserved and no
+automatic reconnect/replay. Paired actual-server and held-Pong CPU regressions
+cover this boundary; source-current packaged/native repetition remains open.
 Capture actual queue/error/read-only UI, keyboard/accessibility and narrow
 layouts; automated fixtures/builds are not packaged/native acceptance. Full
 remote command parity needs additional explicit consent/protocol work; Mobile

@@ -7502,7 +7502,10 @@
         "files_delete_write_only_link_and_oversize_selections_cannot_prepare",
         "files_delete_queued_review_after_account_retirement_is_not_disclosed_but_unknown_survives",
         "files_delete_recovery_required_preserves_virtual_path_and_is_terminal_unknown",
-        "files_delete_prepared_review_waits_behind_existing_transfer_collision_dialog"
+        "files_delete_prepared_review_waits_behind_existing_transfer_collision_dialog",
+        "files_transfer_stays_live_while_browsing_beyond_server_idle_deadline",
+        "files_transfer_command_arriving_during_ping_does_not_drop_exchange",
+        "files_transfer_failed_idle_ping_cancels_collision_and_only_its_child_lifetime"
       ],
       "manual_scenarios": [
         "DT-07"
