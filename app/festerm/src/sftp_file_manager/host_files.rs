@@ -220,6 +220,10 @@ async fn files_operations(
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
                 match command {
+                    WorkerCommand::InspectUploadLocation(_) => {
+                        let _ = events.send(WorkerEvent::TransferCommandFailed { action: "inspect interrupted SFTP upload", details: "Select a connected SFTP tab for this report.".into() }).await;
+                    }
+
                     WorkerCommand::LoadRemote { path } => {
                         match browsing.directory_snapshot(&path).await {
                             Ok((snapshot, metadata, skipped)) => {

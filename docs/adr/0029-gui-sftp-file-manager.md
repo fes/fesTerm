@@ -628,3 +628,11 @@ remains Completed if local report retirement fails. The text interface and Dev
 Tunnel Files keep their existing behavior. `SFTP-05` retains packaged restart,
 real server loss and accessibility evidence; these reports do not authorize remote
 cleanup, resume or replay and do not close post-crash ownership uncertainty.
+
+Explicit interrupted-upload inspection reuses only the selected already-connected
+normal SFTP browser. The central command pins that tab, reloads the inactive
+report, checks exact endpoint/accepted key/current connection scope, then makes
+one exact-parent directory read. It neither reconnects nor retries, and stale
+completion cannot navigate. This read-only convenience preserves the report and
+adds no delete/resume or credential authority. Native restart/inspection/manual
+confirmed deletion remains `SFTP-05` evidence, not a completed recovery claim.

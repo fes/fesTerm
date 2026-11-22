@@ -1,3 +1,6 @@
+#[path = "sftp_file_manager/upload_inspection.rs"]
+mod upload_inspection;
+
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "sftp_file_manager/host_files.rs"]
 mod host_files;
@@ -4363,6 +4366,9 @@ impl SftpFileManagerTab {
             return;
         }
         match event {
+            WorkerEvent::UploadLocationInspected { request, result } => {
+                self.apply_upload_inspection(request, result)
+            }
             #[cfg(feature = "experimental-dev-tunnels")]
             WorkerEvent::FilesConnected {
                 connection_scope,
@@ -4714,6 +4720,7 @@ impl Drop for SftpFileManagerTab {
 
 #[derive(Debug)]
 enum WorkerCommand {
+    InspectUploadLocation(upload_inspection::Request),
     FileOperation(file_operations::Request),
     #[cfg(feature = "experimental-dev-tunnels")]
     PrepareReviewedDelete {
@@ -4748,6 +4755,10 @@ enum WorkerCommand {
 
 #[derive(Debug)]
 enum WorkerEvent {
+    UploadLocationInspected {
+        request: upload_inspection::Request,
+        result: Result<SftpDirectorySnapshot, String>,
+    },
     #[cfg(feature = "experimental-dev-tunnels")]
     FilesConnected {
         connection_scope: Arc<()>,
@@ -5199,6 +5210,15 @@ async fn run_worker_operations(
                             file_operations::remote(&request, &connection_scope, &mut browsing).await
                         };
                         file_operations::report(request, result, &event_sender, &repaint).await;
+                    }
+                    WorkerCommand::InspectUploadLocation(request) => {
+                        let verified = browsing.verified_gui_fingerprint().map(str::to_owned);
+                        let session = &mut browsing;
+                        let result = upload_inspection::read_once(&request, &connection_scope, verified.as_deref(), &mut current_remote, |path| async move {
+                            session.remote_directory_snapshot(Some(&path)).await.map_err(|error| error.to_string())
+                        }).await;
+                        let _ = event_sender.send(WorkerEvent::UploadLocationInspected { request, result }).await;
+                        repaint.request_repaint();
                     }
                     WorkerCommand::LoadRemote { path } => {
                         match browsing.remote_directory_snapshot(Some(&path)).await {

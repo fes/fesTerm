@@ -2622,7 +2622,7 @@ mod tests {
     }
 
     async fn directory_session(
-        handler: PagedDirectoryServer,
+        handler: impl russh_sftp::server::Handler + Send + 'static,
     ) -> (SftpSession, tokio::task::JoinHandle<()>) {
         let (client, server) = tokio::io::duplex(16_384);
         let server = tokio::spawn(russh_sftp::server::run(server, handler));
@@ -2641,6 +2641,91 @@ mod tests {
             },
             server,
         )
+    }
+
+    #[test]
+    fn absolute_upload_inspection_parent_refresh_and_child_keep_protocol_paths_independent_of_initial_cwd(
+    ) {
+        struct Paths {
+            inner: PagedDirectoryServer,
+            paths: Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        impl russh_sftp::server::Handler for Paths {
+            type Error = russh_sftp::protocol::StatusCode;
+            fn unimplemented(&self) -> Self::Error {
+                Self::Error::OpUnsupported
+            }
+            async fn stat(
+                &mut self,
+                id: u32,
+                path: String,
+            ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+                self.paths.lock().unwrap().push(format!("stat:{path}"));
+                let mut attrs = russh_sftp::protocol::FileAttributes::empty();
+                attrs.permissions = Some(0o40700);
+                Ok(russh_sftp::protocol::Attrs { id, attrs })
+            }
+            async fn opendir(
+                &mut self,
+                id: u32,
+                path: String,
+            ) -> Result<russh_sftp::protocol::Handle, Self::Error> {
+                self.paths.lock().unwrap().push(format!("open:{path}"));
+                russh_sftp::server::Handler::opendir(&mut self.inner, id, path).await
+            }
+            async fn readdir(
+                &mut self,
+                id: u32,
+                handle: String,
+            ) -> Result<russh_sftp::protocol::Name, Self::Error> {
+                russh_sftp::server::Handler::readdir(&mut self.inner, id, handle).await
+            }
+            async fn close(
+                &mut self,
+                id: u32,
+                handle: String,
+            ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+                russh_sftp::server::Handler::close(&mut self.inner, id, handle).await
+            }
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let (inner, _, _) = paged_server(0, 0);
+                let (mut session, server) = directory_session(Paths {
+                    inner,
+                    paths: paths.clone(),
+                })
+                .await;
+                session.remote_working_directory = "/unrelated/initial".into();
+                for path in ["/reported", "/reported", "/reported/child"] {
+                    assert_eq!(
+                        session
+                            .remote_directory_snapshot(Some(path))
+                            .await
+                            .unwrap()
+                            .path,
+                        SftpPath::remote(path)
+                    );
+                }
+                assert_eq!(
+                    *paths.lock().unwrap(),
+                    [
+                        "stat:/reported",
+                        "open:/reported",
+                        "stat:/reported",
+                        "open:/reported",
+                        "stat:/reported/child",
+                        "open:/reported/child"
+                    ]
+                );
+                assert_eq!(session.remote_working_directory(), "/unrelated/initial");
+                session.client.close().await.unwrap();
+                server.abort();
+            });
     }
 
     fn planning_budget(items: usize, bytes: usize) -> SharedPlanningBudget {

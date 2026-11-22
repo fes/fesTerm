@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "0a606ed80c1caa0e28f9840cf3141a26122a0f3fb842708e9358f402c726035f"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "a5ff4dd7af4812b2c4cbb16485e81c4a528a9974d59f31c347b099aecd8fe879"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -81,6 +81,7 @@ Use for: Upload uncertainty after exit.
 
 - [`UploadRecoverySink`](../../crates/festerm-ssh/src/sftp_upload_recovery.rs) — Pre-OPEN/publication reporting.
 - [`Ledger`](../../app/festerm/src/sftp_recovery.rs) — Private report store.
+- [Inspection](../../app/festerm/src/sftp_file_manager/upload_inspection.rs)
 
 Evidence:
 - [`durable_upload_report_survives_killed_owner_and_refuses_other_process_ack`](../../app/festerm/src/sftp_recovery/store.rs) — Crash retains reports.
