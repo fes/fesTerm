@@ -2293,8 +2293,10 @@ or **Extension length** under **Extend lifetime**) is drawn disabled, with its
 reason, while its parent preference is off. Every card adds the same 12 px gap
 below itself. Segmented controls read and Tab left to right, and unselected
 segments keep a subtle boundary. Drill-in rows carry the semantic
-`OpenSubpage` chevron icon, never a literal `>`. Only implemented controls
-appear.
+`OpenSubpage` chevron icon, never a literal `>`. Newly focused drill-in rows
+scroll into view during keyboard navigation without opening the sub-page.
+Keeping focus does not override later manual scrolling. Only implemented
+controls appear.
 
 A sub-page replaces the Settings page body while keeping the Settings chip,
 title and singleton identity. Its header has a **Back** button (focused on

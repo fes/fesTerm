@@ -4631,6 +4631,7 @@
         "settings_default_on_preferences_say_so",
         "settings_dependent_rows_follow_their_parent_preference",
         "settings_segmented_options_read_and_tab_left_to_right",
+        "settings_tab_reveals_offscreen_drill_in_without_fighting_later_scroll",
         "settings_cards_and_panels_share_one_gap"
       ],
       "manual_scenarios": [
