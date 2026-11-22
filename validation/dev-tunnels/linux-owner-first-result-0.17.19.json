@@ -1,0 +1,113 @@
+{
+  "record_version": 1,
+  "status": "accepted scoped Linux first-completion and post-restart remoting proof",
+  "tracker": "https://github.com/fes/fesTerm/issues/842",
+  "source_fix": "https://github.com/fes/fesTerm/pull/860",
+  "not_a_new_matrix_case": true,
+  "combined_release_qualified": false,
+  "sources": {
+    "frontend": {
+      "source": "f9da836c2190a907315a2c4d53fc96521980366a",
+      "version": "0.17.19",
+      "unsigned_development_GUI": true,
+      "producer_run": 45016999459,
+      "attempt": 1,
+      "artifact": 14752477282,
+      "MAIN_sha256": "87b563014607b0e900d0f9c3049a9f354c9ee9bea23e4f65cfe48eb05454a249",
+      "retained12_runtime_support_source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "normal_owner_boundary": "Linux owner operations execute in-process; adjacent older setup/bridge/sessiond helpers are excluded from execution. Exact mixed13 map revalidated."
+    },
+    "HOST": {
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "version": "0.17.19",
+      "authenticated_existing_complete_bundle": true,
+      "archive_sha256": "6ef16be24fe1fa83b12dc44440f651317327639cc0357330f60bb1f142f05692",
+      "image_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2",
+      "not_updated_or_replaced": true
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    }
+  },
+  "normal_UI": {
+    "account": "fes-festerm1",
+    "Disable": "One normal confirmation: Provisioned41\u2192actualDisabled42/pendingnull/old HOST1699748 absent; first settled UI correct.",
+    "Enable": "Separate one confirmation with SAME settings: actualProvisioned43/pendingnull, new HOST1728279/birth40715886/run3f6d0f0c-636b-4654-b859-138b7686fbc4; first service_start and final_scope diagnostics ok, no protected-status observation warning.",
+    "settings": "creationOFF, provider-owner, manual startup, SAME host/account/locator/name, Files read-only /home/evidence/festermfiles18, write/deleteOFF.",
+    "first_capture_before_refresh": true,
+    "Refresh_retry_recovery_used": false,
+    "display_limit": "The first UI reports process Running and no current host report. That is a local-observation limit; endpoint readiness is established separately by actual post-restart remoting below."
+  },
+  "post_restart_remoting": {
+    "target": "SAME HOST19/43/run3f6d through public provider/relay",
+    "result": {
+      "creation_allowed": false,
+      "exit_code": 0,
+      "existing_POSIX_owned_group_drained": true,
+      "ordinary_client_pass": true,
+      "stopped_profile_denied_pass": true,
+      "blocked_marker": false,
+      "one_test_pass": true,
+      "elapsed_seconds": 18.151,
+      "tail_sha256": "295ceb93d555f46c76e266b79055319f0293ada5eb7a8d3b8790be7ccdc15e39",
+      "free_after": 3232755712,
+      "service_or_OS_settings_changed": false
+    },
+    "private_refusal": "Inventory exclusion and direct refusal accepted set {Denied,Stale}, not exclusively Denied.",
+    "stopped_and_generic": "Exact typed EnsureProfile and generic Ensure Denied under creationOFF; stopped77 remains NotStarted/rev1 and generic identity absent.",
+    "existing_shared": "Two c13fa103-dc7b-4837-b1af-61095fe54479 resumes with generation1795073404903790292; nonce I/O, exact detach and survival; no new native actors/sessions/generations/profiles.",
+    "operations": {
+      "58ed8db6-a014-4eef-b7b9-b8cc56681fb9": {
+        "logical": "c13fa103-dc7b-4837-b1af-61095fe54479",
+        "generation": "1795073404903790292",
+        "created": false,
+        "recreated": false
+      },
+      "d1a47976-8bf3-4771-bbd4-196e9a17ddce": {
+        "logical": "c13fa103-dc7b-4837-b1af-61095fe54479",
+        "generation": "1795073404903790292",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "actual_owned_cgroup_removed_wrapper_and_SDK_absent": true
+  },
+  "preservation": {
+    "Linux": "All20 original actor PID/birth/image records, old13sessions/8profiles and previous records retained; only two expected same-generation SDK resume operations36\u219238.",
+    "catalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "binding_settings_Files_fixture": "unchanged; native-service/update hashes unchanged through normal owner cycle",
+    "Mac": "All original/failed roots, HOST11, old64358/64364 pair and catalog1a202 unchanged.",
+    "cleanup": "GUI1721478 normal exit0; supervisor1721463 gone, unitinactive/MainPID0/cgroupempty/success. SDK actual group removed/zero members and executable/wrapper absent.",
+    "configuration": "Source R33 config0035 immutable; private clone preserves all11profiles/2recipes/accounts and changes workspace only."
+  },
+  "limits": [
+    "Native successful-run internal contention/retry count was not measured. Deterministic real-lock tests cover contention; native evidence qualifies the normal first result, not a forced lock event.",
+    "Original R33 final_fence/busy failure and earlier uninstrumented failures remain preserved. This does not prove causes of unrelated HOST exits or other completion fences.",
+    "No Windows/macOS first-Enable, OS-login startup, update/installer, Files write/delete, Copilot or additional matrix acceptance implied."
+  ],
+  "private_receipts_sha256": {
+    "R35_first_results": "7a4ac40291bca21bc3d6d4aefbd50d9ce5739f2e902aa9ca6c8987cd96096097",
+    "post43_endpoint": "1b525b12f2e427a56bbcea4625c2288ef018bbc5c44d209a08d9be05e3f0a74f",
+    "original_R33_failure": "a9066022cbffff0247898e74549768caece03f39dd45b87ef5f097cb107eaf2e"
+  },
+  "original_artifacts": {
+    "first-disable.png": {
+      "bytes": 71780,
+      "sha256": "1b0c949a617cb3d4036b8c5bc1510bb15784dcae0415ec2b9e7d58b4b93908be"
+    },
+    "first-enable.png": {
+      "bytes": 151506,
+      "sha256": "86e826b3ced90cd5a65cb3f2a23b745c6b40fecd77f45d9d1a9435aa5d0e29bc"
+    },
+    "first-completion-phases.json": {
+      "bytes": 10619,
+      "sha256": "f99d6144d66a38d4d0f23be7fbcbc95151e411e9732daf50724221a60fc1c5de"
+    },
+    "post-restart-sdk-result.json": {
+      "bytes": 407,
+      "sha256": "1bc7ac05dbebf07a775cbbc4dd55f9733a822b34a430658b885b02e0cbcb7ca3"
+    }
+  }
+}

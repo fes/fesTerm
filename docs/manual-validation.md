@@ -2460,7 +2460,7 @@ possible.
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | AS-01 | Launch with no workspace; Launcher is the sole root surface, initial row focus is visible, keyboard navigation and Enter start the selected transport. | Native functional + visual | Yes: accessibility driver plus screenshot |
-| AS-02 | Open Launcher and Settings repeatedly; each remains a singleton, replaces its own stale instance, and never changes a live session's terminal geometry. | Native functional | Yes: semantic tree and grid-dimension probe |
+| AS-02 | Open Launcher and Settings repeatedly; each remains a singleton, replaces its own stale instance, and never changes a live session's terminal geometry. In a short Settings viewport, Tab from a visible control to an offscreen drill-in row: focus reveals the whole row without opening it; later manual scrolling is not repeatedly overridden while focus stays there. | Native functional + keyboard accessibility | Semantic tree, grid-dimension probe and deterministic headless Tab/viewport regression; native Mac keyboard reachability remains pending and does not qualify wheel/End delivery |
 | AS-03 | At one fixed scale, repeat in both full-height 34 px and compact-height 28 px modes while resizing a multi-session window through the three approved chip-row states: natural widths, inactive-only compaction, and minimum-width overflow. Verify the focused chip remains at normal width for the selected density; inactive chips shrink toward the 72 px floor before any scroll affordance appears; Search then Inspector collapse before the focused chip is compromised; scrolling starts only after inactive minimums, preserves compact widths, and keeps bottom outlines visible; first/middle/last activation expands and fully reveals the new focused chip while the old chip becomes compactable; closing sessions lets inactive chips grow back. Then reorder by drag and menu, rename by double-click, and confirm stable active identity. | Functional + visual + usability | Automate exact width budgets, focused-width invariance, overflow threshold, focus-switch reveal, and grow-back; retain native trackpad/drag feel and visual comparison to both density rows in all three approved mockups for human review |
 | AS-04 | Exercise every global shortcut from terminal, Vim, Emacs, palette, and application controls; application chords act once and ordinary terminal chords reach the TUI. | Native functional | Yes: controlled PTY byte oracle |
 | AS-05 | Close Launcher, Settings, exited, failed, and disconnected surfaces immediately; closing the final surface returns Launcher. | Functional | Yes |
@@ -6090,6 +6090,12 @@ first normal Enable result and its finite stage log, then confirm actual
 Listening and unchanged durable actors,
 profiles and catalog. Do not treat the controlled lock regression as native
 acceptance or proof that later Desktop completion reads cannot still contend.
+The [Linux first-result record](../validation/dev-tunnels/linux-owner-first-result-0.17.19.json)
+now qualifies one normal same-settings Disable/Enable with the corrected
+frontend: first completion succeeds without Refresh/retry, and a separate
+post-restart service check proves retained-session I/O and OFF-policy denial.
+All twenty actors survive. Other platforms and later completion reads remain
+separate; this adds no matrix row.
 
 When the exact native service timeout is returned, Remote Access must show a
 native operation timeout notice and Recovery guidance: the command may not have

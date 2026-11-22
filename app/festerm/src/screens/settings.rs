@@ -3028,6 +3028,9 @@ fn settings_drill_in_row(
     );
     let response = row.response;
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), title));
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
     if response.hovered() || response.has_focus() {
         ui.painter().set(
             background,
@@ -5388,6 +5391,82 @@ mod tests {
         harness.run();
         let x = |label| harness.get_by_label(label).rect().left();
         assert!(x("First") < x("Second") && x("Second") < x("Third"));
+    }
+
+    #[test]
+    fn settings_tab_reveals_offscreen_drill_in_without_fighting_later_scroll() {
+        struct State {
+            viewport: egui::Rect,
+            row: egui::Rect,
+            offset: f32,
+            manual_offset: Option<f32>,
+            activated: bool,
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 220.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    let mut area = egui::ScrollArea::vertical()
+                        .id_salt("settings-focus-visibility")
+                        .max_height(180.0)
+                        .animated(false);
+                    if let Some(offset) = state.manual_offset.take() {
+                        area = area.vertical_scroll_offset(offset);
+                    }
+                    let output = area.show(ui, |ui| {
+                        let _ = ui.button("Visible preceding control");
+                        ui.add_space(500.0);
+                        let row = settings_drill_in_row(
+                            ui,
+                            egui::Id::new("offscreen-settings-drill-in"),
+                            "Remote access",
+                            Some("Existing shared sessions and host policy"),
+                        );
+                        state.viewport = ui.clip_rect();
+                        state.row = row.rect;
+                        state.activated |= row.clicked();
+                        ui.add_space(300.0);
+                    });
+                    state.offset = output.state.offset.y;
+                },
+                State {
+                    viewport: egui::Rect::NOTHING,
+                    row: egui::Rect::NOTHING,
+                    offset: 0.0,
+                    manual_offset: None,
+                    activated: false,
+                },
+            );
+        harness.run();
+        harness.get_by_label("Visible preceding control").focus();
+        harness.run();
+        assert!(harness.state().row.top() > harness.state().viewport.bottom());
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        assert!(harness
+            .get_by_role_and_label(accesskit::Role::Button, "Remote access")
+            .accesskit_node()
+            .is_focused());
+        assert!(
+            harness.state().viewport.contains_rect(harness.state().row),
+            "Tab focus must reveal the whole row: row={:?}, viewport={:?}",
+            harness.state().row,
+            harness.state().viewport
+        );
+        assert!(harness.state().offset > 0.0);
+        assert!(!harness.state().activated, "focus never opens the subpage");
+
+        // A user can scroll away without changing keyboard focus. Retaining
+        // focus must not repeatedly pull the viewport back to this row.
+        harness.state_mut().manual_offset = Some(0.0);
+        harness.run();
+        assert!(harness
+            .get_by_role_and_label(accesskit::Role::Button, "Remote access")
+            .accesskit_node()
+            .is_focused());
+        assert!(harness.state().row.top() > harness.state().viewport.bottom());
+        assert!(harness.state().offset.abs() < 0.01);
+        assert!(!harness.state().activated);
     }
 
     #[test]
