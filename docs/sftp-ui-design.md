@@ -234,10 +234,51 @@ bounded and never delays teardown. A full queue or closed window falls back to
 diagnostics; durable warnings are content-free, while console details include
 recovery paths. Final process exit can interrupt the asynchronous grace period:
 a cleanup-request record is not proof of completion, and neither cleanup nor
-server-side rollback is guaranteed after process termination. There is no
-crash/restart scavenging or durable SFTP ownership ledger; no suffix, age or
-size authorizes deleting a file. Native packaged
-close/quit and notice accessibility remain `SFTP-01` manual evidence.
+server-side rollback is guaranteed after process termination. No suffix, age or
+size authorizes deleting a file. Native packaged close/quit and notice
+accessibility remain `SFTP-01` manual evidence.
+
+### Durable interrupted-upload reports
+
+GUI SFTP uploads save a private report before sending the exclusive remote OPEN.
+The report contains a random operation ID, public profile/endpoint metadata,
+the authenticated SSH host-key fingerprint and exact temporary path. Paths are
+opaque server text, including drive-qualified and server-relative forms; reporting
+does not normalize them or interpret them as client-local names. Before
+publication REMOVE/RENAME, it atomically checkpoints the intended destination.
+Failure to save either checkpoint prevents the corresponding remote effects.
+Credentials, native credential references, file contents and raw error strings
+are excluded. Browsing, the text SFTP interface and Dev Tunnel Files do not
+install this optional GUI reporting hook.
+
+The application loads unresolved reports at startup without making a connection.
+The command palette action **Review interrupted uploads** reopens the same list.
+Reports identify files that *may* exist; they do not establish remote ownership,
+prove rollback, inspect the server, resume, delete or replay a transfer. Copy
+report includes endpoint identity and both recorded paths. Closing this list or
+a live cleanup notice preserves the report. Explicit **Acknowledge and forget
+report** removes only the displayed local report after a separate confirmation;
+reports with a still-active owner refuse acknowledgement.
+
+The application-private catalog is limited to 64 reports and 256 KiB, with bounded
+local lock metadata and no eviction of unresolved reports. A short interprocess
+catalog lock serializes updates; an operation lock lasts through actual blocking
+local I/O. Acknowledgement tries the operation lock without waiting while holding
+the catalog lock. Owner exit/crash releases that lock but leaves the saved report.
+Missing storage is an empty list; replaced or malformed private storage is an
+explicit unavailable/changed result, never a positive empty report. Missing application-data parents are created one private, no-follow component at
+a time within a finite depth budget. Existing permissions are never repaired.
+Locks explicitly unlock on release even while inherited duplicate descriptors
+remain open. Cancellation and changed owner/connection scope are checked after
+local checkpoint work and before the corresponding remote effects.
+
+Only a definitive no-creation OPEN refusal or confirmed final publication retires
+a report automatically. Cancellation, uncertain OPEN/publication and process exit
+retain it. Failure to retire a report after remote success leaves the transfer
+Completed and emits a separate review notice; it never replays the upload. This
+is a durable uncertainty report, not a crash-recovery queue or safe remote cleanup
+facility. Packaged restart, multiwindow review, path readability and accessibility
+remain `SFTP-05` manual qualification.
 
 ### Collision and overwrite policy
 

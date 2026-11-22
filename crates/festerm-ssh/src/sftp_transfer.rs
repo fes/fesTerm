@@ -1012,6 +1012,9 @@ type DirectoryFuture<'a> = Pin<
 >;
 
 trait TransferBackend {
+    fn upload_recovery_pending(&self) -> bool {
+        false
+    }
     fn atomic_remote_publication(&self) -> bool {
         false
     }
@@ -1033,7 +1036,13 @@ trait TransferBackend {
     fn release_replacement(&mut self, _review: RemoteReplacementReview) -> BackendFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
-    fn protect_partial_commit(&mut self, _temporary: &SftpPath, _destination: &SftpPath) {}
+    fn protect_partial_commit<'a>(
+        &'a mut self,
+        _temporary: &'a SftpPath,
+        _destination: &'a SftpPath,
+    ) -> BackendFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 
     fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
         Box::pin(async { Ok(()) })
@@ -1075,8 +1084,19 @@ struct LiveTransferBackend {
 }
 
 impl TransferBackend for LiveTransferBackend {
-    fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
-        self.session.protect_partial_commit(temporary, destination);
+    fn upload_recovery_pending(&self) -> bool {
+        self.session.upload_report_pending()
+    }
+    fn protect_partial_commit<'a>(
+        &'a mut self,
+        temporary: &'a SftpPath,
+        destination: &'a SftpPath,
+    ) -> BackendFuture<'a, ()> {
+        Box::pin(async move {
+            self.session
+                .protect_partial_commit(temporary, destination)
+                .await
+        })
     }
 
     fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
@@ -1133,7 +1153,7 @@ impl TransferBackend for LiveTransferBackend {
                 SftpPath::Remote(path) => self.session.remove_remote_file_exact(path).await,
             };
             if result.is_ok() {
-                self.session.forget_partial_file(path);
+                self.session.forget_partial_file(path).await;
             }
             result
         })
@@ -1164,7 +1184,7 @@ impl TransferBackend for LiveTransferBackend {
                 }),
             };
             if result.is_ok() {
-                self.session.forget_partial_file(source);
+                self.session.forget_partial_file(source).await;
             }
             result
         })
@@ -2631,7 +2651,21 @@ impl WorkerState {
                         if !atomic_publication {
                             if let Some(existing) = backend.metadata(&destination).await? {
                                 if replace_existing_at_commit {
-                                    backend.protect_partial_commit(&temp_destination, &destination);
+                                    backend
+                                        .protect_partial_commit(&temp_destination, &destination)
+                                        .await?;
+                                    if backend.upload_recovery_pending()
+                                        && self
+                                            .cancel_after_report_checkpoint(
+                                                transfer_id,
+                                                backend,
+                                                command_receiver,
+                                                event_sender,
+                                            )
+                                            .await?
+                                    {
+                                        return Ok(());
+                                    }
                                     backend.remove_file(&destination).await?;
                                 } else {
                                     let allowed = allowed_endpoint_decisions(
@@ -2673,7 +2707,21 @@ impl WorkerState {
                             }
                             // A canceled rename may already have published the file.
                             // Exact-handle cleanup must never delete that final object.
-                            backend.protect_partial_commit(&temp_destination, &destination);
+                            backend
+                                .protect_partial_commit(&temp_destination, &destination)
+                                .await?;
+                            if backend.upload_recovery_pending()
+                                && self
+                                    .cancel_after_report_checkpoint(
+                                        transfer_id,
+                                        backend,
+                                        command_receiver,
+                                        event_sender,
+                                    )
+                                    .await?
+                            {
+                                return Ok(());
+                            }
                             backend.rename(&temp_destination, &destination).await?;
                         }
                         self.release_remote_review(transfer_id, backend).await;
@@ -2751,6 +2799,27 @@ impl WorkerState {
             }
         }
         Ok(())
+    }
+
+    async fn cancel_after_report_checkpoint<B: TransferBackend>(
+        &mut self,
+        transfer_id: SftpTransferId,
+        backend: &mut B,
+        commands: &mut Receiver<WorkerCommand>,
+        events: &Sender<SftpTransferEvent>,
+    ) -> Result<bool, SftpSessionError> {
+        self.drain_commands_during_copy(commands, events);
+        if self
+            .items
+            .get(&transfer_id)
+            .is_some_and(|item| item.cancel_requested)
+        {
+            self.release_remote_review(transfer_id, backend).await;
+            self.cleanup_temporary_output(backend, events).await?;
+            self.finish_cancelled(transfer_id, events).await;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn cleanup_temporary_output<B: TransferBackend>(
@@ -3206,7 +3275,17 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct CheckpointProbe {
+        entered: Notify,
+        release: Notify,
+        fail: bool,
+        effects: std::sync::atomic::AtomicUsize,
+        cleaned: std::sync::atomic::AtomicBool,
+    }
+
+    #[derive(Default)]
     struct TestBackend {
+        checkpoint: Option<Arc<CheckpointProbe>>,
         delay_per_chunk_ms: u64,
         cleanup_delay_ms: u64,
         retain_uncertain_partial: bool,
@@ -3224,13 +3303,37 @@ mod tests {
     }
 
     impl TransferBackend for TestBackend {
-        fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
-            assert_eq!(self.partial_file.as_ref(), Some(&real_path(temporary)));
-            self.commit_destination = Some(real_path(destination));
+        fn upload_recovery_pending(&self) -> bool {
+            self.checkpoint.is_some()
+        }
+        fn protect_partial_commit<'a>(
+            &'a mut self,
+            temporary: &'a SftpPath,
+            destination: &'a SftpPath,
+        ) -> BackendFuture<'a, ()> {
+            Box::pin(async move {
+                assert_eq!(self.partial_file.as_ref(), Some(&real_path(temporary)));
+                if let Some(probe) = &self.checkpoint {
+                    probe.entered.notify_one();
+                    probe.release.notified().await;
+                    if probe.fail {
+                        return Err(SftpSessionError::LocalOperationFailed {
+                            operation: "record upload publication",
+                            path: "controlled temporary".into(),
+                            reason: "controlled checkpoint refusal".into(),
+                        });
+                    }
+                }
+                self.commit_destination = Some(real_path(destination));
+                Ok(())
+            })
         }
 
         fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
             Box::pin(async move {
+                if let Some(probe) = &self.checkpoint {
+                    probe.cleaned.store(true, Ordering::Release);
+                }
                 if self.cleanup_delay_ms > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(self.cleanup_delay_ms))
                         .await;
@@ -3307,6 +3410,9 @@ mod tests {
 
         fn remove_file<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()> {
             Box::pin(async move {
+                if let Some(probe) = &self.checkpoint {
+                    probe.effects.fetch_add(1, Ordering::AcqRel);
+                }
                 let real = real_path(path);
                 fs::remove_file(&real)
                     .await
@@ -3325,6 +3431,9 @@ mod tests {
             destination: &'a SftpPath,
         ) -> BackendFuture<'a, ()> {
             Box::pin(async move {
+                if let Some(probe) = &self.checkpoint {
+                    probe.effects.fetch_add(1, Ordering::AcqRel);
+                }
                 let source = real_path(source);
                 let destination = real_path(destination);
                 if self.commit_destination.is_some()
@@ -4152,6 +4261,66 @@ mod tests {
             stdfs::read(destination.join("source.bin.festerm-part")).unwrap(),
             b"copy bytes"
         );
+    }
+
+    #[test]
+    fn durable_upload_checkpoint_cancellation_and_refusal_prevent_publication() {
+        for fail in [false, true] {
+            let root = unique_test_directory("report-checkpoint");
+            recreate_directory(&root);
+            let source = root.join("source.bin");
+            let followup = root.join("followup.bin");
+            let destination = root.join("destination");
+            stdfs::create_dir(&destination).unwrap();
+            stdfs::write(&source, b"new contents").unwrap();
+            stdfs::write(&followup, b"queued contents").unwrap();
+            stdfs::write(destination.join("source.bin"), b"old contents").unwrap();
+            test_runtime().block_on(async {
+                let probe = Arc::new(CheckpointProbe { fail, ..Default::default() });
+                let (commands, mut receiver, _) = spawn_worker(TestBackend {
+                    checkpoint: Some(probe.clone()), retain_uncertain_partial: true,
+                    ..Default::default()
+                }).await;
+                let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+                let (_, collision) = next_collision(&mut receiver).await;
+                commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                    collision_id: collision.id, decision: SftpCollisionDecision::Replace,
+                    scope: SftpCollisionScope::ThisItem,
+                })).await.unwrap();
+                tokio::time::timeout(Duration::from_secs(3), probe.entered.notified()).await.unwrap();
+                let following = queue_numbered_batch(&commands, 2, upload_request(&followup, &destination));
+                commands.send(WorkerCommand::CancelAllTransfers).await.unwrap();
+                probe.release.notify_one();
+                let events = tokio::time::timeout(Duration::from_secs(3), async {
+                    let mut events=Vec::new();let mut finished=std::collections::HashSet::new();
+                    while let Some(event)=receiver.recv().await {
+                        if let SftpTransferEvent::BatchFinished {batch_id,..}=&event {finished.insert(*batch_id);}
+                        events.push(event);
+                        if finished.contains(&batch.batch_id)&&finished.contains(&following.batch_id) {break;}
+                    }
+                    events
+                }).await.unwrap();
+                assert_eq!(probe.effects.load(Ordering::Acquire), 0, "no REMOVE or RENAME after a failed/cancelled checkpoint");
+                assert!(probe.cleaned.load(Ordering::Acquire));
+                assert!(!events.iter().any(|e| matches!(e, SftpTransferEvent::ItemCompleted { .. })));
+                if fail {
+                    assert!(events.iter().any(|e| matches!(e, SftpTransferEvent::ItemFailed { reason, .. } if reason.contains("controlled checkpoint refusal"))));
+                } else {
+                    assert_eq!(events.iter().filter(|e| matches!(e, SftpTransferEvent::ItemCancelled { .. })).count(), 2);
+                }
+            });
+            assert_eq!(
+                stdfs::read(destination.join("source.bin")).unwrap(),
+                b"old contents"
+            );
+            assert_eq!(
+                stdfs::read(destination.join("source.bin.festerm-part")).unwrap(),
+                b"new contents"
+            );
+            assert!(!destination.join("followup.bin").exists());
+            assert!(!destination.join("followup.bin.festerm-part").exists());
+            stdfs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

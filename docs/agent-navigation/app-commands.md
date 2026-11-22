@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "574d7304389ffb7871910a8549c3c0d8e15fae308c3e688b5460b479ff2f5c04"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "0ce242d37740fc1e33e445808c020f90337b86abf7379a5990a8dd4c2faf2c8b"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -20,7 +20,7 @@ Evidence:
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — Singleton surfaces are skipped from close fallback.
 
 Caveats:
-- Widgets emit commands; they do not own session policy.
+- Widgets emit commands; they do not own session policy. Interrupted-upload Review/Copy/Acknowledge use this same route.
 - dispatch is the single mutation path; widget-side tab policy is rejected by design.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 

@@ -1,0 +1,205 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned creation-ON functional case",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "macOS VM",
+    "server": "Windows VM"
+  },
+  "creation_policy": "ON",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Composed pinned artifacts; this is not one source-current combined release or the creation-OFF case.",
+  "sources": {
+    "Mac_GUI": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "signed_official_release": true,
+      "release_run": 44955636986,
+      "artifact": 14728951461
+    },
+    "Windows_local_GUI": {
+      "version": "0.17.19",
+      "source": "920fca574439c5521356b37e2f8893429ef6f2cd",
+      "unsigned_development_GUI": true,
+      "package_run": 44973915774,
+      "artifact": 14734714909,
+      "genuine_support_helper_source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1"
+    },
+    "Windows_signed_HOST_and_new_daemon": {
+      "version": "0.17.15",
+      "source": "1046b6abf907a98161e2f26a0b8dc440886cd761",
+      "HOST_epoch": 38,
+      "HOST_run": "cd522b8a-2db0-4bcb-9d1d-fe948d9505ce",
+      "HOST_PID": 2968,
+      "new_daemon_PID": 5792,
+      "actual_loaded_ConPTY_DLL_sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+      "actual_OpenConsole_PID": 7932,
+      "actual_OpenConsole_sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09"
+    }
+  },
+  "workflow": {
+    "discovery": "Normal provider-authorized fes-festerm1 host enumeration and authorized session inventory; no manual pairing or fingerprint entry.",
+    "visibility": "Shared and never-opened profiles advertised; existing private profile70e excluded. Prior independently accepted SDK5ab/private-refusal server evidence uses the same signed15 HOST38; no fresh Mac-issued private-request claim.",
+    "creation": "One Create & Connect for lab-mac19-win15-on-r13, host-default persistent shell; exactly one new logical/generation/issued operation and three intended native actors.",
+    "new_logical": "9e22b94a-2329-47ca-bc94-e38d05807d52",
+    "new_generation": "1795321779475305954",
+    "issued_operation": "b976a1d9-1ce2-492d-85d8-6a714127616e",
+    "saved_shortcut": "Mac Windows ON attach R13;44bbc37e-85b7-4732-a184-66d150bec192; serialized attach_only with exact host/logical/generation.",
+    "saved_profile_route": "Manage profiles \u2192 Dev Tunnel profiles \u2192 exact saved card Connect.",
+    "I_O_reconnect": "Fresh separate A/B output, normal detach, saved shortcut same-generation C output; later fresh client attachments for both Copilot grids use the same new generation."
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "Copilot": {
+      "version": "1.0.112",
+      "sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "state": "Fresh unauthenticated initial screen after ordinary one-session folder trust; no login/model/paid request.",
+      "cwd": "C:/Users/evidence/.ft-item8-win-copilot-reference-r1"
+    },
+    "capabilities": "Both fresh pairs: ten single replies,202 input bytes; all raw JSON fields equal except case label/elapsed_ms, including all six environment fields, stable actual grids, restored console and drained collector.",
+    "collector_sha256": "d8f556bbf0828acb23c8be14dec18c8911b6e5f8dde723fcc4d8d0944de50abf",
+    "cursor_precondition": "Single compound CMD CLS and collector: clear executes after command echo and before queries.",
+    "visual_review": "Root independently viewed all four originals; same header, responsive Getting started card at74x20/omitted at70x19, banner, MCP text, login/cwd line, input and manual-approval footer.",
+    "font_and_scale": "JetBrainsMono default14pt; both display scale2, WindowsDPI192; no font/DPI/OS preference changes.",
+    "viewport_measurement": "Visible terminal-panel background bounds measured from unmodified screenshot pixel runs; excludes application chrome, includes normal terminal padding. Actual PTY grids are independently observed, not inferred from outer geometry.",
+    "terminal_panel_rects_physical_pixels": {
+      "local74x20": [
+        2,
+        79,
+        1276,
+        790
+      ],
+      "remote74x20": [
+        2,
+        158,
+        1276,
+        778
+      ],
+      "local70x19": [
+        2,
+        79,
+        1208,
+        752
+      ],
+      "remote70x19": [
+        2,
+        158,
+        1208,
+        740
+      ]
+    },
+    "terminal_panel_rects_logical_points": {
+      "local74x20": [
+        1,
+        39.5,
+        638,
+        395
+      ],
+      "remote74x20": [
+        1,
+        79,
+        638,
+        389
+      ],
+      "local70x19": [
+        1,
+        39.5,
+        604,
+        376
+      ],
+      "remote70x19": [
+        1,
+        79,
+        604,
+        370
+      ]
+    },
+    "second_grid_method": "Windows local frontend resizes in place. Mac second frontend reattaches to the same logical/generation and actually resizes that persistent PTY to70x19 before CLI input; frontend PID/attachment change is retained.",
+    "pixel_identity": false
+  },
+  "preservation": {
+    "old24_actors_and_old8_records": "Exact preserved subset throughout.",
+    "intended_new3": "Daemon5792/OpenConsole7932/CMD4396 births/images retained after all frontends exit; final27 actors/9sessions.",
+    "HOST_Task_other_protected_state": "HOST15/38 worker2968, Task and all other six protected leaves unchanged. New catalog full hash remains exact after the intended creation through every later comparison/reconnect.",
+    "Mac": "Original/failed/retained-session/healthyHOST11 guards and account/profile metadata unchanged; only one intended saved host recipe.",
+    "cleanup": "All four fresh Copilot processes exited normally; local transientCMD/ConPTY and every owned GUI/supervisor/input/helper/carrier drained; frontend exit0 observed. CWD restored and only test-owned saved variable removed.",
+    "Windows_TermService": "StayedStopped/Manual/PID0/RDPdeny1 for these Mac-client/local-reference phases; this does not qualify the Windows remote-client privacy gate."
+  },
+  "first_results_and_limits": [
+    "Earlier44x34 historical local15 reference remains separate supporting evidence, not substituted for the two fresh19 pairs.",
+    "Initial separate-CLS query differed only DSRrow8; retained. Fresh two-grid runs use compoundCLS and no normalization.",
+    "One pre-GUI socket-path-length refusal corrected by a shorter owned namespace under the unchanged original lease; no app launched in that refused attempt.",
+    "Two native drag postings produced no geometry change; they are not counted as resize proof. Mac edge-drag behavior remains unqualified.",
+    "Vendor avatar blink differs in first pair; platform rasterization/color handling and DPI prevent pixel-identity claims.",
+    "Original Windows #800 recovery failure, #780 longevity cause and later combined-release qualification remain separate.",
+    "No creation-OFF, mobile, Files, safe partial cleanup/resume or native current-main acceptance is implied."
+  ],
+  "original_artifacts": {
+    "creation-form.png": {
+      "bytes": 744603,
+      "sha256": "f6fa06633ae0efd3eba8a3ca913445fddc1ebd7e1a8d4a22e07f53443e55cacb"
+    },
+    "local70x19-capabilities.json": {
+      "bytes": 1187,
+      "sha256": "3f96de8f12b78bac877f17821395d8db69dc753222eb2667c5358fc0d55828e8"
+    },
+    "local70x19.png": {
+      "bytes": 2910528,
+      "sha256": "342356ff0e94acbc290424a3b88df40d269d1ea35d643694fd2d0644f6a009cb"
+    },
+    "local74x20-capabilities.json": {
+      "bytes": 1187,
+      "sha256": "903b765e609eb7cbdcece126ade37cb6e04aad5545c8c49679ec51cd15c5455c"
+    },
+    "local74x20.png": {
+      "bytes": 2760143,
+      "sha256": "391c5e56b56b10c2dba076e34eea4ae89d1d2951d22ee521a16d8125d7403d2b"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1194,
+      "sha256": "e863e8088f0d08363f4d7b1eb6cd5364e871d3929a1ba5b3332ce668b1c1c290"
+    },
+    "remote70x19.png": {
+      "bytes": 1103307,
+      "sha256": "77eb2272c7df8587c64125f720c8dda31b385a8d9f0497ddc2123ab8af79d169"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 1194,
+      "sha256": "e2ba898a489de10f7c25abc3b97de75ee4df417ec00ef543ff2be585565166b7"
+    },
+    "remote74x20.png": {
+      "bytes": 1129811,
+      "sha256": "b97853f09d6411887ccbe3822525a43fa074f2fff266feb6891ec2899e3051c7"
+    },
+    "saved-reconnect.png": {
+      "bytes": 804920,
+      "sha256": "78e9c01440fde905050735aab48218593ae76cc27fbcc2e4543b797f0261b1e0"
+    }
+  },
+  "private_acceptance": {
+    "basename": "ROOT-MAC-WINDOWS-ON-CASE-ACCEPTANCE.json",
+    "sha256": "36fa486573986741c689e3b9c0b8f7194ef522adec5669e63be4aafa7d9afa44",
+    "receipts": {
+      "FINAL-MAC19-WINDOWS15-RECONNECT-CLEANUP.json": "875e05f60949f4e05ea54925ed74ca769707331085342fa242f90f56ec36e347",
+      "FINAL-MAC19-WINDOWS15-ON-CREATE-SAVED-RECONNECT-CLEANUP.json": "c285281bd0d9a0cd039352232598760c06d477a5f5ec1ad26a6cbb305d23b1fe",
+      "FINAL-TWO-FRESH-WINDOWS19-LOCAL-GRIDS-AND-CLEANUP.json": "8e74050e7399509aaa10fbf87e3435bd27cf80d5e76ba35ef99733c789051868",
+      "FINAL-R15-FRESH74-PAIR-RESIZE-LIMIT-CLEANUP.json": "bd96f7856bc1c2846fc2bf6f6cea214e0c0ed6bcb4f485cff89aab30419b39df",
+      "FINAL-R16-SECOND-FRESH-GRID-PAIR-CLEANUP.json": "7bf64b1827a5c5fbea9753e6cb24a3ec9fd65c074ddfc85a19204c485983fd3a",
+      "ROOT-TWO-FRESH-PAIR-REVIEW.json": "ef38d2508a1bd86349d86a3629ce1c096d983c627a3463bb4fe551ed93d79cfa"
+    }
+  }
+}

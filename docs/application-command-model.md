@@ -556,3 +556,12 @@ confirmation and worker dispatch recheck scope. Queue refusal retains review,
 Cancel is inert, and uncertain outcomes require a new explicit review rather
 than automatic replay. Existing SFTP Mkdir/Rm/Rmdir and ordinary Local operations
 provide the effects; transfer authority and recursive deletion are not added.
+
+
+GUI SFTP interrupted-upload review uses the central typed actions
+`ReviewInterruptedUploads`, `CopyInterruptedUpload` and `AcknowledgeInterruptedUpload`.
+The application owner loads the private report store off the UI thread; widgets
+only propose these actions. Copy uses the displayed public report, and confirmed
+acknowledgement validates that exact report plus an inactive operation lock before
+removing local metadata. Startup/review never authenticates or sends remote work.
+Closing a notice or review modal leaves the report intact (`SFTPG-11`).

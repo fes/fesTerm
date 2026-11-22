@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "3e3aea34ec06d1b69e9ca17b1cb1298a80023c40cc484156481394b4a1cfbd31"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "5983690fff52b403629b755d05154b5e0bae505d51b5bdd04916223cfe7af84e"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -20,7 +20,7 @@ Evidence:
 - [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs)
 
 Caveats:
-- Primary window owns quit, wake, and secret-store policy.
+- Primary window owns quit, wake, and secret-store policy. Startup also loads report-only upload uncertainty without connecting.
 - Automation worker and MCP modes exit before GUI creation.
 - Restored windows reopen only after the primary window exists.
 

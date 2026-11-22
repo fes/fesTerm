@@ -1152,8 +1152,14 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has four accepted pinned functional cases, five preliminary cases and fifteen
-unstarted cases.
+has five accepted pinned functional cases, eight preliminary cases and eleven
+unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
+normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
+It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
+original actors remain plus the intended new three. The second Mac grid is an
+actual PTY resize on a fresh attachment to the same generation. Unsuccessful
+edge-drag commands are retained and do not qualify Mac edge-drag resizing.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
@@ -2825,6 +2831,7 @@ open under item 17.
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-04 | On Local and an owned SFTP Remote, use New directory with a Unicode/spaced child name, invalid traversal/reserved names and an existing destination. Review actual side/endpoint/parent. Select owned files, symlinks and empty folders; Delete must focus Cancel and list exact paths, with no operation before confirmation. Cancel leaves them intact. Confirm removes only reviewed leaves, preserves link targets and refuses non-empty directories. Change selection/folder/connection during review; it must refuse rather than retarget. Saturate command admission, lose the connection during an operation and close the owner: inspect explicit partial/uncertain results, refresh/reselect/reconfirm without automatic replay. Local operations must still work while Remote awaits retry. | Automated owned filesystem/UI and in-process SFTP + native functional/visual/accessibility pending | Production modal geometry covers 320/460 logical-pixel windows with long folder/target names and retained button padding. Portable tests cover child admission/no-overwrite, real Local file/empty-dir/link semantics, observed changed-target refusal, stale directory events/selection/connection, both production buttons/dialogs and inert Cancel/full admission. The in-process SFTP fixture covers LSTAT and one link removal preserving target bytes. Native OS permissions, packaged keyboard/screen-reader/DPI behavior, real remote disconnect/partial-batch presentation and concurrent external path replacement remain manual; no atomic inode-conditional delete or rollback claim. |
+| SFTP-05 | Using owned GUI SFTP fixtures, interrupt an upload after exclusive OPEN and during publication, then restart the packaged app. Review the saved verified endpoint, temporary path and optional final path without connecting. Copy the report, close/reopen the list and dismiss a live notice; verify retention. With another window/process owning an active upload, acknowledgement must refuse; after owner exit, confirm local acknowledgement and verify no server operation. Fill the bounded report store and verify new upload refusal before OPEN without evicting old reports. | Portable report store/process-kill, protocol and headless action checks; native qualification pending | Automated checks cover atomic checkpoint refusal, zero OPEN and zero publication effects, cancellation, retained uncertainty, no-overwrite local reports, capacity/byte limits, endpoint separation, active cross-process locks, crash/reopen, report-only central UI actions and unchanged Completed after retirement failure. Packaged Windows/macOS/Linux restart, real server loss, short-window path/copy readability, multiwindow interaction and accessibility remain manual. Reports do not establish safe remote delete or resume. |
 
 ### SFTP GUI backlog and transfer history
 
