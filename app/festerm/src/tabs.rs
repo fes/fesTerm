@@ -5662,15 +5662,19 @@ impl AppState {
             }
             AppCommand::InspectInterruptedUpload { id } => {
                 let tab = self.active_tab();
-                let connection = match &tab.content {
-                    TabContent::SftpFileManager(sftp) => sftp.upload_inspection_scope(),
-                    _ => None,
+                let (connection, navigation_request_id) = match &tab.content {
+                    TabContent::SftpFileManager(sftp) => (
+                        sftp.upload_inspection_scope(),
+                        sftp.remote_pane.pending_request_id,
+                    ),
+                    _ => (None, 0),
                 };
                 self.pending_upload_recovery = Some(crate::app::sftp_recovery::Action::Inspect(
                     id,
                     crate::app::sftp_recovery::InspectionTarget {
                         tab: tab.id,
                         connection,
+                        navigation_request_id,
                     },
                 ));
             }
@@ -7208,7 +7212,7 @@ impl AppState {
             return Err("Connect normally to this endpoint in an SFTP tab, select that tab, then review this report again.");
         };
         let scope = target.connection.as_ref().ok_or("Connect normally to this endpoint in an SFTP tab, select that tab, then review this report again.")?;
-        tab.inspect_interrupted_upload(report, scope)
+        tab.inspect_interrupted_upload(report, scope, target.navigation_request_id)
     }
 
     pub(crate) fn take_upload_recovery_action(

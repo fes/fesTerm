@@ -154,6 +154,7 @@ pub(crate) enum Action {
 pub(crate) struct InspectionTarget {
     pub(crate) tab: crate::tabs::TabId,
     pub(crate) connection: Option<Arc<()>>,
+    pub(crate) navigation_request_id: u64,
 }
 
 #[derive(Default)]
@@ -637,6 +638,7 @@ mod tests {
                 InspectionTarget {
                     tab: crate::tabs::TabId::next_for_test(),
                     connection: None,
+                    navigation_request_id: 0,
                 },
             ),
             &context,
@@ -706,6 +708,7 @@ mod tests {
         let target = InspectionTarget {
             tab: app.state.active_tab().id,
             connection: None,
+            navigation_request_id: 0,
         };
         app.overlays.upload_recovery = RecoveryView {
             open: true,
