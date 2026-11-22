@@ -676,7 +676,11 @@ pub(crate) fn show_profile_host_picker(
                                 .reference
                                 .as_ref()
                                 .is_some_and(|reference| Some(reference) == selected);
-                            if ui.selectable_label(current, &entry.choice.name).clicked() {
+                            if ui
+                                .selectable_label(current, &entry.choice.name)
+                                .on_hover_text(format!("Dev Tunnel: {}", entry.choice.locator))
+                                .clicked()
+                            {
                                 pick = Some(match entry.remembered {
                                     Some(host) => ProfileHostPick::Bind(host),
                                     None => {
@@ -948,7 +952,9 @@ fn show_sidebar(
                     && selected == account_key
                     && !entries.iter().any(|entry| entry.choice.locator == locator)
                 {
-                    let _ = ui.selectable_label(true, host_name);
+                    let _ = ui
+                        .selectable_label(true, host_name)
+                        .on_hover_text(format!("Dev Tunnel: {locator}"));
                 }
                 for entry in entries {
                     let host = entry.choice;
@@ -957,6 +963,7 @@ fn show_sidebar(
                             host.account == account_key && host.locator == locator,
                             &host.name,
                         )
+                        .on_hover_text(format!("Dev Tunnel: {}", host.locator))
                         .clicked()
                     {
                         let request = egui::Id::new(uuid::Uuid::new_v4());
@@ -1166,6 +1173,84 @@ mod tests {
         assert!(harness.state().configuration.host_recipes().is_empty());
         assert!(harness.query_by_label("Create & Connect").is_none());
         assert!(harness.query_by_label("Prepare client key").is_none());
+    }
+
+    #[test]
+    fn duplicate_host_names_hover_reveals_exact_locator_without_selecting_or_executing() {
+        for selected in 0..2 {
+            let configuration = Configuration::empty()
+                .with_account(account("alice", 1, "alice"))
+                .unwrap()
+                .0;
+            let tab = TabId::next_for_test();
+            let mut harness = directory_harness(configuration, tab);
+            harness
+                .ctx
+                .global_style_mut(|style| style.interaction.tooltip_delay = 0.0);
+            harness.run_steps(3);
+            let request = automatic_requests(harness.state())[0].0;
+            report_discovery(
+                &harness.ctx,
+                tab,
+                request,
+                "alice",
+                Ok(vec![
+                    summary("first.use", "Shared host"),
+                    summary("second.usw2", "Shared host"),
+                ]),
+            );
+            harness.run_steps(3);
+            let rectangles: Vec<_> = harness
+                .query_all_by_label("Shared host")
+                .map(|row| row.rect())
+                .collect();
+            assert_eq!(rectangles.len(), 2);
+            for (index, locator) in ["first.use", "second.usw2"].into_iter().enumerate() {
+                assert!(harness
+                    .query_by_label(&format!("Dev Tunnel: {locator}"))
+                    .is_none());
+                harness
+                    .query_all_by_label("Shared host")
+                    .nth(index)
+                    .unwrap()
+                    .hover();
+                harness.run_steps(5);
+                harness.get_by_label(&format!("Dev Tunnel: {locator}"));
+                assert_eq!(
+                    harness.state().commands.len(),
+                    1,
+                    "hover must not request discovery, review or a session"
+                );
+                assert!(harness.state().configuration.host_recipes().is_empty());
+                assert_eq!(
+                    harness
+                        .query_all_by_label("Shared host")
+                        .map(|row| row.rect())
+                        .collect::<Vec<_>>(),
+                    rectangles
+                );
+            }
+            harness
+                .query_all_by_label("Shared host")
+                .nth(selected)
+                .unwrap()
+                .click();
+            harness.run_steps(3);
+            let Some(AppCommand::ReviewDevTunnelHost {
+                tab_id,
+                request,
+                host,
+            }) = harness.state().commands.last()
+            else {
+                panic!("existing foreground review only")
+            };
+            assert_eq!(*tab_id, tab);
+            assert!(request_is_current(&harness.ctx, tab, *request));
+            assert_eq!(host.account, "alice");
+            assert_eq!(host.name, "Shared host");
+            assert_eq!(host.locator, ["first.use", "second.usw2"][selected]);
+            assert_eq!(harness.state().commands.len(), 2);
+        }
     }
 
     #[test]
@@ -1649,6 +1734,75 @@ mod tests {
         assert_eq!(host.account, "bob-key");
         assert!(host.reference.is_none());
         assert!(profile_request_is_current(&harness.ctx, tab, *request));
+    }
+
+    #[test]
+    fn profile_host_picker_duplicate_name_tooltips_keep_the_existing_review_identity() {
+        let configuration = Configuration::empty()
+            .with_account(account("alice", 1, "alice"))
+            .unwrap()
+            .0;
+        let tab = TabId::next_for_test();
+        let mut harness = picker_harness(configuration, tab);
+        harness
+            .ctx
+            .global_style_mut(|style| style.interaction.tooltip_delay = 0.0);
+        harness.run_steps(3);
+        harness.get_by_label("Find hosts · @alice").click();
+        harness.run_steps(3);
+        let request = discoveries(harness.state())[0].0;
+        report_discovery(
+            &harness.ctx,
+            tab,
+            request,
+            "alice",
+            Ok(vec![
+                summary("first.use", "Shared host"),
+                summary("second.usw2", "Shared host"),
+            ]),
+        );
+        harness.run_steps(3);
+        harness.get_by_label("Host").click();
+        harness.run_steps(3);
+        assert_eq!(harness.query_all_by_label("Shared host").count(), 2);
+        for (index, locator) in ["first.use", "second.usw2"].into_iter().enumerate() {
+            harness
+                .query_all_by_label("Shared host")
+                .nth(index)
+                .unwrap()
+                .hover();
+            harness.run_steps(5);
+            harness.get_by_label(&format!("Dev Tunnel: {locator}"));
+            assert_eq!(
+                harness.state().len(),
+                1,
+                "hover remains offline and does not bind a host"
+            );
+        }
+        harness
+            .query_all_by_label("Shared host")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run_steps(3);
+        let Some(ProfileHostPick::Command(command)) = harness.state().last() else {
+            panic!("foreground review, never offline bind")
+        };
+        let AppCommand::ReviewDevTunnelHost {
+            tab_id,
+            request,
+            host,
+        } = command.as_ref()
+        else {
+            panic!("same existing review action")
+        };
+        assert_eq!(*tab_id, tab);
+        assert!(profile_request_is_current(&harness.ctx, tab, *request));
+        assert_eq!(host.account, "alice");
+        assert_eq!(host.name, "Shared host");
+        assert_eq!(host.locator, "second.usw2");
+        assert!(host.reference.is_none());
+        assert_eq!(harness.state().len(), 2);
     }
 
     #[test]

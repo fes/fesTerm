@@ -1966,6 +1966,11 @@ ordinary provider-authorized route. Selecting a host obtains its authorized
 inventory; saved hints never claim online status. Manual fingerprints and owner
 approval remain in Advanced, rather than the normal account connection path.
 
+Desktop host-choice rows keep their friendly labels. Hovering a row shows only
+**Dev Tunnel: <locator>**, allowing duplicate names to be distinguished without
+selecting a host or requesting inventory. The shared profile host picker uses
+the same public-metadata tooltip; ordinary selection and account scope are unchanged.
+
 Desktop uses a host list beside the selected host's session list. Mobile uses
 a host list and a focused host-detail view, with a clear return to the list. On the mobile
 Profiles screen, **Dev Tunnel hosts…** stays immediately above the bottom tab

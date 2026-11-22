@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "5983690fff52b403629b755d05154b5e0bae505d51b5bdd04916223cfe7af84e"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "a77efa50cb64075ed0e7920e651c97176dc8f7edc617fbefe896d01c7d82a579"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -68,7 +68,7 @@ Evidence:
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
-- Host browser review is not a direct session mutation; it emits review actions.
+- Host choices disclose their public locator on hover without selection; review emits actions, not session mutations.
 - Ownership and approval states are separate from the session runtime state.
 
 ## Lifecycle diagnostics
