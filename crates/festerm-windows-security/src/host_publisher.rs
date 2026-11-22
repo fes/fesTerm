@@ -54,8 +54,23 @@ const APPROVED_EOC04_CHAIN: [[u8; 32]; 3] = [
     APPROVED_CHAIN[1],
     APPROVED_CHAIN[2],
 ];
-const APPROVED_CHAINS: [[[u8; 32]; 3]; 3] =
-    [APPROVED_CHAIN, APPROVED_EOC_CHAIN, APPROVED_EOC04_CHAIN];
+// Independently retrieved Microsoft ID Verified CS AOC CA 04. This is distinct
+// from EOC CA 04; all existing exact chains and native proofs remain required.
+const APPROVED_AOC04_CHAIN: [[u8; 32]; 3] = [
+    [
+        0x15, 0xce, 0xf5, 0xf6, 0x3c, 0xa6, 0xd1, 0xf0, 0x22, 0xb2, 0x93, 0xe9, 0x2c, 0x61, 0xc0,
+        0x05, 0x9c, 0x49, 0xbb, 0x92, 0xee, 0xcd, 0xbc, 0xde, 0x3a, 0x12, 0x5d, 0x3c, 0x63, 0x56,
+        0xd9, 0x4f,
+    ],
+    APPROVED_CHAIN[1],
+    APPROVED_CHAIN[2],
+];
+const APPROVED_CHAINS: [[[u8; 32]; 3]; 4] = [
+    APPROVED_CHAIN,
+    APPROVED_EOC_CHAIN,
+    APPROVED_EOC04_CHAIN,
+    APPROVED_AOC04_CHAIN,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Revocation {
@@ -128,6 +143,39 @@ mod tests {
             trusted_rfc3161: true,
             revocation: Revocation::FreshGood,
         }
+    }
+
+    #[test]
+    fn windows_publisher_policy_accepts_independently_pinned_aoc04_and_retains_prior_chains() {
+        let ekus = [PROFILE, CODE_SIGNING, PUBLIC_TRUST].map(str::to_owned);
+        // Canonical DER from the independently retrieved Microsoft AOC CA04,
+        // distinct from the retained EOC CA04 certificate.
+        let aoc04 = [
+            [
+                0x15, 0xce, 0xf5, 0xf6, 0x3c, 0xa6, 0xd1, 0xf0, 0x22, 0xb2, 0x93, 0xe9, 0x2c, 0x61,
+                0xc0, 0x05, 0x9c, 0x49, 0xbb, 0x92, 0xee, 0xcd, 0xbc, 0xde, 0x3a, 0x12, 0x5d, 0x3c,
+                0x63, 0x56, 0xd9, 0x4f,
+            ],
+            APPROVED_CHAIN[1],
+            APPROVED_CHAIN[2],
+        ];
+        admit(&verified_evidence(&ekus, &aoc04)).unwrap();
+        for previous in [APPROVED_CHAIN, APPROVED_EOC_CHAIN, APPROVED_EOC04_CHAIN] {
+            admit(&verified_evidence(&ekus, &previous)).unwrap();
+            assert_ne!(previous[0], aoc04[0]);
+        }
+        let mut unknown = aoc04;
+        unknown[0][0] ^= 1;
+        assert!(admit(&verified_evidence(&ekus, &unknown)).is_err());
+        let short = &aoc04[..2];
+        assert!(admit(&verified_evidence(&ekus, short)).is_err());
+        let reordered = [aoc04[1], aoc04[0], aoc04[2]];
+        assert!(admit(&verified_evidence(&ekus, &reordered)).is_err());
+        let extra = [aoc04[0], APPROVED_EOC04_CHAIN[0], aoc04[1], aoc04[2]];
+        assert!(admit(&verified_evidence(&ekus, &extra)).is_err());
+        // Common PCA/root bytes form the same valid chain, not a mixed-chain refusal.
+        let shared_ancestors = [aoc04[0], APPROVED_EOC04_CHAIN[1], APPROVED_EOC04_CHAIN[2]];
+        admit(&verified_evidence(&ekus, &shared_ancestors)).unwrap();
     }
 
     #[test]

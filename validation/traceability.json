@@ -7483,6 +7483,7 @@
         "native_service_restart_requires_signed_provenance_without_adopting_cached_receipts",
         "native_publisher_admission_never_substitutes_generic_signature_trust",
         "windows_publisher_policy_accepts_only_approved_profile_and_fresh_native_proofs",
+        "windows_publisher_policy_accepts_independently_pinned_aoc04_and_retains_prior_chains",
         "windows_publisher_policy_rejects_missing_wrong_and_duplicate_ekus",
         "windows_publisher_policy_pins_full_chain_not_candidate_ca_names",
         "windows_publisher_policy_rejects_mixed_reordered_and_incomplete_chains",

@@ -2442,18 +2442,25 @@ Run the repository traceability checker and relevant focused tests per slice,
 then required workspace/package checks for release. Automated fixtures do not
 substitute for native service and physical-device evidence.
 
-### Validation impact: reviewed Windows EOC CA compatibility
+### Validation impact: reviewed Windows CA compatibility
 
-`HOST-05`/`HOST-06` publisher admission accepts exactly three reviewed, ordered
-Microsoft CA chains: AOC CA 03, EOC CA 03 or EOC CA 04, each followed by the same
+`HOST-05`/`HOST-06` publisher admission accepts exactly four reviewed, ordered
+Microsoft CA chains: AOC CA 03, AOC CA 04, EOC CA 03 or EOC CA 04, each followed by the same
 pinned PCA 2021 and Root 2020. The EOC intermediates' DER bytes were independently
 retrieved from Microsoft's HTTPS PKI repository and matched the observed native
-host-chain DER fingerprints. CA 04 also matches Microsoft's published Third Party CPS fingerprint.
+host-chain DER fingerprints. EOC CA 04 also matches Microsoft's published Third Party CPS fingerprint.
 The [public source and exact pins](../host-release-artifacts.md#windows-native-publisher-policy)
 remain compiled authority, never candidate or configuration metadata.
 
-All three chains retain identical subject/profile/EKU, native signature, RFC3161
-timestamp and fresh-revocation requirements. Deterministic tests cover all three
+AOC CA 04 is a distinct additional certificate independently retrieved from
+Microsoft's HTTPS PKI URL, with canonical DER SHA256
+`15cef5f63ca6d1f022b293e92c61c0059c49bb92eecdbcde3a125d3c6356d94f`.
+Its CA constraints and chain signatures were checked under the existing pinned
+PCA/root. The EOC CA 04 pin `bc309555…` and both prior CA 03 chains remain
+unchanged; neither candidate certificates nor their issuer names authorize pins.
+
+All four chains retain identical subject/profile/EKU, native signature, RFC3161
+timestamp and fresh-revocation requirements. Deterministic tests cover all four
 accepted chains, every certificate-byte mutation, other approved intermediates
 in either parent position, all nonidentity chain orders, and truncated or
 extended rejection. This compatibility change adds no publisher
