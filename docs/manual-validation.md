@@ -6328,3 +6328,25 @@ actors/catalog and fresh I/O after separate re-enable. Capture the finite
 `host.disable_completion` event on any failure; `installation_busy` now has an
 exact closed reason. Do not count the portable post-bootout contention fixture
 as native acceptance or as proof that final controller commit contention is fixed.
+
+### HOST-01/HOST-02 expired client-account renewal (issue #838)
+
+Ordinary Desktop host discovery and foreground shell/Files preparation renew an
+expired, refreshable selected GitHub identity under the existing per-account
+lease. Privacy-before-vault preparation remains required for shell/Files.
+Before exchanging the original pair, the native store must contain and read
+back the existing V2 private record with its expired access retained and refresh
+authority removed. The original refresh pair stays in memory only. Publish and
+read back a same-account replacement before using it. Cancellation, changed
+account/privacy guards, a failed fence, or uncertain exchange/publication must
+not retry the original pair, start device sign-in, select another account or
+infer missing sessions. Existing legacy account-refresh consumers also retain
+this fence so they cannot replay a pair abandoned by ordinary remoting.
+
+Deterministic identity/store/transport fixtures cover same-account renewal,
+no-exchange unexpired reuse, failed or lost fence writes, uncertain exchange,
+wrong account, failed/lost replacement publication, reopening and guard loss.
+Fresh native expired-account discovery, shell/Files preparation, platform-vault
+prompt/lock behavior and cancellation/restart remain unqualified until executed
+against the controlled accounts. This source change does not establish why a
+particular older native identity expired or whether it retained refresh authority.

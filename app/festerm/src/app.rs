@@ -27,6 +27,9 @@ pub(crate) mod profile_hosting;
 #[path = "running_tunnels.rs"]
 mod running_tunnels;
 #[cfg(feature = "experimental-dev-tunnels")]
+#[path = "tunnel_account.rs"]
+mod tunnel_account;
+#[cfg(feature = "experimental-dev-tunnels")]
 #[path = "tunnel_browser.rs"]
 pub(crate) mod tunnel_browser;
 #[cfg(feature = "experimental-dev-tunnels")]

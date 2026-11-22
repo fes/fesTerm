@@ -473,16 +473,23 @@ async fn run(
         .inspect_err(observe)?;
     let refreshed = identity.needs_sign_in();
     if refreshed {
-        identity = identity
-            .refresh(&http, client_id, cancel)
-            .await
-            .inspect_err(observe)?;
-        store
-            .update(
-                account.credential_reference(),
-                &SecretBytes::copy_from_slice(&identity.encode_private()?),
-            )
-            .map_err(|_| Error::Store)?;
+        identity = super::tunnel_account::renew(
+            identity,
+            &account,
+            store.as_ref(),
+            client_id,
+            &http,
+            cancel,
+            &|| {
+                if cancel.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .inspect_err(observe)?;
         notify(Event::AccountObservation(
             AccountStatus::LastOperationSucceeded,
         ));

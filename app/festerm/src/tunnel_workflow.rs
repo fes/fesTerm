@@ -424,6 +424,18 @@ async fn prepare(
             .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id(), client_id))
             .inspect_err(observe)?;
         if identity.needs_sign_in() {
+            super::tunnel_account::publish(
+                binding,
+                store.as_ref(),
+                &identity.encode_refresh_attempt()?,
+                &|| {
+                    if cancel.is_cancelled() {
+                        Err(Error::Cancelled)
+                    } else {
+                        Ok(())
+                    }
+                },
+            )?;
             let refreshed = identity
                 .refresh(&http, client_id, cancel)
                 .await
@@ -948,14 +960,21 @@ impl FesTermApp {
                         .as_ref()
                         .ok_or(Error::AccountChanged)
                         .and_then(|identity| {
-                            self.secret_store
-                                .as_ref()
-                                .map_err(|_| Error::Store)?
-                                .update(
-                                    identity.credential_reference(),
-                                    &SecretBytes::copy_from_slice(&bytes),
-                                )
-                                .map_err(|_| Error::Store)
+                            super::tunnel_account::publish(
+                                identity,
+                                self.secret_store
+                                    .as_ref()
+                                    .map_err(|_| Error::Store)?
+                                    .as_ref(),
+                                &bytes,
+                                &|| {
+                                    if workflow.cancel.is_cancelled() {
+                                        Err(Error::Cancelled)
+                                    } else {
+                                        Ok(())
+                                    }
+                                },
+                            )
                         });
                     if result.is_ok() {
                         if let Some(account) = &workflow.account {
