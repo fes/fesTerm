@@ -5950,8 +5950,11 @@ For iOS HOST-01 / HOST-02 / MOB-06 index storage, preserve the existing profile 
 and test-account credentials beneath the OS-managed sandbox. Record the app
 version and build, then capture any visible local-storage failure and its Details
 before retrying. Device-key preparation Details retain the original short notice
-and append only a fixed local stage/class, I/O kind and numeric OS errno when
-available. Distinguish native root validation, receipt-child open/create/validate
+and append only a fixed local stage/class, optional private-storage operation,
+I/O kind and numeric OS errno when available. Shared-helper detail distinguishes
+ACL setting/free, mode changes, metadata reads, mode/ACL postconditions, sync
+and exclusive rename. It captures a failing syscall's errno before cleanup;
+unmapped I/O errors and existing security refusal remain unchanged. Distinguish native root validation, receipt-child open/create/validate
 and root synchronization from lock, record, binding and random-source failures.
 An unavailable errno stays unrecorded; a generic storage refusal does not prove
 record corruption. Do not reset data, replace a ready key or repair permissions

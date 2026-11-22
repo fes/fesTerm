@@ -3,7 +3,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(unix)]
+mod private_diagnostic;
+#[cfg(unix)]
+pub use private_diagnostic::private_storage_diagnostic;
+
+#[cfg(unix)]
 mod imp {
+    use crate::private_diagnostic::{private_error, private_postcondition, Operation};
     use std::{ffi::OsString, fs::File, io, os::unix::fs::MetadataExt, path::Path};
     #[cfg(not(target_os = "ios"))]
     use xattr::FileExt;
@@ -270,17 +276,21 @@ mod imp {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if file
             .list_xattr()
-            .map_err(private_io_error)?
+            .map_err(|error| private_error(Operation::AttributeRead, error))?
             .any(|name| name == "system.posix_acl_access")
         {
             file.remove_xattr("system.posix_acl_access")
-                .map_err(private_io_error)?;
+                .map_err(|error| private_error(Operation::AttributeRemove, error))?;
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
-        clear_apple_acl(file).map_err(private_io_error)?;
+        clear_apple_acl(file)?;
         fchmod(file, Mode::from_bits_truncate(0o600)).map_err(private_metadata_error)?;
-        let private = security_metadata(file).map_err(private_io_error)?;
-        if private.mode != 0o600 || {
+        let private = security_metadata(file)
+            .map_err(|error| private_error(Operation::MetadataRead, error))?;
+        if private.mode != 0o600 {
+            return Err(private_postcondition(Operation::ModePostcondition));
+        }
+        let inherited_acl = {
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             {
                 !private.acl.is_empty()
@@ -289,13 +299,12 @@ mod imp {
             {
                 false
             }
-        } {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("could not make recovery file private: {private:?}"),
-            ));
+        };
+        if inherited_acl {
+            return Err(private_postcondition(Operation::AclPostcondition));
         }
-        file.sync_all().map_err(private_io_error)
+        file.sync_all()
+            .map_err(|error| private_error(Operation::FileSync, error))
     }
 
     pub fn make_private_directory(directory: &File) -> io::Result<()> {
@@ -305,18 +314,19 @@ mod imp {
         for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
             if directory
                 .list_xattr()
-                .map_err(private_io_error)?
+                .map_err(|error| private_error(Operation::AttributeRead, error))?
                 .any(|name| name == attribute)
             {
                 directory
                     .remove_xattr(attribute)
-                    .map_err(private_io_error)?;
+                    .map_err(|error| private_error(Operation::AttributeRemove, error))?;
             }
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
-        clear_apple_acl(directory).map_err(private_io_error)?;
+        clear_apple_acl(directory)?;
         fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(private_metadata_error)?;
-        let private = security_metadata(directory).map_err(private_io_error)?;
+        let private = security_metadata(directory)
+            .map_err(|error| private_error(Operation::MetadataRead, error))?;
         let inherited_acl = {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -338,29 +348,19 @@ mod imp {
                 false
             }
         };
-        if private.mode != 0o700 || inherited_acl {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("could not make save staging directory private: {private:?}"),
-            ));
+        if private.mode != 0o700 {
+            return Err(private_postcondition(Operation::ModePostcondition));
         }
-        directory.sync_all().map_err(private_io_error)
+        if inherited_acl {
+            return Err(private_postcondition(Operation::AclPostcondition));
+        }
+        directory
+            .sync_all()
+            .map_err(|error| private_error(Operation::DirectorySync, error))
     }
 
     fn private_metadata_error(error: nix::errno::Errno) -> io::Error {
-        private_io_error(io::Error::from(error))
-    }
-
-    fn private_io_error(error: io::Error) -> io::Error {
-        match error.raw_os_error() {
-            Some(nix::libc::EPERM | nix::libc::EACCES | nix::libc::EINVAL | nix::libc::ENOTSUP) => {
-                io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "the filesystem cannot enforce private save staging",
-                )
-            }
-            _ => error,
-        }
+        private_error(Operation::Chmod, io::Error::from(error))
     }
 
     fn one_component(name: &Path) -> io::Result<()> {
@@ -1074,15 +1074,16 @@ mod imp {
 
         let acl = unsafe { acl_init(0) };
         if acl.is_null() {
-            return Err(io::Error::last_os_error());
+            return Err(private_error(
+                Operation::AclInit,
+                io::Error::last_os_error(),
+            ));
         }
-        let set = unsafe { acl_set_fd_np(file.as_raw_fd(), acl, ACL_TYPE_EXTENDED) };
-        let freed = unsafe { acl_free(acl) };
-        if set != 0 || freed != 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        crate::private_diagnostic::update_acl_and_free(
+            || unsafe { acl_set_fd_np(file.as_raw_fd(), acl, ACL_TYPE_EXTENDED) },
+            || unsafe { acl_free(acl) },
+            io::Error::last_os_error,
+        )
     }
 
     #[cfg(target_os = "linux")]
@@ -1216,20 +1217,7 @@ mod imp {
         test
     ))]
     fn rename_error(error: nix::errno::Errno) -> io::Error {
-        if [
-            nix::errno::Errno::EINVAL,
-            nix::errno::Errno::ENOSYS,
-            nix::errno::Errno::ENOTSUP,
-        ]
-        .contains(&error)
-        {
-            io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the filesystem cannot perform a no-overwrite rename",
-            )
-        } else {
-            io::Error::from(error)
-        }
+        crate::private_diagnostic::exclusive_rename_error(error)
     }
 
     #[cfg(test)]
