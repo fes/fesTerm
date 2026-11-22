@@ -1,0 +1,130 @@
+{
+  "record_version": 1,
+  "not_a_new_matrix_case": true,
+  "matrix_total": 24,
+  "matrix_status_unchanged": {
+    "accepted": 9,
+    "partial": 6,
+    "unstarted": 9
+  },
+  "combined_release_qualified": false,
+  "status": "accepted scoped stopped-update/first-result and subsequent retained-shell I/O proof",
+  "sources": {
+    "signed_GUI_and_HOST": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+    "version": "0.17.20",
+    "producer_run": 45040645041,
+    "test_artifacts_not_official_release": true,
+    "Windows_client_MAIN": "fe3f7f187d11380740fef2352ba57c0d5f9c043b4f9cf6fc6795db087acf0ce8",
+    "Windows_support": "Retained seven source566 support files; client-only mixed runtime."
+  },
+  "first_disable": {
+    "from": 13,
+    "to": 14,
+    "phase": "Disabled",
+    "pending": null,
+    "old_HOST22042_absent": true,
+    "first_warning": null,
+    "Refresh_or_retry": false
+  },
+  "stopped_update": {
+    "epoch": 14,
+    "from_version": "0.17.19",
+    "to_version": "0.17.20",
+    "same_binding_settings": true,
+    "archive_sha256": "68591124ef332e20df78af4721162d1fce7bc26eeb34c743108a04cf2d2cc05e",
+    "native_record_schema_version": 5
+  },
+  "first_enable": {
+    "epoch": 15,
+    "phase": "Provisioned",
+    "runtime": "Listening",
+    "pid": 33743,
+    "birth": "Sun Nov 22 09:04:24 2026",
+    "run": "9f0b19e8-203d-43f1-a61e-33ed759d86c0",
+    "image_sha256": "b0e0730e4fbe5597349f995c1435bc5fbee899ef431cfa542e8cd51c4aa0ff6d",
+    "creation": true,
+    "files": false,
+    "first_UI_native_observation": "Running",
+    "first_UI_cached_runtime": "No current host report",
+    "first_warning": null,
+    "Refresh_or_retry": false
+  },
+  "preservation": {
+    "Mac_all8_original_durable_actors": true,
+    "catalog_sha256": "9bdc22f78d8a46241052c3df1a4e5eaca881d65951465f0cc3a11a8999c41100",
+    "old_manifests_configs_bundles": true,
+    "Linux49_all20": true,
+    "Windows15_epoch38_all27": true,
+    "Windows_MAIN20_parallel_data_only_transition": "Separately authorized Desktop stage fab38bd309c67192cd064ea92505be50d0732d67588b61e14a32927949947b3e; actor scope unchanged.",
+    "OS_Keychain_permissions_changes": false
+  },
+  "cleanup": {
+    "normal_GUI_exit": 0,
+    "GUI_PID": 29646,
+    "supervisor_shutdown_verified": true,
+    "helpers": [],
+    "wrapper_exit": 0,
+    "carrier_absent": true,
+    "nonworkspace_projection_exact": true
+  },
+  "subsequent_retained_shell_IO": {
+    "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+    "generation": "1795272479437293009",
+    "daemon": 64358,
+    "shell": 64364,
+    "both_birth": "Sat Nov 21 06:48:00 2026",
+    "fresh_output": "WIN20_MAC20_RETAINED_IO",
+    "normal_detach": true,
+    "catalog9bdc_byte_identical_after_attach": true,
+    "new_resume_operations": 0
+  },
+  "limits": [
+    "Later HOST 20 Disable/Enable and endpoint survival across that later cycle remain pending.",
+    "First UI native observation Running and cached No current host report are distinct; independent runtime Listening15 is recorded.",
+    "No creation or session termination in this owner phase. Subsequent phaseA creates one separately authorized shell; it is not required for retained fcaa I/O proof.",
+    "Original failed observations from earlier cohorts remain failed; this normal successful cycle does not prove their exact cause. No all-platform/update/release qualification."
+  ],
+  "private_receipts_sha256": {
+    "owner_first_cycle": "8e187d338e8e560deab85609f3d6b393c6be15c440dd1bf8a9c40b3f6113e041",
+    "subsequent_phaseA": "5415ecada3b52f840f893cb5638086d8c2a8191736e001bb513d1056a2ca9d75"
+  },
+  "original_artifacts": {
+    "first-disable.png": {
+      "bytes": 1095621,
+      "sha256": "f9c37fd55cd70f1a4c5f44569a5041de6331648afa7a247c9be9722d64bbe381"
+    },
+    "first-update.png": {
+      "bytes": 1076361,
+      "sha256": "527f754a8cb0812af87ea9640fc9efc75590a68c398a5a39ef76bead020113a3"
+    },
+    "first-enable.png": {
+      "bytes": 1184254,
+      "sha256": "e50598305b9f727bc9d17c5e5c45322887c0ea83ee024d186ce32e81af47c6f9"
+    },
+    "first-disable-native.json": {
+      "bytes": 239,
+      "sha256": "78a7d27849a5146bfbefc0fe82a53e302eaedf6f5f8722e378e588ffca402a00"
+    },
+    "first-update-native.json": {
+      "bytes": 477,
+      "sha256": "4d065b9747de1035b432fd4cd1655758e74c473df1bc4732f4ae7b6b5e8006a9"
+    },
+    "first-enable-native.json": {
+      "bytes": 674,
+      "sha256": "952da51efc5fe4918f7c04e78ceea29260a2f47133cb2217cc0af5713af55078"
+    },
+    "finite-worker-events.json": {
+      "bytes": 13072,
+      "sha256": "9fc89388bff05b7a95cf02bdd2dc4fa3be77b0354e5b60d21bd660abdb232d68"
+    },
+    "closed-preservation.jsonl": {
+      "bytes": 890,
+      "sha256": "4ba30e09d611387843751c27e490887b7729fca80676803c9cecdf74a59226c3"
+    }
+  },
+  "retained_shell_artifact": {
+    "path": "mac20-retained-shell-io/retained-shell-io.png",
+    "bytes": 2976078,
+    "sha256": "97acc7c27b7fb2b24a0fbc6f259f9c25d9565f6d8d0f2a4b761794d938910e86"
+  }
+}

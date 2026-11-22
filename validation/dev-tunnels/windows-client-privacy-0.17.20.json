@@ -1,0 +1,90 @@
+{
+  "record_version": 1,
+  "not_a_new_matrix_case": true,
+  "matrix_total": 24,
+  "matrix_status_unchanged": {
+    "accepted": 9,
+    "partial": 6,
+    "unstarted": 9
+  },
+  "combined_release_qualified": false,
+  "status": "accepted native refusal/changed-prerequisite/retry/restoration component; default-Stopped connection remains refused",
+  "source": {
+    "GUI_source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+    "GUI_MAIN_sha256": "fe3f7f187d11380740fef2352ba57c0d5f9c043b4f9cf6fc6795db087acf0ce8",
+    "GUI_support": "Retained7 source566 mixed8, client-only; no adjacent legacy helper/setup execution or installer claim.",
+    "Mac_HOST_source": "c0f36c38a44da213dbc3563b3d01c7c65ef02827",
+    "Mac_HOST_epoch": 15,
+    "Mac_HOST_PID": 33743,
+    "Mac_HOST_run": "9f0b19e8-203d-43f1-a61e-33ed759d86c0",
+    "Mac_created_sessiond_sha256": "602ab23ef038fc5b459c4b800b68672c4656ee1c2760326bb2806b1fde5f3c61",
+    "official_release_or_updater_claim": false
+  },
+  "first_native_refusal": {
+    "stage": "service_state",
+    "TermService": "stopped",
+    "OS_code": "not-recorded",
+    "connection_admission": "closed; no session result or absence accepted",
+    "native_diagnostic_attribution": "#853 finite GUI diagnostic exercised; not treated as a successful default-Stopped connection"
+  },
+  "changed_prerequisite": {
+    "authorized_Manual_start": true,
+    "PID": 1136,
+    "birth_unix_ms": 1795368278799,
+    "RDPdeny": 1,
+    "RDP_enabled": false,
+    "visible_Retry_count": 1,
+    "subsequent_inventory_and_connections": "PASS",
+    "restored_after_owned_GUI_and_input_drain": {
+      "state": "Stopped",
+      "mode": "Manual",
+      "pid": 0,
+      "RDPdeny": 1
+    }
+  },
+  "subsequent_retained_shell_IO": {
+    "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+    "generation": "1795272479437293009",
+    "daemon": 64358,
+    "shell": 64364,
+    "both_birth": "Sat Nov 21 06:48:00 2026",
+    "fresh_output": "WIN20_MAC20_RETAINED_IO",
+    "normal_detach": true,
+    "catalog9bdc_byte_identical_after_attach": true,
+    "new_resume_operations": 0
+  },
+  "preservation": {
+    "all27_Windows_actors_full9_catalog_protected7_HOST15_epoch38_Task": "unchanged",
+    "Mac_old8_exact_subset": true,
+    "Linux20_preserved": true,
+    "TermService_after": "Stopped / Manual / PID0 / RDPdeny1",
+    "firewall_RDP_startup_permissions_changed": false,
+    "normal_GUI_exit": 0,
+    "owned_jobs_inputs_helpers_drained_before_service_stop": true
+  },
+  "limits": [
+    "Default-Stopped privacy preparation is FAILED/refused, not a successful connection.",
+    "No numeric OS code recorded for the initial service_state failure; service state does not reuse last-error.",
+    "One explicit authorized temporary Manual service start changed the prerequisite; ONE visible Retry then succeeded. No automatic service start, RDP enabling, firewall permission or general OS privacy acceptance.",
+    "New shell creation and saved reconnect in phaseA are separately scoped; no full Windows\u2192Mac case promotion here."
+  ],
+  "private_receipt_sha256": "5415ecada3b52f840f893cb5638086d8c2a8191736e001bb513d1056a2ca9d75",
+  "original_artifacts": {
+    "first-finite-detail.png": {
+      "bytes": 2926188,
+      "sha256": "784ea27792e1767c5af1bdf0d8b0ff108da3a83e8647dde678d3bf94bcdf3209"
+    },
+    "owned-manual-start.json": {
+      "bytes": 138,
+      "sha256": "8ea1f94250d56d050787338942a33f8b865073e4e88b243c213e799ae3473ac9"
+    },
+    "exact-service-restoration.json": {
+      "bytes": 210,
+      "sha256": "b790fb3e604e0ac67203be4932d2753cf76546f8fab7e7bda396928e0690037a"
+    }
+  },
+  "successful_changed_prerequisite_connection_artifact": {
+    "path": "mac20-retained-shell-io/retained-shell-io.png",
+    "meaning": "Original subsequent retained-shell I/O screenshot; shared with the Mac stopped-update record."
+  }
+}
