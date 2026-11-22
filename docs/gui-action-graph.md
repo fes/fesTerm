@@ -892,6 +892,12 @@ and widget tests do not promote native theme/scale/accessibility acceptance.
 | `TUNNEL-16` | Hosted profile or locally owned cloud entry -> revoked exposure and owned cleanup | Disable and Save, remove native persistence, delete the profile, or confirm deletion of its locally owned cloud entry. | Protected revocation precedes config write and wins even on save failure; stop only exact owned relay images, then delete only the verified recorded cloud identity/account. Never terminate the daemon, sweep cloud prefixes, clear global credentials or resurrect from stale config. | Pending local inventory survives profile deletion with foreground sign-in/Retry; uncertainty retains records and refuses destructive guesses. A fresh explicit enable creates new consent, not authority to discard an uncertain old reservation. | P,H,N,security; partial |
 | `TUNNEL-17` | Local exposure checkbox -> verified host GitHub account | Checking the checkbox immediately opens the account chooser, before Save. Select the compatible verified CLI account or explicitly connect through the browser. | Bounded read-only desktop/default-script inventory; unknown entries refuse. New browser login is unavailable while any known binding needs its account; recovery checks all known accounts. Older custom-state script hosts cannot be inventoried and the sign-in warning discloses possible interruption. Exclusive account/canonical-installer leases fence login; preparation holds the shared lease. Five-minute single-use tab/request/profile receipt gates Save; protected initial reservation pins and reverifies the numeric identity. No credentials enter configuration. | Cancel unchecks exposure and creates no grant/shell/cloud object; completed official CLI authentication may remain, as disclosed. Stale, expired or changed-editor replies cannot enable exposure. No automatic logout or startup browser prompt. | P,H,N,security; partial |
 
+Mobile `HOST-01`/`HOST-02` and `TUNNEL-09` share the selected-account refresh
+lease. Foreground privacy and the full account snapshot fence native reads;
+verified removal of refresh authority precedes exchange, and same-account
+replacement readback precedes use. Uncertain exchange/publication cannot rearm
+or replay the old pair; no automatic device sign-in or account fallback occurs.
+
 For `TUNNEL-15`, the tagged app-to-helper request preserves numeric session
 generations through `u64::MAX` exactly; larger or malformed generations are
 refused before host setup. Stored targets retain the full `u128` range.

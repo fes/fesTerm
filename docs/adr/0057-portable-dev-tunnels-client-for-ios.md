@@ -180,3 +180,22 @@ takeover, exit and lock regressions remain required. Physical iPhone/iPad app
 switching, lock/unlock/Face ID, snapshots, Wi-Fi/cellular transitions and long
 suspension remain **unperformed**, recorded under MOB-03/MOB-06 in
 `docs/manual-validation.md`. Compilation and host loopbacks do not qualify them.
+
+## Selected-account identity renewal
+
+Ordinary mobile HOST Find/Resolve and expansion use the existing tunnel client's
+network deadline and serialized refresh lease, shared with legacy consumers.
+The complete selected account snapshot and native reference remain pinned.
+Before a consuming refresh, the current private record is replaced and read back
+without refresh authority; only a verified same-account replacement is usable.
+Cancellation, stale account/credential metadata, failed fence or uncertain
+exchange/publication returns no prepared identity and never starts device sign-in
+or replays the consumed pair. A committed replacement may be verified on a fresh
+explicit request. No store mutex is held over provider work.
+
+Validation impact: GUI:HOST-01, GUI:HOST-02, GUI:TUNNEL-09. Offline actual Find
+and expansion fixtures, sibling/concurrent/legacy reuse, store publication
+faults and cancellation/snapshot tests cover the source boundary. Physical iOS
+expiry, provider refresh and native Keychain persistence remain DT-07/MOB-03
+qualification; the observed expired Find refusal alone does not prove the device
+will accept the corrected flow.

@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod error;
+#[cfg(test)]
+mod identity_tests;
 mod sign_in_activity;
 pub use sign_in_activity::{SignInActivity, SignInForeground};
 #[cfg(any(test, feature = "testing"))]
@@ -28,7 +30,7 @@ use std::{
 
 use festerm_mobile_profiles::{
     AccountProvider, DevTunnelProfile, Profile, ProfileId, ProfileKind, ProfileStore,
-    TrustedTunnelHost, TunnelSource,
+    TrustedTunnelHost, TunnelAccount, TunnelSource,
 };
 use festerm_secret_store::SecretBytes;
 use festerm_session::{Session, SessionEventNotifier};
@@ -934,38 +936,147 @@ impl TunnelClient {
         })
     }
 
-    /// Loads the account's credential, refreshing and re-storing it when it has
-    /// expired. Refresh is serialized so a consumed refresh token is never
-    /// reused concurrently.
+    /// Prepares only the caller's selected account snapshot on this client's
+    /// existing runtime and refresh lease. Call on an owned worker, after the
+    /// foreground privacy check; `check` fences later cancellation/scope changes.
+    pub fn prepare_account_identity(
+        &self,
+        snapshot: &TunnelAccount,
+        cancel: &CancellationToken,
+        check: &impl Fn() -> Result<(), TunnelError>,
+    ) -> Result<Identity, TunnelError> {
+        self.run(
+            &CancelToken(cancel.clone()),
+            NETWORK_LIMIT,
+            self.account_identity(snapshot, cancel, check),
+        )
+    }
+
     async fn identity(
         &self,
         account: &str,
         cancel: &CancellationToken,
     ) -> Result<Identity, TunnelError> {
-        let _guard = self.refresh.lock().await;
-        let (record, secrets) = {
+        let record = lock(&self.store)
+            .account(account)
+            .cloned()
+            .ok_or(TunnelError::SignInRequired)?;
+        self.account_identity(&record, cancel, &|| Ok(())).await
+    }
+
+    fn check_identity_scope(
+        &self,
+        snapshot: &TunnelAccount,
+        cancel: &CancellationToken,
+        check: &impl Fn() -> Result<(), TunnelError>,
+    ) -> Result<(), TunnelError> {
+        if cancel.is_cancelled() {
+            return Err(TunnelError::Cancelled);
+        }
+        let checked = check();
+        if cancel.is_cancelled() {
+            return Err(TunnelError::Cancelled);
+        }
+        checked?;
+        {
             let store = lock(&self.store);
-            (
-                store
-                    .account(account)
-                    .cloned()
-                    .ok_or(TunnelError::SignInRequired)?,
-                store.secrets().clone(),
-            )
+            if cancel.is_cancelled() {
+                return Err(TunnelError::Cancelled);
+            }
+            if store.account(&snapshot.id) != Some(snapshot) {
+                return Err(TunnelError::AccountChanged);
+            }
+        }
+        let checked = check();
+        if cancel.is_cancelled() {
+            return Err(TunnelError::Cancelled);
+        }
+        checked
+    }
+
+    fn publish_identity(
+        &self,
+        snapshot: &TunnelAccount,
+        expected: &[u8],
+        replacement: &[u8],
+        cancel: &CancellationToken,
+        check: &impl Fn() -> Result<(), TunnelError>,
+    ) -> Result<(), TunnelError> {
+        self.check_identity_scope(snapshot, cancel, check)?;
+        {
+            let store = lock(&self.store);
+            if cancel.is_cancelled() {
+                return Err(TunnelError::Cancelled);
+            }
+            if store.account(&snapshot.id) != Some(snapshot) {
+                return Err(TunnelError::AccountChanged);
+            }
+            let reference = snapshot.credential.to_reference();
+            let current = store
+                .secrets()
+                .get(&reference)
+                .map_err(|_| TunnelError::SecureStorage)?;
+            if !current.with_bytes(|bytes| bytes == expected) {
+                return Err(TunnelError::SecureStorage);
+            }
+            if cancel.is_cancelled() {
+                return Err(TunnelError::Cancelled);
+            }
+            store
+                .secrets()
+                .update(&reference, &SecretBytes::copy_from_slice(replacement))
+                .map_err(|_| TunnelError::SecureStorage)?;
+            let saved = store
+                .secrets()
+                .get(&reference)
+                .map_err(|_| TunnelError::SecureStorage)?;
+            if !saved.with_bytes(|bytes| bytes == replacement) {
+                return Err(TunnelError::SecureStorage);
+            }
+        }
+        self.check_identity_scope(snapshot, cancel, check)
+    }
+
+    async fn account_identity(
+        &self,
+        snapshot: &TunnelAccount,
+        cancel: &CancellationToken,
+        check: &impl Fn() -> Result<(), TunnelError>,
+    ) -> Result<Identity, TunnelError> {
+        let _guard = self.refresh.lock().await;
+        self.check_identity_scope(snapshot, cancel, check)?;
+        let native = {
+            let store = lock(&self.store);
+            if cancel.is_cancelled() {
+                return Err(TunnelError::Cancelled);
+            }
+            if store.account(&snapshot.id) != Some(snapshot) {
+                return Err(TunnelError::AccountChanged);
+            }
+            store
+                .secrets()
+                .get(&snapshot.credential.to_reference())
+                .map_err(|_| TunnelError::SecureStorage)?
         };
-        let reference = record.credential.to_reference();
-        let stored = secrets
-            .get(&reference)
-            .map_err(|_| TunnelError::SecureStorage)?;
-        let identity = stored
-            .with_bytes(|bytes| Identity::decode_private(bytes, record.account_id, &self.client_id))
-            .map_err(|_| TunnelError::SignInRequired)?;
+        self.check_identity_scope(snapshot, cancel, check)?;
+        let identity = native
+            .with_bytes(|bytes| {
+                Identity::decode_private(bytes, snapshot.account_id, &self.client_id)
+            })
+            .map_err(TunnelError::from)?;
+        self.check_identity_scope(snapshot, cancel, check)?;
         if !identity.needs_sign_in() {
             return Ok(identity);
         }
         if !identity.can_refresh() {
             return Err(TunnelError::SignInRequired);
         }
+        // Persist the same private encoding with refresh authority removed BEFORE
+        // any consuming exchange. An uncertain outcome cannot replay the old pair.
+        let fenced = identity.encode_refresh_attempt()?;
+        native.with_bytes(|expected| {
+            self.publish_identity(snapshot, expected, &fenced, cancel, check)
+        })?;
         let refreshed = identity
             .refresh(&*self.transport, &self.client_id, cancel)
             .await
@@ -973,10 +1084,9 @@ impl TunnelClient {
                 TunnelError::Denied | TunnelError::Expired => TunnelError::SignInRequired,
                 other => other,
             })?;
+        self.check_identity_scope(snapshot, cancel, check)?;
         let encoded = refreshed.encode_private()?;
-        secrets
-            .update(&reference, &SecretBytes::copy_from_slice(&encoded))
-            .map_err(|_| TunnelError::SecureStorage)?;
+        self.publish_identity(snapshot, &fenced, &encoded, cancel, check)?;
         Ok(refreshed)
     }
 }

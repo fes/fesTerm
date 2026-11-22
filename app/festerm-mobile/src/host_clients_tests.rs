@@ -4591,3 +4591,193 @@ async fn mobile_host_back_from_busy_creation_cancels_worker_and_keeps_original_s
     );
     assert!(intent.issued_operation().is_none() && intent.confirmed_target().is_none());
 }
+
+#[test]
+fn mobile_host_expired_find_renews_selected_account_before_discovery() {
+    use festerm_mobile_tunnels::{
+        testing::{FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
+        TunnelClient,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (mut app, account) = discovery_fixture(Arc::new(move |_, _| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(vec![discovery_row("renewed")]) })
+    }));
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    assert_eq!(
+        festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", true),
+        account
+    );
+    let snapshot = store.lock().unwrap().account(&account).unwrap().clone();
+    let github = Arc::new(FakeGithub::new(7, "mobile"));
+    let client = TunnelClient::with_parts(
+        store.clone(),
+        github.clone(),
+        Arc::new(FixedDirectory::new()),
+        Arc::new(StreamConnector(
+            || -> festerm_tunnel_bridge::mobile::BoxStream { panic!("no relay during Find") },
+        )),
+        CLIENT_ID.into(),
+    )
+    .unwrap();
+    app = app.with_tunnel_client(Arc::new(client));
+    let ctx = egui::Context::default();
+    app.open_hosts();
+    app.poll_hosts(&ctx);
+    wait_for_discovery(&mut app, &ctx);
+    assert!(app.hosts.error.is_none(), "{:?}", app.hosts.error);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(github.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(store.lock().unwrap().account(&account), Some(&snapshot));
+    assert_eq!(app.hosts.hosts[0].locator, "renewed.fixture");
+    assert!(app.tunnel.sign_in.is_none());
+}
+
+#[test]
+fn mobile_host_expired_expansion_renews_before_ordinary_inventory() {
+    use festerm_mobile_tunnels::{
+        testing::{FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
+        TunnelClient,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (mut app, account) = discovery_fixture(Arc::new(|_, _| panic!("no discovery fanout")));
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", true);
+    let snapshot = store.lock().unwrap().account(&account).unwrap().clone();
+    let github = Arc::new(FakeGithub::new(7, "mobile"));
+    let client = TunnelClient::with_parts(
+        store.clone(),
+        github.clone(),
+        Arc::new(FixedDirectory::new()),
+        Arc::new(StreamConnector(
+            || -> festerm_tunnel_bridge::mobile::BoxStream { panic!("use owned inventory seam") },
+        )),
+        CLIENT_ID.into(),
+    )
+    .unwrap();
+    app = app.with_tunnel_client(Arc::new(client));
+    app.open_hosts();
+    app.hosts.account = account.clone();
+    app.hosts.discovery_attempt = app.host_account();
+    app.hosts.hosts = vec![discovery_row("build")];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    app.hosts.ordinary_service = Some(Arc::new(move |_, _, _| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    }));
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(github.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(store.lock().unwrap().account(&account), Some(&snapshot));
+    assert!(app.tunnel.sign_in.is_none());
+    assert_eq!(
+        app.hosts.error.as_deref(),
+        Some(
+            host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired
+            )
+            .message()
+        )
+    );
+}
+
+#[test]
+fn mobile_host_independent_ordinary_lifetime_cancellation_never_requests_sign_in() {
+    use festerm_mobile_tunnels::{
+        testing::{FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
+        TunnelClient,
+    };
+    use festerm_tunnel_client::{IdentityRequest, IdentityTransport, ResponseFuture};
+    struct PausedRefresh {
+        inner: FakeGithub,
+        entered: std::sync::mpsc::Sender<()>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl IdentityTransport for PausedRefresh {
+        fn request<'a>(
+            &'a self,
+            request: IdentityRequest<'a>,
+            cancel: &'a CancellationToken,
+        ) -> ResponseFuture<'a> {
+            Box::pin(async move {
+                if matches!(request, IdentityRequest::Refresh { .. }) {
+                    self.entered.send(()).unwrap();
+                    self.release.notified().await;
+                }
+                self.inner.request(request, cancel).await
+            })
+        }
+    }
+    let (mut app, account) = discovery_fixture(Arc::new(|_, _| panic!("no discovery fanout")));
+    let store = app.profiles.as_ref().unwrap().store_handle();
+    festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", true);
+    let snapshot = store.lock().unwrap().account(&account).unwrap().clone();
+    let (entered, observed) = std::sync::mpsc::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let http = Arc::new(PausedRefresh {
+        inner: FakeGithub::new(7, "mobile"),
+        entered,
+        release: release.clone(),
+    });
+    let client = TunnelClient::with_parts(
+        store.clone(),
+        http.clone(),
+        Arc::new(FixedDirectory::new()),
+        Arc::new(StreamConnector(
+            || -> festerm_tunnel_bridge::mobile::BoxStream {
+                panic!("no relay after lifetime refusal")
+            },
+        )),
+        CLIENT_ID.into(),
+    )
+    .unwrap();
+    app = app.with_tunnel_client(Arc::new(client));
+    app.open_hosts();
+    app.hosts.account = account.clone();
+    app.hosts.discovery_attempt = app.host_account();
+    app.hosts.hosts = vec![discovery_row("build")];
+    app.hosts.ordinary_service = Some(Arc::new(|_, _, _| {
+        panic!("no inventory after lifetime refusal")
+    }));
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    observed.recv_timeout(Duration::from_secs(3)).unwrap();
+    let request = app.hosts.pending.as_ref().unwrap().token.clone();
+    app.hosts.ordinary_lifetime.as_ref().unwrap().cancel();
+    assert!(
+        !request.is_cancelled(),
+        "this tests the independent lifetime, not request cancellation"
+    );
+    release.notify_one();
+    wait_for_discovery(&mut app, &ctx);
+    assert_eq!(app.hosts.error.as_deref(), Some("Cancelled."));
+    assert!(!request.is_cancelled());
+    assert!(app.tunnel.sign_in.is_none() && app.hosts.ordinary.is_none());
+    assert_eq!(
+        http.inner
+            .refreshes
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    let profiles = store.lock().unwrap();
+    assert_eq!(profiles.account(&account), Some(&snapshot));
+    let native = profiles
+        .secrets()
+        .get(&snapshot.credential.to_reference())
+        .unwrap();
+    let fenced = native
+        .with_bytes(|bytes| {
+            festerm_tunnel_client::identity::Identity::decode_private(bytes, 7, CLIENT_ID)
+        })
+        .unwrap();
+    assert!(fenced.needs_sign_in() && !fenced.can_refresh());
+}
