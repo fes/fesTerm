@@ -489,6 +489,7 @@ pub struct SessionController<S: Session> {
     session: Option<S>,
     session_name: &'static str,
     startup_error: Option<String>,
+    startup_diagnostics: Option<festerm_sessiond::StartupDiagnostics>,
     diagnostics: InputSinkDiagnostics,
     pending_writes: PendingCommandBuffer,
     pending_resize: Option<TerminalSize>,
@@ -578,6 +579,7 @@ impl<S: Session> SessionController<S> {
             session: Some(session),
             session_name,
             startup_error: None,
+            startup_diagnostics: None,
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             native_input_expectation: None,
@@ -633,6 +635,7 @@ impl<S: Session> SessionController<S> {
             session: None,
             session_name,
             startup_error: Some(error),
+            startup_diagnostics: None,
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             native_input_expectation: None,
@@ -904,6 +907,7 @@ impl<S: Session> SessionController<S> {
     }
 
     pub fn advance_lifecycle_generation(&mut self) {
+        self.startup_diagnostics = None;
         drop(self.recording_stream.take());
         let guard = festerm_session::automation_admission_lock();
         self.automation_liveness.store(false, Ordering::Release);
@@ -1779,7 +1783,26 @@ impl<S: Session> SessionController<S> {
         )
     }
 
+    pub(crate) fn startup_diagnostics(&self) -> Option<&festerm_sessiond::StartupDiagnostics> {
+        self.startup_diagnostics.as_ref()
+    }
+
+    pub(crate) fn retain_startup_diagnostics(
+        &mut self,
+        diagnostics: Option<festerm_sessiond::StartupDiagnostics>,
+    ) {
+        // Synchronous construction only: never attach evidence to a connected
+        // controller or a replacement/reconnect generation.
+        if self.session.is_none() && self.startup_error.is_some() && self.lifecycle_generation == 0
+        {
+            self.startup_diagnostics = diagnostics;
+        }
+    }
+
     pub fn diagnostics_line(&self) -> String {
+        if let Some(diagnostics) = &self.startup_diagnostics {
+            return diagnostics.to_string();
+        }
         if let Some(error) = &self.startup_error {
             return format!("{} unavailable: {error}", self.session_name);
         }
@@ -3908,6 +3931,26 @@ mod tests {
             }
             assert_eq!(controller.pending_writes.queued_bytes(), 0);
         }
+    }
+
+    #[test]
+    fn startup_snapshot_cannot_cross_connected_or_replacement_generation() {
+        let snapshot = festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture()
+            .startup_diagnostics()
+            .unwrap()
+            .clone();
+        let mut connected = SessionController::with_session(FakeSession::new([]));
+        connected.retain_startup_diagnostics(Some(snapshot.clone()));
+        assert!(connected.startup_diagnostics().is_none());
+        let mut failed =
+            SessionController::<FakeSession>::with_startup_error("original failure".into());
+        failed.retain_startup_diagnostics(Some(snapshot.clone()));
+        assert!(failed.startup_diagnostics().is_some());
+        failed.advance_lifecycle_generation();
+        assert!(failed.startup_diagnostics().is_none());
+        failed.retain_startup_diagnostics(Some(snapshot));
+        assert!(failed.startup_diagnostics().is_none());
+        assert_eq!(failed.start_error(), Some("original failure"));
     }
 
     #[test]

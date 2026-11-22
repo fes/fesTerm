@@ -7,6 +7,8 @@ pub mod lifecycle;
 pub mod native_binding;
 pub mod private_storage;
 mod remote;
+mod startup_diagnostics;
+pub use startup_diagnostics::{StartupDiagnostics, StartupPhase};
 #[cfg(unix)]
 #[doc(hidden)]
 pub mod unix_endpoint;
@@ -937,6 +939,7 @@ pub fn process_alive(pid: u32) -> bool {
 pub struct PersistentSessionError {
     message: String,
     recovery_failure: Option<lifecycle::RecoveryFailureCategory>,
+    startup_diagnostics: Option<Box<StartupDiagnostics>>,
     #[cfg(any(test, feature = "test-support"))]
     native_failure: Option<NativeConnectionFailure>,
 }
@@ -969,9 +972,29 @@ impl PersistentSessionError {
         Self {
             message: message.into(),
             recovery_failure: None,
+            startup_diagnostics: None,
             #[cfg(any(test, feature = "test-support"))]
             native_failure: None,
         }
+    }
+
+    /// Local parent-boundary evidence only; the original Display/error remains unchanged.
+    pub fn startup_diagnostics(&self) -> Option<&StartupDiagnostics> {
+        self.startup_diagnostics.as_deref()
+    }
+
+    fn with_startup_diagnostics(mut self, diagnostics: StartupDiagnostics) -> Self {
+        self.startup_diagnostics = Some(Box::new(diagnostics));
+        self
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn startup_diagnostics_fixture() -> Self {
+        Self::new("fixture secret stderr/path must not enter diagnostic snapshot")
+            .with_startup_diagnostics(StartupDiagnostics::boundary(
+                StartupPhase::Spawn,
+                Some(&io::Error::from_raw_os_error(5)),
+            ))
     }
 
     /// Content-free classification only; Display retains the original cause.
@@ -3003,6 +3026,47 @@ fn is_launchd_correction_variable(key: &std::ffi::OsStr) -> bool {
         .any(|name| key.to_string_lossy().eq_ignore_ascii_case(name))
 }
 
+fn run_local_start_command(
+    command: &mut Command,
+    daemon: &Path,
+    root: &Path,
+    name: &str,
+) -> Result<(std::process::Output, u32), PersistentSessionError> {
+    // Identical stdio/flags and blocking wait to Command::output, retaining only
+    // the PID of the child we actually own. Ordinary local startup has no trusted
+    // caller-issued generation: never infer one from inherited environment.
+    let child = command.spawn().map_err(|error| {
+        let diagnostics = StartupDiagnostics::boundary(StartupPhase::Spawn, Some(&error));
+        PersistentSessionError::new(format!("could not start {}: {error}", daemon.display()))
+            .with_startup_diagnostics(diagnostics)
+    })?;
+    let starter_pid = child.id();
+    let output = child.wait_with_output().map_err(|error| {
+        let diagnostics = StartupDiagnostics::boundary(StartupPhase::Wait, Some(&error))
+            .for_attempt(root, name, starter_pid, None, None);
+        PersistentSessionError::new(format!("could not start {}: {error}", daemon.display()))
+            .with_startup_diagnostics(diagnostics)
+    })?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(PersistentSessionError::new(format!(
+            "session daemon could not start '{name}': {}",
+            message.trim()
+        ))
+        .with_startup_diagnostics(
+            StartupDiagnostics::boundary(StartupPhase::ChildExit, None).for_attempt(
+                root,
+                name,
+                starter_pid,
+                None,
+                output.status.code(),
+            ),
+        ));
+    }
+
+    Ok((output, starter_pid))
+}
+
 fn connect_or_start(
     name: &str,
     profile: &LocalProfile,
@@ -3010,8 +3074,12 @@ fn connect_or_start(
     scrollback_limit_bytes: usize,
     takeover: bool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
-    let root = runtime_root()?;
-    let registry = load_registry_in(&root)?;
+    let root = runtime_root().map_err(|error| {
+        error.with_startup_diagnostics(StartupDiagnostics::boundary(StartupPhase::Runtime, None))
+    })?;
+    let registry = load_registry_in(&root).map_err(|error| {
+        error.with_startup_diagnostics(StartupDiagnostics::boundary(StartupPhase::Registry, None))
+    })?;
     if let Some(declared) = registry.unreadable.get(name) {
         // Starting a replacement would overwrite a record this build cannot
         // read, so an unreadable name is a refusal rather than a fresh shell.
@@ -3037,7 +3105,9 @@ fn connect_or_start(
         }
     }
 
-    let daemon = daemon_executable()?;
+    let daemon = daemon_executable().map_err(|error| {
+        error.with_startup_diagnostics(StartupDiagnostics::boundary(StartupPhase::Helper, None))
+    })?;
     let mut command = Command::new(&daemon);
     command
         .env("FESTERM_SESSIOND_RUNTIME_ROOT", &root)
@@ -3076,52 +3146,52 @@ fn connect_or_start(
             ))
         }
     }
-    let output = command.output().map_err(|error| {
-        PersistentSessionError::new(format!("could not start {}: {error}", daemon.display()))
-    })?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr);
-        return Err(PersistentSessionError::new(format!(
-            "session daemon could not start '{name}': {}",
-            message.trim()
-        )));
-    }
+    let (output, starter_pid) = run_local_start_command(&mut command, &daemon, &root, name)?;
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut last_refusal = None;
-    loop {
-        if let Some(record) = load_registry_in(&root)?.sessions.get(name) {
-            if !takeover && record.name != name {
-                return Err(PersistentSessionError::new(
-                    "The native session registry identity changed; no client was disconnected.",
-                ));
-            }
-            let connection = if takeover {
-                connect_record(record)
-            } else {
-                connect_unattached_record(record)
-            };
-            match connection {
-                Ok(mut stream) => {
-                    stream.local_root = Some(root);
-                    return Ok(stream);
+    let attach_diagnostics = StartupDiagnostics::boundary(StartupPhase::Attach, None).for_attempt(
+        &root,
+        name,
+        starter_pid,
+        None,
+        output.status.code(),
+    );
+    let attach = || -> Result<ConnectedSession, PersistentSessionError> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut last_refusal = None;
+        loop {
+            if let Some(record) = load_registry_in(&root)?.sessions.get(name) {
+                if !takeover && record.name != name {
+                    return Err(PersistentSessionError::new(
+                        "The native session registry identity changed; no client was disconnected.",
+                    ));
                 }
-                Err(error) if !takeover => last_refusal = Some(error),
-                Err(_) => {}
+                let connection = if takeover {
+                    connect_record(record)
+                } else {
+                    connect_unattached_record(record)
+                };
+                match connection {
+                    Ok(mut stream) => {
+                        stream.local_root = Some(root);
+                        return Ok(stream);
+                    }
+                    Err(error) if !takeover => last_refusal = Some(error),
+                    Err(_) => {}
+                }
             }
-        }
-        if Instant::now() >= deadline {
-            if let Some(error) = last_refusal {
-                return Err(error);
+            if Instant::now() >= deadline {
+                if let Some(error) = last_refusal {
+                    return Err(error);
+                }
+                return Err(PersistentSessionError::new(format!(
+                    "timed out attaching to persistent session '{name}'"
+                )));
             }
-            return Err(PersistentSessionError::new(format!(
-                "timed out attaching to persistent session '{name}'"
-            )));
+            thread::sleep(Duration::from_millis(25));
         }
-        thread::sleep(Duration::from_millis(25));
-    }
+    };
+    attach().map_err(|error| error.with_startup_diagnostics(attach_diagnostics))
 }
-
 fn connect_unattached_record(
     record: &SessionRecord,
 ) -> Result<ConnectedSession, PersistentSessionError> {

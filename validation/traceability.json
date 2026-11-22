@@ -2670,11 +2670,15 @@
         "docs/gui-design.md#local-session"
       ],
       "decisions": [
-        "ADR-0014"
+        "ADR-0014",
+        "ADR-0025"
       ],
       "automated_tests": [
         "unix_pty_smoke_flow_with_test_child_and_issue3_resizes",
-        "ssh_startup_failure_uses_the_existing_no_session_fallback"
+        "ssh_startup_failure_uses_the_existing_no_session_fallback",
+        "local_startup_snapshot_opens_only_its_failed_attempt_once",
+        "startup_snapshot_restore_opens_only_the_initial_selected_failure",
+        "startup_snapshot_cannot_cross_connected_or_replacement_generation"
       ],
       "manual_scenarios": [
         "TI-01",
@@ -3931,7 +3935,8 @@
         "docs/gui-design.md#session-inspector"
       ],
       "decisions": [
-        "ADR-0014"
+        "ADR-0014",
+        "ADR-0025"
       ],
       "automated_tests": [
         "session_inspector_opens_without_resizing_and_escape_restores_terminal_mode",
@@ -3943,7 +3948,10 @@
         "panel_frame_without_renderer_preserves_layout_and_child_order",
         "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
         "unexpected_panel_geometry_retains_the_original_mesh",
-        "replay_warp_ui_surfaces_shared_panels"
+        "replay_warp_ui_surfaces_shared_panels",
+        "local_startup_snapshot_opens_only_its_failed_attempt_once",
+        "startup_snapshot_restore_opens_only_the_initial_selected_failure",
+        "startup_diagnostics_disclosure_is_once_per_controller_attempt"
       ],
       "manual_scenarios": [
         "TI-06"
@@ -3961,7 +3969,8 @@
       ],
       "decisions": [
         "ADR-0009",
-        "ADR-0084"
+        "ADR-0084",
+        "ADR-0025"
       ],
       "automated_tests": [
         "desktop_remote_access_native_preserves_only_typed_diagnostic_before_classification",
@@ -3983,7 +3992,17 @@
         "desktop_remote_access_runtime_history_is_separate_and_clears_on_refresh_failure",
         "desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim",
         "desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_scope",
-        "host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution"
+        "host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution",
+        "startup_snapshot_is_actor_scoped_bounded_and_not_a_daemon_history",
+        "startup_history_observation_never_creates_and_refuses_untrusted_or_busy_state",
+        "startup_evidence_preserves_original_error_and_redacts_untrusted_message",
+        "actual_local_spawn_failure_retains_numeric_boundary_without_private_path",
+        "actual_local_child_failure_retains_owned_pid_exit_and_original_stderr",
+        "starter_diagnostics_are_numeric_bounded_and_never_daemon_identity",
+        "local_startup_snapshot_opens_only_its_failed_attempt_once",
+        "startup_snapshot_restore_opens_only_the_initial_selected_failure",
+        "startup_snapshot_cannot_cross_connected_or_replacement_generation",
+        "startup_diagnostics_disclosure_is_once_per_controller_attempt"
       ],
       "manual_scenarios": [
         "TI-06",
@@ -3993,7 +4012,8 @@
       "prerequisites": [
         "About and Remote access display only typed last-setup stage, available HTTP status, fixed category and recovery guidance. Provider text, credentials, URLs and arbitrary native errors never enter the metadata. Original create uncertainty/cancellation/transient semantics remain intact. Owned installation/origin/epoch, current worker and cancel/draft/success fences reject stale diagnostics; no readiness claim. Native provider/store/cancel captures remain required.",
         "event emphasis and complete redacted Copy Details",
-        "Explicit Refresh loads only recognized bounded runtime-log history correlated with protected runtime/managed records. Primary and cleanup classifications remain separate; diagnostic failures do not alter readiness, retry, cancellation or authority. Native failure cause and longevity qualification remain open under #780; historical evidence is not a current process observation."
+        "Explicit Refresh loads only recognized bounded runtime-log history correlated with protected runtime/managed records. Primary and cleanup classifications remain separate; diagnostic failures do not alter readiness, retry, cancellation or authority. Native failure cause and longevity qualification remain open under #780; historical evidence is not a current process observation.",
+        "Native local startup snapshot rendering/failure classification and remote HOST delivery remain unqualified; ordinary local startup has no trusted parent generation"
       ]
     },
     {

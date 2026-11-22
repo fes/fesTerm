@@ -60,6 +60,7 @@ pub struct InspectorContent<'a> {
     pub transport: TransportFacts<'a>,
     pub trust_fingerprint: Option<&'a str>,
     pub diagnostics: &'a str,
+    pub startup_attempt: Option<u64>,
     pub input_recording: bool,
     pub input_report: &'a str,
     pub reconnect_available: bool,
@@ -303,8 +304,8 @@ pub fn show(
 
                             ui.add_space(14.0);
                             egui::CollapsingHeader::new("Diagnostics")
-                                .id_salt(("session_inspector_diagnostics", content.subject_id))
-                                .default_open(false)
+                                .id_salt(("session_inspector_diagnostics", content.subject_id, content.startup_attempt))
+                                .default_open(content.startup_attempt.is_some())
                                 .show(ui, |ui| {
                                     ui.label("Input routing: bounded RAM only; no text, clipboard contents, or authentication data.");
                                     if ui.button(if content.input_recording { "Stop input recording" } else { "Record input routing" }).clicked() {
@@ -399,6 +400,7 @@ pub(crate) mod tests {
             },
             trust_fingerprint: None,
             diagnostics: "",
+            startup_attempt: None,
             input_recording: false,
             input_report: "",
             reconnect_available: true,
@@ -534,6 +536,39 @@ pub(crate) mod tests {
                 assert_eq!(render(false), render(true), "scale={scale}, width={width}");
             }
         }
+    }
+
+    #[test]
+    fn startup_diagnostics_disclosure_is_once_per_controller_attempt() {
+        let mut content = base_content(71);
+        content.startup_attempt = Some(101);
+        content.diagnostics = "Finite startup evidence";
+        let mut harness = Harness::builder()
+            .with_size(vec2(760.0, 960.0))
+            .build_ui_state(
+                |ui, content: &mut InspectorContent<'static>| {
+                    ui.style_mut().animation_time = 0.0;
+                    show(ui.ctx(), ui.max_rect(), content.clone(), false);
+                },
+                content,
+            );
+        harness.run();
+        harness.get_by_label("Finite startup evidence");
+        harness.get_by_label("Diagnostics").click();
+        harness.run();
+        assert!(harness.query_by_label("Finite startup evidence").is_none());
+        harness.run();
+        assert!(harness.query_by_label("Finite startup evidence").is_none());
+        harness.state_mut().startup_attempt = Some(102);
+        harness.run();
+        harness.get_by_label("Finite startup evidence");
+        harness.state_mut().subject_id = 72;
+        harness.state_mut().startup_attempt = None;
+        harness.run();
+        assert!(
+            harness.query_by_label("Finite startup evidence").is_none(),
+            "ordinary sibling stays collapsed"
+        );
     }
 
     #[test]

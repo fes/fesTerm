@@ -69,7 +69,7 @@ pub enum FailureStage {
     PtyRead,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub timestamp_ms: u128,
@@ -172,6 +172,39 @@ pub fn history(root: &Path, identity: &NativeSessionIdentity) -> io::Result<Vec<
         .filter(|entry| {
             entry.pid == identity.pid && entry.generation == identity.created_at_unix_ms
         })
+        .collect())
+}
+
+/// A starter is deliberately distinct from an established daemon identity.
+/// Constructed only by the backend from an owned child and an already trusted
+/// caller-issued generation; never from a name/latest registry lookup.
+pub(crate) struct StarterIdentity {
+    pub(crate) pid: u32,
+    pub(crate) generation: u128,
+}
+
+pub(crate) fn starter_history(
+    root: &Path,
+    name: &str,
+    starter: &StarterIdentity,
+) -> io::Result<Vec<Entry>> {
+    festerm_ssh::PersistentSessionName::new(name)
+        .map_err(|_| io::Error::other("invalid lifecycle identity"))?;
+    if starter.pid == 0 || starter.generation == 0 {
+        return Err(io::Error::other("invalid starter identity"));
+    }
+    // A single noncreating observation: diagnostics cannot initialize storage,
+    // wait for a writer, or turn an unavailable journal into startup authority.
+    let directory = private_storage::private_directory(&root.join("lifecycle"), false)?;
+    let lock = private_storage::UnlockOnDrop(private_storage::open_private_file(
+        &directory,
+        Path::new(&format!("{name}.lock")),
+        false,
+    )?);
+    lock.try_lock_exclusive()?;
+    Ok(read(&directory, Path::new(&format!("{name}.json")))?
+        .into_iter()
+        .filter(|entry| entry.pid == starter.pid && entry.generation == starter.generation)
         .collect())
 }
 

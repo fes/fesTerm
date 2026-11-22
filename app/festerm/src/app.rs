@@ -6961,6 +6961,10 @@ impl FesTermApp {
                     .host_key_prompt()
                     .map(|prompt| prompt.sha256_fingerprint()),
                 diagnostics: &diagnostics,
+                startup_attempt: session
+                    .controller
+                    .startup_diagnostics()
+                    .and(session.controller.automation_instance()),
                 input_recording,
                 input_report: &input_report,
                 reconnect_available: session.reconnect_available(),

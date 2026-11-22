@@ -6372,9 +6372,18 @@ available (known independent-spawn access denial retains OS code 5). No raw
 error, argv, cwd, environment, credentials or terminal content may be added.
 A diagnostic or missing ring must not authorize replacement, infer absence,
 repair Unknown or change the original outcome. The existing exact-daemon reader
-does not attribute starter entries to a daemon; no automatic pane display is
-claimed. Portable tests cover privacy, bounded storage and non-interference;
-actual signed native failure classification remains pending.
+does not attribute starter entries to a daemon. For a failed ordinary local
+persistent start, a typed content-free parent-boundary snapshot now opens the
+existing Inspector once for that exact newly selected failed controller, with
+Diagnostics initially expanded. Check fixed phase and known owned starter PID,
+numeric OS/child-exit codes, and explicit unavailable lifecycle/daemon/endpoint
+attribution. Ordinary startup has no trusted caller-issued generation, so it must
+not guess one or display another actor's ring. Close the Inspector, visit another
+tab and return: it must stay closed and retain only that failed attempt's facts.
+A replacement/reconnect generation must not retain them. There is no automatic
+retry/restart or remote HOST diagnostic delivery. Portable tests cover privacy,
+bounded noncreating reads, actual controlled child failure and UI isolation;
+actual native pre-Ready classification/rendering remains pending.
 
 HOSTSETUP-01 / HOST-04 / DIAG-01: qualify the dedicated macOS diagnostic fence
 with a fresh pre-command frame proving no existing prompt, one authenticated
