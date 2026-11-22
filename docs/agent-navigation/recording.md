@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "codex-source-verified", "sources": "aba5454b32e641bec84945482f2a2f3c3d4c5be56963ab0d1cdecce6b87d2e8a"} -->
+<!-- agent-navigation: {"domain": "recording", "generator": "2", "model": "codex-source-verified", "sources": "a0c517b11b33066fe39287b6cc90218f956e416bcaa400e19849320e77e1053d"} -->
 # Terminal recording and export
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -30,6 +30,7 @@ Use for: Need to understand why capture stops on lock, sleep, consent loss, or o
 
 - [`PrivacyGuard`](../../app/festerm/src/recording_privacy.rs) — Drops capture when the device privacy monitor reports loss or lifecycle cleanup
 - [`PrivacyTask`](../../app/festerm/src/recording_privacy.rs) — Starts the native privacy monitor and carries cancellation or ready state back
+- [`WindowsPrivacyDiagnostic`](../../app/festerm/src/recording_privacy.rs) — Copies only closed stage/code/service-state context before cleanup.
 
 Evidence:
 - [`desktop_disabling_session_recording_stops_capture_and_retains_the_source`](../../app/festerm/src/application/recording_tests.rs) — Shows opt-out stops capture while keeping the private source

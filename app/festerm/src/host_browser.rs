@@ -196,6 +196,7 @@ impl PrivacyPreparationFailure {
 pub(super) struct PrivacyPreparationDiagnostic {
     generation: u64,
     failure: Arc<OnceLock<PrivacyPreparationFailure>>,
+    windows_startup: Arc<OnceLock<crate::recording_privacy::WindowsPrivacyDiagnostic>>,
 }
 
 impl PrivacyPreparationDiagnostic {
@@ -203,6 +204,7 @@ impl PrivacyPreparationDiagnostic {
         Self {
             generation,
             failure: Arc::new(OnceLock::new()),
+            windows_startup: Arc::new(OnceLock::new()),
         }
     }
 }
@@ -216,6 +218,35 @@ fn record_privacy_preparation_failure(
     // Browser/user cancellation is distinct from the child transport cancellation
     // caused by privacy loss. This slot carries metadata, never authority.
     if !browser_cancel.is_cancelled() && diagnostic.failure.set(failure).is_ok() {
+        context.request_repaint();
+    }
+}
+
+fn record_privacy_preparation_report(
+    diagnostic: &PrivacyPreparationDiagnostic,
+    browser_cancel: &CancellationToken,
+    report: crate::recording_privacy::PreparationFailureReport,
+    context: &egui::Context,
+) {
+    if browser_cancel.is_cancelled() {
+        return;
+    }
+    // Initialize detail only while winning the existing first-failure slot.
+    // Readers require that slot before exposing detail, so repeated callbacks
+    // cannot combine an earlier failure with a later diagnostic.
+    let mut recorded = false;
+    diagnostic.failure.get_or_init(|| {
+        if let Some(detail) = report.windows_startup {
+            let _ = diagnostic.windows_startup.set(detail);
+        }
+        recorded = true;
+        if report.cleanup_unresolved {
+            PrivacyPreparationFailure::CleanupUnresolved
+        } else {
+            PrivacyPreparationFailure::Unavailable
+        }
+    });
+    if recorded {
         context.request_repaint();
     }
 }
@@ -576,6 +607,14 @@ impl Browser {
             ui.collapsing("Diagnostics", |ui| {
                 ui.label(failure.notice());
                 ui.label("Connection admission remains closed. No session result or absence was accepted.");
+                if let Some(detail) = self.privacy_preparation.as_ref()
+                    .filter(|diagnostic| diagnostic.generation == self.generation)
+                    .and_then(|diagnostic| diagnostic.windows_startup.get()) {
+                    ui.label(detail.detail());
+                    if detail.service_not_running {
+                        ui.label("Remote Desktop Services (TermService) is not running. Review Windows privacy-monitor prerequisites before retrying. fesTerm does not start the service or enable Remote Desktop.");
+                    }
+                }
                 #[cfg(windows)]
                 ui.label("Windows requires an active, unlocked WTS session and a running Remote Desktop Services (TermService) service for lock and sleep monitoring. fesTerm does not start services or enable Remote Desktop. Unavailable does not identify which prerequisite failed.");
             });
@@ -1501,6 +1540,7 @@ impl FesTermApp {
         let preparation = PrivacyPreparationDiagnostic {
             generation,
             failure: Arc::new(OnceLock::new()),
+            windows_startup: Arc::new(OnceLock::new()),
         };
         browser.privacy_preparation = Some(preparation.clone());
         let browser_cancel = browser.cancel.clone();
@@ -3007,15 +3047,11 @@ pub(super) fn prepare_ordinary_account(
             Arc::new(|| {}),
             on_loss,
             permit.clone(),
-            Arc::new(move |cleanup_unresolved| {
-                record_privacy_preparation_failure(
+            Arc::new(move |report| {
+                record_privacy_preparation_report(
                     &observed,
                     &observed_cancel,
-                    if cleanup_unresolved {
-                        PrivacyPreparationFailure::CleanupUnresolved
-                    } else {
-                        PrivacyPreparationFailure::Unavailable
-                    },
+                    report,
                     &observed_wake,
                 );
             }),

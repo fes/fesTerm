@@ -4,11 +4,12 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
-        Arc, Mutex, TryLockError,
+        Arc, Mutex, OnceLock, TryLockError,
     },
     thread::{self, JoinHandle},
 };
 
+use super::privacy_startup::PrivacyStartupDiagnostic;
 use super::PrivacyRevocation;
 
 const AVAILABLE: u8 = 0;
@@ -125,6 +126,7 @@ pub(super) struct Lifecycle {
     slot: &'static Slot,
     phase: AtomicU8,
     cancelled: AtomicBool,
+    startup_failure: OnceLock<PrivacyStartupDiagnostic>,
 }
 
 impl Lifecycle {
@@ -133,11 +135,16 @@ impl Lifecycle {
             slot,
             phase: AtomicU8::new(STARTING),
             cancelled: AtomicBool::new(false),
+            startup_failure: OnceLock::new(),
         }
     }
 
     pub(super) fn cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(super) fn record_startup_failure(&self, diagnostic: PrivacyStartupDiagnostic) {
+        let _ = self.startup_failure.set(diagnostic);
     }
 
     pub(super) fn activate(&self) -> bool {
@@ -275,6 +282,10 @@ impl fmt::Debug for PrivacyInstallFailure {
 }
 
 impl PrivacyInstallFailure {
+    /// Finite first-failure context only, never a readiness or cleanup proof.
+    pub fn startup_diagnostic(&self) -> Option<PrivacyStartupDiagnostic> {
+        self.cleanup.as_ref()?.0.startup_failure.get().copied()
+    }
     /// Returns cleanup state only; it is not an admission, privacy, or
     /// recipient fence. Callback delivery does not qualify one; bootstrap
     /// remains closed.
@@ -1581,5 +1592,62 @@ mod tests {
                 "lifecycle test child {case} did not run its scenario"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod startup_diagnostic_tests {
+    use super::*;
+    use crate::privacy_startup::PrivacyStartupStage;
+
+    #[test]
+    fn privacy_startup_first_failure_survives_cleanup_and_preserves_error_contract() {
+        let slot = Box::leak(Box::new(Slot::new()));
+        let run = Arc::new(Lifecycle::new(slot));
+        let first = PrivacyStartupDiagnostic::new(PrivacyStartupStage::WtsRegistration, Some(1722));
+        run.record_startup_failure(first);
+        run.record_startup_failure(PrivacyStartupDiagnostic::new(
+            PrivacyStartupStage::ServiceManagerClose,
+            Some(6),
+        ));
+        run.unknown();
+        let error = unavailable(Some(PrivacyCleanupStatus(run)));
+        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
+        assert_eq!(error.raw_os_error(), None);
+        let failure = error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PrivacyInstallFailure>()
+            .unwrap();
+        assert_eq!(failure.startup_diagnostic(), Some(first));
+        assert_eq!(
+            failure.cleanup_status().unwrap().state(),
+            PrivacyCleanupState::Unknown
+        );
+        assert_eq!(
+            error.to_string(),
+            "Windows privacy monitor unavailable or cleanup unresolved"
+        );
+    }
+
+    #[test]
+    fn privacy_startup_missing_native_evidence_remains_unknown() {
+        let error = unavailable(None);
+        assert!(error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PrivacyInstallFailure>()
+            .unwrap()
+            .startup_diagnostic()
+            .is_none());
+        let run = Arc::new(Lifecycle::new(Box::leak(Box::new(Slot::new()))));
+        let error = unavailable(Some(PrivacyCleanupStatus(run)));
+        assert!(error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PrivacyInstallFailure>()
+            .unwrap()
+            .startup_diagnostic()
+            .is_none());
     }
 }

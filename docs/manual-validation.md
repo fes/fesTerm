@@ -6184,6 +6184,16 @@ user cancellation. Signed native rendering and real OS preparation failures for
 this diagnostic route remain pending; fixtures do not qualify a Windows privacy
 provider or authorize a connection.
 
+Windows startup diagnostics retain only a fixed failed stage, a known numeric
+Win32 code and a closed TermService state when that query succeeded. The first
+failure is retained before cleanup; a service-state refusal never reuses thread
+last-error. These details appear only in the existing collapsed Diagnostics for
+the current connection attempt. Cleanup-unresolved guidance still takes priority.
+A confirmed non-running state names the prerequisite without starting the service
+or enabling Remote Desktop. Missing detail remains inconclusive. Verify one
+separately approved stopped-service remote preparation and the normal monitor
+cleanup; portable fixtures and local-shell success do not qualify this native path.
+
 The controlled Windows .17.8 client campaign found TermService stopped (Manual)
 while the interactive Session1 app was otherwise available. Its existing native
 monitor requires that service running as well as an active/unlocked WTS session.

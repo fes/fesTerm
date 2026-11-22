@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "0fcca58b5b68474f0694fb55f48fcc92047209f09f09d1e98e078457c0fcbdc1"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "67146b90d7d728a543a95700dce587880791dd81d260881dca6a6a47b69f0b23"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -61,6 +61,7 @@ Caveats:
 Use for: A platform needs to wake or revoke consent when the machine resumes or locks
 
 - [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Handles Windows resume broadcasts in the native message loop
+- [`PrivacyInstallFailure`](../../crates/festerm-windows-power/src/privacy_lifecycle.rs) — Retains finite first-failure detail; cleanup and running-service gates stay unchanged.
 - [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Wakes on logind PrepareForSleep(false) resume edges
 
 Evidence:
