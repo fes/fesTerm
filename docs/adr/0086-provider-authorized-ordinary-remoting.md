@@ -382,6 +382,13 @@ existing data or directory permissions. Portable fixtures cover native-root
 identity, search-only ancestors, refusal of missing search/final-directory read
 access, symlink/ACL/permission refusal and the documented `/var` alias; they
 do not establish Simulator or physical-device acceptance.
+Device-key preparation failures also need finite local stage/class and I/O
+kind/known-errno context in the existing error Details, retaining the original
+short notice. Directory initialization and synchronization, lock/record work,
+binding refusal and random-source failure stay distinct. Source error strings,
+paths, records, references, accounts and seeds never enter that context. This
+reporting does not establish the physical-device cause or initiate repair,
+replacement, fallback or an automatic retry.
 
 The opt-in service-client fixture adds an optional stopped shared-profile name.
 Creation OFF native acceptance requires its exact server Denied and complete

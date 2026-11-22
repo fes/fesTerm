@@ -102,7 +102,10 @@ fn ordinary_native_key_reopens_exact_account_route_and_uses_distinct_purpose() {
     vault.update(&other.reference, &wrong).unwrap();
     assert!(matches!(
         index.prepare_with(vault, &other_account, &guard()),
-        Err(KeyError::BindingMismatch)
+        Err(KeyError::Diagnosed(KeyDiagnostic {
+            stage: KeyStage::SeedBinding,
+            ..
+        }))
     ));
     for entry in std::fs::read_dir(root.path().join("host-client-approvals")).unwrap() {
         assert!(entry
@@ -112,6 +115,69 @@ fn ordinary_native_key_reopens_exact_account_route_and_uses_distinct_purpose() {
             .unwrap()
             .starts_with("ordinary-v1-"));
     }
+}
+
+#[test]
+fn ordinary_ready_mismatched_key_diagnostic_never_replaces_key_or_record() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let index = OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap();
+    let vault = Arc::new(Vault::new(CancellationToken::new()));
+    let selected = binding(42);
+    let key = index
+        .prepare_with(vault.clone(), &selected, &guard())
+        .unwrap();
+    let path = root
+        .path()
+        .join("host-client-approvals")
+        .join(selected.name("json").unwrap());
+    let before = std::fs::read(&path).unwrap();
+    vault
+        .update(
+            &key.reference,
+            &SecretBytes::copy_from_slice(b"ghp_secret /private/key reference=opaque"),
+        )
+        .unwrap();
+    let error = index
+        .prepare_with(vault.clone(), &selected, &guard())
+        .err()
+        .expect("ready payload mismatch");
+    assert!(error
+        .diagnostic_message()
+        .contains("stage=seed_binding; class=binding-mismatch"));
+    assert!(!error.diagnostic_message().contains("ghp_"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(vault.writes.load(Ordering::SeqCst), 1);
+    vault
+        .get(&key.reference)
+        .unwrap()
+        .with_bytes(|bytes| assert_eq!(bytes, b"ghp_secret /private/key reference=opaque"));
+}
+
+#[test]
+fn ordinary_malformed_record_diagnostic_precedes_vault_or_replacement() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let index = OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap();
+    let vault = Arc::new(Vault::new(CancellationToken::new()));
+    let selected = binding(42);
+    index
+        .prepare_with(vault.clone(), &selected, &guard())
+        .unwrap();
+    let path = root
+        .path()
+        .join("host-client-approvals")
+        .join(selected.name("json").unwrap());
+    std::fs::write(&path, b"{ghp_sensitive invalid}").unwrap();
+    let gets = vault.gets.load(Ordering::SeqCst);
+    let error = index
+        .prepare_with(vault.clone(), &selected, &guard())
+        .err()
+        .expect("malformed record");
+    assert!(error
+        .diagnostic_message()
+        .contains("stage=record_decode; class=storage"));
+    assert_eq!(vault.gets.load(Ordering::SeqCst), gets);
+    assert_eq!(vault.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(path).unwrap(), b"{ghp_sensitive invalid}");
 }
 
 #[test]

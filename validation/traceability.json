@@ -6815,7 +6815,12 @@
         "recovery_snapshots_accept_pending_wrap_at_a_narrow_right_margin",
         "recovery_snapshots_accept_pending_wrap_after_a_wide_margin_edge_cluster",
         "recovery_snapshots_accept_pending_wrap_in_an_inactive_alternate_buffer",
-        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster"
+        "recovery_snapshots_reject_pending_wrap_inside_a_line_or_cluster",
+        "native_root_approval_diagnostic_is_finite_preserves_kind_and_known_errno",
+        "native_root_approval_diagnostic_distinguishes_child_open_and_validation_without_repair",
+        "ordinary_key_diagnostics_keep_short_notice_and_never_expose_source_strings",
+        "ordinary_ready_mismatched_key_diagnostic_never_replaces_key_or_record",
+        "ordinary_malformed_record_diagnostic_precedes_vault_or_replacement"
       ],
       "manual_scenarios": [
         "DT-05",

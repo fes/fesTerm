@@ -5949,7 +5949,13 @@ a bottom safe-area inset. Tapping it opens the same account-scoped host browser.
 For iOS HOST-01 / HOST-02 / MOB-06 index storage, preserve the existing profile directory
 and test-account credentials beneath the OS-managed sandbox. Record the app
 version and build, then capture any visible local-storage failure and its Details
-before retrying. Ancestors require search access only; the selected namespace
+before retrying. Device-key preparation Details retain the original short notice
+and append only a fixed local stage/class, I/O kind and numeric OS errno when
+available. Distinguish native root validation, receipt-child open/create/validate
+and root synchronization from lock, record, binding and random-source failures.
+An unavailable errno stays unrecorded; a generic storage refusal does not prove
+record corruption. Do not reset data, replace a ready key or repair permissions
+to obtain a successful diagnostic. Ancestors require search access only; the selected namespace
 remains readable and its receipt child stays private. After normal
 GitHub sign-in and automatic host listing, expand a host and verify native key
 preparation reaches the server. An older server may return the typed update

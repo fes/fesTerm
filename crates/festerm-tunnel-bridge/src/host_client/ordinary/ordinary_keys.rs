@@ -14,11 +14,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "key_diagnostics.rs"]
+mod diagnostics;
+pub use diagnostics::KeyDiagnostic;
+use diagnostics::KeyStage;
+
 const PURPOSE: &str = "fesTerm ordinary account route device v1";
 const KEY_RECORD: &[u8] = b"fesTerm ordinary device signing seed v1\0";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyError {
+    Diagnosed(KeyDiagnostic),
     Storage,
     Busy,
     BindingMismatch,
@@ -45,8 +51,8 @@ impl From<SecretStoreError> for KeyError {
 fn key_failure(v: KeyError) -> Failure {
     Failure::OrdinaryKey(v)
 }
-fn storage_failure(_: io::Error) -> KeyError {
-    KeyError::Storage
+fn storage_failure(stage: KeyStage, error: io::Error) -> KeyError {
+    KeyError::storage_at(stage, error)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -137,20 +143,21 @@ impl OrdinaryKeyIndex {
     }
     fn lease(directory: &File, binding: &KeyBinding) -> Result<Lease, KeyError> {
         let file = storage::open_trusted_lock(directory, &binding.name("lock")?)
-            .map_err(storage_failure)?;
+            .map_err(|error| storage_failure(KeyStage::LockOpen, error))?;
         file.try_lock_exclusive().map_err(|e| {
             if fs2::lock_contended_error().raw_os_error() == e.raw_os_error() {
                 KeyError::Busy
             } else {
-                KeyError::Storage
+                storage_failure(KeyStage::LockAcquire, e)
             }
         })?;
         Ok(Lease(file))
     }
     fn read(directory: &File, binding: &KeyBinding) -> Result<Record, KeyError> {
         let bytes = storage::read_private(directory, &binding.name("json")?, 8192)
-            .map_err(storage_failure)?;
-        let record: Record = serde_json::from_slice(&bytes).map_err(|_| KeyError::Storage)?;
+            .map_err(|error| storage_failure(KeyStage::RecordRead, error))?;
+        let record: Record = serde_json::from_slice(&bytes)
+            .map_err(|_| KeyError::Storage.at_stage(KeyStage::RecordDecode))?;
         if record.version != 1 || record.binding != *binding {
             return Err(KeyError::BindingMismatch);
         }
@@ -159,7 +166,8 @@ impl OrdinaryKeyIndex {
     }
     fn replace(directory: &File, binding: &KeyBinding, record: &Record) -> Result<(), KeyError> {
         let bytes = serde_json::to_vec(record).map_err(|_| KeyError::Storage)?;
-        storage::replace_private(directory, &binding.name("json")?, &bytes).map_err(storage_failure)
+        storage::replace_private(directory, &binding.name("json")?, &bytes)
+            .map_err(|error| storage_failure(KeyStage::RecordReplace, error))
     }
     pub(super) fn prepare(
         &self,
@@ -177,14 +185,20 @@ impl OrdinaryKeyIndex {
         binding: &KeyBinding,
         guard: &OrdinaryAccountGuard,
     ) -> Result<NativeKey, KeyError> {
-        guard.check().map_err(|_| KeyError::BindingMismatch)?;
-        let directory = self.index.directory(true).map_err(|_| KeyError::Storage)?;
+        guard
+            .check()
+            .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
+        let directory = self
+            .index
+            .directory_io(true)
+            .map_err(|error| storage_failure(KeyStage::Directory, error))?;
         let _lease = Self::lease(&directory, binding)?;
         let mut record = match storage::read_private(&directory, &binding.name("json")?, 8192) {
             Ok(bytes) => {
-                let r: Record = serde_json::from_slice(&bytes).map_err(|_| KeyError::Storage)?;
+                let r: Record = serde_json::from_slice(&bytes)
+                    .map_err(|_| KeyError::Storage.at_stage(KeyStage::RecordDecode))?;
                 if r.version != 1 || r.binding != *binding {
-                    return Err(KeyError::BindingMismatch);
+                    return Err(KeyError::BindingMismatch.at_stage(KeyStage::RecordBinding));
                 }
                 r
             }
@@ -196,36 +210,51 @@ impl OrdinaryKeyIndex {
                     ready: false,
                     originals: None,
                 };
-                guard.check().map_err(|_| KeyError::BindingMismatch)?;
-                let bytes = serde_json::to_vec(&r).map_err(|_| KeyError::Storage)?;
+                guard
+                    .check()
+                    .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
+                let bytes = serde_json::to_vec(&r)
+                    .map_err(|_| KeyError::Storage.at_stage(KeyStage::RecordEncode))?;
                 ReceiptIndex::publish_new(&directory, &binding.name("json")?, &bytes)
-                    .map_err(storage_failure)?;
+                    .map_err(|error| storage_failure(KeyStage::RecordPublish, error))?;
                 r
             }
-            Err(_) => return Err(KeyError::Storage),
+            Err(error) => return Err(storage_failure(KeyStage::RecordRead, error)),
         };
-        let reference = SecretReference::parse(&record.reference).map_err(|_| KeyError::Storage)?;
-        guard.check().map_err(|_| KeyError::BindingMismatch)?;
+        let reference = SecretReference::parse(&record.reference)
+            .map_err(|_| KeyError::Storage.at_stage(KeyStage::ReferenceDecode))?;
+        guard
+            .check()
+            .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
         let seed = match vault.get(&reference) {
-            Ok(secret) => decode_key(&secret, binding)?,
+            Ok(secret) => decode_key(&secret, binding)
+                .map_err(|error| error.at_stage(KeyStage::SeedBinding))?,
             Err(SecretStoreError::Missing) if !record.ready => {
                 let mut seed = Zeroizing::new([0; 32]);
-                getrandom::fill(seed.as_mut()).map_err(|_| KeyError::RandomUnavailable)?;
+                getrandom::fill(seed.as_mut())
+                    .map_err(|error| KeyError::random_failure(error.raw_os_error()))?;
                 let mut payload = Zeroizing::new(KEY_RECORD.to_vec());
                 payload.extend_from_slice(seed.as_ref());
-                serde_json::to_writer(&mut *payload, binding).map_err(|_| KeyError::Storage)?;
-                guard.check().map_err(|_| KeyError::BindingMismatch)?;
+                serde_json::to_writer(&mut *payload, binding)
+                    .map_err(|_| KeyError::Storage.at_stage(KeyStage::RecordEncode))?;
+                guard
+                    .check()
+                    .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
                 vault.create_reserved(&reference, &SecretBytes::copy_from_slice(&payload))?;
                 seed
             }
             Err(e) => return Err(e.into()),
         };
-        guard.check().map_err(|_| KeyError::BindingMismatch)?;
+        guard
+            .check()
+            .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
         if !record.ready {
             record.ready = true;
             Self::replace(&directory, binding, &record)?;
         }
-        guard.check().map_err(|_| KeyError::BindingMismatch)?;
+        guard
+            .check()
+            .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))?;
         Ok(NativeKey {
             key: Arc::new(OrdinaryDeviceKey::from_seed(&seed)),
             reference,

@@ -25,6 +25,14 @@ impl AttachStage {
     }
 }
 impl Failure {
+    /// App-facing detail with finite local device-key preparation context only.
+    pub fn diagnostic_message(self) -> String {
+        match self {
+            Self::OrdinaryKey(error) => error.diagnostic_message(),
+            _ => self.message().to_owned(),
+        }
+    }
+
     pub(crate) fn at_attach_stage_for(self, role: super::StreamRole, stage: AttachStage) -> Self {
         if role == super::StreamRole::Terminal {
             self.at_attach_stage(stage)
