@@ -168,7 +168,10 @@ This key is a possession/deny handle, not a reusable authorization grant.
 On iOS, obtain index-root authority from Foundation's current-application
 Application Support location, and verify that its pinned directory identity
 matches the existing profile directory. OS-managed sandbox ancestors need not
-meet the generic caller-path policy. The selected app root must remain owned by
+meet the generic caller-path policy or permit directory reading: root and
+intermediate traversal use search-only descriptors without following symlinks.
+The final selected namespace retains read access for validation and private child
+creation/synchronization. The selected app root must remain owned by
 the current user, live, free of group/other write permission and permissive ACLs;
 the fixed receipt child remains private `0700` with descriptor-relative,
 no-follow access. Preserve the existing namespace and refuse a mismatch without
@@ -376,7 +379,8 @@ open until their actual evidence exists.
 iOS index validation also needs native evidence below OS-managed sandbox
 ancestors: automatic host expansion must reach the server without changing
 existing data or directory permissions. Portable fixtures cover native-root
-identity, symlink/ACL/permission refusal and the documented `/var` alias; they
+identity, search-only ancestors, refusal of missing search/final-directory read
+access, symlink/ACL/permission refusal and the documented `/var` alias; they
 do not establish Simulator or physical-device acceptance.
 
 The opt-in service-client fixture adds an optional stopped shared-profile name.

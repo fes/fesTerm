@@ -1959,7 +1959,10 @@ inventory; saved hints never claim online status. Manual fingerprints and owner
 approval remain in Advanced, rather than the normal account connection path.
 
 Desktop uses a host list beside the selected host's session list. Mobile uses
-a host list and a focused host-detail view, with a clear return to the list.
+a host list and a focused host-detail view, with a clear return to the list. On the mobile
+Profiles screen, **Dev Tunnel hosts…** stays immediately above the bottom tab
+bar, outside the scrollable saved-profile list and within the safe area, using
+the same horizontal padding as the list.
 Desktop's New Session → Dev Tunnel entry already shows this split workspace:
 account and hosts on the left, sign-in/loading/empty/error guidance on the right
 until a host is selected. Back returns to New Session; the legacy single-session
