@@ -432,3 +432,14 @@ be reused after a fresh bound native-store read. No alternate account, weaker
 transport or device-flow fallback is introduced. Deterministic private-store
 and transport regressions cover the failure boundary; native vault/provider
 expiry and restart qualification remains part of HOST-01/HOST-02 and DT-07.
+
+
+Initial account credential reads preserve the native store's finite error class
+for HOST-01/HOST-02 guidance. Missing credentials direct explicit Settings
+sign-in; locked-or-unavailable remains ambiguous, and unsupported/backend errors
+name storage availability without inferring a lock. Invalid/oversized records
+require account review. No secret/reference/backend text is displayed, and no
+new authentication action, fallback or retry is admitted. This presentation
+mapping does not reinterpret a later renewal fence/publication `Store` error.
+Actual discovery/foreground failure fixtures cover the initial-read boundary;
+native lock/missing/service behavior and the older Linux failure remain unqualified.

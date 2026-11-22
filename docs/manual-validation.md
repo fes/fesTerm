@@ -6530,3 +6530,16 @@ Fresh native expired-account discovery, shell/Files preparation, platform-vault
 prompt/lock behavior and cancellation/restart remain unqualified until executed
 against the controlled accounts. This source change does not establish why a
 particular older native identity expired or whether it retained refresh authority.
+
+
+### HOST-01/HOST-02 initial account credential guidance
+
+Portable actual-worker fixtures distinguish typed missing, locked-or-unavailable,
+unsupported/backend and invalid/oversized initial credential reads. Discovery
+and foreground preparation retain explicit recovery guidance without starting
+sign-in, renewal or another connection. The combined locked-or-unavailable class
+must not be described as a proven lock. Check these messages with controlled
+native store states, account changes and cancellation; never expose credential
+values/references or infer the original Linux failure's bucket. Later uncertain
+renewal publication keeps its existing fencing and recovery semantics. Native
+message delivery and accessibility remain unqualified.

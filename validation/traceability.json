@@ -6319,6 +6319,8 @@
       ],
       "automated_tests": [
         "renewal_storage_failure_does_not_offer_new_account_authorization",
+        "account_credential_discovery_read_failure_keeps_typed_guidance_without_new_authorization",
+        "account_credential_foreground_read_failure_keeps_typed_guidance_before_provider_work",
         "persisted_refresh_attempt_prevents_exchange_after_reopen",
         "expired_identity_renews_and_publishes_exact_same_account",
         "failed_or_unverified_fence_never_exchanges",
