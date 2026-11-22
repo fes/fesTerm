@@ -1,7 +1,10 @@
 //! Fixed authenticated Desktop start carrier. No cloud, setup or replay path.
 use crate::{
     lifecycle::{Origin, Phase, Snapshot, Store},
-    services::{Observation, ProcessState, Services, TrustedStage},
+    services::{
+        start_diagnostics::{observe as observe_start, StartStage},
+        Observation, ProcessState, Services, TrustedStage,
+    },
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -137,8 +140,12 @@ pub fn execute(
         if cancel.is_cancelled() {
             return Err(io::Error::other("host.cloud_cancelled"));
         }
-        current(&store, installation, epoch, scope)?;
-        if before != store.snapshot()? {
+        observe_start(
+            state,
+            StartStage::MacChildCurrent,
+            current(&store, installation, epoch, scope),
+        )?;
+        if before != observe_start(state, StartStage::MacChildSnapshot, store.snapshot())? {
             return Err(refused());
         }
         Ok(observation.process)
@@ -208,7 +215,11 @@ pub fn start(
         return Err(failure.error());
     }
     let process = reply.process.ok_or_else(refused)?;
-    current(store, &expected.installation, expected.epoch, &scope)?;
+    observe_start(
+        state,
+        StartStage::MacParentCurrent,
+        current(store, &expected.installation, expected.epoch, &scope),
+    )?;
     Ok(Observation {
         process,
         installation: expected.installation.clone(),

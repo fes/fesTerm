@@ -6019,6 +6019,20 @@ endpoint-readiness proof. No raw errors, protected files, account/reference data
 or paths should be captured. These observations preserve existing failures and
 do not authorize another Enable, Start, permission grant or automatic replay.
 
+On builds carrying the start-observation diagnostics, an error-only
+`host.start_observation` event narrows the whole `service_start` boundary to a
+fixed service-lease, lifecycle-fence, registration-read, native-observation or
+manager stage. The
+Mac carrier also distinguishes its child post-start current/snapshot reads and
+parent final-current read. Retain only the fixed stage/kind and numeric OS code
+(or `none`), correlated by process/time with completion events. A lifecycle
+`busy` observation may follow an actual submitted start; it is not evidence that
+startup failed or that the manager should be replayed. Missing events remain
+inconclusive. Capture the first result, then use the existing explicit read-only
+Refresh and supported recovery flow. These taps preserve the exact original
+result, error payload and deadline; no retry or new state acceptance is added.
+Native first-result qualification of the original #842 contention remains open.
+
 When the exact native service timeout is returned, Remote Access must show a
 native operation timeout notice and Recovery guidance: the command may not have
 run or may have completed, so refresh local status and review before another
