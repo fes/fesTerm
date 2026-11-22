@@ -5,6 +5,10 @@ mod exec;
 mod openssh_config;
 mod port_forward;
 mod sftp;
+mod sftp_upload_recovery;
+pub use sftp_upload_recovery::{
+    UploadRecoveryError, UploadRecoveryFuture, UploadRecoveryRecord, UploadRecoverySink,
+};
 mod sftp_input;
 mod sftp_planning;
 mod sftp_transfer;
@@ -3736,14 +3740,16 @@ async fn establish_gui_sftp_session(
         }
     };
 
-    match local_working_directory {
+    let fingerprint = shared.verified_host_key_fingerprint();
+    let session = match local_working_directory {
         Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path)
             .await
             .map_err(|error| GuiSftpSessionConnectError::ConnectionFailed(error.to_string())),
         None => sftp::SftpSession::connect(&handle)
             .await
             .map_err(|error| GuiSftpSessionConnectError::ConnectionFailed(error.to_string())),
-    }
+    }?;
+    Ok(session.with_verified_gui_fingerprint(fingerprint))
 }
 
 async fn observe_gui_sftp_connect<T>(

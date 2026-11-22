@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "111f5ed6fd59e93a87fd80387d33019f9e9e83de65eab5d7b9838a44d67f456c"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "0be0034769052adada731ffa4d4b613fad777d8e48e0aee00833686ae27bb593"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -56,7 +56,7 @@ Evidence:
 
 Caveats:
 - Uncertain output is preserved and reported without claiming ownership or authorizing deletion.
-- Unix cleanup requires a matching regular file in a freshly trusted parent; post-crash recovery remains open.
+- GUI reports survive restart without granting remote cleanup or resume; text SFTP keeps live-only reporting.
 - Remote names and listings are untrusted; validation occurs before any write.
 
 ## app remote sftp
@@ -74,3 +74,16 @@ Caveats:
 - Remote reads are bound to a verified fingerprint and transport generation to avoid stale reads.
 - The app keeps terminal and GUI SFTP lifecycles separate even when they share a profile.
 - A host-key prompt is resume-oriented; dropping the completion cancels the connect attempt.
+
+## Interrupted upload reports
+
+Use for: Upload uncertainty after exit.
+
+- [`UploadRecoverySink`](../../crates/festerm-ssh/src/sftp_upload_recovery.rs) — Pre-OPEN/publication reporting.
+- [`Ledger`](../../app/festerm/src/sftp_recovery.rs) — Private report store.
+
+Evidence:
+- [`durable_upload_report_survives_killed_owner_and_refuses_other_process_ack`](../../app/festerm/src/sftp_recovery/store.rs) — Crash retains reports.
+
+Caveats:
+- Reports grant no deletion/resume authority.

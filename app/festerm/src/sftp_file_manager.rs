@@ -1884,6 +1884,36 @@ impl SftpCleanupReporter {
             .expect("SFTP cleanup reporter lock is not poisoned") = Some(sender);
     }
 
+    fn report_recovery_update(
+        &self,
+        label: &str,
+        temporary: &str,
+        destination: Option<&str>,
+        repaint: &egui::Context,
+    ) {
+        let notice = crate::overlay_state::OpenRefusalNotice {
+            title: Some("Upload recovery report needs review".into()),
+            acknowledgement_path: None,
+            name: label.into(),
+            path: String::new(),
+            headline: "The remote transfer result is unchanged.".into(),
+            detail: format!(
+                "The local report could not be retired. Temporary: {temporary}. Destination: {}. Use Review interrupted uploads in the command palette; inspect paths before another upload. No replay, deletion or resume was attempted.",
+                destination.unwrap_or("not recorded")
+            ),
+        };
+        let delivered = self
+            .sender
+            .lock()
+            .expect("healthy cleanup reporter")
+            .as_ref()
+            .is_some_and(|sender| sender.try_send(notice).is_ok());
+        tracing::warn!(target:"festerm::sftp",gui_notice_delivered=delivered,"Upload recovery bookkeeping needs review; remote result unchanged");
+        if delivered {
+            repaint.request_repaint();
+        }
+    }
+
     fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
         self.report_with_headline(label, error, repaint, "SFTP cleanup is incomplete");
     }
@@ -4953,6 +4983,7 @@ async fn run_worker(
         reporter,
     } = owner;
     let label = target.label.clone();
+    let closed = Arc::new(AtomicBool::new(false));
     let mut transfers = None;
     let work = run_worker_operations(
         target,
@@ -4966,8 +4997,10 @@ async fn run_worker(
             reporter: reporter.clone(),
         },
         &mut transfers,
+        closed.clone(),
     );
     let _ = wait_for_sftp_tab_owner(work, &mut shutdown).await;
+    closed.store(true, AtomicOrdering::Release);
     if let Some(transfers) = transfers {
         match transfers.shutdown().await {
             Ok(()) => tracing::info!(
@@ -4986,6 +5019,7 @@ async fn run_worker_operations(
     mut command_receiver: tokio::sync::mpsc::Receiver<WorkerCommand>,
     notifications: SftpWorkerNotifications,
     transfers: &mut Option<SftpTransferManager>,
+    closed: Arc<AtomicBool>,
 ) {
     let SftpWorkerNotifications {
         connection_scope,
@@ -5067,6 +5101,40 @@ async fn run_worker_operations(
         };
         break (browsing, transfer_session);
     };
+    let mut transfer_session = transfer_session;
+    let endpoint = crate::app::sftp_recovery::Endpoint {
+        host: target.host.clone(),
+        port: target.port,
+        username: target.username.clone(),
+        label: target.label.clone(),
+        profile: target.profile_id.clone(),
+        fingerprint: transfer_session
+            .verified_gui_fingerprint()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    let recovery_reporter = reporter.clone();
+    let recovery_label = target.label.clone();
+    let recovery_wake = repaint.clone();
+    let recovery_scope = connection_scope.clone();
+    let scope_factory: crate::app::sftp_recovery::ScopeFactory = Arc::new(move || {
+        let expected = recovery_scope.capture();
+        let current = recovery_scope.clone();
+        Arc::new(move || Arc::ptr_eq(&current.capture(), &expected))
+    });
+    transfer_session.set_upload_recovery_sink(crate::app::sftp_recovery::sink(
+        endpoint,
+        closed,
+        Arc::new(move |temporary, destination| {
+            recovery_reporter.report_recovery_update(
+                &recovery_label,
+                temporary,
+                destination,
+                &recovery_wake,
+            );
+        }),
+        scope_factory,
+    ));
     *transfers = Some(SftpTransferManager::new(transfer_session));
     let transfer_manager = transfers.as_mut().expect("transfer manager was installed");
     let mut current_remote = browsing.remote_working_directory().to_owned();
@@ -8454,6 +8522,27 @@ pub(crate) mod tests {
         assert_eq!(notice.name, "owned SFTP fixture");
         assert!(notice.detail.contains("/fixture/report.festerm-part"));
         assert!(destination.take_sftp_cleanup_notice().is_none());
+    }
+
+    #[test]
+    fn gui_sftp_upload_recovery_update_notice_keeps_remote_result_separate() {
+        let reporter = SftpCleanupReporter::default();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        reporter.set_sender(sender);
+        reporter.report_recovery_update(
+            "Owned fixture",
+            "/owned/file.festerm-part",
+            Some("/owned/file"),
+            &egui::Context::default(),
+        );
+        let notice = receiver.try_recv().unwrap();
+        assert_eq!(notice.headline, "The remote transfer result is unchanged.");
+        assert!(notice.detail.contains("/owned/file.festerm-part"));
+        assert!(notice.detail.contains("Review interrupted uploads"));
+        assert!(
+            notice.acknowledgement_path.is_none(),
+            "dismissing a notice cannot acknowledge the durable report"
+        );
     }
 
     #[test]

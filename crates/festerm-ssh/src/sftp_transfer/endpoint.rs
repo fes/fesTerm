@@ -98,8 +98,15 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
     fn release_replacement(&mut self, review: RemoteReplacementReview) -> BackendFuture<'_, ()> {
         self.remote.release_replacement(review)
     }
-    fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
-        crate::sftp::protect_transfer_partial(&mut self.partial, temporary, destination);
+    fn protect_partial_commit<'a>(
+        &'a mut self,
+        temporary: &'a SftpPath,
+        destination: &'a SftpPath,
+    ) -> BackendFuture<'a, ()> {
+        Box::pin(async move {
+            crate::sftp::protect_transfer_partial(&mut self.partial, temporary, destination);
+            Ok(())
+        })
     }
     fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
         Box::pin(async move {
@@ -449,10 +456,13 @@ mod tests {
                     writer.write_all(b"owned output").await.unwrap();
                     writer.flush().await.unwrap();
                     drop(writer);
-                    backend.protect_partial_commit(
-                        &SftpPath::local(&temporary),
-                        &SftpPath::local(&destination),
-                    );
+                    backend
+                        .protect_partial_commit(
+                            &SftpPath::local(&temporary),
+                            &SftpPath::local(&destination),
+                        )
+                        .await
+                        .unwrap();
                     std::fs::rename(&selected, &moved).unwrap();
                     std::fs::create_dir(&selected).unwrap();
                     std::fs::write(&temporary, b"foreign temporary").unwrap();

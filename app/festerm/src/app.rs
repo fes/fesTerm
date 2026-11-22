@@ -15,6 +15,8 @@ mod host_browser;
 pub(crate) mod host_files;
 #[cfg(test)]
 mod inline_graphics_tests;
+#[path = "sftp_recovery.rs"]
+pub(crate) mod sftp_recovery;
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use host_browser::{Reauthentication, ReauthenticationOrigin, RequestFailure};
 mod panes;
@@ -3620,6 +3622,14 @@ impl FesTermApp {
 
         let mut items = vec![
             PaletteItem {
+                id: 60,
+                category: C::Files,
+                label: "Review interrupted uploads".into(),
+                hint: None,
+                is_tab: false,
+                shortcut_label: None,
+            },
+            PaletteItem {
                 id: NEW_LAUNCHER_TAB,
                 category: C::Sessions,
                 label: "New Session…".to_owned(),
@@ -4146,6 +4156,9 @@ impl FesTermApp {
                 },
                 context,
             ),
+            60 => self
+                .state
+                .dispatch(AppCommand::ReviewInterruptedUploads, context),
             23 => self.state.dispatch(AppCommand::OpenWindow, context),
             30 => self
                 .state
@@ -9204,6 +9217,7 @@ impl FesTermApp {
             ));
         }
         self.show_open_refusal_notice(ui.ctx(), confirmation_escape);
+        self.show_upload_recovery(ui.ctx());
 
         if self.state.take_save_as_request() {
             self.open_save_as_picker(ui.ctx());
