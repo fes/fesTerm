@@ -645,3 +645,9 @@ these states without changing listing metadata, remote operations or permissions
 Files profile help describes the existing separate write/delete grant; rename
 and permission changes remain unavailable. Native metadata completeness and
 footer/help accessibility remain manual qualification.
+
+Inspection selection fixtures exercise fresh exact regular-file matching,
+unchanged filters, refused special/ambiguous entries, and navigation-generation
+fences from report recheck through browse completion (SFTPG-11). They do not
+qualify ownership, atomic compare-and-delete, native server replacement races,
+or automatic report acknowledgement. Ordinary confirmed Delete remains separate.

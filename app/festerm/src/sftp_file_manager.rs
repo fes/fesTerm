@@ -6425,6 +6425,9 @@ fn load_path(
         }
     }
     if let (PaneFocus::Remote, SftpPath::Remote(remote)) = (focus, &path) {
+        let Some(request_id) = tab.remote_pane.pending_request_id.checked_add(1) else {
+            return false;
+        };
         if tab
             .submit_worker_command(WorkerCommand::LoadRemote {
                 path: remote.clone(),
@@ -6433,6 +6436,7 @@ fn load_path(
         {
             return false;
         }
+        tab.remote_pane.pending_request_id = request_id;
     }
     {
         let pane = pane_mut(tab, focus);

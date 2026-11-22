@@ -6,6 +6,8 @@ pub(super) struct Request {
     scope: Arc<()>,
     fingerprint: String,
     parent: String,
+    temporary: String,
+    navigation_request_id: u64,
 }
 
 fn parent(temporary: &str) -> Result<String, &'static str> {
@@ -54,6 +56,7 @@ impl SftpFileManagerTab {
         &mut self,
         report: &crate::app::sftp_recovery::Report,
         expected_scope: &Arc<()>,
+        expected_navigation_request_id: u64,
     ) -> Result<(), &'static str> {
         let target = self
             .launch_target
@@ -82,13 +85,22 @@ impl SftpFileManagerTab {
         {
             return Err("This SFTP connection has a different or unverified SSH key. The report was kept; no inspection ran.");
         }
+        if self.remote_pane.pending_request_id != expected_navigation_request_id {
+            return Err("The folder changed. Inspect this report again.");
+        }
+        let navigation_request_id = expected_navigation_request_id
+            .checked_add(1)
+            .ok_or("This tab cannot start another inspection. Reopen it normally.")?;
         let request = Request {
             scope: self.file_operations.displayed.clone(),
             fingerprint: report.endpoint.fingerprint.clone(),
             parent: parent(&report.temporary)?,
+            temporary: report.temporary.clone(),
+            navigation_request_id,
         };
         self.submit_worker_command(WorkerCommand::InspectUploadLocation(request))
             .map_err(|_| "Could not queue the inspection. The report was kept; try explicitly when this tab is ready.")?;
+        self.remote_pane.pending_request_id = navigation_request_id;
         self.remote_pane.loading = true;
         Ok(())
     }
@@ -98,7 +110,8 @@ impl SftpFileManagerTab {
         request: Request,
         result: Result<SftpDirectorySnapshot, String>,
     ) {
-        if !self.file_operations.connection.matches(&request.scope)
+        if self.remote_pane.pending_request_id != request.navigation_request_id
+            || !self.file_operations.connection.matches(&request.scope)
             || !Arc::ptr_eq(&self.file_operations.displayed, &request.scope)
             || self.verified_host_key_fingerprint.as_deref() != Some(request.fingerprint.as_str())
             || !matches!(self.connection_state, SftpConnectionState::Ready)
@@ -110,6 +123,24 @@ impl SftpFileManagerTab {
             Ok(snapshot) => {
                 self.remote_pane.set_snapshot(snapshot, None);
                 self.remote_pane.push_history(self.remote_pane.current_path.clone());
+                self.remote_pane.clear_selection();
+                // A report identifies a path, never ownership. Select only an exact,
+                // unique regular leaf in this fresh listing and the user's filter.
+                let matches = self.remote_pane.snapshot.as_ref().unwrap().entries.iter()
+                    .filter(|entry| entry.path == SftpPath::remote(&request.temporary))
+                    .collect::<Vec<_>>();
+                let regular = matches.len() == 1 && matches[0].file_type == SftpEntryType::File;
+                let visible = self.remote_pane.visible_entries();
+                if let Some(index) = regular.then(|| visible.iter().position(|entry|
+                    entry.path == SftpPath::remote(&request.temporary))).flatten() {
+                    self.remote_pane.select_single(&visible[index].path);
+                    self.remote_pane.update_scroll_offset(index as f32 * SFTP_TABLE_ROW_HEIGHT);
+                    self.focused_pane = PaneFocus::Remote;
+                    self.narrow_focus = PaneFocus::Remote;
+                } else {
+                    self.operation_error = Some(("Reported file was not selected.".into(),
+                        "It is missing, ambiguous, not a regular file, or hidden by your filter. The report was kept; review the folder and filter before any deletion.".into()));
+                }
             }
             Err(_) => self.operation_error = Some((
                 "Could not inspect the interrupted upload's location.".into(),
@@ -234,8 +265,12 @@ mod tests {
     fn upload_inspection_routes_only_the_selected_verified_live_tab_once_without_reconnect() {
         let (mut tab, mut queue, report) = fixture();
         let before = tab.remote_pane.current_path.clone();
-        tab.inspect_interrupted_upload(&report, &tab.file_operations.displayed.clone())
-            .unwrap();
+        tab.inspect_interrupted_upload(
+            &report,
+            &tab.file_operations.displayed.clone(),
+            tab.remote_pane.pending_request_id,
+        )
+        .unwrap();
         assert_eq!(tab.remote_pane.current_path, before); // No optimistic navigation.
         let WorkerCommand::InspectUploadLocation(request) = queue.try_recv().unwrap() else {
             panic!("inspection must not use reconnecting LoadRemote or an upload command")
@@ -286,7 +321,11 @@ mod tests {
                 _ => tab.file_operations.connection.retire(),
             }
             assert!(tab
-                .inspect_interrupted_upload(&report, &tab.file_operations.displayed.clone())
+                .inspect_interrupted_upload(
+                    &report,
+                    &tab.file_operations.displayed.clone(),
+                    tab.remote_pane.pending_request_id
+                )
                 .is_err());
             assert!(queue.try_recv().is_err());
             assert!(!tab.remote_pane.loading);
@@ -297,8 +336,12 @@ mod tests {
     fn upload_inspection_worker_refuses_changed_key_or_generation_before_any_read() {
         for case in 0..3 {
             let (mut tab, mut queue, report) = fixture();
-            tab.inspect_interrupted_upload(&report, &tab.file_operations.displayed.clone())
-                .unwrap();
+            tab.inspect_interrupted_upload(
+                &report,
+                &tab.file_operations.displayed.clone(),
+                tab.remote_pane.pending_request_id,
+            )
+            .unwrap();
             let WorkerCommand::InspectUploadLocation(request) = queue.try_recv().unwrap() else {
                 unreachable!()
             };
@@ -324,8 +367,12 @@ mod tests {
     #[test]
     fn upload_inspection_failed_read_is_not_retried_and_late_completion_cannot_navigate() {
         let (mut tab, mut queue, report) = fixture();
-        tab.inspect_interrupted_upload(&report, &tab.file_operations.displayed.clone())
-            .unwrap();
+        tab.inspect_interrupted_upload(
+            &report,
+            &tab.file_operations.displayed.clone(),
+            tab.remote_pane.pending_request_id,
+        )
+        .unwrap();
         let WorkerCommand::InspectUploadLocation(request) = queue.try_recv().unwrap() else {
             unreachable!()
         };
@@ -395,6 +442,7 @@ mod tests {
         let changed_target = crate::app::sftp_recovery::InspectionTarget {
             tab: crate::tabs::TabId::next_for_test(),
             connection: selected.connection.clone(),
+            navigation_request_id: selected.navigation_request_id,
         };
         assert!(state
             .inspect_interrupted_upload(&report, &changed_target)
@@ -409,5 +457,189 @@ mod tests {
         ));
         assert!(queue.try_recv().is_err());
         assert_eq!(state.tabs().len(), 1);
+    }
+    fn reported_listing(kind: SftpEntryType) -> SftpDirectorySnapshot {
+        let mut listing = snapshot("/reported");
+        for (name, file_type) in [("other", SftpEntryType::File), ("file.festerm-part", kind)] {
+            listing.entries.push(SftpDirectoryItem {
+                name: name.into(),
+                path: listing.path.join_child(name),
+                file_type,
+                size: Some(1),
+                modified_at: None,
+                permissions: None,
+            });
+        }
+        listing
+    }
+
+    #[test]
+    fn upload_inspection_selects_only_unique_visible_regular_reported_file() {
+        for case in 0..7 {
+            let (mut tab, mut queue, report) = fixture();
+            let mut listing = reported_listing(match case {
+                2 => SftpEntryType::Directory,
+                3 => SftpEntryType::Symlink,
+                6 => SftpEntryType::Other,
+                _ => SftpEntryType::File,
+            });
+            if case == 0 {
+                for n in 0..80 {
+                    let mut entry = listing.entries[0].clone();
+                    entry.name = format!("a{n:02}");
+                    entry.path = listing.path.join_child(&entry.name);
+                    listing.entries.push(entry);
+                }
+            }
+            if case == 1 {
+                listing.entries.pop();
+            }
+            if case == 4 {
+                listing.entries.push(listing.entries[1].clone());
+            }
+            tab.remote_pane.set_snapshot(listing.clone(), None);
+            tab.remote_pane
+                .select_single(&SftpPath::remote("/reported/other"));
+            if case == 5 {
+                tab.remote_pane.set_filter("other".into());
+            }
+            let filter = tab.remote_pane.filter.clone();
+            tab.inspect_interrupted_upload(
+                &report,
+                &tab.file_operations.displayed.clone(),
+                tab.remote_pane.pending_request_id,
+            )
+            .unwrap();
+            let WorkerCommand::InspectUploadLocation(request) = queue.try_recv().unwrap() else {
+                unreachable!()
+            };
+            tab.apply_event(WorkerEvent::UploadLocationInspected {
+                request,
+                result: Ok(listing),
+            });
+            assert_eq!(tab.remote_pane.filter, filter);
+            if case == 0 {
+                assert_eq!(
+                    tab.remote_pane.selected_paths,
+                    BTreeSet::from([path_key(&SftpPath::remote(&report.temporary))])
+                );
+                assert_eq!(
+                    tab.remote_pane.cursor_path.as_deref(),
+                    Some(path_key(&SftpPath::remote(&report.temporary)).as_str())
+                );
+                assert!(tab.remote_pane.scroll_offset >= 80.0 * SFTP_TABLE_ROW_HEIGHT);
+            } else {
+                assert!(
+                    tab.remote_pane.selected_paths.is_empty(),
+                    "case {case} kept an unrelated selection"
+                );
+                assert!(tab.operation_error.is_some());
+            }
+            assert!(queue.try_recv().is_err()); // Never Delete, reconnect or upload.
+        }
+    }
+
+    #[test]
+    fn upload_inspection_completion_does_not_undo_later_navigation_even_back_to_same_folder() {
+        for completed_navigation in [false, true] {
+            let (mut tab, mut queue, report) = fixture();
+            tab.inspect_interrupted_upload(
+                &report,
+                &tab.file_operations.displayed.clone(),
+                tab.remote_pane.pending_request_id,
+            )
+            .unwrap();
+            let WorkerCommand::InspectUploadLocation(request) = queue.try_recv().unwrap() else {
+                unreachable!()
+            };
+            tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote("/later"));
+            tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote("/current"));
+            if completed_navigation {
+                tab.remote_pane
+                    .set_snapshot(reported_listing(SftpEntryType::File), None);
+                // The later listing, not inspection, owns this different selection.
+                tab.remote_pane
+                    .select_single(&SftpPath::remote("/reported/other"));
+                tab.remote_pane.update_scroll_offset(17.0);
+            }
+            let selected = tab.remote_pane.selected_paths.clone();
+            let snapshot_path = tab.remote_pane.snapshot.as_ref().unwrap().path.clone();
+            let loading = tab.remote_pane.loading;
+            let scroll = tab.remote_pane.scroll_offset;
+            let path = tab.remote_pane.current_path.clone();
+            let history = tab.remote_pane.history.clone();
+            tab.apply_event(WorkerEvent::UploadLocationInspected {
+                request,
+                result: Ok(reported_listing(SftpEntryType::File)),
+            });
+            assert_eq!(tab.remote_pane.current_path, path);
+            assert_eq!(tab.remote_pane.history, history);
+            assert_eq!(tab.remote_pane.loading, loading);
+            assert_eq!(tab.remote_pane.selected_paths, selected);
+            assert_eq!(
+                tab.remote_pane.snapshot.as_ref().unwrap().path,
+                snapshot_path
+            );
+            assert_eq!(tab.remote_pane.scroll_offset, scroll);
+        }
+    }
+
+    #[test]
+    fn upload_inspection_ledger_recheck_cannot_admit_after_later_navigation() {
+        let (tab, mut queue, report) = fixture();
+        let mut state =
+            crate::tabs::AppState::with_launcher(festerm_config::Configuration::empty());
+        state.active_tab_mut().content = crate::tabs::TabContent::SftpFileManager(Box::new(tab));
+        state.dispatch(
+            crate::tabs::AppCommand::InspectInterruptedUpload {
+                id: report.id.clone(),
+            },
+            &egui::Context::default(),
+        );
+        let Some(crate::app::sftp_recovery::Action::Inspect(_, target)) =
+            state.take_upload_recovery_action()
+        else {
+            unreachable!()
+        };
+        let crate::tabs::TabContent::SftpFileManager(tab) = &mut state.active_tab_mut().content
+        else {
+            unreachable!()
+        };
+        tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote("/current"));
+        assert!(matches!(
+            queue.try_recv().unwrap(),
+            WorkerCommand::LoadRemote { .. }
+        ));
+        tab.remote_pane.loading = false;
+        assert!(state.inspect_interrupted_upload(&report, &target).is_err());
+        assert!(queue.try_recv().is_err());
+    }
+    #[test]
+    fn upload_inspection_refused_queue_and_counter_exhaustion_leave_navigation_unchanged() {
+        for exhausted in [false, true] {
+            let (mut tab, _queue, report) = fixture();
+            let (send, _receive) = tokio::sync::mpsc::channel(1);
+            tab.command_sender = send;
+            tab.submit_worker_command(WorkerCommand::LoadRemote {
+                path: "/queued".into(),
+            })
+            .unwrap();
+            tab.remote_pane.pending_request_id = if exhausted { u64::MAX } else { 7 };
+            let id = tab.remote_pane.pending_request_id;
+            let path = tab.remote_pane.current_path.clone();
+            let history = tab.remote_pane.history.clone();
+            let scope = tab.file_operations.displayed.clone();
+            assert!(tab.inspect_interrupted_upload(&report, &scope, id).is_err());
+            assert!(!load_path(
+                &mut tab,
+                PaneFocus::Remote,
+                SftpPath::remote("/refused"),
+                true
+            ));
+            assert_eq!(tab.remote_pane.pending_request_id, id);
+            assert_eq!(tab.remote_pane.current_path, path);
+            assert_eq!(tab.remote_pane.history, history);
+            assert!(!tab.remote_pane.loading);
+        }
     }
 }

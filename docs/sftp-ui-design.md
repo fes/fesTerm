@@ -277,9 +277,14 @@ remain available to copy for manual inspection rather than guessing the original
 server context. Success updates ordinary browser refresh/navigation state. A failed read is
 not retried or reconnected by inspection, and a stale completion cannot navigate.
 
-Inspection does not select, delete, resume or prove ownership of a partial file.
-The user can inspect the current listing and separately use the ordinary file
-manager's Delete confirmation. The durable report remains until explicit
+Inspection clears unrelated selection and selects/reveals only a unique exact
+regular-file path in the fresh listing that is visible under the unchanged user
+filter. Missing, ambiguous, nonregular or filtered entries leave no selection and
+show guidance; no match proves ownership. A navigation generation captured before
+the asynchronous report recheck also fences browse completion: later navigation,
+even away and back to the same folder, prevents stale folder/history/selection
+updates. Inspection never deletes or resumes. The user can separately use the
+ordinary file manager's Delete confirmation. The durable report remains until explicit
 acknowledgement; neither successful inspection nor ordinary deletion retires it.
 
 The application-private catalog is limited to 64 reports and 256 KiB, with bounded
