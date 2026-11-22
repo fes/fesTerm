@@ -3569,3 +3569,178 @@ fn native_start_registration_read_reports_real_post_fence_journal_contention() {
     drop(held.into_inner());
     assert_eq!(store.snapshot().unwrap(), snapshot);
 }
+
+#[cfg(unix)]
+fn start_final_fence_contention(case: &str) {
+    use std::{cell::Cell, rc::Rc};
+    struct ContendedObservation {
+        native: FakeRunner,
+        held: Rc<RefCell<Option<Lease>>>,
+        started: Cell<bool>,
+    }
+    impl CommandRunner for ContendedObservation {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let output = self.native.execute(request)?;
+            if let NativeRequest::Process { args, .. } = request {
+                if args.iter().any(|arg| arg == "start") {
+                    self.started.set(true);
+                } else if args.iter().any(|arg| arg == "show")
+                    && self.started.replace(false)
+                    && self.native.state.borrow().running
+                {
+                    // Acquire only after the successful post-manager Running
+                    // observation. The first final-fence read must see Busy.
+                    let directory =
+                        storage::private_directory(self.native.receipt.parent().unwrap(), false)?;
+                    *self.held.borrow_mut() = Some(Lease::exclusive(storage::open_private_file(
+                        &directory,
+                        Path::new("host-lifecycle.lock"),
+                        false,
+                    )?)?);
+                }
+            }
+            Ok(output)
+        }
+    }
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let base = services(root.path(), &store, Platform::Linux);
+    base.install(&stage, snapshot.epoch).unwrap();
+    base.runner.state.borrow_mut().calls.clear();
+    let held = Rc::new(RefCell::new(None));
+    let manager = Services {
+        store: &store,
+        state: base.state,
+        context: base.context,
+        runner: ContendedObservation {
+            native: base.runner,
+            held: held.clone(),
+            started: Cell::new(false),
+        },
+    };
+    let reads = Cell::new(0);
+    let credentials = Cell::new(0);
+    let result = manager.start_checked(
+        &stage,
+        snapshot.epoch,
+        || {
+            credentials.set(credentials.get() + 1);
+            Ok(())
+        },
+        || {
+            if held.borrow().is_some() {
+                reads.set(reads.get() + 1);
+                if case == "expired" {
+                    native::expire_operation_for_test();
+                } else if reads.get() == 2 {
+                    match case {
+                        "cancelled" => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "fixture.cancelled",
+                            ));
+                        }
+                        "fatal" => return Err(io::Error::from_raw_os_error(5)),
+                        "expired_retry" => {
+                            native::expire_operation_for_test();
+                            held.borrow_mut().take();
+                        }
+                        "superseded" => {
+                            held.borrow_mut().take();
+                            store.revoke()?;
+                        }
+                        "snapshot" => {
+                            held.borrow_mut().take();
+                            store.with_locked(|directory, current| {
+                                let mut changed = current.clone();
+                                changed.settings.allow_creation = !changed.settings.allow_creation;
+                                storage::replace_private(
+                                    directory,
+                                    Path::new("host-lifecycle.json"),
+                                    &serde_json::to_vec(&changed).unwrap(),
+                                )
+                            })?;
+                        }
+                        "released" => {
+                            held.borrow_mut().take();
+                        }
+                        _ => panic!("unknown final-fence fixture"),
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    held.borrow_mut().take();
+    let calls = &manager.runner.native.state.borrow().calls;
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|request| matches!(request,
+                NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "start")
+            ))
+            .count(),
+        1,
+        "manager Start must never replay"
+    );
+    assert_eq!(
+        credentials.get(),
+        2,
+        "credentials must stay outside read retry"
+    );
+    if case == "released" {
+        assert_eq!(result.unwrap().process, ProcessState::Running);
+        assert_eq!(reads.get(), 2, "release follows one actual Busy read");
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+    } else {
+        let error = result.err().expect("unqualified final read must refuse");
+        match case {
+            "expired" | "expired_retry" => {
+                assert_eq!(reads.get(), if case == "expired" { 1 } else { 2 });
+                assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+                assert_eq!(error.to_string(), "host.installation_busy");
+            }
+            "cancelled" => {
+                assert_eq!(reads.get(), 2);
+                assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+                assert_eq!(error.to_string(), "fixture.cancelled");
+            }
+            "fatal" => {
+                assert_eq!(reads.get(), 2);
+                assert_eq!(error.raw_os_error(), Some(5));
+            }
+            "superseded" | "snapshot" => {
+                assert_eq!(reads.get(), 2);
+                assert_eq!(
+                    error.to_string(),
+                    "host.service_stale_or_unapproved_operation"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_final_fence_waits_for_same_snapshot_without_replaying_manager() {
+    start_final_fence_contention("released");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_final_fence_refuses_expired_cancelled_fatal_and_superseded_reads() {
+    for case in [
+        "expired",
+        "expired_retry",
+        "cancelled",
+        "fatal",
+        "superseded",
+        "snapshot",
+    ] {
+        start_final_fence_contention(case);
+    }
+}
