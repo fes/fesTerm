@@ -1155,7 +1155,7 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has six accepted pinned functional cases, seven preliminary cases and eleven
+has seven accepted pinned functional cases, six preliminary cases and eleven
 unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
@@ -1177,6 +1177,21 @@ The old SDK's rejected snapshot is retained separately: its decoder differs from
 the working current GUI/SDK, but the rejected field was not captured. Visual,
 selector, local-reference and SDK sources are explicitly composed; no combined
 current-release, creation-ON or mobile completion is implied.
+
+The [Mac-client/Linux-server creation-ON record](../validation/dev-tunnels/mac-client-linux-native.json)
+adds one named persistent shell, a generation-pinned saved shortcut, normal
+detach/reconnect and fresh 74×20 / 70×19 Copilot/query pairs. The signed Mac GUI
+uses current-source test packages; the server and local-reference GUI are
+separately pinned. A fresh current SDK service check targets the same Linux
+HOST19/epoch39: private exclusion/refusal, existing shared resume, one additional
+generic create/resume and round trips pass. That same-OS SDK route is supporting
+service evidence, not another matrix row. All original sixteen Linux actors
+survive plus the intended GUI and SDK pairs; final twenty actors remain after
+owned GUI/CLI/SDK processes drain. The first comparison's failed cleanup check
+and mistakenly routed restore text are retained; the unauthenticated CLI refused
+that text locally, and subsequent normal exit/restoration passed. Initial visual
+captures precede the mistake; the second comparison uses corrected fail-closed
+sequencing. No creation-OFF, mobile or combined-release completion is implied.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair

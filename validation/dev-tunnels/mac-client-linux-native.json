@@ -1,0 +1,270 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned creation-ON functional case",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "macOS VM",
+    "server": "Linux VM"
+  },
+  "creation_policy": "ON",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Pinned composed Mac GUI777, Linux local GUIe2 and signed Linux HOST/daemon566. Supporting SDK777 connects through the public relay on Linux; this is service proof, not an additional same-OS matrix case or combined-release acceptance.",
+  "sources": {
+    "Mac_GUI": {
+      "version": "0.17.19",
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "signed_test_package": true,
+      "official_release_asset": false,
+      "run": 45000692201,
+      "attempt": 1,
+      "artifact": 14745894424,
+      "publisher_team": "F884J4784J",
+      "native_signature_notarization_Gatekeeper_verified": true
+    },
+    "Linux_local_GUI": {
+      "version": "0.17.19",
+      "source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "unsigned_development_GUI": true,
+      "package_run": 44971540363,
+      "artifact": 14734460242
+    },
+    "Linux_signed_HOST_and_new_daemons": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "HOST_PID": 1526126,
+      "epoch": 39,
+      "run": "9eec2dd4-21ab-49c0-9264-6c7446a58d99",
+      "sessiond_image_sha256": "cf8aa45e640379e4e194a5585601f0916872265f4ebee2755df68cbae82ca82f",
+      "archive_cache_digest": "6ef16be24fe1fa83b12dc44440f651317327639cc0357330f60bb1f142f05692"
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "producer_run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "binary_bytes": 21693888,
+      "unchanged_runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    }
+  },
+  "workflow": {
+    "account": "fes-festerm1",
+    "host_id": "ec4179ea-a8aa-4cd1-97cc-65dc66500825",
+    "locator": "festerm-90d265f22b4e46f0a046be499b4a6650.usw2",
+    "discovery": "Normal Find & Connect; exact locator tooltip before selection, authorized inventory/private omission and creation-ON form. No sign-in or Keychain prompt; no forced-expiry or refresh-token-exchange claim.",
+    "creation": "ONE named persistent New host shell/Create & Connect for lab-mac777-linux19-on-r29, host-default shell/args/cwd. One saved local profile selected in the form.",
+    "logical": "2c2bea95-a31a-47ef-b8e9-06198daff69c",
+    "generation": "1795339094051541898",
+    "issued_operation": "2d1a5761-25a8-43a8-b8f1-bafbea15e8c9",
+    "native_daemon_PID": 1664109,
+    "native_shell_PID": 1664110,
+    "saved_profile": {
+      "id": "d02f84ec-e848-4fdf-9d53-e88d29160688",
+      "name": "Mac Linux ON R29",
+      "behavior": {
+        "kind": "attach_only",
+        "generation": "1795339094051541898"
+      },
+      "logical": "2c2bea95-a31a-47ef-b8e9-06198daff69c"
+    },
+    "I_O_reconnect": "Separate A/B output, normal detach, saved AttachOnly reconnect to the same exact generation, distinct C output; later fresh Copilot frontends use that same generation."
+  },
+  "service_proof": {
+    "test": "Current777 controlled_github_host_service_client_workflow, existing bounded runner, public provider/relay route to SAME current LinuxHOST19/39/run9eec.",
+    "elapsed_seconds": 21.451,
+    "result": "1 passed;0 failed; ordinary-client completion marker; exit0",
+    "private": "Actual previously published/unshared ae6daca3-17e8-4b8a-aa1e-388d3779ce6b/revision2: inventory exclusion and direct refusal in source-accepted {Denied,Stale}; no exclusively-Denied claim.",
+    "existing_shared": {
+      "logical": "c13fa103-dc7b-4837-b1af-61095fe54479",
+      "revision": 1,
+      "generation": "1795073404903790292",
+      "two_resume_roundtrips_exact_detach_and_survival": true
+    },
+    "additional_SDK_generic": {
+      "logical": "5a813865-0cac-4787-8259-ad9e705cffa2",
+      "generation": "1795340933419967882",
+      "one_create_one_resume_same_generation": true,
+      "two_nonce_roundtrips_exact_detach_and_survival": true
+    },
+    "expected_effect": "Two existing shared resumes plus one separate SDK generic Create and Resume. This additional persistent fixture has its own two actors and is distinct from the GUI-created named shell.",
+    "SDK_new_daemon_PID": 1682439,
+    "SDK_new_shell_PID": 1682440,
+    "actual_new_operations": {
+      "1d51c773-dc78-4d01-8a52-f7852e6673cd": {
+        "logical": "c13fa103-dc7b-4837-b1af-61095fe54479",
+        "generation": "1795073404903790292",
+        "created": false,
+        "recreated": false
+      },
+      "2d73768d-d1f5-49a9-abb5-22361f2ba063": {
+        "logical": "5a813865-0cac-4787-8259-ad9e705cffa2",
+        "generation": "1795340933419967882",
+        "created": true,
+        "recreated": false
+      },
+      "93919abe-f9e0-48bc-a964-2867e419ce2f": {
+        "logical": "5a813865-0cac-4787-8259-ad9e705cffa2",
+        "generation": "1795340933419967882",
+        "created": false,
+        "recreated": false
+      },
+      "d353b335-b4f3-414f-bba4-c8c7c48a7cec": {
+        "logical": "c13fa103-dc7b-4837-b1af-61095fe54479",
+        "generation": "1795073404903790292",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "not_a_stopped_profile_start_check": true
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "Copilot": {
+      "version": "1.0.112",
+      "Linux_binary_sha256": "a7796ef0b42a247e77128d5e95375c78370d7e8a34af2d8395450ed956b91cf7",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/home/evidence/.ft-linux19-owner-r20/copilot-reference",
+      "state": "Fresh unauthenticated initial prompt after one-session folder trust; no login/model/paid request."
+    },
+    "capabilities": "All fields equal except case/elapsed_ms in both fresh pairs:10single replies/202input bytes, all6raw environment fields, stable actual grids, restored terminal/descriptor flags. Child-only LC_ALL=C.utf8 for both local-reference and remote collector/CLI; no TERM/TERM_PROGRAM/COLORTERM/LANG/LC_CTYPE rewrites.",
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "visual_review": "All4 original images independently viewed: matching header, responsive Getting started card present74x20/omitted70x19, logo/banner, MCP, login/cwd, input and manual-approval footer.",
+    "scale": "Linux local1x/Mac remote2x; default JetBrainsMono14pt; no OS/font changes or physical-pixel-identity claim.",
+    "terminal_panel_logical_size": {
+      "74x20": [
+        638,
+        389
+      ],
+      "70x19": [
+        604,
+        370
+      ]
+    },
+    "physical_screenshot_size": {
+      "local74x20": [
+        1024,
+        768
+      ],
+      "local70x19": [
+        1024,
+        768
+      ],
+      "remote74x20": [
+        1280,
+        904
+      ],
+      "remote70x19": [
+        1212,
+        866
+      ]
+    },
+    "terminal_panel_rect_physical": {
+      "local74x20": [
+        117,
+        77,
+        755,
+        466
+      ],
+      "local70x19": [
+        117,
+        77,
+        721,
+        447
+      ],
+      "remote74x20": [
+        2,
+        78,
+        1278,
+        856
+      ],
+      "remote70x19": [
+        2,
+        78,
+        1210,
+        818
+      ]
+    },
+    "geometry_method": "Native window bounds/chrome/statusbar with1logical-pixel border excluded; normal terminal padding included. Images remain unmodified.",
+    "second_grid_method": "Separate fresh frontend and attachment to SAME persistent generation actually resize that PTY to70x19; no failed native edge-drag is substituted.",
+    "pixel_identity": false
+  },
+  "preservation": {
+    "Linux_initial16": "All original actors/record bodies/profiles/protected6/HOST39/binding/settings/read-only Files fixture preserved.",
+    "intended_new4": "GUI daemon1664109/bash1664110 plus supporting SDK daemon1682439/bash1682440 remain intentionally persistent; final20 actors/13session records/7profiles.",
+    "GUI_creation_journal": "Exactly one new logical/generation/Create operation; saved reconnect and visual phases keep it unchanged.",
+    "SDK_journal": "Exactly one additional generic generation/session and4operations; old18actors/records unchanged; finalcatalog SHA71a3e38996913fb06125d64f2274b2df6e82b57908ff366b8f7756417f6b181c.",
+    "Mac": "Original/failed manifests, old64358/64364 pair/HOST9859epoch11/catalog1a202/binding/settings unchanged. Private GUI clone changed only saved host recipes/workspace; sourceR27 and accounts unchanged.",
+    "cleanup": "All GUI processes exit0 with helpers empty and supervisor/carrier drained. SDK owned cgroup removed/zero members, wrapper absent and no readable exactSDK process matches; known unreadable OS/ownSSH exceptions retained. Both CLI processes exited through normal CtrlC; CWD restored and test variables unset."
+  },
+  "first_results_and_limits": [
+    "Default752x516 stacked page required ordinary titlebar zoom to expose form; one wheel event did not scroll. Source already has bounded scrolling; a missing-layout defect is not established.",
+    "One misspelled double_click operation was refused before input; existing double-click ordinary zoom succeeded under the same bounded scope.",
+    "Initial native record check confused UI display_name with internal hs-slot-11 name; corrected read-only expectation, no Create replay.",
+    "One new-phase input control still referenced closed prior launch state and refused before input; exact namespace reference corrected, no request replay.",
+    "PhaseA first CLI absence check failed; orchestration erroneously sent restore text into unauthenticated Copilot, which locally refused it. Initial screenshot precedes this text. Consecutive normal CtrlC then positive absence/CWD+variable restoration and all preservation/drain checks passed; phaseB used corrected fail-closed sequencing.",
+    "Two obsolete SDK executable copies were retired only after exact recoverable host backups and quiescent reference proofs; current SDK/runner, evidence/configuration and all sessions retained.",
+    "Historical Linux SDKON evidence was epoch27; the fresh current777 service proof above validates epoch39.",
+    "No creation-OFF/mobile/Files/native resize cursor/long-term renewal or combined-release acceptance implied."
+  ],
+  "private_evidence_receipts_sha256": {
+    "R29_creation_saved_reconnect": "0bf3b07ba7741156f085320f202fee167b471c103f7477049b60c5b0aa6793e8",
+    "R30_two_fresh_pairs": "7e42d824e9bc5df5f64d6817349934a2d69e2bdec54f1b144d4774f429069cd4",
+    "Linux_local_R20": "7830c74e5ef452dc6428bca7ef290bcbdf17651bd33bdf455238aef646607f08",
+    "currentSDK_LinuxON": "e4ae8db8a5e31d8ea0b35157e053c19640003502c1893f7c0235cc92c5ccbd5b"
+  },
+  "original_artifacts": {
+    "local74x20.png": {
+      "bytes": 113154,
+      "sha256": "8fa5a491a64a5b6f8c9f69871616a9c43e72cbd186292576d6b6b66f60b684a7"
+    },
+    "local70x19.png": {
+      "bytes": 106924,
+      "sha256": "37febfab55264e14e4c634b1810c5988ed434e1634b4cb7dab844b173817c13f"
+    },
+    "local74x20-capabilities.json": {
+      "bytes": 1380,
+      "sha256": "43fe1ca71dc21801b57b6b318e629fb60b5cfb78d33febf66e938fe6597e2bfb"
+    },
+    "local70x19-capabilities.json": {
+      "bytes": 1380,
+      "sha256": "073e71e9f8060b6b36ffc8e4107f673de1221638a52a71c186f0f70fe30aa53f"
+    },
+    "remote74x20.png": {
+      "bytes": 136424,
+      "sha256": "4b499be523e15e7156d0051cab917cee52d180bd6f0a69ecd5b852775adfaec9"
+    },
+    "remote70x19.png": {
+      "bytes": 113233,
+      "sha256": "57005b1c7a5446cc292110f08cee6f163e60580b820124c08e51c5099b94926e"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 2580,
+      "sha256": "b6e572846f72866becef1f7611f28a96a3e320738783109f8dd90473ce66a58e"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 2580,
+      "sha256": "81db68cce17e96fb6980195b41010b4d5e7a4388351d3b3e5d632679320f1dcf"
+    },
+    "creation-form.png": {
+      "bytes": 116605,
+      "sha256": "bbfd81e600f2a7ae94886e0bd30c17a8b5358ab329f6d5e5d186577f78fe518b"
+    },
+    "saved-reconnect.png": {
+      "bytes": 136959,
+      "sha256": "a32c7c571e643e4ad8b96c4b01233e5dff05a16939eb79007fb74506dc89c351"
+    }
+  }
+}

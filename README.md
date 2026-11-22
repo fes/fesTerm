@@ -81,7 +81,10 @@ adds named creation, saved exact-generation reconnect and two fresh Copilot pair
 The [Linux-client/Mac-server creation-OFF record](validation/dev-tunnels/linux-client-mac-native.json)
 adds normal host selection, stopped/private-profile refusal, same-generation
 reconnection and two fresh Copilot pairs.
-These six accepted cases use pinned cohorts; the full 24-case matrix and
+The [Mac-client/Linux-server creation-ON record](validation/dev-tunnels/mac-client-linux-native.json)
+adds named creation, saved generation-pinned reconnection, two fresh Copilot pairs
+and a current-server controlled service check.
+These seven accepted cases use pinned cohorts; the full 24-case matrix and
 combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
