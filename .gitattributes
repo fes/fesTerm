@@ -38,3 +38,9 @@ validation/dev-tunnels/linux-owner-first-result-0.17.19/*.json -text
 # Preserve original rooted Files native proof and uploaded public payload bytes.
 validation/dev-tunnels/linux-files-native-readwrite/*.json -text
 validation/dev-tunnels/linux-files-native-readwrite/r36payload.md -text
+
+# Preserve original finite native post-manager observation evidence.
+validation/dev-tunnels/linux-owner-after-manager-busy/*.json -text
+
+# Preserve original reviewed Files deletion diagnostics and proof bytes.
+validation/dev-tunnels/linux-files-native-reviewed-delete/*.json -text

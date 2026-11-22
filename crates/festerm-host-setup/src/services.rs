@@ -1150,7 +1150,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         observe_start(
             &self.state,
             StartStage::AfterManagerFence,
-            self.fence(epoch, Phase::Provisioned),
+            self.start_observation_fence(&snapshot, &guard, &check),
         )?;
         let mut process = observe_start(
             &self.state,
@@ -1164,7 +1164,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             observe_start(
                 &self.state,
                 StartStage::AfterManagerFence,
-                self.fence(epoch, Phase::Provisioned),
+                self.start_observation_fence(&snapshot, &guard, &check),
             )?;
             std::thread::sleep(std::time::Duration::from_millis(25));
             process = observe_start(
@@ -1176,7 +1176,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         observe_start(
             &self.state,
             StartStage::FinalFence,
-            self.start_final_fence(&snapshot, &guard, &check),
+            self.start_observation_fence(&snapshot, &guard, &check),
         )?;
         if process == ProcessState::Transitioning {
             return Ok(observation(&snapshot, process));
@@ -1188,9 +1188,10 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(observation(&snapshot, process))
     }
 
-    // The manager and credential checks have already completed. Retain the
-    // original operation deadline; wait only for a fresh matching final read.
-    fn start_final_fence(
+    // Starting or observing the manager can overlap its protected journal writes.
+    // Retain the original operation deadline; wait only for a fresh matching
+    // post-manager snapshot, without replaying manager or credential work.
+    fn start_observation_fence(
         &self,
         expected: &Snapshot,
         guard: &native::OperationGuard,

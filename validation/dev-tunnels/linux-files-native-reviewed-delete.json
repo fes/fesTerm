@@ -1,0 +1,251 @@
+{
+  "record_version": 1,
+  "status": "scoped native client reviewed-delete Cancel/Confirm pass; owner first-completion FAILED",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "owner_observation_followup": "https://github.com/fes/fesTerm/issues/842",
+  "stable_edges": [
+    "HOST-04",
+    "DTFILES-01",
+    "DTFILES-03",
+    "DTFILES-04"
+  ],
+  "manual_checks": [
+    "DT-05",
+    "DT-07"
+  ],
+  "direction": {
+    "client": "macOS VM",
+    "server": "Linux VM"
+  },
+  "not_a_new_matrix_case": true,
+  "desktop_accepted_case_count": 8,
+  "matrix_total": 24,
+  "combined_release_qualified": false,
+  "sources": {
+    "owner_frontend": {
+      "source": "f9da836c2190a907315a2c4d53fc96521980366a",
+      "version": "0.17.19",
+      "unsigned_development_GUI": true,
+      "MAIN_sha256": "87b563014607b0e900d0f9c3049a9f354c9ee9bea23e4f65cfe48eb05454a249",
+      "retained12_support_source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "normal_owner_operations_in_process": true
+    },
+    "client_frontend": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "version": "0.17.19",
+      "signed_test_package": true,
+      "official_release_asset": false,
+      "producer_run": 45000692201,
+      "attempt": 1,
+      "artifact": 14745894424,
+      "publisher_team": "F884J4784J",
+      "MAIN_sha256": "31d60556c9a59bdd46b47e0f530bd89147d3f267470ac4e4db655dff2c715710",
+      "before_PR862_header_fix": true
+    },
+    "HOST": {
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "version": "0.17.19",
+      "same_existing_authenticated_complete_bundle": true,
+      "image_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2",
+      "archive_sha256": "6ef16be24fe1fa83b12dc44440f651317327639cc0357330f60bb1f142f05692",
+      "not_upgraded_or_replaced": true
+    }
+  },
+  "owner_first_result": {
+    "Disable45_to_actualDisabled46": true,
+    "separate_Enable47_delete_only_grant": "actual Provisioned47/Listening47 but FIRST GUI owner observation FAILED",
+    "diagnostic": [
+      {
+        "time": "2026-11-22T13:17:22Z",
+        "pid": 1751605,
+        "code": "host.start_observation",
+        "stage": "after_manager_fence",
+        "kind": "busy",
+        "os": "none"
+      },
+      {
+        "time": "2026-11-22T13:17:22Z",
+        "pid": 1751605,
+        "code": "host.enable_completion",
+        "epoch": "47",
+        "stage": "service_start",
+        "outcome": "error",
+        "kind": "busy",
+        "failure": "observation",
+        "os": "none",
+        "reason": "unknown"
+      }
+    ],
+    "no_Refresh_Start_Enable_replay": true,
+    "exact_failure_boundary": "host.start_observation after_manager_fence busy; enable_completion service_start observation error. Exact contentioncause unproved.",
+    "first_failure_receipt_sha256": "6a6e3f4cf25ad587e6109745dceecab864cd729fbb6e3a89348508631d734226"
+  },
+  "separate_client_authorization": {
+    "source": "Parent/root explicit new disposition after independently reviewing captured R37 owner failure and actual backend47 preservation.",
+    "scope": "CLIENT ONLY against already running authorized write/delete grant47; no owner retry, Refresh or Enable; original18MiB entryfloor without reset; newclientlease1800/1605/195, firstfailurestop.",
+    "not_fallback_or_owner_success": true
+  },
+  "actual_backend": {
+    "pid": 1756588,
+    "birth_ticks": "41241392",
+    "epoch": 47,
+    "run": "47fb87bb-80f9-4edd-a8e8-f15a1173cd33",
+    "state": "listening",
+    "failure": null,
+    "host_id": "ec4179ea-a8aa-4cd1-97cc-65dc66500825",
+    "installation": "b3f5bf16-dbae-4ad2-892d-115890b1f130",
+    "locator": "festerm-90d265f22b4e46f0a046be499b4a6650.usw2",
+    "root": "/home/evidence/festermfiles18",
+    "write": true,
+    "delete": true,
+    "creation": false,
+    "other_settings_binding_unchanged": true
+  },
+  "client_functional": {
+    "normal_top_level_Files_discovery_exact_locator_beforeselection": true,
+    "existing_account_noauthloop": true,
+    "native_review_count": 4,
+    "file": {
+      "path": "/r36rw/r36payload.md",
+      "dev": 2050,
+      "inode": 3439264,
+      "uid": 1000,
+      "mode": "0600",
+      "bytes": 1872,
+      "sha256_before": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "UIreview": "Exactpath, File1.8KiB andmodifiedtime; roundeddisplay, native1872B/identity/hash readback independentlypinned.",
+      "first_review_Cancel_initially_focused": true,
+      "explicit_Cancel_preserved_sameinode_andbytes": true,
+      "fresh_review_ONE_Confirm": true,
+      "native_after": "file absent; same parentdirectoryinode3439216 empty"
+    },
+    "directory": {
+      "path": "/r36rw",
+      "dev": 2050,
+      "inode": 3439216,
+      "uid": 1000,
+      "mode": "0700",
+      "UIreview": "Exactpath, Folder0B andmodifiedtime; nativeemptydirectory sameinode independentlypinned.",
+      "first_review_Cancel_initially_focused": true,
+      "explicit_Cancel_preserved_sameemptyinode": true,
+      "fresh_review_ONE_Confirm": true,
+      "native_after": "directory absent; only original3rootentries remain"
+    },
+    "capability_attribution": "Pinned566 ReadyV3 advertises delete iffwrite&&delete;777 open_files_reviewed passes advertisedcapability into liveFilesSource. Successful exact server-backed EntryReview dialogs demonstrate reviewedrole functionality; no rawwirecapture or capabilityclaim frombuttoncoloralone.",
+    "Delete_or_review_retry_on_uncertain": false
+  },
+  "preservation": {
+    "Linux20_actor_birth_exe_SHA_exact": true,
+    "full_catalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "profiles": 8,
+    "sessions": 13,
+    "operations": 38,
+    "catalog_oractor_delta": null,
+    "protected7_unchanged_through_clientphase": true,
+    "root_dev_inode_uid_mode_unchanged": true,
+    "allold3children_inode_uid_mode_mtime_bytes_SHA_exact": true,
+    "oldchildren": [
+      "readme.md50B/3d84cf37",
+      "download.txt33B/23027bc3",
+      "emptydir"
+    ],
+    "only_approved_removed": [
+      "r36rw/r36payload.md",
+      "r36rw"
+    ],
+    "Mac_originals_HOST11_pair_catalog1a202_exact": true,
+    "source_configs_immutable": "R36ownerdd930/client0db6 unchanged; newprivateclones workspace only, accounts/profiles/recipes exact"
+  },
+  "normal_cleanup": {
+    "ownerGUI1751605_exit0_drained_beforeclient": true,
+    "clientGUI9405_exit0": true,
+    "helpers_empty": true,
+    "wrapper_absent": true,
+    "carrier_unloaded": true,
+    "closed_unix": 1795354157.34909,
+    "work_cutoff": 1795355502,
+    "hard": 1795355697
+  },
+  "budget": {
+    "entry": 3234357248,
+    "effective_floor": 3215482880,
+    "whole_increment_budget": 18874368,
+    "continuing_floor": 3203010560,
+    "no_reset": true,
+    "finalfree": 3233968128,
+    "whole_increment_growth_bytes": 389120
+  },
+  "remaining_limits": [
+    "OwnerfirstobservationFAILED remainsunqualified; this client result is not an owner lifecyclePASS or corrected-source nativequalification.",
+    "Client777 predates PR862 headerfix; overlappingremoteheader/unknownlistingmetadata retained.",
+    "No native directDenied/rootescape/rootreplacement/revocation/interruption/nonemptydirectory/link substitution/otherOSmatrix qualification.",
+    "No newdesktopcase/mobile/MCP/fullrelease, account/model/paidrequest or credentialexport claim.",
+    "No native proof of the later bounded after-manager observation fix: these actions ran the older F9 owner.",
+    "No cross-OS reviewed-delete matrix acceptance beyond this Mac client/Linux server controlled fixture; other OS pairs, accessibility/usability and native boundary failures remain open."
+  ],
+  "private_receipts_sha256": {
+    "first_owner_failure": "6a6e3f4cf25ad587e6109745dceecab864cd729fbb6e3a89348508631d734226",
+    "independent_client_pass": "bb9abdc88bfb32f8f9349344a2a161e034bd7b6001f09d444ece8585dd27d3ba",
+    "public_closed_proof": "cba7f5424cc61f6a340f1c4aa3658aca8eec07471aec7d96c94caf1cfeac363b",
+    "byte_original_handoff": "1361cecc0ca4217dcfac0784202783949855657fd5797037c84a92aa4c3fc180"
+  },
+  "artifact_directory": "linux-files-native-reviewed-delete",
+  "original_artifacts": {
+    "owner-delete-grant-review.png": {
+      "bytes": 167039,
+      "sha256": "a9a9685ac493aba3a65758daef827d1844fa6a604a3745300b9e3c941b0f6193"
+    },
+    "owner-first-enable-warning.png": {
+      "bytes": 174463,
+      "sha256": "edff308b89a8196745da1733da3c542d43cb0bc3a39800458531aa2b9b3990a8"
+    },
+    "owner-finite-phases.json": {
+      "bytes": 10362,
+      "sha256": "bffb8b5820d61696738e4d7593e2c6b5bfa5713c54461e0ffd9e64241bb0f7bf"
+    },
+    "exact-locator-before-selection.png": {
+      "bytes": 89596,
+      "sha256": "8e64c0b08858a3df9588a7f266a06915754f01bd1eddf35e6a3418570d8bf700"
+    },
+    "file-review-before-cancel.png": {
+      "bytes": 369039,
+      "sha256": "554764a0498ad4efd31fe8956536acd319f0731fb576394a2b15eb43b78074d0"
+    },
+    "file-cancel-result.png": {
+      "bytes": 126524,
+      "sha256": "a1d70970ac3684d21130ccb571019328e681d27d9ba1f58b53f1550eb4bfeb30"
+    },
+    "file-fresh-review-before-confirm.png": {
+      "bytes": 369039,
+      "sha256": "554764a0498ad4efd31fe8956536acd319f0731fb576394a2b15eb43b78074d0"
+    },
+    "file-confirm-result.png": {
+      "bytes": 124165,
+      "sha256": "c823f71452f11aca26200eda288b6efbc4b359a97acccfa57217393397a19cb0"
+    },
+    "directory-review-before-cancel.png": {
+      "bytes": 373162,
+      "sha256": "c941fab0e8d63d67e0f243f10f1f0341838535ec1b47b2f859328a3fcff32096"
+    },
+    "directory-cancel-result.png": {
+      "bytes": 136564,
+      "sha256": "f1fab541eb1f4e758ecfcd967b539272d9e8acb06b927d9faa3ea2515af3c43a"
+    },
+    "directory-fresh-review-before-confirm.png": {
+      "bytes": 373162,
+      "sha256": "c941fab0e8d63d67e0f243f10f1f0341838535ec1b47b2f859328a3fcff32096"
+    },
+    "directory-confirm-result.png": {
+      "bytes": 123165,
+      "sha256": "73e8567906dc1b5b75c5af306b374bd03aea5eafae22aac9743d75c6bda963d0"
+    },
+    "original-three-remain.png": {
+      "bytes": 133910,
+      "sha256": "32c0621e6357422a9b8a435e8832046ab6a474b061b304dac1f01029c0442d77"
+    },
+    "closed-client-delete-preservation.json": {
+      "bytes": 5879,
+      "sha256": "cba7f5424cc61f6a340f1c4aa3658aca8eec07471aec7d96c94caf1cfeac363b"
+    }
+  }
+}

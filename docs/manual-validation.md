@@ -2768,6 +2768,23 @@ Files delete refusal, root escape, revocation/cutover, uncertain or interrupted
 publication, larger/recursive transfers, other OS combinations and packaged
 accessibility/usability remain open; no mobile/MCP or full-release claim follows.
 
+A separate [pinned native reviewed-delete check](../validation/dev-tunnels/linux-files-native-reviewed-delete.json)
+keeps its first owner failure distinct from its client result. Normal
+Disable45→Disabled46 and a delete-only grant Enable47 left the Linux HOST
+Listening47, but the older F9 owner reported `after_manager_fence` Busy through
+`service_start`; no Refresh, Start or Enable was replayed. After that captured
+failure, a separately reviewed client-only phase used signed Mac GUI777 against
+the already-running grant. Four server-backed entry reviews displayed the exact
+owned R36 file and then its empty parent: Cancel initially had focus, explicit
+Cancel preserved each target, and a fresh review/Confirm removed only that target.
+Native readbacks preserved all 20 actors, full catalog and original three fixture
+entries; both owned GUIs exited normally. This qualifies the bounded client
+Cancel/Confirm function, not a successful owner first result or native execution
+of the later source fix. The older client’s header overlap remains visible.
+Direct denial, boundary/revocation/interruption, other OS combinations and broader
+usability remain open; the desktop count stays eight, with no mobile/MCP or
+combined-release claim.
+
 ### Rooted Dev Tunnels client engine
 
 The ADR 0067 portable client and shared ordinary Files connector are bounded
@@ -6100,11 +6117,17 @@ startup failed or that the manager should be replayed. Missing events remain
 inconclusive. Capture the first result, then use the existing explicit read-only
 Refresh and supported recovery flow. These taps preserve the exact original
 result, error payload and deadline; no retry or new state acceptance is added.
-Native first-result qualification of the original #842 contention remains open.
+Native first-result qualification of the original #842 contention remains open. A later
+[Linux native observation](../validation/dev-tunnels/linux-owner-after-manager-busy.json)
+records a distinct `after_manager_fence` Busy while the backend reached Listening;
+all existing actors/files survived and the first warning was preserved without
+Refresh or Start/Enable replay. Deterministic lease tests cover the additional
+post-manager wait, but native qualification of that correction remains pending.
 
-The final post-observation start fence separately waits only for Busy within
-the original native operation deadline, rechecking the full captured snapshot
-and existing guard callback without replaying manager or credential work.
+The post-manager lifecycle fences and final post-observation start fence
+wait only for Busy within the original native operation deadline, rechecking
+the full captured snapshot and existing guard callback without replaying
+manager or credential work.
 Exhaustion returns the original Busy; no Linux cancellation facility is added.
 With a corrected native frontend/test build using the existing authenticated
 HOST components, apply platform signing gates where applicable. Preserve the

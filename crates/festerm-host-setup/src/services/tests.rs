@@ -3571,25 +3571,30 @@ fn native_start_registration_read_reports_real_post_fence_journal_contention() {
 }
 
 #[cfg(unix)]
-fn start_final_fence_contention(case: &str) {
+fn start_observation_fence_contention(case: &str, after_manager: bool) {
     use std::{cell::Cell, rc::Rc};
     struct ContendedObservation {
         native: FakeRunner,
         held: Rc<RefCell<Option<Lease>>>,
         started: Cell<bool>,
+        after_manager: bool,
     }
     impl CommandRunner for ContendedObservation {
         fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
             let output = self.native.execute(request)?;
             if let NativeRequest::Process { args, .. } = request {
-                if args.iter().any(|arg| arg == "start") {
+                let contend = if args.iter().any(|arg| arg == "start") {
                     self.started.set(true);
-                } else if args.iter().any(|arg| arg == "show")
-                    && self.started.replace(false)
-                    && self.native.state.borrow().running
-                {
-                    // Acquire only after the successful post-manager Running
-                    // observation. The first final-fence read must see Busy.
+                    self.after_manager
+                } else {
+                    args.iter().any(|arg| arg == "show")
+                        && self.started.replace(false)
+                        && self.native.state.borrow().running
+                        && !self.after_manager
+                };
+                if contend {
+                    // Hold the actual journal lease immediately after Start,
+                    // or after the post-manager Running observation.
                     let directory =
                         storage::private_directory(self.native.receipt.parent().unwrap(), false)?;
                     *self.held.borrow_mut() = Some(Lease::exclusive(storage::open_private_file(
@@ -3619,6 +3624,7 @@ fn start_final_fence_contention(case: &str) {
             native: base.runner,
             held: held.clone(),
             started: Cell::new(false),
+            after_manager,
         },
     };
     let reads = Cell::new(0);
@@ -3727,7 +3733,7 @@ fn start_final_fence_contention(case: &str) {
 #[cfg(unix)]
 #[test]
 fn native_start_final_fence_waits_for_same_snapshot_without_replaying_manager() {
-    start_final_fence_contention("released");
+    start_observation_fence_contention("released", false);
 }
 
 #[cfg(unix)]
@@ -3741,6 +3747,27 @@ fn native_start_final_fence_refuses_expired_cancelled_fatal_and_superseded_reads
         "superseded",
         "snapshot",
     ] {
-        start_final_fence_contention(case);
+        start_observation_fence_contention(case, false);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_post_manager_fence_waits_for_same_snapshot_without_replaying_manager() {
+    start_observation_fence_contention("released", true);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_post_manager_fence_refuses_expired_cancelled_fatal_and_superseded_reads() {
+    for case in [
+        "expired",
+        "expired_retry",
+        "cancelled",
+        "fatal",
+        "superseded",
+        "snapshot",
+    ] {
+        start_observation_fence_contention(case, true);
     }
 }

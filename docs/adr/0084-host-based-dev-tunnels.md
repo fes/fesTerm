@@ -2695,6 +2695,18 @@ macOS. Windows retains the shared admission/lease tests; its production context
 must still reject elevated or service accounts before that lease gate. The Unix
 fixtures do not claim ordinary-user Windows native startup qualification.
 
+### Validation impact: post-manager lifecycle observation
+
+`HOST-04` also covers the lifecycle read immediately after native manager work.
+That read can overlap protected journal writes even when the manager has started
+the HOST. It shares the existing final-fence Busy-only observation helper, exact
+captured snapshot and original native operation budget; it never repeats manager
+or credential work. Expiry retains Busy, and changed scope, cancellation and
+other failures keep their existing refusal semantics. Actual journal-lease tests
+cover both post-manager and final-fence release/refusal cases. The recorded
+Linux `after_manager_fence` warning predates the correction; corrected native
+first-result and other-platform qualification remain separate gates.
+
 ### Validation impact: stopped reviewed-policy changes
 
 Changing generic creation remains an explicit Disable, reviewed Enable, then
