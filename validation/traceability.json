@@ -6885,7 +6885,14 @@
         "apple_empty_acl_private_file_and_directory_remain_idempotently_private",
         "ordinary_desktop_independent_fixture_does_not_share_native_credential_lease",
         "duplicate_host_names_hover_reveals_exact_locator_without_selecting_or_executing",
-        "profile_host_picker_duplicate_name_tooltips_keep_the_existing_review_identity"
+        "profile_host_picker_duplicate_name_tooltips_keep_the_existing_review_identity",
+        "explicit_program_empty_arguments_default_to_account_home_not_service_cwd",
+        "explicit_directory_and_no_profile_arguments_are_never_rewritten",
+        "generic_shell_uses_account_login_defaults_and_host_home",
+        "corrected_path_is_used_before_canonical_spawn_and_fingerprint",
+        "native_home_and_path_defaults_preserve_explicit_environment_choices",
+        "native_zsh_reads_only_the_private_fixture_home_startup",
+        "oversized_startup_output_is_bounded_and_refused"
       ],
       "manual_scenarios": [
         "DT-05",

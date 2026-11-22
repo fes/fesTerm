@@ -3017,10 +3017,14 @@ fn count_output(shared: &Shared, output: Vec<u8>) -> SessionEvent {
 /// a native persistent session render UTF-8 glyphs and resolve `PATH`
 /// correctly when fesTerm itself was launched from Finder/Launchpad under
 /// launchd. An explicit environment map containing any other key is
-/// rejected below: persistent sessions do not otherwise support arbitrary
+/// rejected below. Native host account HOME/USERPROFILE is also forwardable;
+/// persistent sessions do not otherwise support arbitrary
 /// per-profile environment overrides.
-fn is_launchd_correction_variable(key: &std::ffi::OsStr) -> bool {
-    const ALLOWED: [&str; 4] = ["PATH", "LANG", "LC_ALL", "LC_CTYPE"];
+fn is_local_startup_variable(key: &std::ffi::OsStr) -> bool {
+    #[cfg(unix)]
+    const ALLOWED: [&str; 5] = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "HOME"];
+    #[cfg(windows)]
+    const ALLOWED: [&str; 5] = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "USERPROFILE"];
     ALLOWED
         .iter()
         .any(|name| key.to_string_lossy().eq_ignore_ascii_case(name))
@@ -3134,9 +3138,7 @@ fn connect_or_start(
     match profile.environment() {
         EnvironmentPolicy::Inherit => {}
         EnvironmentPolicy::InheritWith(environment)
-            if environment
-                .keys()
-                .all(|key| is_launchd_correction_variable(key)) =>
+            if environment.keys().all(|key| is_local_startup_variable(key)) =>
         {
             command.envs(environment);
         }
@@ -6748,16 +6750,19 @@ mod tests {
     }
 
     #[test]
-    fn launchd_correction_allowlist_accepts_path_and_locale_only() {
+    fn local_startup_allowlist_accepts_path_locale_and_native_home_only() {
         for allowed in ["PATH", "path", "LANG", "LC_ALL", "LC_CTYPE"] {
             assert!(
-                is_launchd_correction_variable(std::ffi::OsStr::new(allowed)),
+                is_local_startup_variable(std::ffi::OsStr::new(allowed)),
                 "{allowed} should be forwardable to a persistent session"
             );
         }
-        for rejected in ["HOME", "SHELL", "MY_SECRET", "LC_TIME"] {
+        assert!(is_local_startup_variable(std::ffi::OsStr::new(
+            if cfg!(windows) { "USERPROFILE" } else { "HOME" }
+        )));
+        for rejected in ["SHELL", "MY_SECRET", "LC_TIME", "LD_PRELOAD"] {
             assert!(
-                !is_launchd_correction_variable(std::ffi::OsStr::new(rejected)),
+                !is_local_startup_variable(std::ffi::OsStr::new(rejected)),
                 "{rejected} should not be forwardable to a persistent session"
             );
         }

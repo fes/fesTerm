@@ -1172,6 +1172,96 @@ mod imp {
         Ok((account, system_directory()?))
     }
 
+    /// Reads the ordinary current account's profile directory and normal PATH.
+    /// Only PATH leaves the native environment block; no other values are copied.
+    pub fn current_user_profile_and_path() -> io::Result<(PathBuf, Option<std::ffi::OsString>)> {
+        use std::os::windows::ffi::OsStringExt;
+        use windows_sys::Win32::{
+            Security::TOKEN_DUPLICATE,
+            System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock},
+            UI::Shell::GetUserProfileDirectoryW,
+        };
+        // Resolving account metadata grants no native service authority; the
+        // caller's existing service/controller admission remains responsible.
+        let mut token = ptr::null_mut();
+        if unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY | TOKEN_DUPLICATE,
+                &raw mut token,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut home = vec![0_u16; 32768];
+        let mut size = home.len() as u32;
+        if unsafe {
+            GetUserProfileDirectoryW(token.as_raw_handle(), home.as_mut_ptr(), &raw mut size)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let length = home
+            .iter()
+            .position(|v| *v == 0)
+            .ok_or(io::ErrorKind::InvalidData)?;
+        let home = PathBuf::from(std::ffi::OsString::from_wide(&home[..length]));
+        if !home.is_absolute() || !home.is_dir() {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let mut block = ptr::null_mut();
+        if unsafe { CreateEnvironmentBlock(&raw mut block, token.as_raw_handle(), 0) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let result: io::Result<Option<std::ffi::OsString>> = (|| {
+            let start = block.cast::<u16>();
+            let mut offset = 0usize;
+            // OS-owned environment blocks are double-NUL terminated. Bound the
+            // scan and never allocate/copy arbitrary environment entries.
+            while offset < 1024 * 1024 {
+                if unsafe { *start.add(offset) } == 0 {
+                    return Ok(None);
+                }
+                let first = offset;
+                while offset < 1024 * 1024 && unsafe { *start.add(offset) } != 0 {
+                    offset += 1;
+                }
+                if offset == 1024 * 1024 {
+                    return Err(io::ErrorKind::InvalidData.into());
+                }
+                let length = offset - first;
+                if length >= 5 {
+                    let prefix = unsafe { std::slice::from_raw_parts(start.add(first), 5) };
+                    if prefix
+                        .iter()
+                        .copied()
+                        .map(|c| {
+                            if c <= 127 {
+                                (c as u8).to_ascii_uppercase()
+                            } else {
+                                0
+                            }
+                        })
+                        .eq(*b"PATH=")
+                    {
+                        let path =
+                            unsafe { std::slice::from_raw_parts(start.add(first + 5), length - 5) };
+                        return Ok(Some(std::ffi::OsString::from_wide(path)));
+                    }
+                }
+                offset += 1;
+            }
+            Err(io::ErrorKind::InvalidData.into())
+        })();
+        // Always release the complete native block, including failure paths.
+        if unsafe { DestroyEnvironmentBlock(block) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((home, result?))
+    }
+
     /// Resolves the OS system directory without trusting environment variables
     /// or authorizing service installation. Service operations must still use
     /// [`current_user_service_context`] to reject elevated/service accounts.
@@ -4079,20 +4169,20 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
-    create_current_user_only_file_with_audit, current_user_service_context,
-    delete_directory_by_handle, disable_std_handle_inheritance, enable_security_privilege,
-    file_change_time, file_identity, file_link_count, is_current_user_only,
-    lock_directory_for_sync, lock_directory_path_without_delete_sharing, open_directory_no_reparse,
-    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
-    open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
-    open_file_no_reparse_for_verification, open_file_read_write_no_reparse,
-    open_lock_no_reparse_without_delete_sharing, open_private_directory_for_move,
-    open_reviewed_directory_for_move, opened_file_path, remove_private_staging_file,
-    remove_reviewed_empty_directory, remove_reviewed_file, rename_file_noreplace,
-    rename_private_directory_noreplace, rename_reviewed_directory_noreplace, replace_private_file,
-    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
-    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
-    staging_parent_matches, system_directory, trusted_legacy_lock_file,
+    create_current_user_only_file_with_audit, current_user_profile_and_path,
+    current_user_service_context, delete_directory_by_handle, disable_std_handle_inheritance,
+    enable_security_privilege, file_change_time, file_identity, file_link_count,
+    is_current_user_only, lock_directory_for_sync, lock_directory_path_without_delete_sharing,
+    open_directory_no_reparse, open_file_no_reparse, open_file_no_reparse_for_capture,
+    open_file_no_reparse_for_move, open_file_no_reparse_for_security_capture,
+    open_file_no_reparse_for_security_verification, open_file_no_reparse_for_verification,
+    open_file_read_write_no_reparse, open_lock_no_reparse_without_delete_sharing,
+    open_private_directory_for_move, open_reviewed_directory_for_move, opened_file_path,
+    remove_private_staging_file, remove_reviewed_empty_directory, remove_reviewed_file,
+    rename_file_noreplace, rename_private_directory_noreplace, rename_reviewed_directory_noreplace,
+    replace_private_file, require_local_disk_root, restrict_default_dacl_to_current_user,
+    restrict_to_current_user, same_file_identity, secure_staging_parent, security_metadata,
+    security_metadata_matches, staging_parent_matches, system_directory, trusted_legacy_lock_file,
     trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
     StagingParentSecurity, UnsupportedSecurityMetadata,
 };

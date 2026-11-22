@@ -4,6 +4,9 @@
 //! Windows. This crate never imports or mutates `festerm-core`; callers drain
 //! [`SessionEvent`] values and decide when to ingest terminal bytes.
 
+#[cfg(unix)]
+pub mod login_environment;
+
 use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
@@ -215,16 +218,37 @@ pub fn default_local_profile() -> Result<LocalProfile, LocalProfileError> {
 pub fn default_local_profile_with_powershell_preference(
     prefer_powershell: bool,
 ) -> Result<LocalProfile, LocalProfileError> {
+    default_local_profile_with_context(prefer_powershell, None, None, false)
+}
+
+/// Uses the ordinary local-shell policy with host-owned account/environment
+/// defaults. These are resolved locally, never supplied by a remote client.
+pub fn default_local_profile_for_user(
+    prefer_powershell: bool,
+    account_shell: Option<&OsStr>,
+    user_path: Option<&OsStr>,
+) -> Result<LocalProfile, LocalProfileError> {
+    default_local_profile_with_context(prefer_powershell, account_shell, user_path, true)
+}
+
+fn default_local_profile_with_context(
+    prefer_powershell: bool,
+    account_shell: Option<&OsStr>,
+    user_path: Option<&OsStr>,
+    host: bool,
+) -> Result<LocalProfile, LocalProfileError> {
     #[cfg(unix)]
     {
-        let _ = prefer_powershell;
-        discover_unix_shell(std::env::var_os("SHELL").as_deref(), |path| {
+        let _ = (prefer_powershell, user_path, host);
+        let shell = std::env::var_os("SHELL");
+        discover_unix_shell(account_shell.or(shell.as_deref()), |path| {
             path.is_absolute() && path.is_file()
         })
     }
 
     #[cfg(windows)]
     {
+        let _ = account_shell;
         let local_app_data = std::env::var_os("LOCALAPPDATA");
         let path = std::env::var_os("PATH");
         let program_w6432 = std::env::var_os("ProgramW6432").unwrap_or_default();
@@ -235,7 +259,7 @@ pub fn default_local_profile_with_powershell_preference(
             prefer_powershell,
             WindowsShellEnvironment {
                 local_app_data: local_app_data.as_deref(),
-                path: path.as_deref(),
+                path: user_path.or(path.as_deref()),
                 program_files: vec![program_w6432, program_files],
                 comspec: comspec.as_deref(),
                 system_root: system_root.as_deref(),
@@ -244,9 +268,17 @@ pub fn default_local_profile_with_powershell_preference(
             // follow, so `is_file` would wrongly report them as missing.
             |path| {
                 path.is_absolute()
-                    && path
-                        .symlink_metadata()
-                        .is_ok_and(|metadata| !metadata.is_dir())
+                    && path.symlink_metadata().is_ok_and(|metadata| {
+                        // Hosted native launches must pin a real executable;
+                        // an app alias may not be canonicalizable. Keep the
+                        // ordinary GUI alias policy for an ordinary local launch.
+                        if host {
+                            use std::os::windows::fs::MetadataExt;
+                            metadata.is_file() && metadata.file_attributes() & 0x400 == 0
+                        } else {
+                            !metadata.is_dir()
+                        }
+                    })
             },
         )
     }

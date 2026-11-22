@@ -2381,3 +2381,12 @@ ordinary user cancellation is not classified as an OS preparation failure. Windo
 also retain a first fixed native stage, numeric OS code and closed service state
 in that same disclosure; a confirmed non-running service names the prerequisite
 without service/RDP/permission changes. Unknown evidence cannot identify a cause.
+
+### Host shell account defaults (HOST-02 / HOST-03)
+
+Fresh generic creation and Start & Connect resolve omitted cwd on the server
+to its account home, using ordinary local-shell/PATH/startup defaults. Explicit
+launch fields remain exact; reconnect uses the already-issued generation. This
+changes launch defaults on the existing edges, not discovery or authority.
+See ADR-0025/0084 and the manual fresh-shell HOME/PATH scenario; native managed
+qualification remains separate from deterministic launch fixtures.

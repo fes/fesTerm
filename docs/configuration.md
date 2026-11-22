@@ -97,6 +97,17 @@ hyphens.
 
 ### Public host recipes (ADR 0084 foundation)
 
+New hosted shells resolve omitted working directories to the **server account's
+home**, not the background service's current directory or the client's home.
+An omitted shell uses the same platform default as Local Shell (Unix account
+login shell; Windows PowerShell preference with a verifiable installed binary,
+then the command processor). Explicit executables, ordered arguments (including
+an explicitly selected shell with no arguments), and working directories remain
+unchanged. New launches use the host user's normal PATH/startup environment;
+Unix login PATH/locale discovery is bounded and Windows reads only PATH from the
+current account's native environment block. No environment or credentials are
+sent by the client. Existing daemon generations keep their original launch.
+
 Issue [#681](https://github.com/fes/fesTerm/issues/681) adds an **offline
 metadata foundation**, not the stage 6 desktop/mobile connection UI.
 `festerm-client-recipes` owns the same validated public model and commands for

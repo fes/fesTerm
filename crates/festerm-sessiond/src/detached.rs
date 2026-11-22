@@ -44,8 +44,7 @@ fn environment_path(profile: &LocalProfile) -> Result<OsString, PersistentSessio
         EnvironmentPolicy::InheritWith(environment) => {
             let mut keys = std::collections::BTreeSet::new();
             for (key, value) in environment {
-                if !is_launchd_correction_variable(key)
-                    || !keys.insert(text(key)?.to_ascii_uppercase())
+                if !is_local_startup_variable(key) || !keys.insert(text(key)?.to_ascii_uppercase())
                 {
                     return Err(refused("unsupported environment overrides"));
                 }

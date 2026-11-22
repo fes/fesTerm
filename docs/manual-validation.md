@@ -6638,3 +6638,20 @@ native store states, account changes and cancellation; never expose credential
 values/references or infer the original Linux failure's bucket. Later uncertain
 renewal publication keeps its existing fencing and recovery semantics. Native
 message delivery and accessibility remain unqualified.
+
+### HOST-02/HOST-03 fresh-shell home and normal user PATH
+
+On each signed managed macOS, Linux and Windows server, create a fresh generic
+shell and connect to a fresh opted-in stopped profile with omitted cwd. Require
+the server account home and normal user PATH/tool resolution, including a newly
+launched Copilot initial screen, independent of the service cwd and client home.
+Check Unix login startup and Windows normal PowerShell profile loading; explicit
+custom program/argv/cwd and -NoProfile must remain exact. Reattach an existing
+generation across the update and prove its PID/generation/current directory and
+state unchanged. This native matrix is pending for this source change.
+
+Automated evidence covers account-default construction, explicit empty/ordered
+arguments and cwd, corrected bare executable canonicalization/fingerprint,
+HOME/PATH override/Clear preservation, bounded startup/oversized output, and an
+actual zsh startup using only a private fixture HOME. These checks neither
+restart the production Remote shell nor qualify the managed server matrix.
