@@ -1269,21 +1269,22 @@ impl SftpPaneState {
     }
 
     fn selected_total_size(&self) -> Option<u64> {
-        if self.selected_paths.is_empty() {
+        if self.selected_paths.is_empty() || self.stale {
             return None;
         }
         let snapshot = self.snapshot.as_ref()?;
+        if snapshot.path != self.current_path {
+            return None;
+        }
         let mut total = 0_u64;
-        let mut found = false;
+        let mut found = 0;
         for entry in &snapshot.entries {
             if self.selected_paths.contains(&path_key(&entry.path)) {
-                if let Some(size) = entry.size {
-                    total += size;
-                }
-                found = true;
+                total = total.checked_add(entry.size?)?;
+                found += 1;
             }
         }
-        found.then_some(total)
+        (found == self.selected_paths.len()).then_some(total)
     }
 
     fn item_count(&self) -> usize {
@@ -8867,6 +8868,91 @@ pub(crate) mod tests {
             modified_at: None,
             permissions: None,
         }
+    }
+
+    fn selection_footer_pane(sizes: &[Option<u64>]) -> SftpPaneState {
+        let mut pane = SftpPaneState::new(SftpPath::remote("/owned"));
+        let entries: Vec<_> = sizes
+            .iter()
+            .enumerate()
+            .map(|(index, size)| {
+                let name = format!("file-{index}");
+                SftpDirectoryItem {
+                    path: pane.current_path.join_child(&name),
+                    name,
+                    file_type: SftpEntryType::File,
+                    size: *size,
+                    modified_at: None,
+                    permissions: None,
+                }
+            })
+            .collect();
+        let selection = entries.iter().map(|entry| path_key(&entry.path)).collect();
+        pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Remote,
+                path: pane.current_path.clone(),
+                loaded_at: SystemTime::UNIX_EPOCH,
+                entries,
+            },
+            None,
+        );
+        pane.selected_paths = selection;
+        pane
+    }
+
+    #[test]
+    fn selection_footer_preserves_known_zero_and_complete_sum() {
+        let empty = selection_footer_pane(&[]);
+        assert_eq!(footer_summary(&empty), "0 selected");
+        let zero = selection_footer_pane(&[Some(0)]);
+        assert_eq!(zero.selected_total_size(), Some(0));
+        assert_eq!(footer_summary(&zero), "1 selected · 0 B");
+        let sum = selection_footer_pane(&[Some(1024), Some(2048)]);
+        assert_eq!(sum.selected_total_size(), Some(3072));
+        assert_eq!(footer_summary(&sum), "2 selected · 3.0 KiB");
+    }
+
+    #[test]
+    fn selection_footer_omits_unknown_and_stale_sizes() {
+        for case in [
+            "unknown",
+            "mixed",
+            "stale",
+            "missing_entry",
+            "wrong_directory",
+            "missing_snapshot",
+        ] {
+            let mut pane = selection_footer_pane(&[Some(1024), Some(2048)]);
+            match case {
+                "unknown" => {
+                    for entry in &mut pane.snapshot.as_mut().unwrap().entries {
+                        entry.size = None;
+                    }
+                }
+                "mixed" => pane.snapshot.as_mut().unwrap().entries[1].size = None,
+                "stale" => pane.stale = true,
+                "missing_entry" => {
+                    pane.snapshot.as_mut().unwrap().entries.pop();
+                }
+                "wrong_directory" => pane.current_path = SftpPath::remote("/other"),
+                "missing_snapshot" => pane.snapshot = None,
+                _ => unreachable!(),
+            }
+            assert_eq!(pane.selected_total_size(), None, "{case}");
+            assert_eq!(footer_summary(&pane), "2 selected", "{case}");
+        }
+        let unknown = selection_footer_pane(&[None]);
+        assert_eq!(footer_summary(&unknown), "1 selected");
+    }
+
+    #[test]
+    fn selection_footer_omits_overflow_without_losing_selection_count() {
+        let maximum = selection_footer_pane(&[Some(u64::MAX)]);
+        assert_eq!(maximum.selected_total_size(), Some(u64::MAX));
+        let overflow = selection_footer_pane(&[Some(u64::MAX), Some(1)]);
+        assert_eq!(overflow.selected_total_size(), None);
+        assert_eq!(footer_summary(&overflow), "2 selected");
     }
 
     #[test]

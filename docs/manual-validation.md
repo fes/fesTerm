@@ -2717,6 +2717,11 @@ disconnected with Reconnect visible. Native Windows/macOS/Linux text scaling,
 full-value hover hints and screen-reader delivery remain unqualified; the R36
 Files captures below retain the older client’s actual overlapping header.
 
+Selection-footer fixtures cover known zero/complete totals and omit bytes for
+unknown, stale, mismatched or overflowing sizes while retaining the selected
+count. Native Files metadata completeness and footer/help accessibility remain
+manual; no new metadata query or permission follows from this presentation fix.
+
 ### Ordinary HOST rooted files server
 
 The reviewed ADR 0067 HOST Files role is a bounded server/protected-consent
