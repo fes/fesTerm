@@ -1059,6 +1059,15 @@ mod imp {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn clear_apple_acl(file: &File) -> io::Result<()> {
+        // Sandboxed Apple platforms may forbid setting an already-empty ACL.
+        // Read through the same descriptor; read failures remain refusals.
+        if apple_acl(file)
+            .map_err(|error| private_error(Operation::MetadataRead, error))?
+            .is_empty()
+        {
+            return Ok(());
+        }
+
         use std::{
             ffi::c_void,
             os::fd::{AsRawFd, RawFd},
@@ -1501,6 +1510,40 @@ mod tests {
         }
         #[cfg(target_os = "macos")]
         assert!(acl_lines(&directory.0).is_empty());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn apple_empty_acl_private_file_and_directory_remain_idempotently_private() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let directory = TemporaryDirectory::new();
+        fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o700)).unwrap();
+        let handle = directory.open();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(directory.path("private"))
+            .unwrap();
+        // The host's temporary directory may carry an inherited ACL. Normalize
+        // this owned fixture first, then exercise the already-empty path twice.
+        make_private(&file).unwrap();
+        make_private_directory(&handle).unwrap();
+        assert!(is_current_user_only(&file, false).unwrap());
+        assert!(is_current_user_only(&handle, true).unwrap());
+        for _ in 0..2 {
+            make_private(&file).unwrap();
+            make_private_directory(&handle).unwrap();
+            assert!(is_current_user_only(&file, false).unwrap());
+            assert!(is_current_user_only(&handle, true).unwrap());
+        }
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            handle.metadata().unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -6823,7 +6823,8 @@
         "ordinary_malformed_record_diagnostic_precedes_vault_or_replacement",
         "private_storage_context_preserves_sanitized_errno_and_leaves_unmapped_errors_unchanged",
         "acl_set_errno_is_captured_before_free_and_primary_failure_survives_cleanup_failure",
-        "ordinary_record_publication_keeps_actual_exclusive_rename_operation_and_errno"
+        "ordinary_record_publication_keeps_actual_exclusive_rename_operation_and_errno",
+        "apple_empty_acl_private_file_and_directory_remain_idempotently_private"
       ],
       "manual_scenarios": [
         "DT-05",
