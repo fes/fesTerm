@@ -3771,3 +3771,243 @@ fn native_start_post_manager_fence_refuses_expired_cancelled_fatal_and_supersede
         start_observation_fence_contention(case, true);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_bootout_waits_for_unqualified_read_then_absence_without_replay() {
+    struct SettlingBootout {
+        native: FakeRunner,
+        bootout: std::cell::Cell<bool>,
+        queries: std::cell::Cell<usize>,
+    }
+    impl CommandRunner for SettlingBootout {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let mut output = self.native.execute(request)?;
+            let NativeRequest::Process { args, .. } = request else {
+                return Ok(output);
+            };
+            if args.iter().any(|arg| arg == "bootout") {
+                self.bootout.set(true);
+            } else if self.bootout.get() && args.first().is_some_and(|arg| arg == "print") {
+                let n = self.queries.replace(self.queries.get() + 1);
+                if n == 0 {
+                    let record: Registration =
+                        serde_json::from_slice(&std::fs::read(&self.native.receipt)?)?;
+                    // A valid exact definition with an unqualified state. It
+                    // must never be accepted as stopped; the next fresh read
+                    // observes native absence after this single bootout.
+                    output.success = true;
+                    output.code = 0;
+                    output.stdout = format!(
+                        "path = {}\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = unqualified-test-state\n",
+                        self.native.definition.display(), record.executable.display(), record.executable.display(),
+                        definitions::record_runner_verb(&record), record.state.display(),
+                    ).into_bytes();
+                }
+            }
+            Ok(output)
+        }
+    }
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let base = services(root.path(), &store, Platform::Macos);
+    base.install(&stage, snapshot.epoch).unwrap();
+    base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    let manager = Services {
+        store: &store,
+        state: base.state,
+        context: base.context,
+        runner: SettlingBootout {
+            native: base.runner,
+            bootout: std::cell::Cell::new(false),
+            queries: std::cell::Cell::new(0),
+        },
+    };
+    assert_eq!(
+        manager.stop(revoked.epoch).unwrap().process,
+        ProcessState::Absent
+    );
+    assert_eq!(manager.runner.queries.get(), 2);
+    assert_eq!(store.snapshot().unwrap(), revoked);
+    assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request|
+        matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+    ).count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_macos_unqualified_stop_preserves_deadline_fatal_and_scope_refusals() {
+    struct UnqualifiedStop<'a> {
+        native: FakeRunner,
+        store: &'a Store,
+        case: &'static str,
+        bootout: std::cell::Cell<bool>,
+        queries: std::cell::Cell<usize>,
+    }
+    impl CommandRunner for UnqualifiedStop<'_> {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let mut output = self.native.execute(request)?;
+            let NativeRequest::Process { args, .. } = request else {
+                return Ok(output);
+            };
+            if args.iter().any(|arg| arg == "bootout") {
+                self.bootout.set(true);
+            } else if self.bootout.get() && args.first().is_some_and(|arg| arg == "print") {
+                let query = self.queries.get() + 1;
+                self.queries.set(query);
+                if query == 1 {
+                    if self.case == "wrong_kind" {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "host.service_observation_unqualified",
+                        ));
+                    }
+                    if self.case == "wrapped_reason" {
+                        return Err(io::Error::other(
+                            "fixture: host.service_observation_unqualified",
+                        ));
+                    }
+                    let record: Registration =
+                        serde_json::from_slice(&std::fs::read(&self.native.receipt)?)?;
+                    output.success = true;
+                    output.code = 0;
+                    output.stdout = format!(
+                        "path = {}\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = unqualified-test-state\n",
+                        self.native.definition.display(),
+                        record.executable.display(),
+                        record.executable.display(),
+                        definitions::record_runner_verb(&record),
+                        record.state.display(),
+                    ).into_bytes();
+                    match self.case {
+                        "changed_epoch" => self.store.revoke()?,
+                        "changed_receipt" => {
+                            let mut changed = record;
+                            changed.removed = true;
+                            let directory = storage::private_directory(
+                                self.native.receipt.parent().unwrap(),
+                                false,
+                            )?;
+                            storage::replace_private(
+                                &directory,
+                                Path::new(RECORD),
+                                &serde_json::to_vec(&changed)?,
+                            )?;
+                        }
+                        "changed_definition" => {
+                            std::fs::write(&self.native.definition, b"foreign")?
+                        }
+                        _ => {}
+                    }
+                } else {
+                    assert_eq!(query, 2, "must not replay a fatal observation");
+                    match self.case {
+                        "fatal_read" => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::PermissionDenied,
+                                "fixture.stop_read_denied",
+                            ));
+                        }
+                        "malformed" => {
+                            output.success = true;
+                            output.code = 0;
+                            output.stdout = vec![0xff];
+                        }
+                        _ => panic!("unexpected extra observation for {}", self.case),
+                    }
+                }
+            }
+            Ok(output)
+        }
+    }
+    for case in [
+        "expired",
+        "wrong_kind",
+        "wrapped_reason",
+        "fatal_read",
+        "malformed",
+        "changed_epoch",
+        "changed_receipt",
+        "changed_definition",
+    ] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Macos);
+        base.install(&stage, snapshot.epoch).unwrap();
+        base.start_with(&stage, snapshot.epoch, || Ok(())).unwrap();
+        store.revoke().unwrap();
+        let revoked = store.snapshot().unwrap();
+        let receipt = std::fs::read(&base.runner.receipt).unwrap();
+        let manager = Services {
+            store: &store,
+            state: base.state,
+            context: base.context,
+            runner: UnqualifiedStop {
+                native: base.runner,
+                store: &store,
+                case,
+                bootout: std::cell::Cell::new(false),
+                queries: std::cell::Cell::new(0),
+            },
+        };
+        let result = if case == "expired" {
+            manager.stop_once(revoked.epoch, std::time::Instant::now())
+        } else {
+            manager.stop(revoked.epoch)
+        };
+        let error = result.err().unwrap_or_else(|| panic!("{case} must refuse"));
+        match case {
+            "expired" => {
+                assert_eq!(error.kind(), io::ErrorKind::Other);
+                assert_eq!(error.to_string(), "host.service_observation_unqualified");
+            }
+            "wrong_kind" => {
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                assert_eq!(error.to_string(), "host.service_observation_unqualified");
+            }
+            "wrapped_reason" => assert_eq!(
+                error.to_string(),
+                "fixture: host.service_observation_unqualified"
+            ),
+            "fatal_read" => {
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                assert_eq!(error.to_string(), "fixture.stop_read_denied");
+            }
+            "malformed" => assert_eq!(error.to_string(), "host.service_invalid_observation"),
+            _ => assert_ne!(
+                error.to_string(),
+                "host.service_observation_unqualified",
+                "{case}"
+            ),
+        }
+        assert_eq!(
+            manager.runner.queries.get(),
+            if matches!(case, "fatal_read" | "malformed") {
+                2
+            } else {
+                1
+            },
+            "{case}"
+        );
+        assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request|
+            matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
+        ).count(), 1, "{case}");
+        if case != "changed_epoch" {
+            assert_eq!(store.snapshot().unwrap(), revoked, "{case}");
+        }
+        if case != "changed_receipt" {
+            assert_eq!(
+                std::fs::read(&manager.runner.native.receipt).unwrap(),
+                receipt,
+                "{case}"
+            );
+        }
+    }
+}

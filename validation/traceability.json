@@ -6917,7 +6917,9 @@
         "docs/adr/0084-host-based-dev-tunnels.md#noninitializing-local-catalog-observation",
         "docs/manual-validation.md#startup-catalog-observation-and-first-host-setup",
         "docs/adr/0084-host-based-dev-tunnels.md#macos-post-stop-observation-contention",
-        "docs/manual-validation.md#macos-disable-after-post-stop-contention"
+        "docs/manual-validation.md#macos-disable-after-post-stop-contention",
+        "docs/adr/0084-host-based-dev-tunnels.md#macos-post-stop-unqualified-observations",
+        "docs/manual-validation.md#macos-post-stop-unqualified-state-observation"
       ],
       "decisions": [
         "ADR-0084",
@@ -7301,7 +7303,9 @@
         "profile_status_refuses_symlink_catalog_without_touching_target",
         "startup_catalog_observation_leaves_fresh_desktop_host_initializable",
         "native_service_macos_completed_bootout_waits_for_same_epoch_read_lease",
-        "native_service_macos_completed_bootout_refuses_changed_post_stop_proof"
+        "native_service_macos_completed_bootout_refuses_changed_post_stop_proof",
+        "native_service_macos_bootout_waits_for_unqualified_read_then_absence_without_replay",
+        "native_service_macos_unqualified_stop_preserves_deadline_fatal_and_scope_refusals"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"

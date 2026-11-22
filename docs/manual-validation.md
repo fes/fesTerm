@@ -6486,6 +6486,24 @@ actors/catalog and fresh I/O after separate re-enable. Capture the finite
 exact closed reason. Do not count the portable post-bootout contention fixture
 as native acceptance or as proof that final controller commit contention is fixed.
 
+### macOS post-stop unqualified-state observation
+
+Status: portable regression; corrected signed native first-result check pending.
+GUI97dd's first confirmed Disable reached StopRequested12 and runtime Stopped11
+but returned `observation_unqualified`. A later native query found absence;
+supported completion succeeded at the same epoch12 without a new revoke.
+Subsequent Enable13 reached Listening with shell creation enabled, while its
+first GUI observation returned Busy. Preserve these as separate first failures;
+recovery success is not first-confirmation lifecycle acceptance.
+
+With a corrected signed build, confirm Disable once and capture its first
+result before any Refresh or Recovery. Require actual Disabled completion and
+unchanged original durable actors, catalog and binding. If native stop reads
+remain unqualified, retain the finite completion event and original deadline;
+do not accept an unknown state as stopped or repeat bootout. Capture any safe
+closed state classification without retaining raw native output or credentials.
+The portable unknown-state fixture does not identify the earlier native state.
+
 ### HOST-01/HOST-02 expired client-account renewal (issue #838)
 
 Ordinary Desktop host discovery and foreground shell/Files preparation renew an
