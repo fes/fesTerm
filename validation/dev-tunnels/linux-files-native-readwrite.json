@@ -1,0 +1,248 @@
+{
+  "record_version": 1,
+  "status": "scoped native read/write functional pass; wider qualification remains open",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "stable_edges": [
+    "HOST-04",
+    "DTFILES-01",
+    "DTFILES-02",
+    "DTFILES-03",
+    "DTFILES-04"
+  ],
+  "manual_checks": [
+    "DT-05",
+    "DT-07"
+  ],
+  "direction": {
+    "client": "macOS VM",
+    "server": "Linux VM"
+  },
+  "not_a_new_matrix_case": true,
+  "desktop_accepted_case_count": 8,
+  "matrix_total": 24,
+  "combined_release_qualified": false,
+  "sources": {
+    "Linux_owner_frontend": {
+      "source": "f9da836c2190a907315a2c4d53fc96521980366a",
+      "version": "0.17.19",
+      "unsigned_development_GUI": true,
+      "producer_run": 45016999459,
+      "attempt": 1,
+      "artifact": 14752477282,
+      "MAIN_sha256": "87b563014607b0e900d0f9c3049a9f354c9ee9bea23e4f65cfe48eb05454a249",
+      "retained12_runtime_support_source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "normal_owner_boundary": "Linux owner operations execute in-process; adjacent older setup/bridge/sessiond helpers are excluded from execution. Exact mixed13 map revalidated."
+    },
+    "Linux_HOST": {
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "version": "0.17.19",
+      "authenticated_existing_complete_bundle": true,
+      "archive_sha256": "6ef16be24fe1fa83b12dc44440f651317327639cc0357330f60bb1f142f05692",
+      "image_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2",
+      "not_updated_or_replaced": true
+    },
+    "Mac_client": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "version": "0.17.19",
+      "signed_test_package": true,
+      "official_release_asset": false,
+      "run": 45000692201,
+      "attempt": 1,
+      "artifact": 14745894424,
+      "publisher_team": "F884J4784J",
+      "native_signature_notarization_Gatekeeper_verified": true,
+      "MAIN_sha256": "31d60556c9a59bdd46b47e0f530bd89147d3f267470ac4e4db655dff2c715710"
+    }
+  },
+  "normal_owner": {
+    "Disabled44": {
+      "actual": true,
+      "pending": null,
+      "prior_HOST1728279_absent": true,
+      "FIRST_UI": "20-FIRST-DISABLE-RESULT.png"
+    },
+    "Enable45": {
+      "actualProvisioned": true,
+      "pending": null,
+      "FIRST_service_start": "ok",
+      "FIRST_final_scope": "ok",
+      "Refresh_Retry_recovery": false
+    },
+    "current": {
+      "pid": 1745107,
+      "birth_ticks": "41059503",
+      "epoch": 45,
+      "run": "c71e4832-8031-486a-add7-e00adc61fe69",
+      "state": "listening",
+      "failure": null,
+      "same_authenticated_executable_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2"
+    },
+    "settings": {
+      "changed_only": "filesystem.write false\u2192true",
+      "root": "/home/evidence/festermfiles18",
+      "write": true,
+      "delete": false,
+      "delete_serialization": "omitted; defaultfalse",
+      "creation": false,
+      "same_name_account_provider_owner_manualstartup_binding": true
+    }
+  },
+  "normal_client": {
+    "entry": "normal top-level DevTunnelsFiles /Findhosts, tooltip exact90d beforeselection, Connectonce",
+    "locator": "festerm-90d265f22b4e46f0a046be499b4a6650.usw2",
+    "host_id_from_authoritative_server_binding": "ec4179ea-a8aa-4cd1-97cc-65dc66500825",
+    "observed_connected_locator_matches": true,
+    "root_list": true,
+    "original_readme_preview": true,
+    "remote_mkdir_once": "/r36rw",
+    "upload_once_completed": true,
+    "uploaded_markdown_preview": true,
+    "download_once_completed": true,
+    "final_queue": "2completed /100%",
+    "remote_Delete_selected_payload_disabled_tooltip": true,
+    "direct_native_delete_attempt": "NOT RUN; SDK is shellonly; no direct typed Denied claim"
+  },
+  "controlled_fixture": {
+    "root": "/home/evidence/festermfiles18",
+    "scope": "Public test fixture only; no user files or credentials.",
+    "originals": {
+      "readme.md": {
+        "bytes": 50,
+        "sha256": "3d84cf379ec7c9c5a55c41619633754b33500969ebfc29167e984e3b14cae45a"
+      },
+      "download.txt": {
+        "bytes": 33,
+        "sha256": "23027bc3524b05cdfd9da1545e39a22240397efd8b66a31db339143749f74acb"
+      },
+      "empty": {
+        "type": "empty directory"
+      }
+    },
+    "intended_new_entries": [
+      "r36rw",
+      "r36rw/r36payload.md"
+    ],
+    "new_payload": {
+      "bytes": 1872,
+      "sha256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a",
+      "source_server_download_equal": true
+    },
+    "retained_after_normal_cleanup": true
+  },
+  "preservation": {
+    "Linux_original20_birth_executable_hashes": true,
+    "Linux_fullcatalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "profiles": 8,
+    "sessions": 13,
+    "operations": 38,
+    "catalog_delta": null,
+    "original_root_dev_inode_uid_mode_preserved": true,
+    "old_root_children": [
+      "readme.md50B/3d84cf37",
+      "download.txt33B/23027bc3",
+      "empty"
+    ],
+    "all_old_child_inode_uid_mode_mtime_bytes_SHA_unchanged": true,
+    "only_new_remote_entries": [
+      "r36rw",
+      "r36rw/r36payload.md"
+    ],
+    "new_directory_inode": 3439216,
+    "root_mtime_allowed_for_intended_new_child": true,
+    "Mac_originals_HOST11_pair_catalog1a202": true,
+    "source_configs_immutable": true,
+    "private_clone_delta": "workspace persistence only; accounts/allprofiles/recipes exact"
+  },
+  "normal_cleanup": {
+    "owner_GUI_exit0_and_owned_group_drained": true,
+    "owner_closed_unix": 1795351657.8344994,
+    "Mac_GUI4622_exit0_helpers_empty_wrapperabsent_carrierunloaded": true,
+    "Mac_closed_unix": 1795352142.861005
+  },
+  "disk_budget": {
+    "Linux_entry": 3234828288,
+    "Linux_final_free": 3234455552,
+    "whole_increment_growth_bytes": 372736,
+    "whole_increment18MiB_budget": 18874368,
+    "effective_floor": 3215953920,
+    "continuing_floor": 3203010560,
+    "no_reset": true
+  },
+  "observed_UI_limits": [
+    "The long HOST Files locator overlaps Connected in the remote-pane header; original captures retain the overlap.",
+    "Remote size/modified metadata displays dashes and selected-remote footer shows0B; the native server readback and source/download bytes establish the actual1872B length.",
+    "The Files profile form says remote delete is unavailable; this run qualifies write-only policy with DeleteOFF, not optional reviewed deletion."
+  ],
+  "remaining_native_gates": [
+    "Direct typed Files DeleteDenied was not exercised: current777 SDK is a shell workflow. Disabled GUI control plus source tests do not establish native protocol refusal.",
+    "Enable/reviewed delete/cancel/confirm on files and emptyfolders remains unqualified; no delete permission or deletion was issued.",
+    "Native root escape/link/reparse boundaries, changed-root grants and revocation/cutover remain open.",
+    "Interrupted/uncertain publication, cancellation, collision/replacement, recursive/large transfers, throughput/progress performance and crash recovery remain open.",
+    "Other client/server OS combinations, native keyboard/accessibility/narrow-layout usability and complete Windows/macOS/Linux Files qualification remain open.",
+    "No mobile/MCP, updater/installer, combined release or additional desktop matrix-case acceptance."
+  ],
+  "private_receipts_sha256": {
+    "R36_final": "1d4ee56973c682716e08e8c3a77e9b1fc2db8e46c9fb8726638e4c0b177be48c",
+    "closed_public_proof": "8f41f874cc5bb5f4e204da957172419fc81eef7ec2c06570e5c864d3ec884045",
+    "byte_original_public_handoff": "61446f7739a5d75776ec1dbdbb354a08a4459eac3c4ea0bca9f821c8445f67d9"
+  },
+  "artifact_directory": "linux-files-native-readwrite",
+  "original_artifacts": {
+    "first-disable.png": {
+      "bytes": 71524,
+      "sha256": "a63b746f8dc190d92db6a0eca9447619cb9f8185225d28ec27c36d9fa76851b5"
+    },
+    "first-enable.png": {
+      "bytes": 152070,
+      "sha256": "305a47de892d9c0a435a7ec8b1fe2d55e5adf30380fb82967a9946d1eef6db10"
+    },
+    "first-completion-phases.json": {
+      "bytes": 10619,
+      "sha256": "913c3bedb3fe00b35e1038fcfb413d03f396d3cf22b72ac8e27c45f662b7db22"
+    },
+    "exact-locator-before-selection.png": {
+      "bytes": 89596,
+      "sha256": "8e64c0b08858a3df9588a7f266a06915754f01bd1eddf35e6a3418570d8bf700"
+    },
+    "root-list.png": {
+      "bytes": 133159,
+      "sha256": "e19dcf38cf6a120cca60b7396e73055455355d8966a963c37b0f2db9e1647106"
+    },
+    "original-readme-preview.png": {
+      "bytes": 84824,
+      "sha256": "d6072a85172fde7c201ae2dbafeb647a757ef3b904e800913c71515fc71bb3e5"
+    },
+    "mkdir-review.png": {
+      "bytes": 335946,
+      "sha256": "7d3e13379d4b3e5f359b1fdbf2953ee9c79a130efbbdc263153110d7b61ac9c7"
+    },
+    "mkdir-result.png": {
+      "bytes": 136194,
+      "sha256": "cd34e61d93cb574aa05492f1cca087d2afe8380de4c0fad16322bc7d100dd98e"
+    },
+    "upload-completed.png": {
+      "bytes": 168847,
+      "sha256": "baf731fa6e5868a338a75c5baa653e0711c0d86c794c16c0d783a66d19bdef09"
+    },
+    "uploaded-preview.png": {
+      "bytes": 432996,
+      "sha256": "de34899bfa2276a848686e6fa888947b7c5495737c8d31ea68b0cd80a7d82821"
+    },
+    "download-completed.png": {
+      "bytes": 193836,
+      "sha256": "edf0084071b21138748a8c51a6ec5d12e65aec81f7ca782992daf89285e5a713"
+    },
+    "remote-delete-disabled.png": {
+      "bytes": 206613,
+      "sha256": "69bd9620beaab7834e612b381b75a3b08d6190aea3794305713507d83d787b04"
+    },
+    "closed-fixture-transfer-preservation.json": {
+      "bytes": 4927,
+      "sha256": "8f41f874cc5bb5f4e204da957172419fc81eef7ec2c06570e5c864d3ec884045"
+    },
+    "r36payload.md": {
+      "bytes": 1872,
+      "sha256": "37d8ba1a3f39d370b6faafa0ea5c26156da454871d93ac60e05a9e44ee9aab4a"
+    }
+  }
+}

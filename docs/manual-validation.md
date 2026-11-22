@@ -2711,6 +2711,12 @@ separate PS-02/07/10 evidence.
 | FD-05 | In the GUI SFTP file manager (issue #137): drag selected item(s) between the local and remote panes and confirm the same transfer requests the toolbar/rail buttons would queue are enqueued; drag files from Finder/Explorer onto the remote pane and confirm they upload into its current directory; drag files from Finder/Explorer onto the local pane and confirm the drop is rejected with a factual notice; attempt to drag a remote item out to Finder/Explorer/Desktop and confirm the current, documented limitation (no native OS drag-out; use the transfer buttons to download first). | Native functional + usability | Payload plumbing, enqueue rules, and connection/writability gating are automated; the native Finder/Explorer drag gesture itself (both directions) remains manual |
 | FD-06 | In the GUI SFTP file manager's local pane only, right-click a single item and a multi-selection, choose "Reveal in Finder"/"Show in File Explorer"/"Open Containing Folder", and confirm the OS file manager opens focused on the expected item (single selection) or the first selected item (multi-selection); confirm the action is absent from the remote pane's context menu. | Native functional | Per-platform command construction is automated; actually observing the OS file manager focus/selection remains manual |
 
+Pane-header layout has an automated production-widget check for long host
+identities at 280/460/900 logical-pixel pane widths, both connected and
+disconnected with Reconnect visible. Native Windows/macOS/Linux text scaling,
+full-value hover hints and screen-reader delivery remain unqualified; the R36
+Files captures below retain the older client’s actual overlapping header.
+
 ### Ordinary HOST rooted files server
 
 The reviewed ADR 0067 HOST Files role is a bounded server/protected-consent
@@ -2745,6 +2751,22 @@ legacy setup unchanged. Static capability output is not endpoint readiness or
 native file-transfer qualification.
 Protected owner status/settings JSON can contain the private root; keep it out
 of published qualification artifacts and retain only finite outcomes/public scope.
+
+A [pinned native Mac-to-Linux read/write check](../validation/dev-tunnels/linux-files-native-readwrite.json)
+qualifies normal Disable43→Disabled44→separate Enable45 with only the reviewed
+write grant changed, Delete off and the same public test root. The Linux F9
+foreground owner uses the existing authenticated HOST19/source566 bundle;
+the Mac client is signed GUI777. Normal provider discovery, root enumeration,
+readme preview, one new directory and a 1,872-byte upload/preview/download passed;
+source, server and downloaded bytes have the same SHA-256. Selected remote Delete
+remained disabled. Both GUIs exited normally; all 20 retained actors, catalog
+records and original fixture entries were preserved. These mixed, pinned sources
+qualify this functional increment only and leave the eight accepted desktop
+cases unchanged. The original captures retain the remote-header overlap and
+missing remote size/modified metadata (selected footer shows 0 B). Direct native
+Files delete refusal, root escape, revocation/cutover, uncertain or interrupted
+publication, larger/recursive transfers, other OS combinations and packaged
+accessibility/usability remain open; no mobile/MCP or full-release claim follows.
 
 ### Rooted Dev Tunnels client engine
 

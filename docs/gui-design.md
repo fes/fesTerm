@@ -334,7 +334,9 @@ The launcher may contain:
   connection metadata and trust/authentication flow.
 - **Dev Tunnels Files** — an independent account/host file session in enabled
   builds. Select a host through normal discovery; it needs no shell or daemon
-  session. Reuse the file-manager panes and transfer drawer. Host read/write
+  session. Reuse the file-manager panes and transfer drawer. Pane headers keep
+  connection state/actions visible and truncate long identities with a full-value
+  hover hint. Host read/write
   permission controls uploads and new folders. Deletion of up to 8 files/empty
   folders needs a separate default-off host permission and exact native review
   before the default-Cancel confirmation; old write permission grants no delete.
