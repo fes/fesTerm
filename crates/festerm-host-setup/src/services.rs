@@ -1,6 +1,8 @@
 //! Same-user native host control. Process observations are never host readiness.
 //! CLI management never treats a native process observation as endpoint readiness.
 mod definitions;
+pub(crate) mod start_diagnostics;
+use start_diagnostics::{observe as observe_start, StartStage};
 pub mod native;
 #[cfg(all(feature = "cloud", feature = "host-runtime"))]
 mod reconfiguration;
@@ -1016,7 +1018,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         // One existing native operation covers publisher/self admission AND
         // actual start. Every early error drains its captured workers before
         // this dedicated process may exit; no nested lease or deadline reset.
-        let guard = self.lease()?.drain_before_drop();
+        let guard =
+            observe_start(&self.state, StartStage::ServiceLease, self.lease())?.drain_before_drop();
         let stage = self.reopen_stage_admitted(epoch, Phase::Provisioned, &guard)?;
         stage.require_current_executable()?;
         let repeated = std::cell::Cell::new(false);
@@ -1044,7 +1047,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             ));
         }
         check()?;
-        let guard = self.lease()?;
+        let guard = observe_start(&self.state, StartStage::ServiceLease, self.lease())?;
         self.start_admitted(stage, epoch, credentials, check, guard)
     }
 
@@ -1057,11 +1060,19 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         _guard: native::OperationGuard,
     ) -> io::Result<Observation> {
         self.require_replacement_settled()?;
-        let snapshot = self.fence(epoch, Phase::Provisioned)?;
+        let snapshot = observe_start(
+            &self.state,
+            StartStage::InitialFence,
+            self.fence(epoch, Phase::Provisioned),
+        )?;
         credentials()?;
         check()?;
         stage.revalidate()?;
-        let (_, record) = self.reconciled_registration()?;
+        let (_, record) = observe_start(
+            &self.state,
+            StartStage::RegistrationRead,
+            self.reconciled_registration(),
+        )?;
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         if record.executable != stage.path
             || record.digest != stage.digest
@@ -1071,50 +1082,102 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_explicit_replacement_required"));
         }
         stage.revalidate_registration(&record)?;
-        let before = self.observe(&record)?;
+        let before = observe_start(
+            &self.state,
+            StartStage::BeforeObservation,
+            self.observe(&record),
+        )?;
         if before == ProcessState::Transitioning {
-            self.fence(epoch, Phase::Provisioned)?;
+            observe_start(
+                &self.state,
+                StartStage::FinalFence,
+                self.fence(epoch, Phase::Provisioned),
+            )?;
             return Ok(observation(&snapshot, before));
         }
         if before != ProcessState::Running {
-            self.fence(epoch, Phase::Provisioned)?;
+            observe_start(
+                &self.state,
+                StartStage::BeforeManagerFence,
+                self.fence(epoch, Phase::Provisioned),
+            )?;
             credentials()?;
             check()?;
             check()?;
             match self.context.platform {
-                Platform::Linux => self.run(&["--user", "start", &record.resource])?,
+                Platform::Linux => observe_start(
+                    &self.state,
+                    StartStage::Manager,
+                    self.run(&["--user", "start", &record.resource]),
+                )?,
                 Platform::Macos => {
                     if before == ProcessState::Absent {
                         let path = definitions::definition_path(&self.context, &record);
-                        self.run(&[
-                            "bootstrap",
-                            &format!("gui/{}", record.user),
-                            definitions::path_text(&path)?,
-                        ])?;
+                        observe_start(
+                            &self.state,
+                            StartStage::Manager,
+                            self.run(&[
+                                "bootstrap",
+                                &format!("gui/{}", record.user),
+                                definitions::path_text(&path)?,
+                            ]),
+                        )?;
                     }
-                    self.fence(epoch, Phase::Provisioned)?;
+                    observe_start(
+                        &self.state,
+                        StartStage::BeforeManagerFence,
+                        self.fence(epoch, Phase::Provisioned),
+                    )?;
                     check()?;
-                    self.run(&[
-                        "kickstart",
-                        &format!("gui/{}/{}", record.user, record.resource),
-                    ])?;
+                    observe_start(
+                        &self.state,
+                        StartStage::Manager,
+                        self.run(&[
+                            "kickstart",
+                            &format!("gui/{}/{}", record.user, record.resource),
+                        ]),
+                    )?;
                 }
                 Platform::Windows => {
-                    self.task(&record, TaskAction::Start)?;
+                    observe_start(
+                        &self.state,
+                        StartStage::Manager,
+                        self.task(&record, TaskAction::Start),
+                    )?;
                 }
             }
         }
-        self.fence(epoch, Phase::Provisioned)?;
-        let mut process = self.observe(&record)?;
+        observe_start(
+            &self.state,
+            StartStage::AfterManagerFence,
+            self.fence(epoch, Phase::Provisioned),
+        )?;
+        let mut process = observe_start(
+            &self.state,
+            StartStage::AfterObservation,
+            self.observe(&record),
+        )?;
         for _ in 0..2 {
             if process == ProcessState::Running || process == ProcessState::Failed {
                 break;
             }
-            self.fence(epoch, Phase::Provisioned)?;
+            observe_start(
+                &self.state,
+                StartStage::AfterManagerFence,
+                self.fence(epoch, Phase::Provisioned),
+            )?;
             std::thread::sleep(std::time::Duration::from_millis(25));
-            process = self.observe(&record)?;
+            process = observe_start(
+                &self.state,
+                StartStage::AfterObservation,
+                self.observe(&record),
+            )?;
         }
-        self.fence(epoch, Phase::Provisioned)?;
+        observe_start(
+            &self.state,
+            StartStage::FinalFence,
+            self.fence(epoch, Phase::Provisioned),
+        )?;
         if process == ProcessState::Transitioning {
             return Ok(observation(&snapshot, process));
         }

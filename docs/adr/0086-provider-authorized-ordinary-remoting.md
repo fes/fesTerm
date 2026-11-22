@@ -398,6 +398,14 @@ clearing it. An already-empty ACL needs no setter; a nonempty ACL still follows
 the existing clearing path, and a read error refuses the operation. Mode
 restriction, strict mode/ACL verification and synchronization remain mandatory.
 
+Native-start failure logs further separate fixed service-lease, lifecycle-fence,
+registration-read, manager and process-observation stages, including Mac carrier final-scope reads.
+Only error kind and known numeric OS code accompany a stage; arbitrary source
+text remains excluded. Error-only observation preserves the exact result and
+existing deadline/guards without replay or changed authorization. Held-journal
+contention, retained raw/custom errors, log failure and no-extra-manager-call
+regressions cover the diagnostic contract, not native resolution of #842.
+
 The opt-in service-client fixture adds an optional stopped shared-profile name.
 Creation OFF native acceptance requires its exact server Denied and complete
 pre/post NotStarted inventory, plus a separate completion marker; legacy

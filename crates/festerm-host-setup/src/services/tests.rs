@@ -131,6 +131,7 @@ struct FakeState {
     registered: bool,
     running: bool,
     refuse_start: bool,
+    fail_start_io: Option<i32>,
     refuse_registration: bool,
     observation_error: bool,
     native_xml: Option<String>,
@@ -157,6 +158,11 @@ impl CommandRunner for FakeRunner {
         match request {
             NativeRequest::Process { args, .. } => {
                 let args: Vec<_> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
+                if args.contains(&"start") || args.contains(&"kickstart") {
+                    if let Some(code) = state.fail_start_io {
+                        return Err(io::Error::from_raw_os_error(code));
+                    }
+                }
                 if args.contains(&"daemon-reload") {
                     state.registered = self.definition.exists() && !state.refuse_registration;
                     if state.fail_reload_once {
@@ -3483,4 +3489,83 @@ fn native_service_macos_completed_bootout_refuses_changed_post_stop_proof() {
             matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "bootout"))
         ).count(), 1);
     }
+}
+
+#[cfg(all(unix, feature = "host-runtime"))]
+#[test]
+fn native_start_failure_diagnostics_keep_runner_error_and_never_replay_manager() {
+    for fail_observation in [true, false] {
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let services = services(root.path(), &store, Platform::Linux);
+        services.install(&stage, snapshot.epoch).unwrap();
+        {
+            let mut state = services.runner.state.borrow_mut();
+            state.calls.clear();
+            state.observation_error = fail_observation;
+            state.fail_start_io = (!fail_observation).then_some(5);
+        }
+        let error = services
+            .start_with(&stage, snapshot.epoch, || Ok(()))
+            .err()
+            .unwrap();
+        let state = services.runner.state.borrow();
+        let starts = state
+            .calls
+            .iter()
+            .filter(|request| {
+                matches!(request,
+            NativeRequest::Process {args, ..} if args.iter().any(|arg| arg == "start"))
+            })
+            .count();
+        let log = std::fs::read_to_string(root.path().join("state/worker.log")).unwrap();
+        if fail_observation {
+            assert_eq!(error.to_string(), "host.service_observation_unavailable");
+            assert_eq!(starts, 0);
+            assert!(log.contains("host.start_observation stage=before_observation"));
+        } else {
+            assert_eq!(error.raw_os_error(), Some(5));
+            assert_eq!(error.kind(), io::Error::from_raw_os_error(5).kind());
+            assert_eq!(starts, 1);
+            assert!(log.contains("host.start_observation stage=manager"));
+            assert!(log.contains("os=5"));
+        }
+        assert!(!state.running);
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+    }
+}
+
+#[cfg(all(unix, feature = "host-runtime"))]
+#[test]
+fn native_start_registration_read_reports_real_post_fence_journal_contention() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    services.runner.state.borrow_mut().calls.clear();
+    let held = RefCell::new(None);
+    let error = services
+        .start_with(&stage, snapshot.epoch, || {
+            let directory = storage::private_directory(&state, false)?;
+            let file =
+                storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)?;
+            held.replace(Some(Lease::exclusive(file)?));
+            Ok(())
+        })
+        .err()
+        .unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(error.raw_os_error(), None);
+    assert!(services.runner.state.borrow().calls.is_empty());
+    assert!(std::fs::read_to_string(state.join("worker.log"))
+        .unwrap()
+        .contains("host.start_observation stage=registration_read kind=busy os=none"));
+    drop(held.into_inner());
+    assert_eq!(store.snapshot().unwrap(), snapshot);
 }

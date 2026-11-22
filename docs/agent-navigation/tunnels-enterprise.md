@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "b83417fe84f5f6dca8cf3514ddf4a504866dbed0a7290c86e22c5260bdcf7fb5"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "347b226f86b5d2e4206af1b91bc17144b3a0596210b5cbdee4931e58cd843239"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,12 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: HOST resolution and signed-in inventory.
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Filters HOST marker and rejects bridge fallback in the service selector
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds worker inventory to signed-in project metadata before rendering
+- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs) — Selects HOST markers without bridge fallback.
+- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds signed-in project inventory.
 
 Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects legacy bridge labels and ambiguous HOST selection
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Stale results cannot repopulate a new signed-out tab
+- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs) — Rejects bridge labels and ambiguous HOSTs.
+- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Discards stale signed-out results.
 
 Caveats:
 - Inventory rows are metadata, not live daemon proof
@@ -74,6 +74,7 @@ Caveats:
 Use for: Exact Desktop start through the registered helper.
 
 - [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime.
+- [`StartStage`](../../crates/festerm-host-setup/src/services/start_diagnostics.rs) — Records finite errors; retains exact results.
 
 Evidence:
 - [`native_service_dedicated_guard_drains_late_manager_before_process_completion`](../../crates/festerm-host-setup/src/services/native.rs) — Holds the original context through native drain.
