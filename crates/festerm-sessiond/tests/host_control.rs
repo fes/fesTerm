@@ -1499,9 +1499,10 @@ fn crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generat
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
     let operation = fixture.issued();
-    let running = fixture
-        .control()
-        .ensure(
+    // The final result read can return Busy after creation is committed.
+    // Retain the same issued operation while its generation lease settles.
+    let running = retry_busy(|| {
+        fixture.control().ensure(
             &fixture.owner,
             &operation,
             &creation,
@@ -1509,7 +1510,8 @@ fn crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generat
             &AtomicBool::new(false),
             allow,
         )
-        .unwrap();
+    })
+    .unwrap();
     let directory = storage::private_directory(&fixture.root, false).unwrap();
     let name = Path::new("host-sessions.json");
     let bytes = storage::read_private(&directory, name, 4 * 1024 * 1024).unwrap();
