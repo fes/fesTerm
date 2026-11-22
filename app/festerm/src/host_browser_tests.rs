@@ -912,7 +912,13 @@ fn ordinary_ui_fixture(service: OrdinaryService) -> (FesTermApp, egui::Context) 
         }))
         .unwrap(),
     );
-    let reference = vault.put(&SecretBytes::copy_from_slice(&bytes)).unwrap();
+    // MemorySecretStore::put uses a per-store deterministic counter, while the
+    // native identity lease is shared across tests/processes. Reserve a unique
+    // fixture credential so unrelated test vaults never share that lease.
+    let reference = SecretReference::generate();
+    vault
+        .create_reserved(&reference, &SecretBytes::copy_from_slice(&bytes))
+        .unwrap();
     let account = DevTunnelAccount::new(
         "github-user",
         AccountProvider::Github,
@@ -966,6 +972,43 @@ fn wait_ordinary_ui(app: &mut FesTermApp, context: &egui::Context) {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[test]
+fn ordinary_desktop_independent_fixture_does_not_share_native_credential_lease() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let fixture_service: OrdinaryService = Arc::new(|_, _, _| {
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    });
+    let (first, _) = ordinary_ui_fixture(fixture_service);
+    let first_account = &first.host_browser.as_ref().unwrap().account;
+    let _first_lease = super::super::tunnel_workflow::account_lease(Some(first_account)).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (mut second, context) = ordinary_ui_fixture(Arc::new(move |_, _, _| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired,
+            ))
+        })
+    }));
+    second.begin_ordinary_host(&context);
+    wait_ordinary_ui(&mut second, &context);
+    assert_eq!(
+        second.host_browser.as_ref().unwrap().feedback.as_deref(),
+        Some(
+            host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::HostUpdateRequired
+            )
+            .message()
+        )
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
