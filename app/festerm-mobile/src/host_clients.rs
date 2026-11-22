@@ -1855,7 +1855,7 @@ impl MobileApp {
                         &identity, &locator, index, &budgets, guard, &cancel,
                     ))
                     .map(|result| ResultEvent::Ordinary(Box::new(result)))
-                    .map_err(|error| error.message().to_owned())
+                    .map_err(|error| error.diagnostic_message())
             };
             #[cfg(test)]
             let result = {

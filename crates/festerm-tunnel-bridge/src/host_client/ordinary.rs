@@ -12,7 +12,7 @@ pub use files::{open_files, open_files_reviewed, Files, FilesError, FilesStream}
 #[path = "ordinary/ordinary_tests.rs"]
 mod tests;
 pub(super) use ordinary_keys::{KeyBinding, NativeKey};
-pub use ordinary_keys::{KeyError, OrdinaryKeyIndex};
+pub use ordinary_keys::{KeyDiagnostic, KeyError, OrdinaryKeyIndex};
 pub(super) const ORIGINAL_PURPOSE: &str = "fesTerm ordinary durable originals v1";
 
 /// Captured bound-account lifetime, separate from a discovery chooser request.

@@ -332,16 +332,25 @@ impl ReceiptIndex {
     }
 
     pub(super) fn directory(&self, create: bool) -> Result<File, Error> {
+        self.directory_io(create).map_err(storage_error)
+    }
+
+    // Ordinary-key diagnostics retain only the I/O category/stage/errno before
+    // the existing approval error intentionally collapses storage failures.
+    pub(super) fn directory_io(&self, create: bool) -> io::Result<File> {
         #[cfg(unix)]
         if let Some(root) = &self.native_root {
-            return root
-                .open_host_approval_directory(create)
-                .map_err(storage_error);
+            return root.open_host_approval_directory(create);
         }
         if create {
-            ensure_parent(self.root.parent().ok_or(Error::Storage)?, 32).map_err(storage_error)?;
+            ensure_parent(
+                self.root
+                    .parent()
+                    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?,
+                32,
+            )?;
         }
-        storage::private_directory(&self.root, create).map_err(storage_error)
+        storage::private_directory(&self.root, create)
     }
 
     fn lease(directory: &File, host: &HostId, account: &str) -> Result<Lease, Error> {

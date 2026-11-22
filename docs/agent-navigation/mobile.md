@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "3672125446457422a590ea4946383f6db780766885153d43ee6bf8beed6232c0"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "e3c56d929c2ce8467e58b7196ecec8d62e271a6ae04f9eab7d8825b4db3406eb"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -31,10 +31,12 @@ Use for: Which files handle host discovery, inventory, and save-before-connect?
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
 - [`show_tabs`](../../app/festerm-mobile/src/shell.rs) — Keeps the Profiles host-browser entry above tabs, outside the saved-profile scroller.
 - [`NativeAppPrivateRoot`](../../crates/festerm-secret-store/src/native_root.rs) — Pins the Foundation-selected iOS app namespace; no alternate storage path is tried.
+- [`KeyDiagnostic`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/key_diagnostics.rs) — Finite preparation stages; no source strings or key data.
 
 Evidence:
 - [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs) — Checks adoption before Running and lock fencing.
 - [`host_entry_stays_above_tabs_with_a_long_saved_profile_list`](../../app/festerm-mobile/src/lib.rs) — Checks empty and overflowing profile lists keep the host-browser action visible above tabs.
+- [`ordinary_key_diagnostics_keep_short_notice_and_never_expose_source_strings`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/key_diagnostics.rs) — Checks bounded preparation detail and unchanged notices.
 
 Caveats:
 - Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration.

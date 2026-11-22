@@ -21,6 +21,48 @@ enum RootPolicy {
     IosSandbox,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ApprovalDirectoryStage {
+    RootValidate,
+    ChildOpen,
+    ChildCreate,
+    ChildValidate,
+    RootSync,
+}
+impl ApprovalDirectoryStage {
+    fn code(self) -> &'static str {
+        match self {
+            Self::RootValidate => "native.root_validate",
+            Self::ChildOpen => "native.child_open",
+            Self::ChildCreate => "native.child_create",
+            Self::ChildValidate => "native.child_validate",
+            Self::RootSync => "native.root_sync",
+        }
+    }
+    fn error(self, error: io::Error) -> io::Error {
+        let kind = error.kind();
+        let failure = ApprovalDirectoryFailure {
+            stage: self,
+            kind,
+            errno: error.raw_os_error(),
+        };
+        // Drop arbitrary source strings. Only this finite diagnostic survives.
+        io::Error::new(kind, failure)
+    }
+}
+#[derive(Debug)]
+struct ApprovalDirectoryFailure {
+    stage: ApprovalDirectoryStage,
+    kind: io::ErrorKind,
+    errno: Option<i32>,
+}
+impl std::fmt::Display for ApprovalDirectoryFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("native approval directory operation failed")
+    }
+}
+impl std::error::Error for ApprovalDirectoryFailure {}
+
 impl NativeAppPrivateRoot {
     /// Obtains the current native application root, never imported metadata.
     pub fn current() -> Result<Self, SecretStoreError> {
@@ -74,7 +116,8 @@ impl NativeAppPrivateRoot {
     /// Opens only the fixed receipt child. The native application root itself
     /// is never exported; all receipt I/O remains descriptor-relative.
     pub fn open_host_approval_directory(&self, create: bool) -> io::Result<File> {
-        self.validate()?;
+        self.validate()
+            .map_err(|error| ApprovalDirectoryStage::RootValidate.error(error))?;
         let name = Path::new("host-client-approvals");
         let child = match unix::open_directory_read_nofollow(&self.directory, name) {
             Ok(child) => child,
@@ -82,18 +125,32 @@ impl NativeAppPrivateRoot {
                 match unix::create_private_directory(&self.directory, name) {
                     Ok(child) => child,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        unix::open_directory_read_nofollow(&self.directory, name)?
+                        unix::open_directory_read_nofollow(&self.directory, name)
+                            .map_err(|error| ApprovalDirectoryStage::ChildOpen.error(error))?
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(ApprovalDirectoryStage::ChildCreate.error(error)),
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(ApprovalDirectoryStage::ChildOpen.error(error)),
         };
-        validate(&child)?;
+        validate(&child).map_err(|error| ApprovalDirectoryStage::ChildValidate.error(error))?;
         if create {
-            self.directory.sync_all()?;
+            self.directory
+                .sync_all()
+                .map_err(|error| ApprovalDirectoryStage::RootSync.error(error))?;
         }
         Ok(child)
+    }
+
+    /// Finite context only: never a path, descriptor, ACL, record or source text.
+    /// A lower security helper may already have discarded the OS errno.
+    pub fn approval_directory_diagnostic(
+        error: &io::Error,
+    ) -> Option<(&'static str, io::ErrorKind, Option<i32>)> {
+        let failure = error
+            .get_ref()?
+            .downcast_ref::<ApprovalDirectoryFailure>()?;
+        Some((failure.stage.code(), failure.kind, failure.errno))
     }
 
     /// Checks that the existing profile store is this OS-issued namespace.
@@ -279,6 +336,78 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn native_root_approval_diagnostic_is_finite_preserves_kind_and_known_errno() {
+        for stage in [
+            ApprovalDirectoryStage::RootValidate,
+            ApprovalDirectoryStage::ChildOpen,
+            ApprovalDirectoryStage::ChildCreate,
+            ApprovalDirectoryStage::ChildValidate,
+            ApprovalDirectoryStage::RootSync,
+        ] {
+            let error = stage.error(io::Error::from_raw_os_error(nix::libc::EACCES));
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(
+                NativeAppPrivateRoot::approval_directory_diagnostic(&error),
+                Some((
+                    stage.code(),
+                    io::ErrorKind::PermissionDenied,
+                    Some(nix::libc::EACCES)
+                ))
+            );
+        }
+        let error = ApprovalDirectoryStage::ChildCreate.error(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secret-reference /private/key ghp_sensitive",
+        ));
+        assert_eq!(
+            NativeAppPrivateRoot::approval_directory_diagnostic(&error),
+            Some(("native.child_create", io::ErrorKind::Unsupported, None))
+        );
+        assert_eq!(
+            error.to_string(),
+            "native approval directory operation failed"
+        );
+        if let Some(source) = std::error::Error::source(&error) {
+            assert_eq!(
+                source.to_string(),
+                "native approval directory operation failed"
+            );
+        }
+        assert!(
+            NativeAppPrivateRoot::approval_directory_diagnostic(&io::Error::other("unrelated"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn native_root_approval_diagnostic_distinguishes_child_open_and_validation_without_repair() {
+        let fixture = Fixture::new();
+        let root = fixture.pin();
+        let child = fixture.0.join("host-client-approvals");
+        fs::write(&child, b"preserve existing object").unwrap();
+        let error = root.open_host_approval_directory(true).unwrap_err();
+        assert_eq!(
+            NativeAppPrivateRoot::approval_directory_diagnostic(&error)
+                .unwrap()
+                .0,
+            "native.child_open"
+        );
+        assert_eq!(fs::read(&child).unwrap(), b"preserve existing object");
+        // Only this owned fixture changes shape; the product never repairs it.
+        fs::remove_file(&child).unwrap();
+        fs::create_dir(&child).unwrap();
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+        let error = root.open_host_approval_directory(true).unwrap_err();
+        assert_eq!(
+            NativeAppPrivateRoot::approval_directory_diagnostic(&error)
+                .unwrap()
+                .0,
+            "native.child_validate"
+        );
+        assert_eq!(fs::metadata(&child).unwrap().mode() & 0o777, 0o755);
     }
 
     #[test]
