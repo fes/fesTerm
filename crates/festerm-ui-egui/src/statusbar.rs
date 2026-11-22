@@ -105,74 +105,109 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
         // `ui.horizontal` here centered every element exactly, but still
         // read as sitting slightly above the bar's true visual center.
         let content_rect = rect.translate(vec2(0.0, OPTICAL_VERTICAL_NUDGE));
-        let mut content_ui = ui.new_child(UiBuilder::new().max_rect(content_rect));
-        let ui = &mut content_ui;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            ui.add_space(STATUS_BAR_LEFT_INSET);
-            if let Some(mode) = content.mode {
-                ui.label(
-                    RichText::new(mode)
+        let has_dot = !matches!(content.status, ChipStatus::Neutral);
+        let label_width = ui
+            .painter()
+            .layout_no_wrap(
+                content.status_label.to_owned(),
+                egui::TextStyle::Small.resolve(ui.style()),
+                STATUS_BAR_TEXT,
+            )
+            .size()
+            .x;
+        let has_state = has_dot || !content.status_label.is_empty();
+        let state_width = if has_state {
+            8.0 + label_width
+                + if has_dot { 8.0 } else { 0.0 }
+                + if has_dot && !content.status_label.is_empty() {
+                    8.0
+                } else {
+                    0.0
+                }
+        } else {
+            0.0
+        };
+        let state_left = (content_rect.right() - state_width).max(content_rect.left());
+        let state_rect =
+            egui::Rect::from_min_max(egui::pos2(state_left, content_rect.top()), content_rect.max);
+        let left_start = (content_rect.left() + STATUS_BAR_LEFT_INSET).min(state_left);
+        let left_end = (state_left - if has_state { 8.0 } else { 0.0 }).max(left_start);
+        let left_rect = egui::Rect::from_min_max(
+            egui::pos2(left_start, content_rect.top()),
+            egui::pos2(left_end, content_rect.bottom()),
+        );
+        let mut left = ui.new_child(
+            UiBuilder::new()
+                .max_rect(left_rect)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        left.set_clip_rect(ui.clip_rect().intersect(left_rect));
+        left.spacing_mut().item_spacing.x = 8.0;
+        let fields = [
+            content.mode.map(|v| {
+                (
+                    v,
+                    RichText::new(v)
                         .small()
                         .strong()
                         .color(theme::ACCENT_PRIMARY),
-                );
+                )
+            }),
+            content
+                .context
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT))),
+            content
+                .dimensions
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT))),
+            content
+                .system
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT_DIM))),
+            content
+                .detail
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT_DIM))),
+            content
+                .durable_session
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT_DIM))),
+            content
+                .port_forwards
+                .map(|v| (v, RichText::new(v).small().color(STATUS_BAR_TEXT_DIM))),
+        ];
+        for (value, text) in fields.into_iter().flatten() {
+            if left.available_width() <= 0.0 {
+                break;
             }
-            if let Some(context) = content.context {
-                ui.label(RichText::new(context).small().color(STATUS_BAR_TEXT));
-            }
-            if let Some(dimensions) = content.dimensions {
-                ui.label(RichText::new(dimensions).small().color(STATUS_BAR_TEXT));
-            }
-            if let Some(system) = content.system {
-                ui.label(RichText::new(system).small().color(STATUS_BAR_TEXT_DIM));
-            }
-            if let Some(detail) = content.detail {
-                ui.label(RichText::new(detail).small().color(STATUS_BAR_TEXT_DIM));
-            }
-            if let Some(durable_session) = content.durable_session {
-                ui.label(
-                    RichText::new(durable_session)
-                        .small()
-                        .color(STATUS_BAR_TEXT_DIM),
-                );
-            }
-            if let Some(port_forwards) = content.port_forwards {
-                ui.label(
-                    RichText::new(port_forwards)
-                        .small()
-                        .color(STATUS_BAR_TEXT_DIM),
-                );
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(8.0);
-                // The dot and the label are independent: `Neutral` means
-                // "this surface has no live transport to report", not "say
-                // nothing". The Markdown viewer uses it to show a plain
-                // `Read only` with no dot, per the mockup.
-                if !matches!(content.status, ChipStatus::Neutral) {
-                    // Sized to the surrounding small-text line height
-                    // (rather than a bare fixed box) so the dot's own
-                    // center lands on the same optical center line as the
-                    // text beside it - a fixed `8.0`-tall box was slightly
-                    // shorter than the text's line height and read as
-                    // sitting above center.
-                    let text_height = ui.text_style_height(&egui::TextStyle::Small);
-                    let (rect, response) =
-                        ui.allocate_exact_size(egui::vec2(8.0, text_height), egui::Sense::hover());
-                    ui.painter()
-                        .circle_filled(rect.center(), 3.5, content.status.color());
-                    let _ = response;
-                }
-                if !content.status_label.is_empty() {
-                    ui.label(
+            left.add(egui::Label::new(text).truncate())
+                .on_hover_text(value);
+        }
+        // Reserve the factual state independently of variable-length left text.
+        // Neutral still permits a plain label, while omitting the transport dot.
+        let mut right = ui.new_child(
+            UiBuilder::new()
+                .max_rect(state_rect)
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        right.set_clip_rect(ui.clip_rect().intersect(state_rect));
+        right.spacing_mut().item_spacing.x = 8.0;
+        right.add_space(8.0);
+        if has_dot {
+            let text_height = right.text_style_height(&egui::TextStyle::Small);
+            let (rect, _) = right.allocate_exact_size(vec2(8.0, text_height), egui::Sense::hover());
+            right
+                .painter()
+                .circle_filled(rect.center(), 3.5, content.status.color());
+        }
+        if !content.status_label.is_empty() {
+            right
+                .add(
+                    egui::Label::new(
                         RichText::new(content.status_label)
                             .small()
                             .color(STATUS_BAR_TEXT),
-                    );
-                }
-            });
-        });
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(content.status_label);
+        }
     });
 }
 
@@ -181,6 +216,118 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     use super::*;
+
+    #[test]
+    fn status_bar_reserves_connected_state_before_narrow_long_details() {
+        let path = "Remote · /home/evidence/a-very-long-project-directory/another-long-directory/working-tree";
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(387.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        mode: None,
+                        context: None,
+                        dimensions: Some("44×34"),
+                        system: Some(path),
+                        status: ChipStatus::Connected,
+                        status_label: "Connected",
+                        detail: Some("copilot — a-long-running-task-title"),
+                        durable_session: Some("festerm-sessiond · shared-development-shell"),
+                        port_forwards: Some("3 active forwards"),
+                    },
+                )
+            });
+        harness.run();
+        let state = harness.get_by_label("Connected").rect();
+        let grid = harness.get_by_label("44×34").rect();
+        let detail = harness.get_by_label(path).rect();
+        assert!(state.right() <= 387.0 && state.left() >= 0.0, "{state:?}");
+        assert!(grid.right() + 8.0 <= state.left(), "{grid:?} {state:?}");
+        assert!(detail.right() + 8.0 <= state.left(), "{detail:?} {state:?}");
+        let painted = harness
+            .output()
+            .shapes
+            .iter()
+            .find(|shape| {
+                matches!(
+                    &shape.shape, egui::Shape::Text(text) if text.galley.job.text == path
+                )
+            })
+            .expect("long source remains a real text label");
+        assert!(painted.clip_rect.right() + 8.0 <= state.left());
+        let dot = harness
+            .output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle) if (circle.radius - 3.5).abs() < f32::EPSILON => {
+                    Some(circle)
+                }
+                _ => None,
+            })
+            .expect("Connected still has its factual state dot");
+        assert!(state.right() + 8.0 <= dot.center.x - dot.radius);
+        assert!(dot.center.x + dot.radius <= 387.0);
+        if let egui::Shape::Text(text) = &painted.shape {
+            assert_eq!(text.galley.rows.len(), 1);
+            assert!(text.galley.elided, "long details need visible truncation");
+        }
+    }
+
+    #[test]
+    fn status_bar_wide_labels_keep_full_text_without_elision() {
+        let labels = [
+            "INSERT",
+            "SSH",
+            "80×24",
+            "Remote · Linux",
+            "cargo test",
+            "tmux · deploy",
+            "2 active forwards",
+            "Connected",
+        ];
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        mode: Some(labels[0]),
+                        context: Some(labels[1]),
+                        dimensions: Some(labels[2]),
+                        system: Some(labels[3]),
+                        detail: Some(labels[4]),
+                        durable_session: Some(labels[5]),
+                        port_forwards: Some(labels[6]),
+                        status: ChipStatus::Connected,
+                        status_label: labels[7],
+                    },
+                )
+            });
+        harness.run();
+        let state = harness.get_by_label("Connected").rect();
+        for label in labels {
+            let rect = harness.get_by_label(label).rect();
+            if label != "Connected" {
+                assert!(rect.right() + 8.0 <= state.left());
+            }
+            let text = harness
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => Some(text),
+                    _ => None,
+                })
+                .expect("each wide label is painted");
+            assert_eq!(text.galley.rows.len(), 1);
+            assert!(
+                !text.galley.elided,
+                "{label} must fit at the ordinary wide size"
+            );
+        }
+    }
 
     #[test]
     fn status_bar_renders_left_and_right_text() {

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "a6d988654da4ce170e9739e761c858f63c70122618726bb21ca2af37c84aa928"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "38fc70f37c0bed23bf4834931aa1da7c5dd0f95383f29f4bf8bf4dbc7c1653bc"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -98,3 +98,15 @@ Evidence:
 
 Caveats:
 - App eligibility and session geometry precede painting; terminal state remains core-owned.
+
+## Status bar
+
+Use for: Narrow footer details and factual connection state.
+
+- [`show`](../../crates/festerm-ui-egui/src/statusbar.rs) — Reserves the right state band before clipping/truncating left labels.
+
+Evidence:
+- [`status_bar_reserves_connected_state_before_narrow_long_details`](../../crates/festerm-ui-egui/src/statusbar.rs) — Checks actual label/dot bounds and text clipping at 387 px.
+
+Caveats:
+- Headless geometry does not qualify native DPI, hover or screen-reader delivery.

@@ -4027,6 +4027,8 @@
       "decisions": [],
       "automated_tests": [
         "status_bar_renders_left_and_right_text",
+        "status_bar_reserves_connected_state_before_narrow_long_details",
+        "status_bar_wide_labels_keep_full_text_without_elision",
         "disconnected_overlay_offers_reconnect_beside_diagnostics",
         "overlay_hides_reconnect_when_unavailable_or_already_reconnecting",
         "disconnected_overlay_reconnects_the_same_tab_through_application_command",
