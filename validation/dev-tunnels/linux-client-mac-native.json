@@ -46,7 +46,8 @@
       "version": "0.17.14",
       "PID": 64358,
       "shell_PID": 64364,
-      "image_sha256": "6c692c2e1ffc2abf35459fcabc9db360f6ebde472211e4b5bebef6a9e174ba1a"
+      "image_sha256": "3cca5a01174fab8180bede1685d4365d330ce6e8841ded1ea5e332dc1bf52cfc",
+      "signed_archive_sha256": "6c692c2e1ffc2abf35459fcabc9db360f6ebde472211e4b5bebef6a9e174ba1a"
     }
   },
   "workflow": {
