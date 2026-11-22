@@ -6820,7 +6820,10 @@
         "native_root_approval_diagnostic_distinguishes_child_open_and_validation_without_repair",
         "ordinary_key_diagnostics_keep_short_notice_and_never_expose_source_strings",
         "ordinary_ready_mismatched_key_diagnostic_never_replaces_key_or_record",
-        "ordinary_malformed_record_diagnostic_precedes_vault_or_replacement"
+        "ordinary_malformed_record_diagnostic_precedes_vault_or_replacement",
+        "private_storage_context_preserves_sanitized_errno_and_leaves_unmapped_errors_unchanged",
+        "acl_set_errno_is_captured_before_free_and_primary_failure_survives_cleanup_failure",
+        "ordinary_record_publication_keeps_actual_exclusive_rename_operation_and_errno"
       ],
       "manual_scenarios": [
         "DT-05",

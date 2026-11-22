@@ -385,7 +385,11 @@ do not establish Simulator or physical-device acceptance.
 Device-key preparation failures also need finite local stage/class and I/O
 kind/known-errno context in the existing error Details, retaining the original
 short notice. Directory initialization and synchronization, lock/record work,
-binding refusal and random-source failure stay distinct. Source error strings,
+binding refusal and random-source failure stay distinct. Shared private-storage
+helpers retain a closed inner-operation code and known original errno at
+existing sanitized refusal points; mode/ACL postconditions remain separate.
+ACL setter failure is captured before cleanup can overwrite its errno. Unmapped
+raw errors and no-overwrite/security semantics remain unchanged. Source error strings,
 paths, records, references, accounts and seeds never enter that context. This
 reporting does not establish the physical-device cause or initiate repair,
 replacement, fallback or an automatic retry.

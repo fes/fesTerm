@@ -44,7 +44,9 @@ impl ApprovalDirectoryStage {
         let failure = ApprovalDirectoryFailure {
             stage: self,
             kind,
-            errno: error.raw_os_error(),
+            errno: unix::private_storage_diagnostic(&error)
+                .and_then(|(_, _, errno)| errno)
+                .or_else(|| error.raw_os_error()),
         };
         // Drop arbitrary source strings. Only this finite diagnostic survives.
         io::Error::new(kind, failure)

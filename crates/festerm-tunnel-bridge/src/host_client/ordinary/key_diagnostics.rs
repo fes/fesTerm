@@ -61,6 +61,7 @@ pub struct KeyDiagnostic {
     kind: Option<io::ErrorKind>,
     errno: Option<i32>,
     native_stage: Option<&'static str>,
+    operation: Option<&'static str>,
 }
 impl KeyError {
     pub(super) fn storage_at(stage: KeyStage, error: io::Error) -> Self {
@@ -69,9 +70,14 @@ impl KeyError {
             festerm_secret_store::NativeAppPrivateRoot::approval_directory_diagnostic(&error);
         #[cfg(not(unix))]
         let native: Option<(&'static str, io::ErrorKind, Option<i32>)> = None;
-        let (native_stage, kind, errno) = match native {
-            Some((stage, kind, errno)) => (Some(stage), kind, errno),
-            None => (None, error.kind(), error.raw_os_error()),
+        #[cfg(unix)]
+        let private = festerm_unix_security::private_storage_diagnostic(&error);
+        #[cfg(not(unix))]
+        let private: Option<(&'static str, io::ErrorKind, Option<i32>)> = None;
+        let (native_stage, operation, kind, errno) = match (private, native) {
+            (Some((operation, kind, errno)), _) => (None, Some(operation), kind, errno),
+            (None, Some((stage, kind, errno))) => (Some(stage), None, kind, errno),
+            (None, None) => (None, None, error.kind(), error.raw_os_error()),
         };
         Self::Diagnosed(KeyDiagnostic {
             stage,
@@ -79,6 +85,7 @@ impl KeyError {
             kind: Some(kind),
             errno,
             native_stage,
+            operation,
         })
     }
     pub(super) fn at_stage(self, stage: KeyStage) -> Self {
@@ -95,6 +102,7 @@ impl KeyError {
             kind: None,
             errno: None,
             native_stage: None,
+            operation: None,
         })
     }
     pub(super) fn random_failure(errno: Option<i32>) -> Self {
@@ -104,6 +112,7 @@ impl KeyError {
             kind: None,
             errno,
             native_stage: None,
+            operation: None,
         })
     }
     /// Extends the unchanged short notice only with finite local categories.
@@ -117,10 +126,14 @@ impl KeyError {
         let errno = value
             .errno
             .map_or_else(|| "not-recorded".into(), |errno| errno.to_string());
+        let operation = value
+            .operation
+            .map_or_else(String::new, |operation| format!(" operation={operation};"));
         format!(
-            "{} Device-key diagnostic: stage={}; class={}; I/O kind={}; errno={}.",
+            "{} Device-key diagnostic: stage={};{} class={}; I/O kind={}; errno={}.",
             self.message(),
             value.native_stage.unwrap_or(value.stage.code()),
+            operation,
             value.class.code(),
             kind,
             errno
@@ -131,6 +144,45 @@ impl KeyError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_record_publication_keeps_actual_exclusive_rename_operation_and_errno() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        std::fs::create_dir(root.path().join("source")).unwrap();
+        std::fs::create_dir(root.path().join("source/child")).unwrap();
+        let directory = std::fs::File::open(root.path()).unwrap();
+        let child = std::fs::File::open(root.path().join("source/child")).unwrap();
+        // POSIX refuses moving a directory into its own descendant. The real
+        // primitive preserves Unsupported classification if the volume instead
+        // refuses exclusive rename before checking the directory relationship.
+        let error = festerm_unix_security::rename_noreplace(
+            &directory,
+            std::path::Path::new("source"),
+            &child,
+            std::path::Path::new("moved"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        let (operation, kind, errno) =
+            festerm_unix_security::private_storage_diagnostic(&error).unwrap();
+        assert_eq!(operation, "private.exclusive_rename");
+        assert_eq!(kind, io::ErrorKind::Unsupported);
+        let errno = errno.expect("exclusive rename retains its original errno");
+        assert!(matches!(
+            io::Error::from_raw_os_error(errno).kind(),
+            io::ErrorKind::InvalidInput | io::ErrorKind::Unsupported
+        ));
+        let error = KeyError::storage_at(KeyStage::RecordPublish, error);
+        let message = error.diagnostic_message();
+        assert_eq!(error.message(), KeyError::Storage.message());
+        assert!(message
+            .contains("stage=record_publish; operation=private.exclusive_rename; class=storage"));
+        assert!(message.contains(&format!("errno={errno}")));
+        assert!(!message.contains(&root.path().to_string_lossy().to_string()));
+        assert!(root.path().join("source/child").is_dir());
+        assert!(!root.path().join("source/child/moved").exists());
+    }
+
     #[test]
     fn ordinary_key_diagnostics_keep_short_notice_and_never_expose_source_strings() {
         for stage in [
