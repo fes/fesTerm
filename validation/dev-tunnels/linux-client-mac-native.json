@@ -1,0 +1,226 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned creation-OFF functional case",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "Linux VM",
+    "server": "macOS VM"
+  },
+  "creation_policy": "OFF",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Composed pinned source cohorts; not a combined current release or creation-ON/mobile case. Visual e2 client and later385 selector share core/transport source; current777 SDK uses identical test/core/attachment source to successful current GUI.",
+  "sources": {
+    "Linux_visual_GUI": {
+      "version": "0.17.19",
+      "source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "unsigned_development_GUI": true,
+      "package_run": 44971540363,
+      "artifact": 14734460242
+    },
+    "Linux_normal_selector_GUI": {
+      "version": "0.17.19",
+      "source": "385e0e76960e41df7be72f2962987960dbe0f80e",
+      "package_run": 44997980053,
+      "artifact": 14744199500,
+      "mixed_runtime": "MAIN385 plus12 unchanged846/e2 support files; client-only, no setup/update/local-persistent/legacy helper use"
+    },
+    "Linux_controlled_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "test_result": "1 passed;0 failed; both ordinary-client and stopped-profile-denied completion markers;19.089s"
+    },
+    "Mac_local_GUI_and_signed_HOST": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "release_run": 44955636986,
+      "artifact": 14728951461,
+      "HOST_epoch": 11,
+      "HOST_run": "96fd0c36-66fc-44bd-9160-650b85bf2126",
+      "HOST_PID": 9859
+    },
+    "retained_Mac_daemon": {
+      "version": "0.17.14",
+      "PID": 64358,
+      "shell_PID": 64364,
+      "image_sha256": "6c692c2e1ffc2abf35459fcabc9db360f6ebde472211e4b5bebef6a9e174ba1a"
+    }
+  },
+  "workflow": {
+    "account": "fes-festerm1",
+    "host": "847d1db1-267a-49b8-8f68-1a19d02c6155",
+    "locator": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+    "discovery": "Normal provider-authorized Find & Connect; exact locator tooltip before selecting duplicate friendly name; no imported recipe/manual trust. Earlier R24 bound public ChooseSession recipe is separately attributed for visual components.",
+    "shared_logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+    "generation": "1795272479437293009",
+    "I_O_reconnect": "Normal GUI A/B, detach, same-generation reconnect/C; later current SDK two separate retained-shell nonce round trips and detach.",
+    "private": "Normal local UI published then unshared SAME logical885883d3-771c-4f12-9ed1-744715b22281/revision2. Complete inventory exclusion plus direct EnsureProfile refusal in source-accepted {Denied,Stale}; no exact-private-Denied claim.",
+    "stopped_shared": "Normal local UI Save-only logical1615504f-c562-46a5-aa16-673c1d07599f/revision1; advertised Not started, Start & Connect disabled; actual SDK EnsureProfile requires typed Denied and unchanged profile/revision/no session or uncertainty.",
+    "generic_creation_denied": "Current SDK actual Ensure (not client-preflight Create) requires exact typed Refused(Denied); logical1229ab9f-3a99-430e-809e-55ebf43feefa remains absent from sessions/uncertainty. Separate normal Create-if-missing GUI request visibly denied with unchanged journal; its message alone is not typed transport proof.",
+    "creation_UI": "Creation disabled text, New host shell absent, private omitted, stopped Start disabled."
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "Copilot": {
+      "version": "1.0.112",
+      "Mac_binary_sha256": "a29f5a52ac73cbd707fa4855939f1fe6a7e3bd44a6a9f577dbe7f7754a4b8424",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/Users/evidence/.ft-copilot-reference-native19-r22",
+      "state": "Fresh normal unauthenticated initial prompt after one-session folder trust; no paid/model/login request"
+    },
+    "capabilities": "Both fresh pairs: all10 single query replies,202 input bytes, all6 environment fields and every JSON field equal except case/elapsed_ms. Actual grids stable, terminal and descriptor flags restored. Child-only LC_ALL=en_US.UTF-8 on both server-local and remote collector/CLI; TERM/TERM_PROGRAM/COLORTERM/LANG/LC_CTYPE not rewritten.",
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "visual_review": "All4 original images independently viewed; matching header, responsive Getting started card at74x20/omitted at70x19, banner, MCP text, login/cwd line, input and manual-approval footer.",
+    "font_and_scale": "Default JetBrains Mono14pt; Mac local scale2/Linux remote scale1. No OS/font preference changes or physical-pixel-identity claim.",
+    "terminal_panel_logical_size": {
+      "74x20": [
+        638,
+        389
+      ],
+      "70x19": [
+        604,
+        370
+      ]
+    },
+    "geometry_method": "Original capture bounds and observed single-row app chrome/status24pt; terminal panels exclude1logical-pixel window border and include normal terminal padding. Physical capture dimensions and coordinates retained below.",
+    "physical_screenshot_size": {
+      "local74x20": [
+        1280,
+        904
+      ],
+      "local70x19": [
+        1212,
+        866
+      ],
+      "remote74x20": [
+        1024,
+        768
+      ],
+      "remote70x19": [
+        1024,
+        768
+      ]
+    },
+    "terminal_panel_rect_physical": {
+      "local74x20": [
+        2,
+        78,
+        1278,
+        856
+      ],
+      "local70x19": [
+        2,
+        78,
+        1210,
+        818
+      ],
+      "remote74x20": [
+        101,
+        119,
+        739,
+        508
+      ],
+      "remote70x19": [
+        101,
+        119,
+        705,
+        489
+      ]
+    },
+    "pixel_identity": false
+  },
+  "preservation": {
+    "Mac": "Original/failed manifests, HOST9859/11/run/binding/settings, retained64358/64364 births and original session/profile/operation records preserved. Intended catalog fixture metadata1\u21923 profiles only; no new session/generation/actor.",
+    "Linux": "Original16 actors/protected7/HOST39/catalog/binding/settings/Files read-only fixture preserved. GUI account/profile/recipe metadata unchanged; only private workspace persistence.",
+    "SDK_expected_operations": {
+      "63bd4b09-c855-4f04-a499-9424a0f49d07": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false,
+        "record_sha256": "a4a890556413efee616c1e4034595753325623929d06a0e09123703384d8dc0e"
+      },
+      "b0f9f784-e3c3-42fa-a47b-c3aee320ef1e": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false,
+        "record_sha256": "ecb5b51dfa8eb93318bbc8deb669007bda5b9c95e6d8ec5f13341e9de1ef6672"
+      }
+    },
+    "post_SDK_catalog_sha256": "1a202bdaf5c9f6b0adb729bcadb6b97b64cf302ab4003d5821fd541dc31a761f",
+    "cleanup": "Actual SDK cgroup removed/zero members; wrapper absent/no readable exactSDK matches; known nondumpable OS/ownSSH exceptions explicitly retained. Every GUI exited0 before supervisor/carrier cleanup; CLI processes exited normally and original CWD restored."
+  },
+  "first_results_and_limits": [
+    "Earlier R23 selected stale friendly-name row; it is not a current MacHOST refusal. Current locator tooltip/default selector succeeds.",
+    "First oldSDK5ab attempt rejected test fixture account ID before native access; corrected login without identity/ref changes.",
+    "Corrected oldSDK5ab rejected attachment snapshot after stopped/private checks. Old decoder differs from current; particular rejected field unrecorded. Retained one allowed resume operation, no new generation; not asserted a current product regression.",
+    "Current SDK777 already existed in CI; no new build or test shim. Full test succeeded once with current decoder.",
+    "One old unused SDK955 guest executable was retired only after exact local backup/hash and no-reference checks; no source/evidence/session data removed.",
+    "No Maccreation-ON, mobile/keyboard/background, Files, live update or combined current-release acceptance implied."
+  ],
+  "private_evidence_receipts_sha256": {
+    "R24_component": "b34f3fbd8506a69e116b5a326289be7a8dee18e7fd3ae1a953570c6f3a04147a",
+    "R26_normal_selector": "edd3ae35c9cf391300bd9fc282526d0719531c1d7f9a549e64b7462acb2a5b28",
+    "R27_metadata": "e9b654989c6507f498238520bcc91da69ee2f107c6e461bec7e4d67dc98344e8",
+    "R28_stopped_UI": "0e0a0e19daec3d985da6702f045e1437dbf3d2a0a5bd91a181cbd9a43b14c11a",
+    "current_SDK_fullOFF": "81134c29bd85c4af6476431166fc00a2326530017c6a349ef9734b03bc10ffa5"
+  },
+  "original_artifacts": {
+    "local74x20.png": {
+      "bytes": 126085,
+      "sha256": "2eaa101886415d461bd211193237feb1e5d7483664146c6ff18debd5a27c5d6e"
+    },
+    "local70x19.png": {
+      "bytes": 102967,
+      "sha256": "dc151593fd88cba79e5ce5058ef93cf5d3758cab1c2d753f9887aa07c32e4435"
+    },
+    "local74x20-capabilities.json": {
+      "bytes": 1383,
+      "sha256": "d9e27a0a4a979a6290061a1f85ed133954e8d02f7020401fa8709c342b5bcb1a"
+    },
+    "local70x19-capabilities.json": {
+      "bytes": 1383,
+      "sha256": "b7d930b3c93b6e3c28f976217aff4957df09adb0560be6d097291fb8418599c7"
+    },
+    "remote74x20.png": {
+      "bytes": 119628,
+      "sha256": "585863d1164dea13dd24e9ce7db6dab2fb4167d69bd68d4058fc0c48b6c19784"
+    },
+    "remote70x19.png": {
+      "bytes": 108959,
+      "sha256": "dfa70ef4a1db392c000ec7522c077ba303e9855fb30dd40a66aea7eef2f1a795"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 1392,
+      "sha256": "2d00ec1cb9b216fab726f4bb7f6cc2f2b72d5db2e2d946bb44fadea68bfe6bea"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1392,
+      "sha256": "6e45b8dfb27548436de94766dbec9c9daf1ae389698d386df62de3ed680ee78f"
+    },
+    "client-stopped-disabled.png": {
+      "bytes": 88964,
+      "sha256": "79b57314a2f9d4c3a1ba894634cd0732fe9036a2029bc3b1ed490782572cdefc"
+    },
+    "server-private-unshare-review.png": {
+      "bytes": 131990,
+      "sha256": "1481287b91d149fdb31bf10ef0746b6f7cb68fb79127781771ea8b42626f0a84"
+    }
+  }
+}

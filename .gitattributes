@@ -24,3 +24,6 @@ crates/*/tests/fixtures/unicode/**/*.txt text eol=lf whitespace=-blank-at-eol
 # Windows checkout would silently rewrite them into something no program ever
 # emitted, so they are binary regardless of what git's heuristics decide.
 crates/*/tests/fixtures/**/*.raw binary
+
+# Preserve original native probe JSON bytes, including transport-added final LF.
+validation/dev-tunnels/linux-client-mac-native-off/*-capabilities.json -text whitespace=-blank-at-eof

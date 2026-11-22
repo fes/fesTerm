@@ -1155,7 +1155,7 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has five accepted pinned functional cases, eight preliminary cases and eleven
+has six accepted pinned functional cases, seven preliminary cases and eleven
 unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
@@ -1163,6 +1163,20 @@ It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
 original actors remain plus the intended new three. The second Mac grid is an
 actual PTY resize on a fresh attachment to the same generation. Unsuccessful
 edge-drag commands are retained and do not qualify Mac edge-drag resizing.
+
+The [Linux-client/Mac-server creation-OFF record](../validation/dev-tunnels/linux-client-mac-native.json)
+adds normal exact-locator selection, Running/Not-started shared-profile inventory,
+disabled Start, private-profile exclusion, same-generation I/O/reconnection and
+fresh 74×20 / 70×19 Copilot/query pairs. The current controlled SDK requires exact
+typed generic Ensure and stopped-profile EnsureProfile Denied; its private-target
+assertion accepts Denied or Stale, not exclusively Denied. Normal host-side UI
+publication/unsharing allocated the actual fixture identities without starting
+shells. The successful SDK added only two same-generation resume records; all
+original actors, sessions and records survived and owned processes drained.
+The old SDK's rejected snapshot is retained separately: its decoder differs from
+the working current GUI/SDK, but the rejected field was not captured. Visual,
+selector, local-reference and SDK sources are explicitly composed; no combined
+current-release, creation-ON or mobile completion is implied.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
