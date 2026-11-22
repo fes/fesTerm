@@ -6,8 +6,8 @@ use super::model::{ReconnectBanner, SurfaceKind, SurfaceState, SurfaceSummary};
 use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    bottom_sheet, button, count_chip, labelled, long_press_or_click, paint_fit, plus_chip,
-    segmented, session_chip, sheet_title, ButtonKind, Dot,
+    bottom_sheet, button, button_sized, count_chip, labelled, long_press_or_click, paint_fit,
+    plus_chip, segmented, session_chip, sheet_title, ButtonKind, Dot,
 };
 use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Response, Sense, Stroke, Ui};
 use festerm_core::{Key, Modifiers};
@@ -676,7 +676,37 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel, keys: &mut KeyPress) -> Ke
 
 /// Reconnect banner (mock-up 16). Returns true when the action is chosen.
 pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) -> bool {
-    let mut chosen = false;
+    recovery_banner(ui, banner, compact, false, false) == RecoveryAction::Reconnect
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecoveryAction {
+    #[default]
+    None,
+    Reconnect,
+    Close,
+}
+
+/// HOST recovery stays beside the retained terminal, including a usable Close
+/// action while the one bounded reconnect is pending.
+#[cfg(feature = "host-clients")]
+pub fn host_reconnect_banner(
+    ui: &mut Ui,
+    banner: &ReconnectBanner,
+    compact: bool,
+    pending: bool,
+) -> RecoveryAction {
+    recovery_banner(ui, banner, compact, pending, true)
+}
+
+fn recovery_banner(
+    ui: &mut Ui,
+    banner: &ReconnectBanner,
+    compact: bool,
+    pending: bool,
+    close: bool,
+) -> RecoveryAction {
+    let mut chosen = RecoveryAction::None;
     egui::Frame::new()
         .fill(color::SURFACE)
         .stroke(Stroke::new(1.0, color::BORDER))
@@ -730,7 +760,21 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
             } else {
                 "Reconnect · new shell"
             };
-            chosen = button(ui, ButtonKind::Primary, label, true).clicked();
+            if close {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    let width = ((ui.available_width() - 12.0) / 2.0).max(0.0);
+                    let size = egui::vec2(width, space::BUTTON_HEIGHT);
+                    if button_sized(ui, ButtonKind::Primary, label, !pending, size).clicked() {
+                        chosen = RecoveryAction::Reconnect;
+                    }
+                    if button_sized(ui, ButtonKind::Secondary, "Close", true, size).clicked() {
+                        chosen = RecoveryAction::Close;
+                    }
+                });
+            } else if button(ui, ButtonKind::Primary, label, true).clicked() {
+                chosen = RecoveryAction::Reconnect;
+            }
             if !compact {
                 ui.label(
                     egui::RichText::new(&banner.status)
@@ -810,6 +854,56 @@ pub fn read_only_note(ui: &mut Ui) {
 mod keyboard_tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
+
+    #[cfg(feature = "host-clients")]
+    #[test]
+    fn host_recovery_buttons_fit_phone_width_and_close_stays_available_while_pending() {
+        for (width, compact) in [(320.0, false), (390.0, false), (320.0, true)] {
+            for pending in [false, true] {
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 300.0))
+                    .build_ui_state(
+                        move |ui, action: &mut RecoveryAction| {
+                            let banner = ReconnectBanner {
+                                detail: None,
+                                status: "Input is paused.".into(),
+                                reattach: None,
+                                custom: Some(super::super::model::BannerText {
+                                    title: "Connection closed".into(),
+                                    body: "Reconnect to continue the same session.".into(),
+                                    action: "Reconnect",
+                                }),
+                            };
+                            let chosen = host_reconnect_banner(ui, &banner, compact, pending);
+                            if chosen != RecoveryAction::None {
+                                *action = chosen;
+                            }
+                        },
+                        RecoveryAction::None,
+                    );
+                harness.run();
+                let reconnect = harness.get_by_label("Reconnect").rect();
+                let close = harness.get_by_label("Close").rect();
+                assert!(reconnect.left() >= 12.0);
+                assert!(close.left() - reconnect.right() >= 12.0);
+                assert!(close.right() <= width - 12.0);
+                assert!(reconnect.height() >= 44.0 && close.height() >= 44.0);
+                harness.get_by_label("Reconnect").click();
+                harness.run();
+                assert_eq!(
+                    *harness.state(),
+                    if pending {
+                        RecoveryAction::None
+                    } else {
+                        RecoveryAction::Reconnect
+                    }
+                );
+                harness.get_by_label("Close").click();
+                harness.run();
+                assert_eq!(*harness.state(), RecoveryAction::Close);
+            }
+        }
+    }
 
     #[test]
     fn terminal_keys_follow_the_requested_navigation_rows() {

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "634adda481c318479e42948ddad34a2a94cd7db5784fd70cf43c9b375c65c1b1"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "1ee4b56ede12a7b5275b10434e68a5e0ab157d4be58edcf65e5f0fd998951fef"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -28,6 +28,7 @@ Caveats:
 Use for: Which files handle host discovery, inventory, and save-before-connect?
 
 - [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns host inventory, reviewed creation, and local profile metadata.
+- [`begin_host_reconnect`](../../app/festerm-mobile/src/host_clients/reconnect.rs) — Refreshes exact ordinary account/host/session proof for same-tab Attach without creation or takeover.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
 - [`show_tabs`](../../app/festerm-mobile/src/shell.rs) — Keeps the Profiles host-browser entry above tabs, outside the saved-profile scroller.
 - [`NativeAppPrivateRoot`](../../crates/festerm-secret-store/src/native_root.rs) — Pins the Foundation-selected iOS app namespace; no alternate storage path is tried.

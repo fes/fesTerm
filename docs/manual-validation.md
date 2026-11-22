@@ -397,10 +397,17 @@ HOST-03 / MOB-06 / TUNNEL-11 attachment failure: keep the viewer open after a
 controlled connection failure. Check the short plain Connection closed guidance
 and paused input. Open the existing terminal menu to read finite
 stage/category/I/O-kind and unknown/original-action diagnostics without navigating
-Back. Review host remains the only recovery action; no replacement creation or
-replay occurs. A generic failure must not invent an app-background cause. After
-normal background/foreground, verify the same concise guidance and unchanged
-explicit reviewed recovery; a successful reconnect is separate native evidence. Exercise relay/authentication, snapshot/activation and
+Back. Bottom Reconnect retries only the exact retained session; Close retires
+only this local attachment. A generic failure must not invent an app-background
+cause. After normal background/foreground, an adopted Running ordinary HOST tab
+reattaches once only when unlocked and visible in the active terminal, without
+host-chooser navigation. Verify exact host/account/logical/generation continuity,
+no Ensure/Create, takeover or input replay, and history retained until authenticated
+snapshot adoption. A failure remains in the terminal with explicit Reconnect and
+Close; repeated foreground frames must not loop. Lock/background/close/sign-out,
+changed tab/screen or stale attempt must discard late completion. Missing native
+key, changed host identity/policy or absent/changed generation refuses inline.
+Physical iOS/Android foreground recovery is separate native evidence. Exercise relay/authentication, snapshot/activation and
 live-stream failures without exposing raw transport text, headers or credentials.
 For a successful shared-profile connection, verify its advertised name labels the
 tab while the exact target/generation and creation-OFF policy remain unchanged.

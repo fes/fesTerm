@@ -171,23 +171,26 @@ impl Drop for UnlockOnDrop {
     }
 }
 
-/// Opens an existing legacy lock without changing its permissions, or creates
-/// a private lock in a verified trusted directory.
-pub fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
+/// Opens only an existing trusted lock, preserving permissions and identity.
+pub fn open_existing_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
     file_name(name)?;
     ancestor(directory)?;
     #[cfg(unix)]
-    fn existing(directory: &File, name: &Path) -> io::Result<File> {
+    {
         festerm_unix_security::open_file_nofollow(directory, name)
     }
     #[cfg(windows)]
-    fn existing(directory: &File, name: &Path) -> io::Result<File> {
+    {
         let file =
             festerm_windows_security::open_lock_no_reparse_without_delete_sharing(directory, name)?;
         festerm_windows_security::trusted_legacy_lock_file(&file)?;
         Ok(file)
     }
-    match existing(directory, name) {
+}
+
+/// Opens an existing legacy lock unchanged, or creates a private lock.
+pub fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
+    match open_existing_trusted_lock(directory, name) {
         Ok(file) => Ok(file),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             #[cfg(unix)]
@@ -200,7 +203,7 @@ pub fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(error),
             }
-            existing(directory, name)
+            open_existing_trusted_lock(directory, name)
         }
         Err(error) => Err(error),
     }
@@ -528,6 +531,47 @@ mod tests {
         drop(socket);
         drop(root);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn existing_lock_never_creates_or_changes_legacy_identity() {
+        let root = private_test_directory();
+        let directory = private_directory(root.path(), false).unwrap();
+        let name = Path::new("existing.lock");
+        assert_eq!(
+            open_existing_trusted_lock(&directory, name)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        let first = open_trusted_lock(&directory, name).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            first
+                .set_permissions(std::fs::Permissions::from_mode(0o644))
+                .unwrap();
+            let before = first.metadata().unwrap();
+            let existing = open_existing_trusted_lock(&directory, name).unwrap();
+            let after = existing.metadata().unwrap();
+            assert_eq!(
+                (after.dev(), after.ino(), after.mode()),
+                (before.dev(), before.ino(), before.mode())
+            );
+            assert_eq!(
+                after.mode() & 0o777,
+                0o644,
+                "legacy mode is neither repaired nor relaxed"
+            );
+        }
+        let reopened = open_existing_trusted_lock(&directory, name).unwrap();
+        assert_eq!(
+            first.metadata().unwrap().len(),
+            reopened.metadata().unwrap().len()
+        );
+        drop(open_trusted_lock(&directory, name).unwrap());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
     #[test]

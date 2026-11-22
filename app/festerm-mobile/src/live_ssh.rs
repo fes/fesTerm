@@ -61,6 +61,10 @@ pub(super) struct LiveSsh {
     pending_resize: Option<(Dimensions, Instant)>,
     running: bool,
     resume_check: bool,
+    #[cfg(feature = "host-clients")]
+    host_resume_armed: bool,
+    #[cfg(feature = "host-clients")]
+    host_previously_adopted: bool,
     probe: Option<super::tunnel_link::Job<Result<(), festerm_mobile_tunnels::TunnelError>>>,
     pub(super) status: &'static str,
     pub(super) accepted_pin: Option<String>,
@@ -115,6 +119,10 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         pending_resize: None,
         running: false,
         resume_check: false,
+        #[cfg(feature = "host-clients")]
+        host_resume_armed: false,
+        #[cfg(feature = "host-clients")]
+        host_previously_adopted: false,
         probe: None,
         status: "Connection lost. Connect again for a fresh shell.",
         accepted_pin: None,
@@ -150,6 +158,10 @@ impl LiveSsh {
             pending_resize: None,
             running: false,
             resume_check: false,
+            #[cfg(feature = "host-clients")]
+            host_resume_armed: false,
+            #[cfg(feature = "host-clients")]
+            host_previously_adopted: false,
             probe: None,
             status: "Connecting to approved HOST; snapshot adoption pending",
             accepted_pin: None,
@@ -202,6 +214,10 @@ impl LiveSsh {
             pending_resize: None,
             running: true,
             resume_check: false,
+            #[cfg(feature = "host-clients")]
+            host_resume_armed: false,
+            #[cfg(feature = "host-clients")]
+            host_previously_adopted: false,
             probe: None,
             status: "Attached",
             accepted_pin: None,
@@ -296,6 +312,10 @@ impl LiveSsh {
             pending_resize: None,
             running: false,
             resume_check: false,
+            #[cfg(feature = "host-clients")]
+            host_resume_armed: false,
+            #[cfg(feature = "host-clients")]
+            host_previously_adopted: false,
             probe: None,
             status: "Connecting",
             accepted_pin: pin.map(str::to_owned),
@@ -320,6 +340,55 @@ impl LiveSsh {
             && self.password_prompt.is_none()
     }
 
+    #[cfg(feature = "host-clients")]
+    pub(super) fn arm_host_resume(&mut self) {
+        // Capture before privacy cancellation can replace the backend cause.
+        if let Some(host) = &self.host {
+            self.host_previously_adopted |=
+                self.running && host.lifecycle() == SessionLifecycle::Running;
+            if host.attachment_ended() {
+                self.host_previously_adopted = false;
+                self.host_resume_armed = false;
+                return;
+            }
+            self.host_resume_armed |= self.host_previously_adopted;
+        }
+    }
+
+    #[cfg(feature = "host-clients")]
+    pub(super) fn retain_host_adoption(&mut self, previous: &Self) {
+        self.host_previously_adopted = previous.host_previously_adopted
+            && previous
+                .host
+                .as_ref()
+                .is_some_and(|host| !host.attachment_ended());
+    }
+
+    #[cfg(feature = "host-clients")]
+    pub(super) fn host_session_id(&self) -> Option<festerm_session::SessionId> {
+        self.host.as_ref().map(|host| host.id())
+    }
+
+    #[cfg(feature = "host-clients")]
+    pub(super) fn host_connecting(&self) -> bool {
+        self.host.as_ref().is_some_and(|host| {
+            self.session.is_some() && host.lifecycle() == SessionLifecycle::Starting
+        })
+    }
+
+    #[cfg(feature = "host-clients")]
+    pub(super) fn take_host_resume_arm(&mut self) -> bool {
+        if self
+            .host
+            .as_ref()
+            .is_some_and(|host| host.attachment_ended())
+        {
+            self.host_previously_adopted = false;
+            self.host_resume_armed = false;
+        }
+        std::mem::take(&mut self.host_resume_armed)
+    }
+
     pub(super) fn can_reset(&self) -> bool {
         self.session.is_none()
     }
@@ -332,6 +401,8 @@ impl LiveSsh {
         egui::Context,
     )> {
         let host = self.host.take()?;
+        self.host_resume_armed = false;
+        self.host_previously_adopted = false;
         self.session = None;
         self.running = false;
         self.pending_resize = None;
@@ -343,9 +414,11 @@ impl LiveSsh {
     pub(super) fn suspend(&mut self) {
         #[cfg(feature = "host-clients")]
         if let Some(host) = &self.host {
+            // Native and frame suspension hooks may both run. Preserve the
+            // first adopted-live observation, never arm a new/failed attempt.
             host.cancel();
             self.running = false;
-            self.status = "HOST transport cancelled; daemon owns grace; reconnect explicitly, no input replay";
+            self.status = "HOST transport cancelled; daemon owns grace; no input replay";
             return;
         }
         if self.tunnel.is_some() && self.session.is_some() {
@@ -513,6 +586,10 @@ impl LiveSsh {
                     self.password_prompt = Some(prompt);
                 }
                 Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                    #[cfg(feature = "host-clients")]
+                    if self.host.is_some() {
+                        self.host_previously_adopted = true;
+                    }
                     self.running = true;
                     self.status = "Connected";
                 }
@@ -913,6 +990,10 @@ mod tests {
             pending_resize: None,
             running: true,
             resume_check: false,
+            #[cfg(feature = "host-clients")]
+            host_resume_armed: false,
+            #[cfg(feature = "host-clients")]
+            host_previously_adopted: false,
             probe: None,
             status: "Connected",
             accepted_pin: None,
@@ -2453,6 +2534,77 @@ mod tests {
         .await
         .unwrap();
         (host, server.await.unwrap())
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_resume_arm_requires_adopted_running_and_coalesces_suspend() {
+        let (host, _peer) = host_admission_fixture().await;
+        let mut live = LiveSsh::from_host(host.clone(), &egui::Context::default());
+        live.arm_host_resume();
+        assert!(
+            !live.take_host_resume_arm(),
+            "not adopted by this viewer yet"
+        );
+        let mut terminal = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+        live.poll(&mut terminal, &egui::Context::default());
+        assert!(live.running);
+        host.cancel(); // Native privacy cancellation can precede the suspend hook.
+        live.arm_host_resume();
+        live.suspend();
+        live.arm_host_resume();
+        live.suspend();
+        assert!(
+            live.take_host_resume_arm(),
+            "native/frame suspension must coalesce"
+        );
+        assert!(
+            !live.take_host_resume_arm(),
+            "one foreground opportunity only"
+        );
+        live.arm_host_resume();
+        assert!(
+            live.take_host_resume_arm(),
+            "a fresh suspension rearms prior adoption after transport loss"
+        );
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[tokio::test]
+    async fn mobile_host_known_remote_end_revokes_an_already_armed_attempt() {
+        use tokio::io::AsyncWriteExt;
+        for kind in [
+            festerm_tunnel_bridge::protocol::EXITED,
+            festerm_tunnel_bridge::protocol::DISPLACED,
+        ] {
+            let (host, mut peer) = host_admission_fixture().await;
+            let mut live = LiveSsh::from_host(host.clone(), &egui::Context::default());
+            let mut terminal = Terminal::new(Dimensions::new(4, 2).unwrap()).unwrap();
+            live.poll(&mut terminal, &egui::Context::default());
+            assert!(live.running);
+            live.arm_host_resume();
+            let payload = if kind == festerm_tunnel_bridge::protocol::DISPLACED {
+                vec![festerm_tunnel_bridge::protocol::Displacer::Remote.code()]
+            } else {
+                Vec::new()
+            };
+            peer.write_u8(kind).await.unwrap();
+            peer.write_u32(payload.len() as u32).await.unwrap();
+            peer.write_all(&payload).await.unwrap();
+            peer.flush().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !host.attachment_ended() {
+                    live.poll(&mut terminal, &egui::Context::default());
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            host.cancel();
+            assert!(!live.take_host_resume_arm());
+            live.arm_host_resume();
+            assert!(!live.take_host_resume_arm());
+        }
     }
 
     #[cfg(feature = "host-clients")]
