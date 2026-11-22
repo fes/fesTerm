@@ -1152,8 +1152,14 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has four accepted pinned functional cases, five preliminary cases and fifteen
-unstarted cases.
+has five accepted pinned functional cases, eight preliminary cases and eleven
+unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
+normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
+It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
+original actors remain plus the intended new three. The second Mac grid is an
+actual PTY resize on a fresh attachment to the same generation. Unsuccessful
+edge-drag commands are retained and do not qualify Mac edge-drag resizing.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
