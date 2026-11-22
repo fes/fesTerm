@@ -147,8 +147,15 @@ impl UploadRecoveryRecord for Record {
 pub(crate) enum Action {
     Review,
     Copy(String),
+    Inspect(String, InspectionTarget),
     Acknowledge(String),
 }
+#[derive(Clone, Debug)]
+pub(crate) struct InspectionTarget {
+    pub(crate) tab: crate::tabs::TabId,
+    pub(crate) connection: Option<Arc<()>>,
+}
+
 #[derive(Default)]
 pub(crate) struct RecoveryView {
     open: bool,
@@ -158,6 +165,9 @@ pub(crate) struct RecoveryView {
     error: Option<Error>,
     pending: Option<std::sync::mpsc::Receiver<Result<Vec<ListedReport>, Error>>>,
     confirmation: Option<String>,
+    inspect_after_load: Option<(Report, InspectionTarget)>,
+    inspection_ready: Option<(Report, InspectionTarget)>,
+    inspection_feedback: Option<&'static str>,
     ledger: Option<Ledger>,
 }
 impl RecoveryView {
@@ -213,8 +223,20 @@ impl RecoveryView {
                 Ok(rows) => {
                     self.rows = rows;
                     self.error = None;
+                    if let Some((expected, tab)) = self.inspect_after_load.take() {
+                        match self.rows.iter().find(|row| row.report == expected) {
+                            Some(row) if !row.active => {
+                                self.inspection_ready = Some((expected, tab))
+                            }
+                            Some(_) => self.error = Some(Error::Busy),
+                            None => self.error = Some(Error::Changed),
+                        }
+                    }
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    self.inspect_after_load = None;
+                    self.error = Some(e);
+                }
             }
             if self.auto_open && (!self.rows.is_empty() || self.error.is_some()) {
                 self.open = true;
@@ -237,6 +259,19 @@ impl RecoveryView {
                     context.copy_text(report_text(&row.report));
                 }
             }
+            Action::Inspect(id, tab) => {
+                self.inspection_feedback = None;
+                let Some(row) = self.rows.iter().find(|row| row.report.id == id) else {
+                    self.error = Some(Error::Changed);
+                    return;
+                };
+                if row.active || self.pending.is_some() {
+                    self.error = Some(Error::Busy);
+                    return;
+                }
+                self.inspect_after_load = Some((row.report.clone(), tab));
+                self.load(None, context); // Recheck the durable record and active-owner lock.
+            }
             Action::Acknowledge(id) => {
                 let Some(row) = self.rows.iter().find(|row| row.report.id == id) else {
                     self.error = Some(Error::Changed);
@@ -253,7 +288,7 @@ impl RecoveryView {
     }
 }
 fn report_text(r: &Report) -> String {
-    format!("Endpoint: {}@{}:{}\nVerified SSH key: {}\nTemporary (may exist): {}\nDestination: {}\nNo remote inspection, deletion or resume has run.",r.endpoint.username,r.endpoint.host,r.endpoint.port,r.endpoint.fingerprint,r.temporary,r.destination.as_deref().unwrap_or("not recorded before publication"))
+    format!("Endpoint: {}@{}:{}\nVerified SSH key: {}\nTemporary (may exist): {}\nDestination: {}\nThis report does not record inspection results or authorize deletion or resume.",r.endpoint.username,r.endpoint.host,r.endpoint.port,r.endpoint.fingerprint,r.temporary,r.destination.as_deref().unwrap_or("not recorded before publication"))
 }
 impl super::FesTermApp {
     pub(super) fn show_upload_recovery(&mut self, context: &egui::Context) {
@@ -270,6 +305,15 @@ impl super::FesTermApp {
             return;
         }
         let view = &mut self.overlays.upload_recovery;
+        if let Some((report, target)) = view.inspection_ready.take() {
+            match self.state.inspect_interrupted_upload(&report, &target) {
+                Ok(()) => view.open = false,
+                Err(message) => view.inspection_feedback = Some(message),
+            }
+        }
+        if !view.open {
+            return;
+        }
         let mut action = None;
         let mut close = false;
         crate::software_background::show_modal(
@@ -278,9 +322,12 @@ impl super::FesTermApp {
             |ui| {
                 ui.set_width((context.content_rect().width() - 40.0).clamp(160.0, 620.0));
                 ui.heading("Interrupted uploads");
-                ui.label("These saved reports identify files that may exist. No remote inspection or action has run.");
+                ui.label("These saved reports identify files that may exist. Review the current location before taking a separate action.");
                 if let Some(error) = view.error {
                     ui.colored_label(festerm_ui_egui::theme::STATUS_ERROR, error.message());
+                }
+                if let Some(message) = view.inspection_feedback {
+                    ui.label(message);
                 }
                 if view.pending.is_some() {
                     ui.label("Reading local reports…");
@@ -310,6 +357,14 @@ impl super::FesTermApp {
                                 ui.horizontal_wrapped(|ui| {
                                     if ui.button("Copy report").clicked() {
                                         action = Some(crate::tabs::AppCommand::CopyInterruptedUpload {
+                                            id: row.report.id.clone(),
+                                        });
+                                    }
+                                    if ui.add_enabled(
+                                        !row.active && view.pending.is_none(),
+                                        egui::Button::new("Inspect remote location"),
+                                    ).clicked() {
+                                        action = Some(crate::tabs::AppCommand::InspectInterruptedUpload {
                                             id: row.report.id.clone(),
                                         });
                                     }
@@ -353,6 +408,8 @@ impl super::FesTermApp {
             view.open = false;
             view.auto_open = false;
             view.confirmation = None;
+            view.inspect_after_load = None;
+            view.inspection_ready = None;
         }
         if let Some(command) = action {
             self.state.dispatch(command, context);
@@ -557,5 +614,143 @@ mod tests {
         assert!(copied.contains("/owned/active.festerm-part"));
         assert!(!copied.contains("credential_reference"));
         drop(token);
+    }
+    #[test]
+    fn upload_recovery_inspection_rechecks_active_owner_and_keeps_durable_report() {
+        let (_private, ledger) = ledger();
+        let token = ledger
+            .begin(endpoint(), "/owned/file.festerm-part".into())
+            .unwrap();
+        let report = token.report.clone();
+        let mut rows = ledger.list().unwrap();
+        rows[0].active = false; // Simulate a stale inactive presentation; actual owner is held.
+        let mut view = RecoveryView {
+            rows,
+            ledger: Some(ledger.clone()),
+            started: true,
+            ..Default::default()
+        };
+        let context = egui::Context::default();
+        view.act(
+            Action::Inspect(
+                report.id.clone(),
+                InspectionTarget {
+                    tab: crate::tabs::TabId::next_for_test(),
+                    connection: None,
+                },
+            ),
+            &context,
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while view.pending.is_some() {
+            view.poll(&context);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(view.error, Some(Error::Busy));
+        assert!(view.inspection_ready.is_none());
+        assert_eq!(ledger.list().unwrap()[0].report, report);
+        drop(token);
+    }
+
+    #[test]
+    fn upload_recovery_inspection_without_selected_connection_gives_guidance_and_never_acknowledges(
+    ) {
+        let (_private, ledger) = ledger();
+        let token = ledger
+            .begin(endpoint(), "/owned/file.festerm-part".into())
+            .unwrap();
+        let id = token.report.id.clone();
+        drop(token);
+        let mut app = super::super::FesTermApp::for_test_with_configuration(
+            festerm_config::Configuration::empty(),
+        );
+        app.overlays.upload_recovery.ledger = Some(ledger.clone());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut super::super::FesTermApp| app.show_upload_recovery(ui.ctx()),
+                app,
+            );
+        wait_view(&mut harness);
+        harness.run_steps(2);
+        harness.get_by_label("Inspect remote location").click();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while harness
+            .state()
+            .overlays
+            .upload_recovery
+            .inspection_feedback
+            .is_none()
+        {
+            harness.run_steps(1);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        harness.get_by_label("Connect normally to this endpoint in an SFTP tab, select that tab, then review this report again.");
+        assert!(harness.state().overlays.upload_recovery.open);
+        assert_eq!(ledger.list().unwrap()[0].report.id, id);
+        assert_eq!(harness.state().state.tabs().len(), 1);
+    }
+    #[test]
+    fn upload_recovery_ready_inspection_waits_for_other_modal_ownership() {
+        let (_private, ledger) = ledger();
+        let token = ledger
+            .begin(endpoint(), "/owned/file.festerm-part".into())
+            .unwrap();
+        let report = token.report.clone();
+        drop(token);
+        let mut app = super::super::FesTermApp::for_test_with_configuration(
+            festerm_config::Configuration::empty(),
+        );
+        let target = InspectionTarget {
+            tab: app.state.active_tab().id,
+            connection: None,
+        };
+        app.overlays.upload_recovery = RecoveryView {
+            open: true,
+            started: true,
+            inspection_ready: Some((report.clone(), target)),
+            ledger: Some(ledger.clone()),
+            ..Default::default()
+        };
+        app.overlays.recording_modal = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 700.0))
+            .build_ui_state(
+                |ui, app: &mut super::super::FesTermApp| app.show_upload_recovery(ui.ctx()),
+                app,
+            );
+        harness.run_steps(3);
+        assert!(harness
+            .state()
+            .overlays
+            .upload_recovery
+            .inspection_ready
+            .is_some());
+        assert!(harness
+            .state()
+            .overlays
+            .upload_recovery
+            .inspection_feedback
+            .is_none());
+        assert!(harness.state().overlays.upload_recovery.open);
+        assert_eq!(ledger.list().unwrap()[0].report, report);
+        harness.state_mut().overlays.recording_modal = false;
+        harness.run_steps(2);
+        assert!(harness
+            .state()
+            .overlays
+            .upload_recovery
+            .inspection_ready
+            .is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .upload_recovery
+            .inspection_feedback
+            .is_some());
+        assert_eq!(ledger.list().unwrap()[0].report, report);
+        assert_eq!(harness.state().state.tabs().len(), 1);
     }
 }

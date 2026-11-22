@@ -262,6 +262,24 @@ a live cleanup notice preserves the report. Explicit **Acknowledge and forget
 report** removes only the displayed local report after a separate confirmation;
 reports with a still-active owner refuse acknowledgement.
 
+**Inspect remote location** is an explicit, read-only action. Select an already
+connected normal SFTP tab for the exact host, port and username first. The
+application reloads the report and refuses an active upload owner, changed report,
+changed selected tab, unverified/different accepted SSH key, stale connection or
+busy browser. If no eligible selected tab exists, the report remains visible with
+instructions to connect normally; inspection never creates a connection or reads
+credentials. A single generation-fenced directory read opens the recorded parent only for
+normalized absolute SFTP paths, without changing its meaning through the session's
+initial directory. Relative, drive-only, UNC, backslash and nonnormalized paths
+remain available to copy for manual inspection rather than guessing the original
+server context. Success updates ordinary browser refresh/navigation state. A failed read is
+not retried or reconnected by inspection, and a stale completion cannot navigate.
+
+Inspection does not select, delete, resume or prove ownership of a partial file.
+The user can inspect the current listing and separately use the ordinary file
+manager's Delete confirmation. The durable report remains until explicit
+acknowledgement; neither successful inspection nor ordinary deletion retires it.
+
 The application-private catalog is limited to 64 reports and 256 KiB, with bounded
 local lock metadata and no eviction of unresolved reports. A short interprocess
 catalog lock serializes updates; an operation lock lasts through actual blocking

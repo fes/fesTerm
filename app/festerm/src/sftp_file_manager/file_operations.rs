@@ -18,7 +18,7 @@ impl ConnectionScope {
         *self.0.lock().expect("SFTP connection scope lock") = Arc::new(());
     }
 
-    fn matches(&self, expected: &Arc<()>) -> bool {
+    pub(super) fn matches(&self, expected: &Arc<()>) -> bool {
         Arc::ptr_eq(&self.capture(), expected)
     }
 }

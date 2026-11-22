@@ -559,9 +559,16 @@ provide the effects; transfer authority and recursive deletion are not added.
 
 
 GUI SFTP interrupted-upload review uses the central typed actions
-`ReviewInterruptedUploads`, `CopyInterruptedUpload` and `AcknowledgeInterruptedUpload`.
+`ReviewInterruptedUploads`, `CopyInterruptedUpload`, `InspectInterruptedUpload` and
+`AcknowledgeInterruptedUpload`.
 The application owner loads the private report store off the UI thread; widgets
 only propose these actions. Copy uses the displayed public report, and confirmed
 acknowledgement validates that exact report plus an inactive operation lock before
 removing local metadata. Startup/review never authenticates or sends remote work.
 Closing a notice or review modal leaves the report intact (`SFTPG-11`).
+Inspection captures the selected tab identity at command dispatch, asynchronously
+reloads the exact inactive report, and admits only the selected already-connected
+normal SFTP tab with the exact endpoint, accepted key and current generation.
+A dedicated single-read command avoids ordinary navigation's reconnect/retry
+branch; late completions cannot change the folder or accepted key. No connection,
+authentication, remote mutation or report acknowledgement is implicit.

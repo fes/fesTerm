@@ -7580,14 +7580,24 @@
         "durable_upload_reports_preserve_server_path_forms_without_local_interpretation",
         "durable_upload_reports_create_missing_private_application_parents_without_repair",
         "durable_upload_reports_explicitly_release_catalog_and_operation_locks_with_live_duplicates",
-        "upload_recovery_missing_parents_are_observed_without_creation_or_alias_following"
+        "upload_recovery_missing_parents_are_observed_without_creation_or_alias_following",
+        "upload_inspection_parent_preserves_absolute_paths_and_refuses_ambiguous_forms",
+        "upload_inspection_routes_only_the_selected_verified_live_tab_once_without_reconnect",
+        "upload_inspection_rejects_endpoint_key_unready_and_stale_authority_without_queueing",
+        "upload_inspection_worker_refuses_changed_key_or_generation_before_any_read",
+        "upload_inspection_failed_read_is_not_retried_and_late_completion_cannot_navigate",
+        "upload_inspection_central_command_pins_the_selected_tab_without_starting_another_connection",
+        "upload_recovery_inspection_rechecks_active_owner_and_keeps_durable_report",
+        "upload_recovery_inspection_without_selected_connection_gives_guidance_and_never_acknowledges",
+        "upload_recovery_ready_inspection_waits_for_other_modal_ownership",
+        "absolute_upload_inspection_parent_refresh_and_child_keep_protocol_paths_independent_of_initial_cwd"
       ],
       "manual_scenarios": [
         "SFTP-05"
       ],
       "status": "partial",
       "prerequisites": [
-        "Packaged restart, real server loss, multiwindow path/copy readability and accessibility remain pending; no safe remote cleanup or resume claim."
+        "Packaged crash/restart, same-key inspection followed by separately confirmed manual deletion, server failure, changed-key/path behavior, multiwindow interaction and accessibility remain pending; no safe automatic remote cleanup or resume claim."
       ]
     }
   ]

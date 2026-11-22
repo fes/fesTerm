@@ -3147,6 +3147,9 @@ pub enum AppCommand {
     CopyInterruptedUpload {
         id: String,
     },
+    InspectInterruptedUpload {
+        id: String,
+    },
     AcknowledgeInterruptedUpload {
         id: String,
     },
@@ -5657,6 +5660,20 @@ impl AppState {
             AppCommand::CopyInterruptedUpload { id } => {
                 self.pending_upload_recovery = Some(crate::app::sftp_recovery::Action::Copy(id))
             }
+            AppCommand::InspectInterruptedUpload { id } => {
+                let tab = self.active_tab();
+                let connection = match &tab.content {
+                    TabContent::SftpFileManager(sftp) => sftp.upload_inspection_scope(),
+                    _ => None,
+                };
+                self.pending_upload_recovery = Some(crate::app::sftp_recovery::Action::Inspect(
+                    id,
+                    crate::app::sftp_recovery::InspectionTarget {
+                        tab: tab.id,
+                        connection,
+                    },
+                ));
+            }
             AppCommand::AcknowledgeInterruptedUpload { id } => {
                 self.pending_upload_recovery =
                     Some(crate::app::sftp_recovery::Action::Acknowledge(id))
@@ -7175,6 +7192,23 @@ impl AppState {
         }
         assert!(self.documents.borrow_mut().release(id));
         recovery
+    }
+
+    pub(crate) fn inspect_interrupted_upload(
+        &mut self,
+        report: &crate::app::sftp_recovery::Report,
+        target: &crate::app::sftp_recovery::InspectionTarget,
+    ) -> Result<(), &'static str> {
+        if self.active_tab().id != target.tab {
+            return Err(
+                "The selected tab changed. Select the connected SFTP tab and inspect again.",
+            );
+        }
+        let TabContent::SftpFileManager(tab) = &mut self.active_tab_mut().content else {
+            return Err("Connect normally to this endpoint in an SFTP tab, select that tab, then review this report again.");
+        };
+        let scope = target.connection.as_ref().ok_or("Connect normally to this endpoint in an SFTP tab, select that tab, then review this report again.")?;
+        tab.inspect_interrupted_upload(report, scope)
     }
 
     pub(crate) fn take_upload_recovery_action(
