@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "148dbeb7ef81acb9f165c5fa62951d90f4142a65a98c75b34fa1626ffdf4c8bc"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "5a624c97c86cc7e41f8b8361db386438ddc2e46addb65ead72dd50ae4e8a3106"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

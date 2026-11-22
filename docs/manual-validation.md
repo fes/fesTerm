@@ -5800,11 +5800,14 @@ review/three gates and a separate one-run owner authorization. See
 [the fixed inputs, evidence and operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
-The compiled policy accepts only the two explicitly reviewed AOC CA 03 or
-EOC CA 03 chains under the same pinned PCA/root, with all subject, profile,
-timestamp and fresh-revocation checks retained. The EOC CA 03 DER pin was
-independently verified against Microsoft's public PKI download; this adds no
-automatic CA discovery or generic OS-trusted-publisher fallback. See the
+The compiled policy accepts only four explicitly reviewed complete ordered
+chains: AOC CA 03, AOC CA 04, EOC CA 03 or EOC CA 04 under the same pinned
+PCA/root, with all subject, profile, timestamp and fresh-revocation checks retained.
+Their DER pins were independently verified against Microsoft's public PKI
+downloads; this adds no automatic CA discovery or generic OS-trusted-publisher
+fallback. The additional AOC CA 04 still requires corrected-build native package
+qualification and the normal stopped-update check; portable tests do not complete
+those gates, and the first old-policy refusal remains preserved. See the
 [exact approved chains](host-release-artifacts.md#windows-native-publisher-policy).
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
 implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25

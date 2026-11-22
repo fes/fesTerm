@@ -2038,8 +2038,10 @@ authenticated account and complete locked snapshot/epoch/binding revalidation.
 Uncertainty remains fail-closed in local-disable/CleanupPending; status context
 is unverified, not removal authority. No browser or DELETE is performed.
 
-Windows source requires the approved publisher/profile, current online-enabled
-fail-closed PKI policy and exact protected graceful stop/run-lease release,
+Windows source allows only the four independently pinned complete AOC03/AOC04/
+EOC03/EOC04 chains under the same PCA/root; adding AOC04 retains all prior pins
+and requires separate corrected-build native qualification. Windows source
+requires the approved publisher/profile, current online-enabled fail-closed PKI policy and exact protected graceful stop/run-lease release,
 never Scheduler force-stop. Actual3030 run42881664804 passed25 preflight cases
 then aborted during the genuine positive PKI case on a misaligned timestamp
 pointer; the unsigned negative was unreached. Native PKI remains **blocked**;
