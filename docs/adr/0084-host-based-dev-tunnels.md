@@ -3117,3 +3117,23 @@ source race, not the call site of the signed 0.17.18 native busy failure. The
 controller's final lifecycle commit remains a separate possible contention
 point. Native first-confirmation Disable, retained Enable and session I/O with
 the corrected build remain pending.
+
+### Final native start observation contention
+
+After the manager start and native observation have completed, the final
+lifecycle fence may wait only for transient Busy under the original native
+operation deadline. Every read invokes the existing guard callback and must
+match the full captured Provisioned snapshot. Exhausted contention preserves
+the original Busy; callback failures, changed scope and other read failures
+remain final. Credentials, staging, registration reconciliation and manager
+commands are outside the retry. Pre-manager and early Transitioning fences are
+unchanged. This adds no cancellation facility to the normal Linux start path;
+existing guarded callers retain their callback checks.
+
+Validation impact: GUI:HOST-04 and ADR0084. A real lifecycle lease held after a
+successful manager observation deterministically reproduces the final Busy.
+Controlled release, original deadline expiry (including expiry in a retry
+callback), cancellation/fatal callback errors and changed epoch or same-epoch
+snapshot retain exactly one manager start and the original credential checks.
+This source regression does not qualify the corrected native first result or
+the controller's separate final report/commit reads.

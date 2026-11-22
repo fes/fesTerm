@@ -26,6 +26,13 @@ pub(super) struct OperationGuard {
 }
 
 impl OperationGuard {
+    pub(super) fn remaining(&self) -> io::Result<Duration> {
+        let until = UNTIL
+            .with(|slot| slot.get())
+            .ok_or_else(|| super::refused("host.service_native_timeout"))?;
+        remaining(until)
+    }
+
     #[cfg(all(feature = "cloud", feature = "host-runtime"))]
     pub(super) fn limit_until(&self, deadline: Instant) {
         UNTIL.with(|slot| {

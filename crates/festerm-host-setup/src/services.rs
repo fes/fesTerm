@@ -1057,7 +1057,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
         check: impl Fn() -> io::Result<()>,
-        _guard: native::OperationGuard,
+        guard: native::OperationGuard,
     ) -> io::Result<Observation> {
         self.require_replacement_settled()?;
         let snapshot = observe_start(
@@ -1176,7 +1176,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         observe_start(
             &self.state,
             StartStage::FinalFence,
-            self.fence(epoch, Phase::Provisioned),
+            self.start_final_fence(&snapshot, &guard, &check),
         )?;
         if process == ProcessState::Transitioning {
             return Ok(observation(&snapshot, process));
@@ -1186,6 +1186,46 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         }
         check()?;
         Ok(observation(&snapshot, process))
+    }
+
+    // The manager and credential checks have already completed. Retain the
+    // original operation deadline; wait only for a fresh matching final read.
+    fn start_final_fence(
+        &self,
+        expected: &Snapshot,
+        guard: &native::OperationGuard,
+        check: &impl Fn() -> io::Result<()>,
+    ) -> io::Result<Snapshot> {
+        let mut last_busy = None;
+        loop {
+            check()?;
+            if let Some(error) = last_busy.take() {
+                if guard.remaining().is_err() {
+                    return Err(error);
+                }
+            }
+            let result = self
+                .fence(expected.epoch, Phase::Provisioned)
+                .and_then(|current| {
+                    if &current != expected {
+                        return Err(refused("host.service_stale_or_unapproved_operation"));
+                    }
+                    Ok(current)
+                });
+            match result {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    let Ok(remaining) = guard.remaining() else {
+                        return Err(error);
+                    };
+                    std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+                    if guard.remaining().is_err() {
+                        return Err(error);
+                    }
+                    last_busy = Some(error);
+                }
+                result => return result,
+            }
+        }
     }
 
     pub fn stop(&self, epoch: u64) -> io::Result<Observation> {

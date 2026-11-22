@@ -6072,6 +6072,17 @@ Refresh and supported recovery flow. These taps preserve the exact original
 result, error payload and deadline; no retry or new state acceptance is added.
 Native first-result qualification of the original #842 contention remains open.
 
+The final post-observation start fence separately waits only for Busy within
+the original native operation deadline, rechecking the full captured snapshot
+and existing guard callback without replaying manager or credential work.
+Exhaustion returns the original Busy; no Linux cancellation facility is added.
+With a corrected native frontend/test build using the existing authenticated
+HOST components, apply platform signing gates where applicable. Preserve the
+first normal Enable result and its finite stage log, then confirm actual
+Listening and unchanged durable actors,
+profiles and catalog. Do not treat the controlled lock regression as native
+acceptance or proof that later Desktop completion reads cannot still contend.
+
 When the exact native service timeout is returned, Remote Access must show a
 native operation timeout notice and Recovery guidance: the command may not have
 run or may have completed, so refresh local status and review before another
