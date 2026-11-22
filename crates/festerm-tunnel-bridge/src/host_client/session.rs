@@ -20,6 +20,7 @@ struct State {
     terminal: Option<TerminalHandle>,
     lifecycle: SessionLifecycle,
     lifecycle_pending: bool,
+    attachment_ended: bool,
     detach: Option<OperationId>,
     metrics: SessionMetrics,
 }
@@ -108,6 +109,7 @@ impl HostSession {
                 terminal: None,
                 lifecycle: SessionLifecycle::Starting,
                 lifecycle_pending: true,
+                attachment_ended: false,
                 detach: None,
                 metrics: SessionMetrics {
                     event_queue_capacity: 4,
@@ -135,6 +137,14 @@ impl HostSession {
 
     pub fn binding(&self) -> &Binding {
         &self.scope.binding
+    }
+
+    /// A definitive remote EXITED/DISPLACED event, retained across cancellation.
+    /// This is observation data, never permission to reconnect or create.
+    pub fn attachment_ended(&self) -> bool {
+        self.state
+            .lock()
+            .map_or(true, |state| state.attachment_ended)
     }
 
     pub fn has_pending_snapshot(&self) -> bool {
@@ -329,11 +339,13 @@ impl HostSession {
                 }
             }
             EXITED => {
+                state.attachment_ended = true;
                 // This wire event carries no exit status; do not invent zero.
                 Self::finish(state, SessionLifecycle::Stopped);
                 Ok(SessionEvent::Lifecycle(SessionLifecycle::Stopped))
             }
             DISPLACED => {
+                state.attachment_ended = true;
                 let lifecycle = SessionLifecycle::Disconnected(SessionError::new(
                     SessionErrorKind::Output,
                     "This attachment was displaced by another client. No automatic reconnect or input replay was attempted.",

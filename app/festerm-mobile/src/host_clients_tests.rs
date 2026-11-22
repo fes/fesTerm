@@ -6,7 +6,7 @@ use festerm_session::{Session, SessionLifecycle};
 use std::{cell::Cell, rc::Rc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-fn app() -> MobileApp {
+pub(super) fn app() -> MobileApp {
     MobileApp::new(Rc::new(Cell::new(Lifecycle {
         active: true,
         ..Lifecycle::default()
@@ -47,7 +47,7 @@ fn mobile_host_open_is_offline_and_lock_callback_cancels_without_another_frame()
     assert!(app.sink.live.host.token(epoch).is_cancelled());
 }
 
-fn client_inventory(creation_allowed: bool) -> Inventory {
+pub(super) fn client_inventory(creation_allowed: bool) -> Inventory {
     Inventory {
         capabilities: Capabilities {
             issuance_epoch: Some(festerm_host_protocol::Epoch::new(1).unwrap()),
@@ -1541,6 +1541,25 @@ async fn installed_host_round_trip(intentional_close: bool, disconnect: bool) {
         return;
     }
     app.sink.live.content_lock_callback()();
+    app.sink.live.suspend();
+    assert!(
+        app.sink
+            .live
+            .connection
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .take_host_resume_arm(),
+        "actual adopted Running survives lock-before-suspend ordering"
+    );
+    assert!(!app
+        .sink
+        .live
+        .connection
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .take_host_resume_arm());
     assert!(
         !app.sink
             .live
@@ -1565,9 +1584,13 @@ async fn installed_host_round_trip(intentional_close: bool, disconnect: bool) {
         .as_mut()
         .unwrap()
         .poll(&mut app.terminal, &context);
-    assert_eq!(app.reconnect_banner().custom.unwrap().action, "Review host");
-    app.reconnect_active(&context).unwrap();
-    assert!(app.hosts.open && app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert_eq!(app.reconnect_banner().custom.unwrap().action, "Reconnect");
+    assert!(app.reconnect_active(&context).is_err());
+    assert!(!app.hosts.open && app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(app
+        .host_reconnect_notice()
+        .unwrap()
+        .contains("explicit host review"));
     assert_eq!(
         app.active_tab,
         Some(host_tab),
@@ -3739,7 +3762,7 @@ fn mobile_ordinary_host_switch_cancels_pending_expansion_before_stale_publicatio
     assert!(app.hosts.receipt.is_none() && app.hosts.originals.is_empty());
 }
 
-fn ordinary_fixture_context(
+pub(super) fn ordinary_fixture_context(
     account_id: u64,
 ) -> (tempfile::TempDir, host_client::ordinary::OrdinaryContext) {
     use festerm_tunnel_bridge::{
@@ -3789,7 +3812,7 @@ fn ordinary_fixture_context(
     (root, context)
 }
 
-fn ordinary_mobile_ui_fixture(
+pub(super) fn ordinary_mobile_ui_fixture(
     context: host_client::ordinary::OrdinaryContext,
     inventory: Inventory,
     root: &std::path::Path,
@@ -4019,6 +4042,7 @@ fn mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes(
                 tab: 11,
                 owner: None,
                 ordinary_lifetime: Some(first_token.clone()),
+                reconnect: None,
             },
             SessionAccount {
                 session: Arc::downgrade(&second_session),
@@ -4026,6 +4050,7 @@ fn mobile_ordinary_account_removal_cancels_only_affected_sessions_and_lifetimes(
                 tab: 12,
                 owner: None,
                 ordinary_lifetime: Some(second_token.clone()),
+                reconnect: None,
             },
         ];
         if via_sign_out {
@@ -4138,10 +4163,7 @@ async fn mobile_host_viewer_shows_real_finite_attach_failure_without_leaving_ter
     assert_eq!(banner.status, "Input is paused.");
     let text = banner.custom.as_ref().unwrap();
     assert_eq!(text.title, "Connection closed");
-    assert_eq!(
-        text.body,
-        "Review this host to reconnect to the same session."
-    );
+    assert_eq!(text.body, "Reconnect to continue the same session.");
     assert!(
         !text.body.contains("away"),
         "a generic failure must not invent a background cause"
@@ -4156,16 +4178,16 @@ async fn mobile_host_viewer_shows_real_finite_attach_failure_without_leaving_ter
     assert!(detail.contains("unknown, not absent") && detail.contains("original issued action"));
     assert!(!detail.contains("UNRELATED"));
     assert!(banner.reattach.is_none());
-    assert_eq!(text.action, "Review host");
+    assert_eq!(text.action, "Reconnect");
     let mut harness = egui_kittest::Harness::builder()
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui(move |ui| {
             crate::terminal_chrome::reconnect_banner(ui, &banner, false);
         });
     harness.run();
-    harness.get(By::new().label("Review host"));
+    harness.get(By::new().label("Reconnect"));
     harness.get(By::new().label("Connection closed"));
-    harness.get(By::new().label("Review this host to reconnect to the same session."));
+    harness.get(By::new().label("Reconnect to continue the same session."));
     assert!(harness.query(By::new().label(detail.as_str())).is_none());
     assert!(harness
         .query(By::new().label("Reconnect · new shell"))

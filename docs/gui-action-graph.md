@@ -1809,8 +1809,14 @@ ownership until buffers are released. Native/mobile acceptance for the corrected
 signed route remains separate from portable codec/budget tests.
 
 The mobile HOST-03 viewer shows **Connection closed** with plain guidance to
-review and reconnect to the same session, input paused and only explicit
-**Review host**. Existing finite attachment stage/category/I/O detail and the
+reconnect to the same session, input paused, and bottom **Reconnect** and
+**Close** actions. Ordinary previously adopted live HOST tabs arm one automatic
+Attach when returning to an unlocked, foreground, visible active terminal; other
+screens and background tabs do not start work. Both automatic and explicit
+Reconnect refresh the same account and known provider locator, require the full
+original host identity and exact Running logical/generation, and attach without
+takeover. Missing/replaced native key state refuses without key bootstrap.
+Failures stay in the same viewer; Close only retires this attachment. Existing finite attachment stage/category/I/O detail and the
 unknown-not-absent/original-action warning remain in the existing terminal-menu
 diagnostics without navigating Back. Synchronous HOST input or immediate
 viewport-resize admission refusal also retains the finite `full`, `closed` or
@@ -1818,8 +1824,8 @@ viewport-resize admission refusal also retains the finite `full`, `closed` or
 viewport). Closed retains an already available finite HOST lifecycle cause, or
 explicitly reports unknown. No input content, lengths or queue-capacity values are
 included; refusal still disconnects without continuation or replay. Generic closure does not infer a background
-cause. No diagnostic or copy change retries, creates, replays input, changes
-privacy cancellation or replaces a shell. Shared-profile tabs use the matching advertised profile name as display
+cause. Reconnect never Ensure/Creates, replaces a generation, replays input, or
+bypasses privacy/account/context cancellation. Shared-profile tabs use the matching advertised profile name as display
 metadata, with the prior generic description as fallback. Portable framed EOF
 and viewer regressions are not native connection acceptance.
 

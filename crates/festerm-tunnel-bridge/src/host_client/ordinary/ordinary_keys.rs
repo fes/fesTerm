@@ -169,6 +169,71 @@ impl OrdinaryKeyIndex {
         storage::replace_private(directory, &binding.name("json")?, &bytes)
             .map_err(|error| storage_failure(KeyStage::RecordReplace, error))
     }
+    // Reconnection can only reuse the previously authenticated native identity.
+    // Unlike prepare, missing/unready/replaced state never initializes a key.
+    pub(super) fn existing(
+        &self,
+        binding: &KeyBinding,
+        reference: &SecretReference,
+        public_key: [u8; 32],
+        guard: &OrdinaryAccountGuard,
+    ) -> Result<NativeKey, Failure> {
+        guard.check()?;
+        let vault = native_store().map_err(|e| key_failure(e.into()))?;
+        self.existing_with(Arc::from(vault), binding, reference, public_key, guard)
+            .map_err(key_failure)
+    }
+    fn existing_with(
+        &self,
+        vault: Arc<dyn SecretStore>,
+        binding: &KeyBinding,
+        reference: &SecretReference,
+        public_key: [u8; 32],
+        guard: &OrdinaryAccountGuard,
+    ) -> Result<NativeKey, KeyError> {
+        let check = || {
+            guard
+                .check()
+                .map_err(|_| KeyError::BindingMismatch.at_stage(KeyStage::AccountGuard))
+        };
+        check()?;
+        let directory = self
+            .index
+            .directory_io(false)
+            .map_err(|error| storage_failure(KeyStage::Directory, error))?;
+        #[cfg(feature = "relay")]
+        let file = storage::open_existing_trusted_lock(&directory, &binding.name("lock")?);
+        #[cfg(not(feature = "relay"))]
+        let file = storage::open_existing_private(&directory, &binding.name("lock")?);
+        let file = file.map_err(|error| storage_failure(KeyStage::LockOpen, error))?;
+        file.try_lock_exclusive().map_err(|error| {
+            if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+                KeyError::Busy
+            } else {
+                storage_failure(KeyStage::LockAcquire, error)
+            }
+        })?;
+        let _lease = Lease(file);
+        let record = Self::read(&directory, binding)?;
+        if !record.ready || record.reference != reference.to_persisted_string() {
+            return Err(KeyError::BindingMismatch.at_stage(KeyStage::RecordBinding));
+        }
+        check()?;
+        let secret = vault.get(reference)?;
+        let seed =
+            decode_key(&secret, binding).map_err(|error| error.at_stage(KeyStage::SeedBinding))?;
+        let key = OrdinaryDeviceKey::from_seed(&seed);
+        if key.public_key() != public_key {
+            return Err(KeyError::BindingMismatch.at_stage(KeyStage::SeedBinding));
+        }
+        check()?;
+        Ok(NativeKey {
+            key: Arc::new(key),
+            reference: reference.duplicate_for_transport(),
+            index: self.clone(),
+            vault,
+        })
+    }
     pub(super) fn prepare(
         &self,
         binding: &KeyBinding,

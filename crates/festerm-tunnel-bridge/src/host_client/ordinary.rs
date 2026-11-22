@@ -205,6 +205,43 @@ async fn authenticate_fresh(
     request_cancel: &CancellationToken,
     role: StreamRole,
 ) -> Result<Authenticated, Failure> {
+    authenticate_fresh_mode(
+        identity,
+        locator,
+        KeySource::Bootstrap(index),
+        budgets,
+        account_guard,
+        request_cancel,
+        role,
+    )
+    .await
+}
+
+enum KeySource {
+    Bootstrap(OrdinaryKeyIndex),
+    Existing(OrdinaryContext),
+}
+
+fn after_existing_host_check<T>(
+    expected: Option<&OrdinaryHostInfo>,
+    actual: &OrdinaryHostInfo,
+    action: impl FnOnce() -> Result<T, ContractError>,
+) -> Result<T, ContractError> {
+    if expected.is_some_and(|expected| expected != actual) {
+        return Err(ContractError::Stale);
+    }
+    action()
+}
+
+async fn authenticate_fresh_mode(
+    identity: &Identity,
+    locator: &str,
+    source: KeySource,
+    budgets: &Budgets,
+    account_guard: &OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    role: StreamRole,
+) -> Result<Authenticated, Failure> {
     account_guard.check()?;
     identity
         .account
@@ -223,12 +260,26 @@ async fn authenticate_fresh(
     };
     account_guard.check()?;
     let route = route(&resolved)?;
+    if let KeySource::Existing(prior) = &source {
+        if prior.host_info().route != route
+            || prior.binding().account() != format!("github:{}", identity.account.id)
+        {
+            return Err(Failure::BindingMismatch);
+        }
+    }
+    let expected_info = match &source {
+        KeySource::Existing(prior) => Some(prior.host_info().clone()),
+        KeySource::Bootstrap(_) => None,
+    };
     let key_binding = KeyBinding::new(identity.account.id, route.clone())?;
     let key_guard = key_guard_for_request(account_guard, request_cancel);
     let (key, permit) = tokio::select! {
         biased;
         _ = account_guard.cancel.cancelled() => return Err(Error::Cancelled.into()),
-        value = open_native_owner_key(permit, request_cancel, move || index.prepare(&key_binding, &key_guard)) => value?,
+        value = open_native_owner_key(permit, request_cancel, move || match source {
+            KeySource::Existing(prior) => prior.key_index().existing(&key_binding, &prior.reference(), prior.0.key.key.public_key(), &key_guard),
+            KeySource::Bootstrap(index) => index.prepare(&key_binding, &key_guard),
+        }) => value?,
     };
     account_guard.check()?;
     let stream = connect(
@@ -243,6 +294,7 @@ async fn authenticate_fresh(
     let proof_route = route.clone();
     let proof_guard = account_guard.clone();
     let publish_guard = account_guard.clone();
+    let proof_expected = expected_info.clone();
     let authenticated = crate::host_runtime::authenticate_ordinary_client_using_guard(
         stream,
         permit,
@@ -251,7 +303,9 @@ async fn authenticate_fresh(
         request_cancel.clone(),
         move |connection, challenge| {
             proof_guard.check()?;
-            signing.prove(connection, &proof_route, challenge, role)
+            after_existing_host_check(proof_expected.as_ref(), &challenge.host_info, || {
+                signing.prove(connection, &proof_route, challenge, role)
+            })
         },
         move || publish_guard.check(),
     );
@@ -261,6 +315,7 @@ async fn authenticate_fresh(
         value = authenticated => value?,
     };
     account_guard.check()?;
+    after_existing_host_check(expected_info.as_ref(), &info, || Ok(()))?;
     Ok(Authenticated {
         stream,
         permit,
@@ -280,16 +335,56 @@ pub async fn discover(
     account_guard: OrdinaryAccountGuard,
     request_cancel: &CancellationToken,
 ) -> Result<(OrdinaryContext, Inventory), Failure> {
+    discover_mode(
+        identity,
+        locator,
+        KeySource::Bootstrap(index),
+        budgets,
+        account_guard,
+        request_cancel,
+    )
+    .await
+}
+
+/// Fresh provider proof and inventory using only the original native key.
+/// Missing/replaced native state refuses; this never bootstraps credentials.
+pub async fn rediscover_existing(
+    identity: &Identity,
+    locator: &str,
+    prior: &OrdinaryContext,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+) -> Result<(OrdinaryContext, Inventory), Failure> {
+    discover_mode(
+        identity,
+        locator,
+        KeySource::Existing(prior.clone()),
+        budgets,
+        account_guard,
+        request_cancel,
+    )
+    .await
+}
+
+async fn discover_mode(
+    identity: &Identity,
+    locator: &str,
+    source: KeySource,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+) -> Result<(OrdinaryContext, Inventory), Failure> {
     let Authenticated {
         stream,
         permit,
         info,
         resolved,
         key,
-    } = authenticate_fresh(
+    } = authenticate_fresh_mode(
         identity,
         locator,
-        index,
+        source,
         budgets,
         &account_guard,
         request_cancel,

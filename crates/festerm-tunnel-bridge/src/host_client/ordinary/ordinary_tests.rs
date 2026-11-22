@@ -281,3 +281,41 @@ async fn ordinary_test_context_cannot_open_real_transport_or_grant_remote_author
         Err(Failure::Control(Error::Contract(ContractError::Denied)))
     ));
 }
+
+#[test]
+fn reconnect_changed_challenge_never_calls_device_signer() {
+    let (_root, context) = fixture();
+    for change in ["installation", "principal", "policy", "route", "ssh-pin"] {
+        let expected = context.host_info();
+        let mut actual = expected.clone();
+        match change {
+            "installation" => actual.installation = festerm_host_protocol::HostId::new(),
+            "principal" => actual.principal = festerm_host_protocol::PrincipalId::new(),
+            "policy" => actual.policy_epoch = Epoch::new(2).unwrap(),
+            "route" => actual.route.endpoint_id.push('x'),
+            "ssh-pin" => actual.route.host.host_key_fingerprint.push('x'),
+            _ => unreachable!(),
+        }
+        let calls = std::cell::Cell::new(0);
+        assert!(after_existing_host_check(Some(expected), &actual, || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
+        .is_err());
+        assert_eq!(calls.get(), 0, "{change}");
+        assert!(after_existing_host_check(None, &actual, || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
+        .is_ok());
+        assert_eq!(
+            calls.get(),
+            1,
+            "normal discovery retains its initial proof behavior"
+        );
+    }
+    assert!(
+        after_existing_host_check(Some(context.host_info()), context.host_info(), || Ok(()))
+            .is_ok()
+    );
+}

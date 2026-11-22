@@ -486,3 +486,35 @@ async fn selected_host_real_eof_retains_attachment_phase_and_kind_through_sessio
         server.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn definitive_remote_end_or_displacement_survives_privacy_cancellation() {
+    for kind in [EXITED, DISPLACED] {
+        let (_sender, events) = flume::bounded(2);
+        let session = HostSession::from_worker(
+            Worker {
+                scope: scope(),
+                cancel: CancellationToken::new(),
+                ordinary_guard: None,
+                events,
+            },
+            Arc::new(Notify(tokio::sync::Notify::new())),
+        );
+        assert!(!session.attachment_ended());
+        let (mut stream, mut peer) = tokio::io::duplex(64);
+        let payload = if kind == DISPLACED {
+            vec![crate::protocol::Displacer::Remote.code()]
+        } else {
+            Vec::new()
+        };
+        frame(&mut peer, kind, &payload).await;
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let frame = host_terminal::read_frame(&mut stream, &permit, false)
+            .await
+            .unwrap();
+        HostSession::event(&mut session.state.lock().unwrap(), frame).unwrap();
+        assert!(session.attachment_ended());
+        session.cancel();
+        assert!(session.attachment_ended());
+    }
+}

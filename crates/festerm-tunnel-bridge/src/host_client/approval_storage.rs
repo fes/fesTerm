@@ -60,6 +60,13 @@ fn private_file(directory: &File, name: &Path, create: bool) -> io::Result<File>
     Ok(file)
 }
 
+pub(in crate::host_client) fn open_existing_private(
+    directory: &File,
+    name: &Path,
+) -> io::Result<File> {
+    private_file(directory, name, false)
+}
+
 pub(in crate::host_client) fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
     match private_file(directory, name, false) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {

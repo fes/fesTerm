@@ -105,6 +105,14 @@ impl MobileApp {
             return;
         }
         if self.active_tab == Some(id) {
+            #[cfg(feature = "host-clients")]
+            if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                live.arm_host_resume();
+            }
+            #[cfg(feature = "live-ssh")]
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+                tab.reconnect_armed = true;
+            }
             self.workspace = workspaces::Workspace::Terminal;
             self.surface = Surface::Terminal;
             return;
@@ -127,6 +135,10 @@ impl MobileApp {
             }
         }
         self.active_tab = Some(id);
+        #[cfg(feature = "host-clients")]
+        if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+            live.arm_host_resume();
+        }
         self.tabs[position].has_new_output = false;
         #[cfg(feature = "live-ssh")]
         {
@@ -269,8 +281,7 @@ impl MobileApp {
     pub(super) fn reconnect_active(&mut self, ctx: &egui::Context) -> Result<(), String> {
         #[cfg(feature = "host-clients")]
         if self.active_is_host() {
-            self.review_host_reconnection();
-            return Ok(());
+            return self.begin_host_reconnect(ctx);
         }
         let spec = self
             .active_spec()

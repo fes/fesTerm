@@ -292,3 +292,81 @@ fn ordinary_request_cancel_during_native_write_preserves_account_and_reserved_se
     account.cancel.cancel();
     assert!(next.check().is_err());
 }
+
+#[test]
+fn reconnect_existing_key_never_bootstraps_missing_unready_or_replaced_state() {
+    for change in [
+        "missing-record",
+        "missing-lock",
+        "unready",
+        "replaced-reference",
+        "missing-secret",
+        "replaced-secret",
+        "different-public-key",
+    ] {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let index = OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap();
+        let vault = Arc::new(Vault::new(CancellationToken::new()));
+        let selected = binding(42);
+        let key = index
+            .prepare_with(vault.clone(), &selected, &guard())
+            .unwrap();
+        assert!(index
+            .existing_with(
+                vault.clone(),
+                &selected,
+                &key.reference,
+                key.key.public_key(),
+                &guard()
+            )
+            .is_ok());
+        let path = root
+            .path()
+            .join("host-client-approvals")
+            .join(selected.name("json").unwrap());
+        let mut record: Record = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let mut public = key.key.public_key();
+        match change {
+            "missing-record" => std::fs::remove_file(&path).unwrap(),
+            "missing-lock" => {
+                std::fs::remove_file(path.with_file_name(selected.name("lock").unwrap())).unwrap()
+            }
+            "unready" => {
+                record.ready = false;
+                std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+            "replaced-reference" => {
+                record.reference = SecretReference::generate().to_persisted_string();
+                std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+            "missing-secret" => {
+                vault.delete(&key.reference).unwrap();
+            }
+            "replaced-secret" => {
+                vault
+                    .update(
+                        &key.reference,
+                        &SecretBytes::copy_from_slice(b"invalid private payload"),
+                    )
+                    .unwrap();
+            }
+            "different-public-key" => public[0] ^= 1,
+            _ => unreachable!(),
+        }
+        let before = std::fs::read(&path).ok();
+        let entries = std::fs::read_dir(path.parent().unwrap()).unwrap().count();
+        assert!(
+            index
+                .existing_with(vault.clone(), &selected, &key.reference, public, &guard())
+                .is_err(),
+            "{change}"
+        );
+        assert_eq!(std::fs::read(&path).ok(), before, "{change}");
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            entries,
+            "{change}"
+        );
+        assert_eq!(vault.writes.load(Ordering::SeqCst), 1, "{change}");
+    }
+}

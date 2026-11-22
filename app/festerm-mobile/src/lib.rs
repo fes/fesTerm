@@ -600,7 +600,15 @@ impl SuspensionHandle {
     pub fn suspend(&self) {
         self.sign_in.set_foreground(false);
         #[cfg(feature = "host-clients")]
-        self.host.invalidate();
+        {
+            if let Some(live) = self.connection.borrow_mut().as_mut() {
+                live.arm_host_resume();
+            }
+            for (_, live) in self.background.borrow_mut().iter_mut() {
+                live.arm_host_resume();
+            }
+            self.host.invalidate();
+        }
         self.stop_recording();
         if let Some(live) = self.connection.borrow_mut().as_mut() {
             live.suspend();
@@ -1988,7 +1996,10 @@ impl MobileApp {
             self.poll_tunnels(ui.ctx());
             self.auto_reconnect_tunnel(ui.ctx());
             #[cfg(feature = "host-clients")]
-            self.poll_hosts(ui.ctx());
+            {
+                self.poll_hosts(ui.ctx());
+                self.poll_host_reconnect(ui.ctx());
+            }
         }
         #[cfg(feature = "live-ssh")]
         if lifecycle.active {
@@ -3400,12 +3411,35 @@ impl MobileApp {
             let banner = self.reconnect_banner();
             let compact = ui.available_height() < 260.0;
             let mut reconnect = false;
+            #[cfg(feature = "host-clients")]
+            let mut close = false;
             egui::Panel::bottom("mobile-recovery")
                 .frame(egui::Frame::new().fill(theme::color::BAR))
                 .show_separator_line(false)
                 .show(ui, |ui| {
+                    #[cfg(feature = "host-clients")]
+                    if self.active_is_host() {
+                        match terminal_chrome::host_reconnect_banner(
+                            ui,
+                            &banner,
+                            compact,
+                            self.host_reconnect_pending(),
+                        ) {
+                            terminal_chrome::RecoveryAction::Reconnect => reconnect = true,
+                            terminal_chrome::RecoveryAction::Close => close = true,
+                            terminal_chrome::RecoveryAction::None => {}
+                        }
+                        return;
+                    }
                     reconnect = terminal_chrome::reconnect_banner(ui, &banner, compact);
                 });
+            #[cfg(feature = "host-clients")]
+            if close {
+                if let Some(tab) = self.active_tab {
+                    self.close_tab(tab);
+                }
+                return;
+            }
             if reconnect {
                 if let Some(id) = self
                     .active_tunnel()
@@ -3587,14 +3621,24 @@ impl MobileApp {
             .map_or("Connection ended", |live| live.status);
         #[cfg(feature = "host-clients")]
         if self.active_is_host() {
+            let pending = self.host_reconnect_pending();
             return model::ReconnectBanner {
-                detail: None,
+                detail: self.host_reconnect_notice().map(str::to_owned),
                 status: "Input is paused.".into(),
                 reattach: None,
                 custom: Some(model::BannerText {
-                    title: "Connection closed".into(),
-                    body: "Review this host to reconnect to the same session.".into(),
-                    action: "Review host",
+                    title: if pending {
+                        "Reconnecting"
+                    } else {
+                        "Connection closed"
+                    }
+                    .into(),
+                    body: "Reconnect to continue the same session.".into(),
+                    action: if pending {
+                        "Reconnecting…"
+                    } else {
+                        "Reconnect"
+                    },
                 }),
             };
         }

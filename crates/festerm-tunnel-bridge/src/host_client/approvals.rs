@@ -21,6 +21,9 @@ pub(super) mod storage {
     pub(in crate::host_client) fn private_directory(_: &Path, _: bool) -> io::Result<File> {
         unsupported()
     }
+    pub(in crate::host_client) fn open_existing_private(_: &File, _: &Path) -> io::Result<File> {
+        unsupported()
+    }
     pub(in crate::host_client) fn open_trusted_lock(_: &File, _: &Path) -> io::Result<File> {
         unsupported()
     }

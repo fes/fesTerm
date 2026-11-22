@@ -3172,3 +3172,18 @@ callback), cancellation/fatal callback errors and changed epoch or same-epoch
 snapshot retain exactly one manager start and the original credential checks.
 This source regression does not qualify the corrected native first result or
 the controller's separate final report/commit reads.
+
+### Mobile same-existing-session foreground reconnect
+
+The ordinary mobile follow-up changes the closed viewer's recovery actions to
+Reconnect and Close. A previously adopted Running attachment may attempt one
+fresh Attach on genuine foreground/tab activation, only while unlocked and visible
+in the active terminal. This is not resume-or-create authority: exact host,
+account, logical identity and generation remain mandatory, with fresh provider
+proof, existing native key only, no takeover, no input or mutation replay, and
+same-tab/privacy/account/attempt cancellation fences. Definitive remote exit or
+displacement revokes automatic recovery eligibility even if privacy cancellation
+later replaces the transport lifecycle. Failed attempts remain in the terminal;
+Close retires only the local attachment. See ADR 0086's foreground recovery
+amendment. Portable regressions and iOS compilation do not establish physical
+app-switch acceptance.

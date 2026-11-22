@@ -443,3 +443,26 @@ new authentication action, fallback or retry is admitted. This presentation
 mapping does not reinterpret a later renewal fence/publication `Store` error.
 Actual discovery/foreground failure fixtures cover the initial-read boundary;
 native lock/missing/service behavior and the older Linux failure remain unqualified.
+
+### Mobile existing-session foreground recovery
+
+MOB-06 / HOST-03 / TUNNEL-11 ordinary tabs retain a private in-memory reconnect
+seed: account, verified provider locator, full HostInfo/binding, exact Running
+logical/generation and original frontend SessionId. Only a viewer that adopted
+Running before suspension arms one foreground/tab-activation attempt. Work starts
+only in the foreground, unlocked, visible active terminal. Fresh account readiness,
+provider resolution and authenticated inventory precede Attach without takeover.
+The original native key record/reference/public key must still exist and match;
+recovery never bootstraps a replacement key or changes native approval authority.
+The retained context supplies comparison data only, not its cancelled lifetime.
+
+Both foreground and bottom-button Reconnect use this same existing-session path,
+never Ensure/Create, chooser fallback, changed-generation substitution, terminal
+input replay or mutation replay. Full HostInfo equality conservatively refuses
+policy/installation/principal/SSH-pin changes. Fresh privacy/account/attempt and
+same-visible-tab/SessionId checks fence installation; stale jobs cancel their
+request and attachment lifetimes. Terminal history remains until authenticated
+snapshot adoption. Close cancels/locally retires the attachment without End.
+Advanced-owner tabs may refuse inline pending explicit fresh host review. Portable
+fixtures cover these boundaries; physical app-switch recovery remains a separate
+native acceptance gate.

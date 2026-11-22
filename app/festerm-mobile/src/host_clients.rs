@@ -39,6 +39,8 @@ use std::sync::{
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+mod reconnect;
+
 // Both ordinary and Advanced receipts use this existing native namespace.
 // The legacy profile path is compared for identity, never accepted as authority.
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -280,6 +282,7 @@ struct SessionAccount {
     tab: u64,
     owner: Option<OwnerBinding>,
     ordinary_lifetime: Option<Arc<CancellationToken>>,
+    reconnect: Option<reconnect::Seed>,
 }
 
 struct OriginalEnd {
@@ -383,6 +386,8 @@ type OrdinaryService = Arc<dyn Fn(u64, String, CancellationToken) -> OrdinaryFut
 
 #[derive(Default)]
 pub(super) struct HostUi {
+    reconnect: Option<reconnect::PendingReconnect>,
+    reconnect_notice: Option<(u64, String)>,
     #[cfg(all(test, unix))]
     gallery_display: Option<GalleryDisplay>,
     pub(super) open: bool,
@@ -1468,6 +1473,7 @@ impl MobileApp {
     }
 
     pub(super) fn retire_host_tab(&mut self, tab: u64) -> bool {
+        self.cancel_host_reconnect_for_tab(tab);
         if !self
             .tabs
             .iter()
@@ -1480,6 +1486,14 @@ impl MobileApp {
                 "HOST detach workers are busy; wait before closing another attachment.".into(),
             );
             return false;
+        }
+        if let Some(owner) = self
+            .hosts
+            .session_accounts
+            .iter_mut()
+            .find(|owner| owner.tab == tab)
+        {
+            owner.reconnect = None;
         }
         let retiring = if self.active_tab == Some(tab) {
             self.sink
@@ -1575,12 +1589,6 @@ impl MobileApp {
         self.hosts.saved = true;
     }
 
-    pub(super) fn review_host_reconnection(&mut self) {
-        self.open_hosts();
-        self.hosts.clear_review();
-        self.hosts.error = Some("Explicitly select the original host and exact session again. No legacy fallback, new shell or input replay was started.".into());
-    }
-
     fn host_account(&self) -> Option<TunnelAccount> {
         let store = self.profiles.as_ref()?.store_handle();
         let store = store.lock().ok()?;
@@ -1634,6 +1642,14 @@ impl MobileApp {
     }
 
     pub(super) fn invalidate_host_account(&mut self, id: &str) {
+        if self
+            .hosts
+            .reconnect
+            .as_ref()
+            .is_some_and(|pending| pending.account.id == id)
+        {
+            self.hosts.reconnect = None;
+        }
         self.hosts.session_accounts.retain(|owner| {
             if owner.account.id != id {
                 return true;
@@ -2439,6 +2455,11 @@ impl MobileApp {
                 .as_ref()
                 .map(|receipt| receipt.binding().clone()),
             ordinary_lifetime: self.hosts.ordinary_lifetime.clone(),
+            reconnect: self
+                .hosts
+                .ordinary
+                .as_ref()
+                .and_then(|ordinary| reconnect::Seed::new(ordinary, &session, &self.hosts.locator)),
         });
         self.tabs.last_mut().expect("new tab").host = true;
         self.terminal = self.blank_terminal();

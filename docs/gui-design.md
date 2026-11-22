@@ -2081,14 +2081,20 @@ bounded registry survives closing review, but is not durable restart
 reconciliation. Unknown, denied, offline, busy and incompatible replies retain
 the original action; none means absence or authorizes a replacement shell.
 
-A closed mobile HOST terminal uses plain reconnect guidance and the existing
-**Review host** action. It does not claim the shell ended or that reconnection
+A closed mobile HOST terminal keeps bottom **Reconnect** and **Close** buttons.
+Reconnect stays in this viewer and targets only the same account, verified host,
+logical identity and generation; Close retires this attachment without End.
+Previously adopted ordinary HOST tabs attempt one automatic Attach on each genuine
+foreground/tab activation while unlocked and visibly active in the terminal.
+A failed attempt leaves explicit Reconnect available without a chooser roundtrip. It does not claim the shell ended or that reconnection
 will succeed. Existing finite stage/category/I/O detail and unknown-generation/
 original-action mechanics remain in the terminal menu's diagnostics while the
 viewer stays open. The current presentation does not retain a reliable per-session
 background cause, so it uses generic **Connection closed** rather than attributing
 every cancellation or transport failure to leaving the app. Input remains paused;
-there is no automatic retry, replacement creation or replay.
+there is no background/frame retry loop, replacement creation, takeover or input
+replay. Settings/host chooser, lock, account changes and stale attempts cancel
+recovery; missing/replaced native keys or changed host/generation refuse inline.
 
 Import never grants execution consent. Before first executing an imported
 recipe, the foreground execution UI must explicitly review/reconfirm its shell,
