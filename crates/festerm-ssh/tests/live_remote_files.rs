@@ -1302,6 +1302,10 @@ fn gui_sftp_reviewed_link_metadata_and_remove_preserve_its_target() {
             .unwrap();
         let mut session = completion.wait().await.unwrap();
         assert_eq!(
+            session.verified_gui_fingerprint(),
+            Some(prompt.sha256_fingerprint())
+        );
+        assert_eq!(
             session
                 .remote_path_metadata(FIXTURE_LINK_PATH)
                 .await

@@ -382,6 +382,7 @@ pub(crate) struct SessionNameNotice {
 /// of these instead of five separate `Option` fields.
 #[derive(Default)]
 pub(crate) struct OverlayState {
+    pub(crate) upload_recovery: crate::app::sftp_recovery::RecoveryView,
     pub(crate) native_tunnel: bool,
     pub(crate) recording_modal: bool,
     pub(crate) pending_close: Option<PendingCloseConfirmation>,
@@ -470,6 +471,12 @@ impl OverlayState {
     }
 
     pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
+        self.upload_recovery.is_open() || self.blocks_other_upload_recovery_modals()
+    }
+    pub(crate) fn blocks_terminal_input_except_upload_recovery(&self) -> bool {
+        self.pending_paste.is_some() || self.blocks_other_upload_recovery_modals()
+    }
+    fn blocks_other_upload_recovery_modals(&self) -> bool {
         self.native_tunnel
             || self.recording_modal
             || self.pending_close.is_some()

@@ -617,3 +617,14 @@ zero and completed progress. The production paint regression
 panel bounds, padding and both painted fill ratios at narrow and desktop widths.
 Headless gallery captures complement those geometry checks; native DPI and
 live-transfer usability remain manual.
+
+
+For `SFTPG-11`, GUI-only interrupted-upload reporting persists a bounded private
+intent before exclusive OPEN and a destination checkpoint before publication.
+Portable tests exercise actual SFTP request boundaries, cancellation, process kill
+and reopen, interprocess active ownership, capacity/byte refusal, endpoint identity
+and report-only central UI review/acknowledgement. A successful remote publication
+remains Completed if local report retirement fails. The text interface and Dev
+Tunnel Files keep their existing behavior. `SFTP-05` retains packaged restart,
+real server loss and accessibility evidence; these reports do not authorize remote
+cleanup, resume or replay and do not close post-crash ownership uncertainty.

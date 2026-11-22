@@ -3143,6 +3143,13 @@ pub enum AppCommand {
     OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    ReviewInterruptedUploads,
+    CopyInterruptedUpload {
+        id: String,
+    },
+    AcknowledgeInterruptedUpload {
+        id: String,
+    },
     /// Application-scoped recording surfaces.
     OpenRecording,
     OpenRecordingSettings,
@@ -4228,6 +4235,7 @@ pub struct AppState {
     /// click that did nothing.
     open_refusal: Option<(PathBuf, OpenFailure)>,
     pending_open_refusal_notices: VecDeque<crate::overlay_state::OpenRefusalNotice>,
+    pending_upload_recovery: Option<crate::app::sftp_recovery::Action>,
     sftp_cleanup_sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>,
     sftp_cleanup_receiver: Receiver<crate::overlay_state::OpenRefusalNotice>,
     pending_terminal_path_opens: Vec<PendingTerminalPathOpen>,
@@ -4395,6 +4403,7 @@ impl AppState {
             rectangle_copy_refusal: None,
             open_refusal: None,
             pending_open_refusal_notices: VecDeque::new(),
+            pending_upload_recovery: None,
             sftp_cleanup_sender,
             sftp_cleanup_receiver,
             pending_terminal_path_opens: Vec::new(),
@@ -5642,6 +5651,16 @@ impl AppState {
                 }
             }
             AppCommand::OpenSettings => self.open_settings(),
+            AppCommand::ReviewInterruptedUploads => {
+                self.pending_upload_recovery = Some(crate::app::sftp_recovery::Action::Review)
+            }
+            AppCommand::CopyInterruptedUpload { id } => {
+                self.pending_upload_recovery = Some(crate::app::sftp_recovery::Action::Copy(id))
+            }
+            AppCommand::AcknowledgeInterruptedUpload { id } => {
+                self.pending_upload_recovery =
+                    Some(crate::app::sftp_recovery::Action::Acknowledge(id))
+            }
             AppCommand::OpenRecording
             | AppCommand::OpenRecordingSettings
             | AppCommand::OpenRecordingLibrary => {}
@@ -7156,6 +7175,12 @@ impl AppState {
         }
         assert!(self.documents.borrow_mut().release(id));
         recovery
+    }
+
+    pub(crate) fn take_upload_recovery_action(
+        &mut self,
+    ) -> Option<crate::app::sftp_recovery::Action> {
+        self.pending_upload_recovery.take()
     }
 
     pub(crate) fn take_sftp_cleanup_notice(

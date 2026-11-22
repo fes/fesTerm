@@ -393,6 +393,9 @@ pub struct SftpSession {
     local_working_directory: PathBuf,
     closed: bool,
     partial_file: Option<PartialFile>,
+    verified_gui_fingerprint: Option<String>,
+    upload_recovery: Option<std::sync::Arc<dyn crate::UploadRecoverySink>>,
+    upload_report: Option<Box<dyn crate::UploadRecoveryRecord>>,
     /// Keeps the connection's background transport task alive for as long
     /// as this session lives. Only ever set by
     /// [`Self::with_runtime_keepalive`], used exclusively by
@@ -497,6 +500,21 @@ impl std::fmt::Debug for SftpTransportKeepAlive {
 }
 
 impl SftpSession {
+    pub(crate) fn with_verified_gui_fingerprint(mut self, fingerprint: Option<String>) -> Self {
+        self.verified_gui_fingerprint = fingerprint;
+        self
+    }
+    /// The actual key accepted by this GUI session's authenticated connector.
+    pub fn verified_gui_fingerprint(&self) -> Option<&str> {
+        self.verified_gui_fingerprint.as_deref()
+    }
+    /// Installs local reporting only; it cannot authorize remote operations.
+    pub fn set_upload_recovery_sink(
+        &mut self,
+        sink: std::sync::Arc<dyn crate::UploadRecoverySink>,
+    ) {
+        self.upload_recovery = Some(sink);
+    }
     /// Hands the authenticated raw `russh-sftp` client and its transport
     /// keep-alive to a platform-neutral SFTP consumer such as `festerm-sftp`.
     /// The text-mode command surface of this session is no longer usable.
@@ -582,6 +600,9 @@ impl SftpSession {
             local_working_directory,
             closed: false,
             partial_file: None,
+            verified_gui_fingerprint: None,
+            upload_recovery: None,
+            upload_report: None,
             runtime_keepalive: None,
         })
     }
@@ -608,45 +629,120 @@ impl SftpSession {
         &mut self,
         remote_path: &str,
     ) -> Result<russh_sftp::client::fs::File, SftpSessionError> {
-        self.client
+        self.open_upload_file_checked(remote_path, || Ok(())).await
+    }
+    async fn open_upload_file_checked(
+        &mut self,
+        remote_path: &str,
+        check: impl FnOnce() -> Result<(), SftpSessionError>,
+    ) -> Result<russh_sftp::client::fs::File, SftpSessionError> {
+        if let Some(sink) = &self.upload_recovery {
+            match sink.begin(remote_path).await {
+                Ok(record) => self.upload_report = Some(record),
+                Err(error) => {
+                    self.partial_file = None; // No OPEN was sent.
+                    return Err(recovery_error("record upload recovery", remote_path, error));
+                }
+            }
+            if sink.cancelled()
+                || self
+                    .upload_report
+                    .as_ref()
+                    .is_some_and(|record| record.cancelled())
+            {
+                return Err(SftpSessionError::LocalOperationFailed {
+                    operation: "cancel transfer",
+                    path: remote_path.into(),
+                    reason: "transfer owner or connection changed".into(),
+                });
+            }
+            check()?; // Drain existing cancellation commands after durable begin, before OPEN.
+        }
+        let result = self
+            .client
             .open_with_flags(
                 remote_path.to_owned(),
                 OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
             )
-            .await
-            .map_err(|error| {
-                use russh_sftp::{client::error::Error, protocol::StatusCode};
-                // A lost reply may follow server-side creation. Keep the
-                // unconfirmed ledger, without claiming ownership or removing
-                // anything. Generic Failure is not a rollback guarantee.
-                if matches!(
-                    &error,
-                    Error::Status(status)
-                        if matches!(status.status_code,
-                            StatusCode::NoSuchFile
-                                | StatusCode::PermissionDenied
-                                | StatusCode::OpUnsupported)
-                ) {
-                    self.partial_file = None;
+            .await;
+        if let Err(error) = &result {
+            use russh_sftp::{client::error::Error, protocol::StatusCode};
+            if matches!(error, Error::Status(status) if matches!(status.status_code, StatusCode::NoSuchFile | StatusCode::PermissionDenied | StatusCode::OpUnsupported))
+            {
+                self.retire_upload_report(remote_path, None).await;
+                self.partial_file = None;
+            }
+        }
+        result.map_err(|error| remote_error("upload", remote_path, error))
+    }
+    async fn retire_upload_report(&mut self, temporary: &str, destination: Option<&str>) {
+        if let Some(mut report) = self.upload_report.take() {
+            if report.retire().await.is_err() {
+                if let Some(sink) = &self.upload_recovery {
+                    sink.report_update_failure(temporary, destination);
                 }
-                remote_error("upload", remote_path, error)
-            })
+            }
+        }
     }
 
     pub(crate) async fn check_partial_path(&self, path: &SftpPath) -> Result<(), SftpSessionError> {
         check_transfer_partial_path(&self.partial_file, path).await
     }
 
-    pub(crate) fn forget_partial_file(&mut self, path: &SftpPath) {
-        forget_transfer_partial(&mut self.partial_file, path)
+    pub(crate) async fn forget_partial_file(&mut self, path: &SftpPath) {
+        if let Some(partial) = self
+            .partial_file
+            .as_ref()
+            .filter(|partial| &partial.path == path)
+        {
+            if let SftpPath::Remote(temporary) = path {
+                let destination = partial.commit_destination.as_ref().map(SftpPath::display);
+                self.retire_upload_report(temporary, destination.as_deref())
+                    .await;
+            }
+        }
+        forget_transfer_partial(&mut self.partial_file, path);
+    }
+    pub(crate) fn upload_report_pending(&self) -> bool {
+        self.upload_report.is_some()
     }
 
-    pub(crate) fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
-        protect_transfer_partial(&mut self.partial_file, temporary, destination)
+    pub(crate) async fn protect_partial_commit(
+        &mut self,
+        temporary: &SftpPath,
+        destination: &SftpPath,
+    ) -> Result<(), SftpSessionError> {
+        if let (SftpPath::Remote(path), SftpPath::Remote(target)) = (temporary, destination) {
+            if let Some(report) = self.upload_report.as_mut() {
+                report
+                    .before_publication(target)
+                    .await
+                    .map_err(|error| recovery_error("record upload publication", path, error))?;
+            }
+            if self
+                .upload_report
+                .as_ref()
+                .is_some_and(|record| record.cancelled())
+                || self
+                    .upload_recovery
+                    .as_ref()
+                    .is_some_and(|sink| sink.cancelled())
+            {
+                return Err(SftpSessionError::LocalOperationFailed {
+                    operation: "cancel transfer",
+                    path: path.into(),
+                    reason: "transfer owner or connection changed".into(),
+                });
+            }
+        }
+        protect_transfer_partial(&mut self.partial_file, temporary, destination);
+        Ok(())
     }
 
     pub(crate) async fn cleanup_interrupted_transfer(&mut self) -> Result<(), SftpSessionError> {
-        cleanup_transfer_partial(&mut self.partial_file).await
+        let result = cleanup_transfer_partial(&mut self.partial_file).await;
+        self.upload_report = None; // Release only the local lease; unresolved durable report remains.
+        result
     }
 
     async fn finish_failed_transfer(&mut self, error: SftpSessionError) -> SftpSessionError {
@@ -1407,7 +1503,9 @@ impl SftpSession {
             .await
             .map_err(|error| local_error("open source file", local_path, error))?;
         self.begin_partial_file(SftpPath::remote(remote_path.to_owned()))?;
-        let mut remote_file = self.open_upload_file(remote_path).await?;
+        let mut remote_file = self
+            .open_upload_file_checked(remote_path, || on_progress(0))
+            .await?;
         self.confirm_partial_file();
 
         let transfer_result = async {
@@ -2427,6 +2525,18 @@ pub(crate) fn remote_path_metadata(
     }
 }
 
+fn recovery_error(
+    operation: &'static str,
+    path: &str,
+    error: crate::UploadRecoveryError,
+) -> SftpSessionError {
+    SftpSessionError::LocalOperationFailed {
+        operation,
+        path: path.into(),
+        reason: error.message().into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2524,6 +2634,9 @@ mod tests {
                 local_working_directory: PathBuf::from("."),
                 closed: false,
                 partial_file: None,
+                verified_gui_fingerprint: None,
+                upload_recovery: None,
+                upload_report: None,
                 runtime_keepalive: None,
             },
             server,
@@ -2798,6 +2911,7 @@ mod tests {
     enum UploadOpenReply {
         Lost,
         CreatedFailure,
+        Writable,
         Refused(russh_sftp::protocol::StatusCode),
     }
 
@@ -2806,6 +2920,8 @@ mod tests {
         reply: UploadOpenReply,
         created: Arc<tokio::sync::Notify>,
         removals: Arc<AtomicUsize>,
+        opens: Arc<AtomicUsize>,
+        renames: Arc<AtomicUsize>,
     }
 
     impl russh_sftp::server::Handler for UploadOpenServer {
@@ -2836,11 +2952,12 @@ mod tests {
 
         async fn open(
             &mut self,
-            _id: u32,
+            id: u32,
             filename: String,
             flags: OpenFlags,
             _attrs: russh_sftp::protocol::FileAttributes,
         ) -> Result<russh_sftp::protocol::Handle, Self::Error> {
+            self.opens.fetch_add(1, Ordering::AcqRel);
             assert!(matches!(
                 filename.as_str(),
                 "/target.bin" | "/source.bin.festerm-part"
@@ -2857,13 +2974,57 @@ mod tests {
                 .create_new(true)
                 .open(self.root.join(filename.trim_start_matches('/')))
                 .unwrap();
-            std::io::Write::write_all(&mut file, b"created before OPEN reply").unwrap();
+            if !matches!(self.reply, UploadOpenReply::Writable) {
+                std::io::Write::write_all(&mut file, b"created before OPEN reply").unwrap();
+            }
             self.created.notify_one();
             match self.reply {
                 UploadOpenReply::Lost => std::future::pending().await,
                 UploadOpenReply::CreatedFailure => Err(Self::Error::Failure),
+                UploadOpenReply::Writable => Ok(russh_sftp::protocol::Handle {
+                    id,
+                    handle: filename,
+                }),
                 UploadOpenReply::Refused(_) => unreachable!(),
             }
+        }
+
+        async fn write(
+            &mut self,
+            id: u32,
+            handle: String,
+            offset: u64,
+            data: Vec<u8>,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            use std::io::{Seek, Write};
+            let mut f = stdfs::OpenOptions::new()
+                .write(true)
+                .open(self.root.join(handle.trim_start_matches('/')))
+                .unwrap();
+            f.seek(std::io::SeekFrom::Start(offset)).unwrap();
+            f.write_all(&data).unwrap();
+            Ok(upload_status(id))
+        }
+        async fn close(
+            &mut self,
+            id: u32,
+            _handle: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            Ok(upload_status(id))
+        }
+        async fn rename(
+            &mut self,
+            id: u32,
+            oldpath: String,
+            newpath: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            self.renames.fetch_add(1, Ordering::AcqRel);
+            stdfs::rename(
+                self.root.join(oldpath.trim_start_matches('/')),
+                self.root.join(newpath.trim_start_matches('/')),
+            )
+            .unwrap();
+            Ok(upload_status(id))
         }
 
         async fn remove(
@@ -2876,6 +3037,15 @@ mod tests {
         }
     }
 
+    fn upload_status(id: u32) -> russh_sftp::protocol::Status {
+        russh_sftp::protocol::Status {
+            id,
+            status_code: russh_sftp::protocol::StatusCode::Ok,
+            error_message: String::new(),
+            language_tag: String::new(),
+        }
+    }
+
     async fn upload_open_session(
         root: &Path,
         reply: UploadOpenReply,
@@ -2885,7 +3055,23 @@ mod tests {
         Arc<AtomicUsize>,
         Arc<tokio::sync::Notify>,
     ) {
+        let (session, server, removals, created, _, _) = upload_counted_session(root, reply).await;
+        (session, server, removals, created)
+    }
+    async fn upload_counted_session(
+        root: &Path,
+        reply: UploadOpenReply,
+    ) -> (
+        SftpSession,
+        tokio::task::JoinHandle<()>,
+        Arc<AtomicUsize>,
+        Arc<tokio::sync::Notify>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+    ) {
         let (client, server) = tokio::io::duplex(16_384);
+        let opens = Arc::new(AtomicUsize::new(0));
+        let renames = Arc::new(AtomicUsize::new(0));
         let removals = Arc::new(AtomicUsize::new(0));
         let created = Arc::new(tokio::sync::Notify::new());
         let server = tokio::spawn(russh_sftp::server::run(
@@ -2895,6 +3081,8 @@ mod tests {
                 reply,
                 created: created.clone(),
                 removals: removals.clone(),
+                opens: opens.clone(),
+                renames: renames.clone(),
             },
         ));
         let client = RusshSftpSession::new(client).await.unwrap();
@@ -2906,12 +3094,259 @@ mod tests {
                 local_working_directory: root.to_owned(),
                 closed: false,
                 partial_file: None,
+                verified_gui_fingerprint: None,
+                upload_recovery: None,
+                upload_report: None,
                 runtime_keepalive: None,
             },
             server,
             removals,
             created,
+            opens,
+            renames,
         )
+    }
+
+    #[derive(Default)]
+    struct ReportProbe {
+        fail_begin: bool,
+        fail_retire: bool,
+        block_begin: bool,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        cancelled: std::sync::atomic::AtomicBool,
+        saved: std::sync::atomic::AtomicBool,
+        active: std::sync::atomic::AtomicBool,
+        notices: AtomicUsize,
+    }
+    struct ProbeRecord(Arc<ReportProbe>);
+    impl Drop for ProbeRecord {
+        fn drop(&mut self) {
+            self.0.active.store(false, Ordering::Release);
+        }
+    }
+    impl crate::UploadRecoveryRecord for ProbeRecord {
+        fn cancelled(&self) -> bool {
+            self.0.cancelled.load(Ordering::Acquire)
+        }
+        fn before_publication<'a>(
+            &'a mut self,
+            _destination: &'a str,
+        ) -> crate::UploadRecoveryFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+        fn retire(&mut self) -> crate::UploadRecoveryFuture<'_, ()> {
+            Box::pin(async move {
+                if self.0.fail_retire {
+                    Err(crate::UploadRecoveryError::Unavailable)
+                } else {
+                    self.0.saved.store(false, Ordering::Release);
+                    Ok(())
+                }
+            })
+        }
+    }
+    struct ProbeSink(Arc<ReportProbe>);
+    impl crate::UploadRecoverySink for ProbeSink {
+        fn begin<'a>(
+            &'a self,
+            _temporary: &'a str,
+        ) -> crate::UploadRecoveryFuture<'a, Box<dyn crate::UploadRecoveryRecord>> {
+            Box::pin(async move {
+                if self.0.fail_begin {
+                    return Err(crate::UploadRecoveryError::Unavailable);
+                }
+                self.0.saved.store(true, Ordering::Release);
+                self.0.active.store(true, Ordering::Release);
+                let record = ProbeRecord(self.0.clone());
+                self.0.entered.notify_one();
+                if self.0.block_begin {
+                    self.0.release.notified().await;
+                }
+                Ok(Box::new(record) as Box<dyn crate::UploadRecoveryRecord>)
+            })
+        }
+        fn report_update_failure(&self, _temporary: &str, _destination: Option<&str>) {
+            self.0.notices.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[test]
+    fn durable_upload_report_failure_and_cancelled_begin_send_zero_open() {
+        test_runtime().block_on(async {
+            for fail_begin in [true,false] {
+                let root=unique_test_directory("report-before-open");create_directory(&root);
+                let (mut session,server,removals,_,opens,renames)=upload_counted_session(&root,UploadOpenReply::Writable).await;
+                let probe=Arc::new(ReportProbe {fail_begin,block_begin:!fail_begin,..Default::default()});
+                session.set_upload_recovery_sink(Arc::new(ProbeSink(probe.clone())));
+                session.begin_partial_file(SftpPath::remote("/target.bin")).unwrap();
+                if fail_begin {assert!(session.open_upload_file("/target.bin").await.is_err());}
+                else {
+                    let result=session.open_upload_file("/target.bin");tokio::pin!(result);
+                    tokio::select! {_ = &mut result=>panic!("begin must block"),_ = probe.entered.notified()=>{}}
+                    probe.cancelled.store(true,Ordering::Release);probe.release.notify_one();
+                    assert!(result.await.is_err());
+                }
+                let _=session.cleanup_interrupted_transfer().await;
+                assert_eq!(opens.load(Ordering::Acquire),0);assert_eq!(removals.load(Ordering::Acquire),0);assert_eq!(renames.load(Ordering::Acquire),0);
+                assert!(!probe.active.load(Ordering::Acquire));assert_eq!(probe.saved.load(Ordering::Acquire),!fail_begin);
+                assert!(stdfs::read_dir(&root).unwrap().next().is_none());
+                server.abort();let _=server.await;stdfs::remove_dir_all(root).unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn durable_upload_report_retirement_requires_definitive_no_creation() {
+        test_runtime().block_on(async {
+            for reply in [
+                UploadOpenReply::CreatedFailure,
+                UploadOpenReply::Refused(russh_sftp::protocol::StatusCode::PermissionDenied),
+            ] {
+                let root = unique_test_directory("report-open-outcome");
+                create_directory(&root);
+                let (mut session, server, removals, _, opens, renames) =
+                    upload_counted_session(&root, reply).await;
+                let probe = Arc::new(ReportProbe::default());
+                session.set_upload_recovery_sink(Arc::new(ProbeSink(probe.clone())));
+                session
+                    .begin_partial_file(SftpPath::remote("/target.bin"))
+                    .unwrap();
+                assert!(session.open_upload_file("/target.bin").await.is_err());
+                let _ = session.cleanup_interrupted_transfer().await;
+                assert_eq!(
+                    probe.saved.load(Ordering::Acquire),
+                    matches!(reply, UploadOpenReply::CreatedFailure)
+                );
+                assert!(!probe.active.load(Ordering::Acquire));
+                assert_eq!(opens.load(Ordering::Acquire), 1);
+                assert_eq!(removals.load(Ordering::Acquire), 0);
+                assert_eq!(renames.load(Ordering::Acquire), 0);
+                server.abort();
+                let _ = server.await;
+                stdfs::remove_dir_all(root).unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn durable_upload_cancel_all_during_begin_prevents_open_and_drains_report_owner() {
+        use crate::sftp_transfer::{SftpTransferEvent, SftpTransferManager, SftpTransferRequest};
+        test_runtime().block_on(async {
+            let root = unique_test_directory("report-cancel-before-open");
+            create_directory(&root);
+            let source = root.join("source.bin");
+            stdfs::write(&source, b"never sent").unwrap();
+            let (mut session, server, removals, _, opens, renames) =
+                upload_counted_session(&root, UploadOpenReply::Writable).await;
+            let probe = Arc::new(ReportProbe {
+                block_begin: true,
+                ..Default::default()
+            });
+            session.set_upload_recovery_sink(Arc::new(ProbeSink(probe.clone())));
+            let mut manager = SftpTransferManager::new(session);
+            manager
+                .enqueue_batch(vec![SftpTransferRequest::new(
+                    SftpPath::local(&source),
+                    SftpPath::remote("/"),
+                )
+                .unwrap()])
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), probe.entered.notified())
+                .await
+                .unwrap();
+            manager.cancel_all_transfers().unwrap();
+            probe.release.notify_one();
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let mut cancelled = 0;
+                loop {
+                    match manager.recv_event().await.unwrap() {
+                        SftpTransferEvent::ItemCancelled { .. } => cancelled += 1,
+                        SftpTransferEvent::ItemFailed { reason, .. } => {
+                            panic!("cancellation must stay cancellation: {reason}")
+                        }
+                        SftpTransferEvent::BatchFinished { .. } => break,
+                        _ => {}
+                    }
+                }
+                assert_eq!(cancelled, 1);
+            })
+            .await
+            .unwrap();
+            assert_eq!(opens.load(Ordering::Acquire), 0);
+            assert_eq!(removals.load(Ordering::Acquire), 0);
+            assert_eq!(renames.load(Ordering::Acquire), 0);
+            assert!(probe.saved.load(Ordering::Acquire));
+            assert!(!probe.active.load(Ordering::Acquire));
+            assert!(!root.join("source.bin.festerm-part").exists());
+            manager.shutdown().await.unwrap();
+            server.abort();
+            let _ = server.await;
+            stdfs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn durable_upload_retirement_failure_preserves_completed_publication_without_replay() {
+        use crate::sftp_transfer::{SftpTransferEvent, SftpTransferManager, SftpTransferRequest};
+        test_runtime().block_on(async {
+            let root = unique_test_directory("report-after-publication");
+            create_directory(&root);
+            let local = root.join("local");
+            stdfs::create_dir(&local).unwrap();
+            let source = local.join("source.bin");
+            stdfs::write(&source, b"published once").unwrap();
+            let (mut session, server, removals, _, opens, renames) =
+                upload_counted_session(&root, UploadOpenReply::Writable).await;
+            let probe = Arc::new(ReportProbe {
+                fail_retire: true,
+                ..Default::default()
+            });
+            session.set_upload_recovery_sink(Arc::new(ProbeSink(probe.clone())));
+            let mut manager = SftpTransferManager::new(session);
+            let batch = manager
+                .enqueue_batch(vec![SftpTransferRequest::new(
+                    SftpPath::local(&source),
+                    SftpPath::remote("/"),
+                )
+                .unwrap()])
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let mut completed = 0;
+                loop {
+                    match manager.recv_event().await.unwrap() {
+                        SftpTransferEvent::ItemCompleted { .. } => completed += 1,
+                        SftpTransferEvent::ItemFailed { reason, .. } => {
+                            panic!("publication must stay successful: {reason}")
+                        }
+                        SftpTransferEvent::BatchFinished { batch_id, .. }
+                            if batch_id == batch.batch_id =>
+                        {
+                            break
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(completed, 1);
+            })
+            .await
+            .unwrap();
+            assert_eq!(probe.notices.load(Ordering::Acquire), 1);
+            assert!(probe.saved.load(Ordering::Acquire));
+            assert!(!probe.active.load(Ordering::Acquire));
+            assert_eq!(opens.load(Ordering::Acquire), 1);
+            assert_eq!(renames.load(Ordering::Acquire), 1);
+            assert_eq!(removals.load(Ordering::Acquire), 0);
+            assert_eq!(
+                stdfs::read(root.join("source.bin")).unwrap(),
+                b"published once"
+            );
+            assert!(!root.join("source.bin.festerm-part").exists());
+            manager.shutdown().await.unwrap();
+            server.abort();
+            let _ = server.await;
+            stdfs::remove_dir_all(root).unwrap();
+        });
     }
 
     async fn check_upload_open_outcome(batch: bool, reply: UploadOpenReply) {
@@ -3093,6 +3528,9 @@ mod tests {
                 local_working_directory: PathBuf::from("."),
                 closed: false,
                 partial_file: Some(partial_file),
+                verified_gui_fingerprint: None,
+                upload_recovery: None,
+                upload_report: None,
                 runtime_keepalive: None,
             },
             server,
@@ -3296,10 +3734,13 @@ mod tests {
                 writer.write_all(b"complete output").await.unwrap();
                 writer.flush().await.unwrap();
                 drop(writer);
-                session.protect_partial_commit(
-                    &SftpPath::local(&temporary),
-                    &SftpPath::local(&destination),
-                );
+                session
+                    .protect_partial_commit(
+                        &SftpPath::local(&temporary),
+                        &SftpPath::local(&destination),
+                    )
+                    .await
+                    .unwrap();
                 if rename_completed {
                     stdfs::rename(&temporary, &destination).unwrap();
                 }
@@ -3529,7 +3970,10 @@ mod tests {
                 local_creation: None,
             })
             .await;
-            session.protect_partial_commit(&path, &SftpPath::local(destination.clone()));
+            session
+                .protect_partial_commit(&path, &SftpPath::local(destination.clone()))
+                .await
+                .unwrap();
             assert!(matches!(
                 session.cleanup_interrupted_transfer().await,
                 Err(SftpSessionError::TransferCommitInterrupted { .. })
