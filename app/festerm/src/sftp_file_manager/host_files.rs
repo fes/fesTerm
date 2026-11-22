@@ -213,7 +213,7 @@ async fn files_operations(
         let review_stop = browsing.delete_review_stop();
         tokio::select! {
             biased;
-            _ = lifetime.cancelled() => return Err("Files authority or tab lifetime ended. Reconnect explicitly after reviewing the account.".into()),
+            _ = lifetime.cancelled() => return Err("Files connection, authority or tab lifetime ended. Reconnect explicitly after reviewing the account.".into()),
             _ = async { match review_stop { Some(stop) => stop.cancelled().await, None => std::future::pending::<()>().await } } => {
                 browsing.cancel_delete_review().await.map_err(|error| error.to_string())?;
             }

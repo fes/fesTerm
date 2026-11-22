@@ -95,6 +95,7 @@ festerm-windows-direct2d = { path = "../../crates/festerm-windows-direct2d" }
 winresource = "0.1"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", features = ["testing"] }
 festerm-ssh = { path = "../../crates/festerm-ssh", features = ["test-support"] }
 festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }

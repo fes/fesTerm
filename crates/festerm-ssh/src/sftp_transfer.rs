@@ -1018,6 +1018,12 @@ trait TransferBackend {
     fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(std::future::pending())
     }
+    fn idle_keepalive_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+    fn keepalive(&mut self) -> BackendFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
     fn review_replacement<'a>(
         &'a mut self,
         _path: &'a SftpPath,
@@ -1282,6 +1288,11 @@ async fn run_transfer_worker<B: TransferBackend>(
         planning_budget: Some(SharedPlanningBudget::new(planning_limits)),
         ..WorkerState::default()
     };
+    let mut keepalive = backend.idle_keepalive_interval().map(|period| {
+        let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        timer
+    });
     loop {
         state.publish_snapshot(&snapshot);
         state
@@ -1319,6 +1330,19 @@ async fn run_transfer_worker<B: TransferBackend>(
             _ = backend.retirement() => {
                 command_receiver.close();
                 state.handle_command(WorkerCommand::CancelAllTransfers, &event_sender).await;
+            }
+            _ = async {
+                match &mut keepalive {
+                    Some(timer) => { timer.tick().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                // Select only readiness. Dropping a losing in-flight exchange
+                // would close its stream when a command arrives mid-Ping.
+                if backend.keepalive().await.is_err() {
+                    command_receiver.close();
+                    state.handle_command(WorkerCommand::CancelAllTransfers, &event_sender).await;
+                }
             }
             command = command_receiver.recv() => match command {
                 Some(command) => state.handle_command(command, &event_sender).await,

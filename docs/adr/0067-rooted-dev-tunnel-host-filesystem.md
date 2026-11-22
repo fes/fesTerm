@@ -348,6 +348,13 @@ packaged acceptance.
 
 ## Validation impact
 
+Desktop DTFILES-01/03 idle liveness covers both independently opened Files
+streams. Actual-server paired-stream regression keeps browsing/preview alive
+beyond the unchanged wire deadline before first transfer STAT; held-Pong and
+lost-Pong fixtures cover command arrival and child-scoped collision drain.
+These client-only checks add no grant, reconnect, replay, or server timeout
+change; native/provider qualification remains separate.
+
 - **Invariants introduced or changed:** ADR 0053's host filesystem grant now
   includes explicitly rooted enumeration/writes and separately consented Open3
   one-shot deletion of reviewed files/empty folders. Terminal ownership,

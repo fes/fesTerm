@@ -91,6 +91,10 @@ pipelining, reconnect replay, handle reuse across streams, or transfer resumptio
 All JSON field names/types and enum spellings are defined by the portable DTOs.
 Unknown fields/operations and malformed framing refuse. Each frame/read/job has
 a 30-second deadline. `ping` can keep an otherwise idle stream alive.
+Desktop Files clients ping both independently opened browsing and transfer
+streams every 20 seconds while idle. A transfer Ping completes before the queue
+admits another command; a failed Ping retires only that Files tab and drains its
+queued work. It never reconnects or replays an operation.
 
 ## HOST Files opening amendment (reviewed contract)
 

@@ -23,6 +23,15 @@ pub struct RemoteDirectoryPage {
 pub trait RemoteTransferEndpoint: Send + 'static {
     fn check_current(&mut self) -> Result<(), SftpSessionError>;
     fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    /// Opt-in idle liveness only; ordinary SSH endpoints remain unchanged.
+    fn idle_keepalive_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+    /// Completes one exchange before the worker admits another command. A
+    /// terminal failure must retire this endpoint's own connection lifetime.
+    fn keepalive(&mut self) -> RemoteTransferFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
     /// Close all retained directory/review handles on worker shutdown or a
     /// dropped operation. A failed close must retire the endpoint locally.
     fn cleanup(&mut self) -> RemoteTransferFuture<'_, ()>;
@@ -68,6 +77,12 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
     }
     fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         self.remote.retirement()
+    }
+    fn idle_keepalive_interval(&self) -> Option<std::time::Duration> {
+        self.remote.idle_keepalive_interval()
+    }
+    fn keepalive(&mut self) -> BackendFuture<'_, ()> {
+        self.remote.keepalive()
     }
     fn review_replacement<'a>(
         &'a mut self,

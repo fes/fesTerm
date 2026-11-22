@@ -138,6 +138,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
         let lifetime = self.lifetime.clone();
         Box::pin(async move { lifetime.cancelled().await })
     }
+    fn idle_keepalive_interval(&self) -> Option<Duration> {
+        Some(Duration::from_secs(20))
+    }
+    fn keepalive(&mut self) -> RemoteTransferFuture<'_, ()> {
+        Box::pin(async move {
+            let result = self.ping().await;
+            if result.is_err() {
+                // Retire only this Files tab's child lifetime. The browsing
+                // worker reports ConnectionFailed and drains owned transfers.
+                self.lifetime.cancel();
+            }
+            result
+        })
+    }
     fn cleanup(&mut self) -> RemoteTransferFuture<'_, ()> {
         Box::pin(async move {
             let interrupted = self.in_flight_upload.take();
@@ -782,6 +796,246 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_transfer_command_arriving_during_ping_does_not_drop_exchange() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (ping_sent, ping_seen) = tokio::sync::oneshot::channel();
+        let (continue_ping, wait_ping) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            ping_sent.send(()).unwrap();
+            wait_ping.await.unwrap();
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            let stat = request(&mut peer).await;
+            assert!(matches!(stat.operation, rpc::Operation::Stat { .. }));
+            reply(&mut peer, stat.id, None, Some(rpc::ErrorCode::NotFound)).await;
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let lifetime = CancellationToken::new();
+        let mut manager =
+            SftpTransferManager::from_remote_endpoint(endpoint(stream, lifetime.clone()).await);
+        tokio::task::yield_now().await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        tokio::time::resume();
+        tokio::time::timeout(Duration::from_secs(3), ping_seen)
+            .await
+            .unwrap()
+            .unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::remote("/missing"),
+                SftpPath::local(folder.path().join("target")),
+            )
+            .unwrap()])
+            .unwrap();
+        // The command is ready while the Ping reply remains withheld.
+        tokio::task::yield_now().await;
+        continue_ping.send(()).unwrap();
+        let reason = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let festerm_ssh::SftpTransferEvent::ItemFailed { reason, .. } =
+                    manager.recv_event().await.unwrap()
+                {
+                    break reason;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!reason.contains("transport"), "{reason}");
+        assert!(!lifetime.is_cancelled());
+        manager.shutdown().await.unwrap();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_transfer_failed_idle_ping_cancels_collision_and_only_its_child_lifetime() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let stat = request(&mut peer).await;
+            assert!(matches!(stat.operation, rpc::Operation::Stat { .. }));
+            reply(
+                &mut peer,
+                stat.id,
+                Some(rpc::Result::Stat {
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "1".into(),
+                        modified_ms: None,
+                    },
+                }),
+                None,
+            )
+            .await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            // Lose the reply without replay, reconnection, or a new grant.
+        });
+        let parent = CancellationToken::new();
+        let sibling = parent.child_token();
+        let lifetime = parent.child_token();
+        let mut manager =
+            SftpTransferManager::from_remote_endpoint(endpoint(stream, lifetime.clone()).await);
+        let folder = tempfile::tempdir().unwrap();
+        let destination = folder.path().join("existing");
+        std::fs::write(&destination, b"original").unwrap();
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::remote("/source"),
+                SftpPath::local(&destination),
+            )
+            .unwrap()])
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if matches!(
+                    manager.recv_event().await.unwrap(),
+                    festerm_ssh::SftpTransferEvent::Collision(_)
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        tokio::time::resume();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut cancelled = false;
+            loop {
+                match manager.recv_event().await.unwrap() {
+                    festerm_ssh::SftpTransferEvent::ItemCancelled { .. } => cancelled = true,
+                    festerm_ssh::SftpTransferEvent::BatchFinished { .. } => {
+                        assert!(cancelled);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(lifetime.is_cancelled());
+        assert!(!parent.is_cancelled() && !sibling.is_cancelled());
+        tokio::task::yield_now().await;
+        assert!(
+            manager.snapshot().items.is_empty(),
+            "collision reservations drained"
+        );
+        manager.shutdown().await.unwrap();
+        joined(server).await;
+        assert_eq!(std::fs::read(destination).unwrap(), b"original");
+    }
+
+    // Use the actual rooted server and its unchanged 30-second wire deadline.
+    // Advancing only idle time keeps filesystem jobs on the normal clock.
+    #[tokio::test]
+    async fn files_transfer_stays_live_while_browsing_beyond_server_idle_deadline() {
+        use festerm_tunnel_bridge::filesystem::{self, Filesystem};
+        #[cfg(not(windows))]
+        let parents = [std::env::current_dir().unwrap()];
+        #[cfg(windows)]
+        let parents = [
+            std::env::temp_dir(),
+            std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("Temp"),
+        ];
+        let root = parents
+            .into_iter()
+            .find_map(|parent| {
+                let path = parent.join(format!("files-idle-transfer-{}", uuid::Uuid::new_v4()));
+                festerm_tunnel_bridge::setup_storage::private_directory(&path, true)
+                    .ok()
+                    .map(|_| path)
+            })
+            .expect("a policy-compliant private fixture root");
+        std::fs::write(root.join("download.txt"), b"controlled download").unwrap();
+        let filesystem = Filesystem::open(&rpc::Policy {
+            root: root.clone(),
+            write: false,
+            delete: false,
+        })
+        .unwrap();
+        let lifetime = CancellationToken::new();
+        let mut servers = Vec::new();
+        let mut endpoints = Vec::new();
+        for _ in 0..2 {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let filesystem = filesystem.clone();
+            servers.push(tokio::spawn(async move {
+                let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                assert_eq!(kind, rpc::OPEN);
+                let expected: rpc::Open = serde_json::from_slice(&bytes).unwrap();
+                filesystem::serve(peer, filesystem, expected.target, &bytes).await
+            }));
+            endpoints.push(endpoint(stream, lifetime.clone()).await);
+        }
+        let mut browsing = endpoints.remove(0);
+        let mut manager = SftpTransferManager::from_remote_endpoint(endpoints.remove(0));
+        tokio::task::yield_now().await;
+        for _ in 0..4 {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(10)).await;
+            tokio::time::resume();
+            browsing.ping().await.unwrap();
+            // Let an idle ping finish its real filesystem job before advancing
+            // another idle interval. This is not a protocol timeout override.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            browsing
+                .markdown_snapshot("/download.txt", 1024)
+                .await
+                .unwrap(),
+            b"controlled download"
+        );
+        assert!(
+            !lifetime.is_cancelled(),
+            "closing a preview retains the tab lifetime"
+        );
+        let local = tempfile::tempdir().unwrap();
+        let destination = local.path().join("download.txt");
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::remote("/download.txt"),
+                SftpPath::local(&destination),
+            )
+            .unwrap()])
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match manager.recv_event().await.unwrap() {
+                    festerm_ssh::SftpTransferEvent::ItemCompleted {
+                        bytes_transferred, ..
+                    } => break Ok(bytes_transferred),
+                    festerm_ssh::SftpTransferEvent::ItemFailed { reason, .. } => break Err(reason),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        manager.shutdown().await.unwrap();
+        browsing.client.cancel();
+        for server in servers {
+            let _ = server.await.unwrap();
+        }
+        drop(filesystem);
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            result,
+            Ok(19),
+            "first transfer STAT must survive idle browsing"
+        );
+        assert_eq!(std::fs::read(destination).unwrap(), b"controlled download");
     }
 
     #[tokio::test]
