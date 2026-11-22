@@ -6311,6 +6311,7 @@
         "ADR-0087"
       ],
       "automated_tests": [
+        "renewal_storage_failure_does_not_offer_new_account_authorization",
         "persisted_refresh_attempt_prevents_exchange_after_reopen",
         "expired_identity_renews_and_publishes_exact_same_account",
         "failed_or_unverified_fence_never_exchanges",

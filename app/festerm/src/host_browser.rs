@@ -48,7 +48,7 @@ impl RequestFailure {
             return Self::expired();
         }
         let mut failure = Self::from(error);
-        if !matches!(error, Error::Cancelled | Error::Busy) {
+        if !matches!(error, Error::Cancelled | Error::Busy | Error::Store) {
             failure.needs_sign_in = true;
             failure.message.push_str(" Account renewal did not complete. Sign in again in Settings; no credential exchange was replayed.");
         }

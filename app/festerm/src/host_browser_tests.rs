@@ -5,6 +5,16 @@ use festerm_config::{
 };
 
 #[test]
+fn renewal_storage_failure_does_not_offer_new_account_authorization() {
+    use festerm_tunnel_client::Error;
+    assert!(!RequestFailure::renewal(Error::Store).needs_sign_in);
+    assert!(!RequestFailure::renewal(Error::Busy).needs_sign_in);
+    assert!(!RequestFailure::renewal(Error::Cancelled).needs_sign_in);
+    assert!(RequestFailure::renewal(Error::Expired).needs_sign_in);
+    assert!(RequestFailure::renewal(Error::Network).needs_sign_in);
+}
+
+#[test]
 fn host_quick_create_requires_a_bounded_nonblank_name() {
     for invalid in ["", "  ", "bad\nname", "bad\u{0}name"] {
         assert!(!valid_session_name(invalid));
