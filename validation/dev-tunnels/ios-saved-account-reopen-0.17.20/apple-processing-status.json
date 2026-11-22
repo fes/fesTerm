@@ -1,0 +1,22 @@
+{
+  "checked_UTC": "2026-11-22T17:48:56.521721+00:00",
+  "version": "0.17.20",
+  "build": "2611221721",
+  "found": true,
+  "physical_acceptance": false,
+  "read_only": true,
+  "testers_invited_or_groups_changed": false,
+  "id": "01dbc83d-65a2-4ab5-baf6-79d3f386c53a",
+  "attributes": {
+    "version": "2611221721",
+    "uploadedDate": "2026-11-22T09:47:33-08:00",
+    "expired": false,
+    "processingState": "VALID"
+  },
+  "beta": {
+    "autoNotifyEnabled": true,
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION"
+  },
+  "existing_group_readback": "Unqualified: optional GET build/betaGroups returned403; not retried; no permission/group changes"
+}

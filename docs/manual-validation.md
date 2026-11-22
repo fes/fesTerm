@@ -6076,6 +6076,13 @@ evidence separately; controlled filesystem fixtures do not complete this gate.
 A search-only traversal regression establishes filesystem semantics, not the
 precise cause of a physical-device storage refusal or successful device recovery.
 
+The [physical saved-account reopen record](../validation/dev-tunnels/ios-saved-account-reopen-0.17.20.json)
+attributes the user report “Hosts appear and Remote opens” to TestFlight
+0.17.20 (2611221721), frozen PR #868 source `163eb156` / tree `a2928bca`.
+The user updated with existing data and was asked to open Find & Connect and Remote without signing
+in again. Apple reports VALID / IN_BETA_TESTING. This is user-reported phone
+workflow evidence, not a credential/exchange trace or a full mobile matrix case.
+
 HOSTSETUP-01 / DIAG-01 also requires a native capture of the typed last-setup
 diagnostic in About and Remote access: stage, actual HTTP status when available,
 fixed error category and recovery guidance. Check a provider refusal, native
@@ -6312,6 +6319,16 @@ same-intent retry, changed target, unavailable bundle and cancellation while a
 native operation drains. No cache edits, CLI origin switch, automatic rollback,
 reenable or replacement shell qualifies recovery. Model/render/compilation and
 metadata projection are not genuine native publisher/service/vault evidence.
+A [Mac 20 stopped-update record](../validation/dev-tunnels/mac-owner-stopped-update-0.17.20.json)
+qualifies normal first Disable 13 → Disabled 14, authenticated HOST 19 → 20 Update
+while remaining Disabled 14, and separate first Enable 15 with independent
+Listening 15. All eight prior durable actors and the full catalog remained
+unchanged. Subsequent Windows 20 attachment produced fresh output on the original
+fcaa generation/native 14 daemon without a new resume operation. The cached UI
+line “No current host report” is retained separately from native Running and
+backend Listening. A later HOST 20 Disable/Enable cycle remains unqualified; no
+full row or combined-release acceptance follows from this component.
+
 ### HOST-01/HOST-02 privacy preparation diagnostics
 
 Portable fixtures cover loss-before-installation-error ordering, discarded late
@@ -6329,6 +6346,14 @@ A confirmed non-running state names the prerequisite without starting the servic
 or enabling Remote Desktop. Missing detail remains inconclusive. Verify one
 separately approved stopped-service remote preparation and the normal monitor
 cleanup; portable fixtures and local-shell success do not qualify this native path.
+
+The [Windows 20 native privacy record](../validation/dev-tunnels/windows-client-privacy-0.17.20.json)
+retains the first service_state refusal with TermService Stopped/Manual and no
+recorded OS code. A separately authorized temporary Manual start, followed by
+one visible Retry, admitted actual Mac 20 retained-shell I/O. After normal GUI
+and owned-helper drain the exact test-started service returned to Stopped/PID0;
+Manual startup and RDPdeny1 stayed unchanged. This does not turn the original
+Stopped connection into a pass or authorize automatic service changes.
 
 The controlled Windows .17.8 client campaign found TermService stopped (Manual)
 while the interactive Session1 app was otherwise available. Its existing native

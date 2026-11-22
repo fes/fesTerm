@@ -1,0 +1,16 @@
+{
+  "status": "PASS_USER_REPORTED_PRESERVED_ACCOUNT_REOPEN",
+  "recorded_UTC": "2026-11-22T17:55:47.364286+00:00",
+  "version": "0.17.20",
+  "build": "2611221721",
+  "source": "163eb156856107d717a006d03f2fe82aacf93610",
+  "tree": "a2928bca7843fb2027507e22e38b3feefda7bde5",
+  "question": "Update while keeping existing app data, then open Find & Connect and Remote without signing in again.",
+  "user_answer": "Hosts appear and Remote opens",
+  "acceptance": "Physical iPhone existing saved account discovers hosts and opens Remote after update without an instructed sign-in or reset.",
+  "limits": [
+    "User-reported native workflow; no exported credential or raw provider exchange trace.",
+    "Not a full mobile policy/Copilot matrix case.",
+    "PR merge still awaits full CI."
+  ]
+}

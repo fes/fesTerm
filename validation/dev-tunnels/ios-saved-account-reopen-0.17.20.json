@@ -1,0 +1,53 @@
+{
+  "record_version": 1,
+  "not_a_new_matrix_case": true,
+  "matrix_total": 24,
+  "matrix_status_unchanged": {
+    "accepted": 9,
+    "partial": 6,
+    "unstarted": 9
+  },
+  "combined_release_qualified": false,
+  "status": "accepted user-reported physical iPhone preserved-account reopening",
+  "version": "0.17.20",
+  "build": "2611221721",
+  "source": "163eb156856107d717a006d03f2fe82aacf93610",
+  "tree": "a2928bca7843fb2027507e22e38b3feefda7bde5",
+  "IPA_bytes": 29407669,
+  "IPA_sha256": "610fb8943fe1a84e71160910ca78b4c5f0ceb013938d6c5ab7f01729a887a3cf",
+  "distribution": "Existing TestFlight beta; VALID and internal IN_BETA_TESTING. No testers/group/signing/permission changes.",
+  "workflow": "Update while keeping existing app data, then open Find & Connect and Remote without signing in again.",
+  "user_answer": "Hosts appear and Remote opens",
+  "acceptance": "Physical iPhone existing saved account discovers hosts and opens Remote after update without an instructed sign-in or reset.",
+  "limits": [
+    "User-reported actual phone workflow; no independent screenshot, credential inspection or provider exchange trace.",
+    "No instructed sign-in/data reset; exact internal refresh/exchange path not observed.",
+    "Optional beta-group enumeration returned403 and was not retried; supported build/betaDetail readiness passed.",
+    "Not a full mobile policy/Copilot case or combined-release acceptance. Build was frozen PR868 source; full CI and same-tree merge are recorded separately from physical acceptance."
+  ],
+  "private_receipts_sha256": {
+    "VALID_handoff": "560d20fc94cebed00890842034dac8a1f6d76151af8ae3f7ab71f15b3ab0a3bc",
+    "physical_user_acceptance": "3dc33c782eebeab2b57389046bcfec890ed53e5939a0cdad0b7324f2f741ac3e"
+  },
+  "original_artifacts": {
+    "physical-user-acceptance.json": {
+      "bytes": 790,
+      "sha256": "3dc33c782eebeab2b57389046bcfec890ed53e5939a0cdad0b7324f2f741ac3e"
+    },
+    "apple-processing-status.json": {
+      "bytes": 699,
+      "sha256": "8843b29f5f518526cdd5e685b47dd5e8c507963b888ef3170867754e847479a6"
+    }
+  },
+  "source_merge": {
+    "PR": 868,
+    "main": "9f8b4b7900619aa13e4b25ccd84eb4bf35c6eb21",
+    "merged_tree_equals_built_tree": true,
+    "all4_associated_workflows": "SUCCESS",
+    "checks": {
+      "success": 21,
+      "expected_skip": 3
+    },
+    "unresolved_threads": 0
+  }
+}
