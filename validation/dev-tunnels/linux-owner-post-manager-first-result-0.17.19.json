@@ -1,0 +1,111 @@
+{
+  "record_version": 1,
+  "status": "accepted scoped Linux first-completion proof; no new matrix case",
+  "source_fix": "https://github.com/fes/fesTerm/pull/863",
+  "not_a_new_matrix_case": true,
+  "matrix_total": 24,
+  "desktop_matrix_completed_unchanged": 8,
+  "combined_release_qualified": false,
+  "sources": {
+    "frontend": {
+      "source": "78a6d280e74b177163470d705d8a5a524c7c9302",
+      "tree": "a055fa2cea7f4dadda1f5f32f7d8ff96c7ceb302",
+      "merged_main_same_tree": "81b65e94000d88b7a0d4c0642cb992e79c68ae87",
+      "version": "0.17.19",
+      "unsigned_development_GUI": true,
+      "producer_run": 45029932811,
+      "attempt": 1,
+      "artifact": 14757830008,
+      "producer_checkout_is_PR_head_not_merge_SHA": true,
+      "MAIN_bytes": 118814816,
+      "MAIN_sha256": "2587d78135dc80fdeeb9e805bff26f74042d47b76ac8be64c7a9ae64f44e960a",
+      "retained12_runtime_support_source": "e2a6783928d5d58684be34dceaf415865ceec49a",
+      "mixed13_map_sha256": "3b96198098522c544a3065355715e7791a72aa7a2465ad14b3b9e72bca67650c",
+      "normal_owner_boundary": "In-process Linux owner path. Adjacent older setup/bridge/sessiond/automation helpers excluded from execution."
+    },
+    "HOST": {
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "version": "0.17.19",
+      "authenticated_existing_complete_bundle": true,
+      "archive_sha256": "6ef16be24fe1fa83b12dc44440f651317327639cc0357330f60bb1f142f05692",
+      "image_sha256": "8dd2876eee8c408a4ff3cd2846f6c09acbb005b477e7e2dbcbe2756e6e9935e2",
+      "not_updated_or_replaced": true
+    }
+  },
+  "normal_UI": {
+    "account": "fes-festerm1",
+    "Disable": "ONE normal confirmation Provisioned47\u2192actualDisabled48/pendingnull/oldHOST1756588 absent; first settled UI correct.",
+    "Enable": "ONE separate reviewed confirmation with identical settings\u2192actualProvisioned49/pendingnull; newHOST1780181/birth41894605/run09424ad7-64f7-4184-8c49-42ee63f95bd3. First service_start and final_scope diagnostics ok, no protected-status warning.",
+    "settings": "creationOFF, provider-owner, manual startup; identical host/account/locator/name/binding and Files /home/evidence/festermfiles18 writeTRUE/deleteTRUE.",
+    "first_capture_before_refresh": true,
+    "Refresh_retry_recovery_used": false,
+    "display_limit": "First settled UI reports enabled/process Running and no current host report. Independent protected runtime reports Listening49. No post-restart endpoint/I-O test was performed in this phase.",
+    "async_first_frame": "Initial pending frame is retained privately; published first-enable is the first settled result."
+  },
+  "finite_first_completion": {
+    "time": "2026-11-22T15:06:14Z",
+    "service_start": "ok",
+    "final_scope": "ok",
+    "error_events": 0,
+    "relay_open": "ok epoch49",
+    "forced_contention_or_retry_count_measured": false
+  },
+  "preservation": {
+    "all20_native_actor_PID_birth_image_records": "exact",
+    "catalog_sha256": "a374d88b2da350c85747e17b3853ae885206c97413f10eec10c7683d68e9d894",
+    "counts": {
+      "profiles": 8,
+      "sessions": 13,
+      "operations": 38
+    },
+    "old3_Files_fixtures": "exact original identities/modes/mtime/bytes/SHA; prior reviewed-deleted R36 file/directory stay absent",
+    "settings_and_binding": "unchanged",
+    "native_service_update_catalog_hashes": "unchanged",
+    "intended_changed_records": [
+      "host-cloud.json",
+      "owner-enrollment.json",
+      "host-lifecycle.json",
+      "host-runtime.json"
+    ],
+    "cleanup": "GUI1776454 normal exit0; supervisor1776436 absent; unitinactive/MainPID0/emptycgroup/success before original workcutoff.",
+    "configuration": "Immutable R37source6b38 preserved; private clone only workspace persistence, without_workspace projection d6af64ad6b372e67a3690a3ce10de7f424fea5fa9d9d16c811e16a088a2bdeae exact.",
+    "whole_guest_budget_bytes": 18874368,
+    "free_after": 3231191040,
+    "effective_whole_phase_floor": 3213766656,
+    "continuing_floor": 3203010560
+  },
+  "limits": [
+    "Native actual successful-run internal contention/retry count not measured. Deterministic existing lease tests cover Busy; this qualifies a normal native first result.",
+    "Original R37 after_manager_fence Busy failure remains preserved and is not changed to PASS. No causes inferred for unrelated failures.",
+    "No endpoint/SDK/sessionI-O after restart in R38; no new matrix, Files, otherOS, installer/update, mobile or MCP acceptance.",
+    "No physical pixel or signed developmentGUI release claim. Genuine signed HOST19 remains source566."
+  ],
+  "private_receipts_sha256": {
+    "R38_first_results": "cb61a96d2d6dfc967ccde821b425755e8fbc8ba93382a7a159e34943c0f26b8b",
+    "MAIN_only_stage": "f54953106f543f16e917513359254f8e8139d199e0823dd63d8d403e808431ea",
+    "host_only_qualification": "35a4e22cb1f3dd90c629c9040cc90b3ecbd2970f7846659749c6721b1d4de715",
+    "original_R37_failure": "6a6e3f4cf25ad587e6109745dceecab864cd729fbb6e3a89348508631d734226"
+  },
+  "original_artifacts": {
+    "first-disable.png": {
+      "bytes": 71485,
+      "sha256": "d47e523e09e33f4d40f5bb9f008b1dd971c215f704f576af23805f2f7480add4"
+    },
+    "first-enable.png": {
+      "bytes": 152344,
+      "sha256": "26beff6fd72dc8042f865c84f6e36cf295fd4982c927737b380a27a4042ff6bc"
+    },
+    "first-completion-phases.jsonl": {
+      "bytes": 10961,
+      "sha256": "8739eba85c2657960de9f02c436faf677edd7a43f82e5001c55db59b1c3d19fc"
+    },
+    "closed-preservation.jsonl": {
+      "bytes": 4799,
+      "sha256": "5bc67bd54c475bd44b72fd2d1feb18636432ea19f79bcca81a83cab6ea0ad3a9"
+    },
+    "development-runtime-provenance.json": {
+      "bytes": 3091,
+      "sha256": "62bfecf3dbf4644f35ec7a7c2323b65972f2ae821575746f1f296dc1a6c2001c"
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "purpose": "development-appimage-core-prefix-only-not-signed-release",
+  "installation_kind": "appimage",
+  "feature_scope": "existing normal AppImage package build",
+  "source_stage": "cargo-packager-0.11.8 appimage_deb/data before linuxdeploy",
+  "checkout_commit": "78a6d280e74b177163470d705d8a5a524c7c9302",
+  "checkout_tree": "a055fa2cea7f4dadda1f5f32f7d8ff96c7ceb302",
+  "candidate_head": "78a6d280e74b177163470d705d8a5a524c7c9302",
+  "run_id": "45029932811",
+  "run_attempt": "1",
+  "binary": "usr/bin/festerm",
+  "bytes": 118814816,
+  "sha256": "2587d78135dc80fdeeb9e805bff26f74042d47b76ac8be64c7a9ae64f44e960a",
+  "mode": 493,
+  "host_bundle_key_sha256": "fdf0423276142abe11d0e1f8ca634621e8e03f1a6f2b6faf557b1d4167201ff8",
+  "files": {
+    "usr/bin/festerm": {
+      "bytes": 118814816,
+      "sha256": "2587d78135dc80fdeeb9e805bff26f74042d47b76ac8be64c7a9ae64f44e960a",
+      "mode": 493
+    },
+    "usr/bin/festerm-automation-js-worker": {
+      "bytes": 3198160,
+      "sha256": "966bbd184e3e1d87cd4d07e49c979030ae1cfb322c8b7f722edc39129dde17c2",
+      "mode": 493
+    },
+    "usr/bin/festerm-sessiond": {
+      "bytes": 3491768,
+      "sha256": "afba2598acdb8820fa21129bcd280dc2deff62741e914e497c6507dfd07abf0e",
+      "mode": 493
+    },
+    "usr/bin/festerm-tunnel-bridge": {
+      "bytes": 13452680,
+      "sha256": "0897810ba2f4de94562b77a8074677d86e32e54a29b28dd609cfda0bcab075c2",
+      "mode": 493
+    },
+    "usr/bin/festerm-tunnel-setup": {
+      "bytes": 4060816,
+      "sha256": "c8b55cd0e4d2870dc4a2ea405da1184cdcaadb19f8dfac9271900187d3950b1d",
+      "mode": 493
+    },
+    "usr/lib/festerm/THIRD_PARTY_NOTICES.txt": {
+      "bytes": 1717450,
+      "sha256": "2b735f227988b31174a08820bfcf20218c277f6edd359a5e506932fba1bcbd9a",
+      "mode": 420
+    },
+    "usr/share/applications/festerm.desktop": {
+      "bytes": 191,
+      "sha256": "a72d5cca0f6abc1165ddc6131ceb171fa6c16efd0298e006ea41cfd81e98d816",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/1024x1024/apps/festerm.png": {
+      "bytes": 96625,
+      "sha256": "d245bd09377b9b70d4b82514a2b4b2f547cf9b45624ac85e34a42346e4dd0e28",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/128x128/apps/festerm.png": {
+      "bytes": 8011,
+      "sha256": "de80c060b8204bfc424e04ae5851846d8f4efac208918816fde5a5b3ed5f9c83",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/16x16/apps/festerm.png": {
+      "bytes": 685,
+      "sha256": "89c535bf3433ef7dd992d212d5c403b99cfd83ee7abe91349085da434e2b5ece",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/256x256/apps/festerm.png": {
+      "bytes": 18641,
+      "sha256": "edee71461faef548a45b62134446c10bc3c1701f5805e7bed7392cd7de9f0384",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/32x32/apps/festerm.png": {
+      "bytes": 1383,
+      "sha256": "90870fc1a093f8a2b217fb562f429cc58fd5be497afad1c3d77b8f609ec4a9c7",
+      "mode": 420
+    },
+    "usr/share/icons/hicolor/512x512/apps/festerm.png": {
+      "bytes": 43195,
+      "sha256": "1e14d1a6d0da865ac532decfd5cf909170b322d32643a4cfd50d9c47a21b95a9",
+      "mode": 420
+    }
+  }
+}

@@ -1,0 +1,352 @@
+{
+  "record_version": 1,
+  "status": "accepted ninth pinned creation-ON functional case; combined-release qualification incomplete",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "Linux VM",
+    "server": "macOS VM"
+  },
+  "creation_policy": "ON",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Pinned MAIN78 Linux client with12 retained e2 development support files, signed MacHOST/daemon19 source566, earlier signed MacGUI566 local renderer references, and current777 Linux SDK client to SAME Mac13. No combined-release or same-OS matrix acceptance.",
+  "sources": {
+    "Linux_GUI": {
+      "version": "0.17.19",
+      "source": "78a6d280e74b177163470d705d8a5a524c7c9302",
+      "tree": "a055fa2cea7f4dadda1f5f32f7d8ff96c7ceb302",
+      "package_run": 45029932811,
+      "attempt": 1,
+      "artifact": 14757830008,
+      "MAIN_bytes": 118814816,
+      "MAIN_sha256": "2587d78135dc80fdeeb9e805bff26f74042d47b76ac8be64c7a9ae64f44e960a",
+      "mixed_runtime": "MAIN78 plus12 unchanged e2/846 development support files; client-only: no setup/update/local-persistent/legacy helper execution",
+      "mixed13_map_sha256": "3b96198098522c544a3065355715e7791a72aa7a2465ad14b3b9e72bca67650c",
+      "unsigned_development_GUI": true
+    },
+    "Mac_local_GUI_and_signed_HOST": {
+      "version": "0.17.19",
+      "source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "release_run": 44955636986,
+      "GUI_artifact": 14728951461,
+      "HOST_epoch": 13,
+      "HOST_PID": 22042,
+      "HOST_birth_UTC": "2026-11-22T14:44:21Z",
+      "HOST_run": "7a380ffc-cf6f-46cf-9e3f-128c36f1d39b",
+      "signed_archive_sha256": "2615c685824300e00c687e91082919f1788338d99e8d897c09e728f73e111a8a",
+      "new_sessiond_image_sha256": "8d7c1f3b5164804092c54402f8aa6fd899c279b13a58ab5e6ddf5aaa1887c9a7"
+    },
+    "retained_Mac_daemon": {
+      "version": "0.17.14",
+      "PID": 64358,
+      "shell_PID": 64364,
+      "image_sha256": "3cca5a01174fab8180bede1685d4365d330ce6e8841ded1ea5e332dc1bf52cfc",
+      "signed_archive_sha256": "6c692c2e1ffc2abf35459fcabc9db360f6ebde472211e4b5bebef6a9e174ba1a"
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "run": 45000090102,
+      "attempt": 1,
+      "artifact": 14745498280,
+      "bytes": 21693888,
+      "sha256": "e0e8b32a661d31cc8531c4e896b808571f6f487d826eb2e255cd00015c0237df",
+      "runner_sha256": "d0067a895ce79f0efcbad49fde63241ea5773409c16de6910ced53de2f5b91f4"
+    }
+  },
+  "workflow": {
+    "account": "fes-festerm1",
+    "host": "847d1db1-267a-49b8-8f68-1a19d02c6155",
+    "locator": "festerm-e87f2c360faa4d7289dd9fa9b28eb0c3.usw2",
+    "discovery": "Normal Find & Connect, exact public locator tooltip disambiguates duplicate friendly name; authorized inventory/new host shell form. No import/manual pairing/sign-in/Refresh/retry.",
+    "creation": "ONE named persistent New host shell/Create & Connect: lab-linux78-mac13-on-a1, host-default shell/args/cwd; Save as local profile checked. No server profile is added by generic creation.",
+    "logical": "7c58ec78-6ff0-400d-acad-a4aace733b68",
+    "generation": "1795361045068247455",
+    "operation": "80e342dd-238d-404f-93cf-16027e4c7840",
+    "daemon_PID": 24297,
+    "shell_PID": 24303,
+    "saved_profile": {
+      "id": "c35f03e6-77aa-4bd5-a08a-7f08f450d93a",
+      "name": "Linux Mac ON A1",
+      "behavior": {
+        "kind": "attach_only",
+        "generation": "1795361045068247455"
+      }
+    },
+    "I_O_reconnect": "Distinct A/B output, normal detach, normal saved AttachOnly profile route and same-generation reconnect/C; later two fresh visual frontends attach to SAME generation.",
+    "stopped_shared": {
+      "logical": "1615504f-c562-46a5-aa16-673c1d07599f",
+      "revision": 1,
+      "name": "Lab stopped shared",
+      "before": "Advertised NotStarted",
+      "action": "ONE normal Start & Connect",
+      "generation": "1795361438188135134",
+      "operation": "f9fa3a79-a750-4aae-b971-8284d5078179",
+      "daemon_PID": 24704,
+      "shell_PID": 24705,
+      "result": "Normal connected /bin/sh prompt and exact echo roundtrip, detach; profile/revision/consent unchanged."
+    }
+  },
+  "service_proof": {
+    "test": "Current777 controlled_github_host_service_client_workflow through public relay to SAME MacHOST13",
+    "result": "1 passed;0 failed; ordinary-client completion marker;exit0",
+    "elapsed_seconds": 23.724,
+    "private": "Actual previously published/unshared logical885883d3-771c-4f12-9ed1-744715b22281/revision2 excluded from inventory; direct EnsureProfile refusal belongs source-accepted {Denied,Stale}. Exact union member not exported; no exclusively-Denied claim.",
+    "shared": "Existing fcaa6f65-c562-4273-8b75-79f8e6bb9478/rev1/gen1795272479437293009: two resumes, same generation/pair, native nonce roundtrips/detach/survival.",
+    "additional_generic": {
+      "logical": "503c5c4d-c750-4b65-8737-faaa8892e651",
+      "generation": "1795363280201536092",
+      "daemon_PID": 26722,
+      "shell_PID": 26723,
+      "effect": "ONE create and ONE resume same generation; two nonce roundtrips/detach/survival; separate from GUI named shell."
+    },
+    "new_operation_receipts": {
+      "213156c3-9e02-435e-9147-2bd11748d983": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false
+      },
+      "35f91cf4-4083-4f50-a231-71557ad3b1b7": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false
+      },
+      "57348a1d-f672-4c3c-9618-a8cb350e5ec8": {
+        "logical": "503c5c4d-c750-4b65-8737-faaa8892e651",
+        "generation": "1795363280201536092",
+        "created": false,
+        "recreated": false
+      },
+      "bef9a91b-b2af-4d9e-9abf-3ee2cdde75fe": {
+        "logical": "503c5c4d-c750-4b65-8737-faaa8892e651",
+        "generation": "1795363280201536092",
+        "created": true,
+        "recreated": false
+      }
+    },
+    "stopped_start_proof": "GUI PhaseA above; SDK ON fixture intentionally has no stopped_shared_profile_name."
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "Copilot": {
+      "version": "1.0.112",
+      "Mac_binary_sha256": "a29f5a52ac73cbd707fa4855939f1fe6a7e3bd44a6a9f577dbe7f7754a4b8424",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/Users/evidence/.ft-copilot-reference-native19-r22",
+      "state": "Fresh unauthenticated initial prompt after one-session folder trust; no login/model/paid request."
+    },
+    "capabilities": "Both fresh pairs: every raw JSON field equal except case/elapsed_ms, including all6 environment fields and10 single query replies/202input bytes; stable actual grids, restored terminal and descriptor flags. No JSON normalization.",
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "locale_precondition": "Explicit child-only LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 on remote probe and Copilot, matching actual existing local R22 reference launcher. No persistent shell/profile/HOST/OS environment changes or default-locale equality claim.",
+    "local_reference_injection_proof": {
+      "launcher_sha256": "570b640cae8a02d04288188c97c48f901d580f6c3af4a8a2be75ec7d30a09de3",
+      "function": "application_environment",
+      "lines": [
+        91,
+        92
+      ],
+      "fixed_values": {
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8"
+      },
+      "source_comment": "Original retained mandatory Mac launcher explicitly supplies both fields before local app launch."
+    },
+    "source_reuse_proof": [
+      {
+        "path": "crates/festerm-core",
+        "old_object": "8362202cab63d4a29e01c10051934f980d364634",
+        "new_object": "8362202cab63d4a29e01c10051934f980d364634",
+        "byte_identical": true
+      },
+      {
+        "path": "crates/festerm-host-protocol",
+        "old_object": "e5c5ba0b14b5af14c4154dc618ee1348ec07d108",
+        "new_object": "e5c5ba0b14b5af14c4154dc618ee1348ec07d108",
+        "byte_identical": true
+      },
+      {
+        "path": "crates/festerm-ui-egui/src/renderer.rs",
+        "old_object": "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556",
+        "new_object": "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556",
+        "byte_identical": true
+      },
+      {
+        "path": "crates/festerm-ui-egui/src/renderer",
+        "old_object": "7dd98d142ac7454e091ee15bf881a52f8c255113",
+        "new_object": "7dd98d142ac7454e091ee15bf881a52f8c255113",
+        "byte_identical": true
+      },
+      {
+        "path": "crates/festerm-tunnel-bridge/src/host_terminal.rs",
+        "old_object": "080ae9f50e8c297222e24f2e69de0ec67c055b2f",
+        "new_object": "080ae9f50e8c297222e24f2e69de0ec67c055b2f",
+        "byte_identical": true
+      },
+      {
+        "path": "crates/festerm-tunnel-bridge/src/host_terminal/client.rs",
+        "old_object": "53f092aa04495b878fcff25649cb25a0a963fb3b",
+        "new_object": "53f092aa04495b878fcff25649cb25a0a963fb3b",
+        "byte_identical": true
+      }
+    ],
+    "visual_review": "Matching initial header, responsive Getting started card present74x20/omitted70x19, logo/banner,0MCP/login/cwd line,input and manual-approval footer. DefaultJetBrainsMono14pt; Mac local2x/Linux remote1x; no physical-raster identity claim.",
+    "terminal_panel_logical_size": {
+      "74x20": [
+        638,
+        389
+      ],
+      "70x19": [
+        604,
+        370
+      ]
+    },
+    "terminal_panel_rect_physical": {
+      "local74x20": [
+        2,
+        78,
+        1278,
+        856
+      ],
+      "local70x19": [
+        2,
+        78,
+        1210,
+        818
+      ],
+      "remote74x20": [
+        101,
+        119,
+        739,
+        508
+      ],
+      "remote70x19": [
+        101,
+        119,
+        705,
+        489
+      ]
+    },
+    "physical_screenshot_size": {
+      "local74x20": [
+        1280,
+        904
+      ],
+      "local70x19": [
+        1212,
+        866
+      ],
+      "remote74x20": [
+        1024,
+        768
+      ],
+      "remote70x19": [
+        1024,
+        768
+      ]
+    },
+    "pixel_identity": false,
+    "existing_byte_original_local_references": {
+      "local74x20.png": {
+        "path": "linux-client-mac-native-off/local74x20.png",
+        "bytes": 126085,
+        "sha256": "2eaa101886415d461bd211193237feb1e5d7483664146c6ff18debd5a27c5d6e"
+      },
+      "local74x20-capabilities.json": {
+        "path": "linux-client-mac-native-off/local74x20-capabilities.json",
+        "bytes": 1383,
+        "sha256": "d9e27a0a4a979a6290061a1f85ed133954e8d02f7020401fa8709c342b5bcb1a"
+      },
+      "local70x19.png": {
+        "path": "linux-client-mac-native-off/local70x19.png",
+        "bytes": 102967,
+        "sha256": "dc151593fd88cba79e5ce5058ef93cf5d3758cab1c2d753f9887aa07c32e4435"
+      },
+      "local70x19-capabilities.json": {
+        "path": "linux-client-mac-native-off/local70x19-capabilities.json",
+        "bytes": 1383,
+        "sha256": "b7d930b3c93b6e3c28f976217aff4957df09adb0560be6d097291fb8418599c7"
+      }
+    }
+  },
+  "preservation": {
+    "Mac": "Original64358/64364 durable pair andall3 profiles/oldsession4operations exact throughout; intentional GUI named pair+stopped-shared pair+SDK generic pair add6actors. Final8durableactors plusHOST13. All records beforeeachphase exactsubsets; final4session records/3profiles/10operation receipts.",
+    "Mac_final_catalog_sha256": "9bdc22f78d8a46241052c3df1a4e5eaca881d65951465f0cc3a11a8999c41100",
+    "Linux": "HOST49/all20 durableactors/protected7/full a374 catalog/binding/settings and MAIN78/retained12 unchanged. Original11profiles/2recipes/accounts exact; ONLY intended local AttachOnly recipe added, workspace metadata in private GUI clones.",
+    "Windows": "All27 actors/full9catalog/protected7/HOST15epoch38/nativeTask/StoppedManualTermService/RDPdeny1/data-only public3/currentmixed8 unchanged; no GUI/prompt/input/service action.",
+    "cleanup": "Every owned GUI normalexit0 plus supervisor/unitdrain. Both CLI instances exited via normal boundedCtrlC; positiveCLIabsence precedes CWD restoration/variable unset/detach. SupportingSDK cgroup removed/no members/wrapper absent/no readable exactSDK executable matches; known unreadable OS/ownSSH exceptions are not claimed inspected. No OS/Keychain grants or server lifecycle/policy changes during this case.",
+    "Linux_C_effective_floor": 3220545536,
+    "Linux_C_actual_postfree": 3229929472,
+    "Mac_C_free": 20739375104
+  },
+  "first_results_and_limits": [
+    "First74x20 raw probe compared harness-injected localLANG=en_US.UTF-8 with default new HOST shell LANGunset. Every other field/query matched. Original failed report retained; changed-precondition phases explicitly supply LANG+LC_ALL to each child. No default native HOST locale invariant or guessed product fix claimed.",
+    "First failed comparison orchestration lacked fail-fast: Copilot launch continued to folder-trust screen after assertion; trust was not accepted, normalCtrlC/positiveabsence/CWDrestore/drain passed. Corrected phases require successful comparison in separate toolcall before CLI launch.",
+    "One immediate cleanup status read preceded supervisor publishing normalexit0; no cleanup mutation then. Read-only settled exit0 and exact current controller namespace admitted normal drain. No client/host operation replay.",
+    "Transient initial provider captures sometimes stale/black; settled owned frames were observed before activation; no product rendering defect inferred.",
+    "Create/save adds only a CLIENT recipe; original server3profiles remain exact. SDK wholeON test deliberately performs two existing shared resumes plus one separate generic create/resume;4operation receipts are attributed, not hidden.",
+    "Queued physical/mobile/Files/resize-cursor/default-locale/renewal or combined-release acceptance not implied."
+  ],
+  "private_evidence_receipts_sha256": {
+    "phase_A_creation_saved_ABC_stopped_start": "2d7c7f262a92bf7924d37a0eff8a6df1860ead960378c4449aacb467a68579cb",
+    "first_default_LANG_mismatch_and_cleanup": "a4f5352a55e2e72adaa4fdc214daa35fe89c1b65daa8734a5d3d53b435c0078f",
+    "controlled_locale74x20": "0a10b9384fb274301af92cae38833d231122a51abb6ce68b2364a040b41bb65b",
+    "controlled_locale70x19": "f52693aa52e61b25ec283cac95ba1e7c251be9eb1d1da0c5f563502b5347feb8",
+    "current777_whole_ON_SDK": "178a9d64a6d8605f7ccca9e0fd28b2efa7be10e68ca646a6d88ad161fa9a61b3"
+  },
+  "original_artifacts": {
+    "client-exact-locator.png": {
+      "bytes": 95719,
+      "sha256": "454ebb4a5754794ba5caeece23e60e8618fe272d22df00cb22ea48d07efe8816"
+    },
+    "client-create-save-review.png": {
+      "bytes": 81997,
+      "sha256": "a0a4991ce622e2820fcfa4af6486cc618c9a83ad529e7aea881fdc95317a53b3"
+    },
+    "client-saved-reconnect-ABC.png": {
+      "bytes": 95939,
+      "sha256": "a9a0df28be7d3800d6e45a8bb5d6e7174b2b320ec93279f0a46514c4445ebd61"
+    },
+    "client-stopped-start-IO.png": {
+      "bytes": 66069,
+      "sha256": "afdaecb127db26bffac75b474b7db0c39b07a0b74d124bd52dd7489ce68b8d9c"
+    },
+    "remote74x20.png": {
+      "bytes": 119710,
+      "sha256": "aa5b3430a25573116b972ca3892ddd78cc18832cdcf4dbd183737a6492cb1f35"
+    },
+    "remote70x19.png": {
+      "bytes": 109454,
+      "sha256": "cd6e925d0f338bf77b002a61e36d150253749e327bc147b18236591ba86bc76d"
+    },
+    "remote74x20-capabilities.json": {
+      "bytes": 1390,
+      "sha256": "352fd5c5a7f34161468a89330bf007bb8f548555f791a9d666e80e30db79dd9c"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1390,
+      "sha256": "d1c353dfdd6854979f24c6b8f2110d2871f3c37574d650c07cbe650a12dab67c"
+    },
+    "first-default-locale-capabilities.json": {
+      "bytes": 1382,
+      "sha256": "6bcbe7dc0b034486667122bb16e6691730aa1f2d7822337f2987fed74c3661b5"
+    },
+    "sdk-native-result.log": {
+      "bytes": 216,
+      "sha256": "6d51df32f021860f5d78af1107e75c8d7bc4a6acc0b9401e281c12c3746d5d95"
+    }
+  },
+  "root_acceptance_sha256": "c00ee5ce0761ddc48b3afae09fd815641d0c4ec7873694f8d49b11e84577e5ee"
+}

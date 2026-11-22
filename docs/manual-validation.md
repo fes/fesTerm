@@ -1155,7 +1155,7 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has eight accepted pinned functional cases, six preliminary cases and ten
+has nine accepted pinned functional cases, six preliminary cases and nine
 unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
@@ -1200,6 +1200,21 @@ This is the eighth pinned functional case, with mixed cohorts and original
 local-reference attribution retained. The preceding first Enable observation
 warning remains separate from functional-case acceptance.
 
+
+The [Linux-client/Mac creation-ON record](../validation/dev-tunnels/linux-client-mac-native-on.json)
+is the ninth pinned case: normal exact-host discovery, one named persistent
+shell and local AttachOnly save, same-generation A/B/C reconnect, and one stopped
+shared-profile Start & Connect pass. Both 74×20 and 70×19 raw reports match the
+local reference except case/time; normal Copilot initial screens match layout
+and responsive wrapping. The first comparison retained a default LANG mismatch:
+the local launcher injects it. Changed-precondition runs explicitly set matching
+LANG and LC_ALL on both test children; no result normalization or permanent
+shell/environment change is made. Default native locale parity remains unqualified.
+A current SDK777 check against Mac13 proves actual private-profile Denied-or-Stale,
+shared/generic idempotence, I/O and survival. All old actors and records survive
+plus six intended Mac actors; normal GUI/SDK cleanup passes. Mixed GUI78/HOST566/
+SDK777/local-reference cohorts and native DPI limits are explicit. Neither mobile,
+Mac owner-first-result nor combined-release acceptance follows from this row.
 
 The [iOS-client/Windows 44×34 record](../validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one scoped DT-02 capability/environment and fresh normal Copilot pair
@@ -2766,8 +2781,7 @@ readme preview, one new directory and a 1,872-byte upload/preview/download passe
 source, server and downloaded bytes have the same SHA-256. Selected remote Delete
 remained disabled. Both GUIs exited normally; all 20 retained actors, catalog
 records and original fixture entries were preserved. These mixed, pinned sources
-qualify this functional increment only and leave the eight accepted desktop
-cases unchanged. The original captures retain the remote-header overlap and
+qualify this functional increment only and do not add a desktop matrix case. The original captures retain the remote-header overlap and
 missing remote size/modified metadata (selected footer shows 0 B). Direct native
 Files delete refusal, root escape, revocation/cutover, uncertain or interrupted
 publication, larger/recursive transfers, other OS combinations and packaged
@@ -6127,7 +6141,15 @@ Native first-result qualification of the original #842 contention remains open. 
 records a distinct `after_manager_fence` Busy while the backend reached Listening;
 all existing actors/files survived and the first warning was preserved without
 Refresh or Start/Enable replay. Deterministic lease tests cover the additional
-post-manager wait, but native qualification of that correction remains pending.
+post-manager wait. A subsequent [corrected Linux first-result check](../validation/dev-tunnels/linux-owner-post-manager-first-result-0.17.19.json)
+completed one normal Disable47→Disabled48 and separate Enable49 with identical
+settings, first settled completion and finite service-start/final-scope success,
+without Refresh or replay. All twenty actors, catalog and original Files entries
+survived normal GUI exit. Actual contention/retry count was not measured; this
+neither identifies the earlier holder nor qualifies Mac/Windows. The UI reports
+Running without a current host report; this phase did not test endpoint I/O or
+add a matrix case. The frontend is the tested PR863 head with retained support
+files; its genuine signed HOST19 remains the earlier source566 bundle.
 
 The post-manager lifecycle fences and final post-observation start fence
 wait only for Busy within the original native operation deadline, rechecking

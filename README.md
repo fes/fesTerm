@@ -89,7 +89,13 @@ and a current-server controlled service check.
 The [Mac-client/Linux-server creation-OFF record](validation/dev-tunnels/mac-client-linux-native-off.json)
 adds disabled stopped-profile/generic creation, retained-session reconnection
 and two fresh Copilot pairs.
-These eight accepted cases use pinned cohorts; the full 24-case matrix and
+A separate [Linux owner lifecycle check](validation/dev-tunnels/linux-owner-post-manager-first-result-0.17.19.json)
+qualifies first-result Disable/Enable with the corrected frontend and preserved
+sessions; it adds no matrix case or endpoint test.
+The [Linux-client/Mac-server creation-ON record](validation/dev-tunnels/linux-client-mac-native-on.json)
+adds named creation, saved exact-generation reconnect, stopped-profile Start,
+two matched-grid Copilot pairs and direct private-profile refusal.
+These nine accepted cases use pinned cohorts; the full 24-case matrix and
 combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
