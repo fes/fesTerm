@@ -370,7 +370,9 @@ success on every OS failure. A missing or failed Close retains both the original
 I/O error and cleanup error and closes the stream. Dropped futures, cancelled
 authority, deadlines and unknown wire outcomes still close it immediately; no
 transfer, Close or Finish is replayed. A local flush failure after an already
-acknowledged read-handle Close does not issue a second Close.
+acknowledged read-handle Close does not issue a second Close. A late Close
+acknowledgement never preserves the stream, and the current-account fence still
+runs when local flushing returns an error.
 
 Disconnect, close or cancellation cleans incomplete staging files when the
 process can run cleanup. A force-kill/power loss can leave private staging or

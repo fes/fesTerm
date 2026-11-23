@@ -7652,6 +7652,8 @@
         "rooted_client_returned_download_io_failures_preserve_channel",
         "rooted_client_failed_abort_preserves_both_errors_and_original_deadline",
         "rooted_client_dropped_or_cancelled_abort_still_fences_stream",
+        "rooted_client_late_ready_abort_ack_cannot_keep_stream",
+        "ordinary_files_client_flush_error_fences_late_account_cutover",
         "interrupted_copy_preserves_failed_handle_cleanup",
         "failed_transfer_cleanup_retains_a_content_free_uncertainty_notice"
       ],
