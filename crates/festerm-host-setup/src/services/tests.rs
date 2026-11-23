@@ -3574,6 +3574,8 @@ fn native_start_registration_read_reports_real_post_fence_journal_contention() {
 #[cfg(unix)]
 fn start_observation_fence_contention(case: &str, after_manager: bool) {
     use std::{cell::Cell, rc::Rc};
+    let callback_read = case.starts_with("callback_");
+    let case = case.strip_prefix("callback_").unwrap_or(case);
     struct ContendedObservation {
         native: FakeRunner,
         held: Rc<RefCell<Option<Lease>>>,
@@ -3640,11 +3642,6 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
         || {
             if held.borrow().is_some() {
                 reads.set(reads.get() + 1);
-                if case == "callback_busy" {
-                    // Mac Desktop's callback itself reads the current protected
-                    // snapshot. Its Busy must not be mislabeled as wait expiry.
-                    return store.snapshot().map(|_| ());
-                }
                 if case == "expired" {
                     native::expire_operation_for_test();
                 } else if reads.get() == 2 {
@@ -3682,6 +3679,15 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
                         _ => panic!("unknown final-fence fixture"),
                     }
                 }
+                if callback_read {
+                    // The actual Mac callback checks cancellation and exact
+                    // scope via a separate protected read. Exercise the real
+                    // lifecycle lease, not a synthetic Busy return.
+                    let current = store.snapshot()?;
+                    if current != snapshot {
+                        return Err(refused("host.runtime_consent_changed"));
+                    }
+                }
             }
             Ok(())
         },
@@ -3707,29 +3713,25 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
         assert_eq!(result.unwrap().process, ProcessState::Running);
         assert_eq!(reads.get(), 2, "release follows one actual Busy read");
         assert_eq!(store.snapshot().unwrap(), snapshot);
+        if callback_read {
+            let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+            assert!(log.contains("stage=observation_callback kind=busy os=none"));
+            assert!(!log.contains("stage=observation_budget_exhausted"));
+            assert!(!log.contains("stage=final_fence kind=busy"));
+        }
     } else {
         let error = result.err().expect("unqualified final read must refuse");
         match case {
-            "callback_busy" => {
-                assert_eq!(
-                    reads.get(),
-                    1,
-                    "callback failure remains final, without retry"
-                );
-                assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-                assert_eq!(error.raw_os_error(), None);
-                assert_eq!(error.to_string(), "host.installation_busy");
-                let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
-                assert!(log.contains("stage=observation_callback kind=busy os=none"));
-                assert!(!log.contains("stage=observation_budget_exhausted"));
-            }
             "expired" | "expired_retry" => {
                 assert_eq!(reads.get(), if case == "expired" { 1 } else { 2 });
                 assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
                 assert_eq!(error.to_string(), "host.installation_busy");
                 let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
                 assert!(log.contains("stage=observation_budget_exhausted kind=busy os=none"));
-                assert!(!log.contains("stage=observation_callback"));
+                assert_eq!(
+                    log.contains("stage=observation_callback kind=busy os=none"),
+                    callback_read
+                );
             }
             "cancelled" => {
                 assert_eq!(reads.get(), 2);
@@ -3744,7 +3746,11 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
                 assert_eq!(reads.get(), 2);
                 assert_eq!(
                     error.to_string(),
-                    "host.service_stale_or_unapproved_operation"
+                    if callback_read {
+                        "host.runtime_consent_changed"
+                    } else {
+                        "host.service_stale_or_unapproved_operation"
+                    }
                 );
             }
             _ => unreachable!(),
@@ -4099,7 +4105,7 @@ fn native_service_stopped_termination_projection_requires_review_and_preserves_o
 #[cfg(unix)]
 #[test]
 fn native_start_scope_callback_busy_is_distinct_from_fence_budget_exhaustion() {
-    start_observation_fence_contention("callback_busy", false);
+    start_observation_fence_contention("callback_expired", false);
 }
 
 #[cfg(unix)]
@@ -4268,5 +4274,30 @@ fn native_start_completion_retains_operation_and_original_deadline_without_repla
                 .lease()
                 .expect("operation lock is released after completion"),
         );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_scope_callback_waits_for_same_scope_without_replaying_manager() {
+    for after_manager in [false, true] {
+        start_observation_fence_contention("callback_released", after_manager);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_scope_callback_refuses_expired_cancelled_fatal_and_changed_scope() {
+    for after_manager in [false, true] {
+        for case in [
+            "callback_expired",
+            "callback_expired_retry",
+            "callback_cancelled",
+            "callback_fatal",
+            "callback_superseded",
+            "callback_snapshot",
+        ] {
+            start_observation_fence_contention(case, after_manager);
+        }
     }
 }
