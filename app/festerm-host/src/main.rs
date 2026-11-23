@@ -723,6 +723,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             let settings = Settings {
                 filesystem: None,
                 friendly_name: name.into(),
+                allow_session_termination: false,
                 allow_creation: match choice("--creation")? {
                     Some("allow") => true,
                     Some("deny") | None => false,
@@ -1355,6 +1356,7 @@ mod tests {
                 ordinary_access: OrdinaryAccess::OwnerOnly,
                 friendly_name: "Cleanup fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )

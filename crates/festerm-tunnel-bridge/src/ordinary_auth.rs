@@ -385,7 +385,6 @@ impl OrdinaryCapability {
         current.validate()?;
         if self.role == StreamRole::Files
             || current.denied_keys.contains(&self.public_key)
-            || matches!(request.body, Request::ExplicitEnd { .. })
             || matches!(request.body, Request::EnsureProfile { .. })
                 && !policy.capabilities.creation_allowed
                 && !grant.is_some_and(|g| matches!(g.state, LogicalState::Running(_)))
@@ -409,6 +408,123 @@ mod tests {
     use super::*;
     use crate::relay_host::tests::owner_pair;
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
+
+    #[test]
+    fn ordinary_termination_is_separate_consent_and_rechecks_exact_current_grant() {
+        use festerm_host_protocol::{
+            Capabilities, Envelope, GenerationId, LogicalSessionId, LogicalState, OperationId,
+            Request, SessionGrant, Target,
+        };
+        let epoch = Epoch::new(1).unwrap();
+        let host = PinnedHost {
+            host: HostId::new(),
+            host_key_fingerprint: format!("SHA256:{}", "A".repeat(43)),
+        };
+        let principal = PrincipalId::new();
+        let mut policy = OrdinaryPolicy {
+            host_info: OrdinaryHostInfo {
+                version: 1,
+                route: OrdinaryRoute {
+                    tunnel_id: "fixture".into(),
+                    cluster: "usw3".into(),
+                    endpoint_id: format!("{}-relay", host.host),
+                    port: 47461,
+                    host: host.clone(),
+                },
+                installation: HostId::new(),
+                principal: principal.clone(),
+                policy_epoch: epoch,
+            },
+            session: crate::owner_auth::SessionPolicy {
+                host: host.clone(),
+                principal: principal.clone(),
+                host_epoch: epoch,
+                grant_epoch: epoch,
+                remote_access: true,
+                capabilities: Capabilities {
+                    inventory: true,
+                    attach: true,
+                    explicit_end: true,
+                    ..Default::default()
+                },
+            },
+            denied_keys: vec![],
+            files: None,
+        };
+        let key = [7; 32];
+        let (capability, guard) = OrdinaryCapability::mint(
+            VerifiedOrdinaryProof {
+                public_key: key,
+                role: StreamRole::Control,
+            },
+            &policy,
+        )
+        .unwrap();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(9).unwrap(),
+        };
+        let request = Envelope::new(
+            host.host,
+            OperationId::new(),
+            Request::ExplicitEnd {
+                target: target.clone(),
+            },
+        );
+        let grant = SessionGrant {
+            logical: target.logical,
+            owner: principal,
+            remote_access: true,
+            state: LogicalState::Running(target.generation),
+            revision: epoch,
+        };
+        assert!(!policy.session.capabilities.creation_allowed);
+        assert!(capability
+            .authorize(&policy, &policy.session, &request, epoch, Some(&grant))
+            .is_ok());
+        for change in [
+            "permission",
+            "principal",
+            "epoch",
+            "remote",
+            "generation",
+            "unknown",
+            "revoked",
+            "private",
+            "key",
+        ] {
+            let mut current = policy.clone();
+            let mut grant = grant.clone();
+            match change {
+                "permission" => current.session.capabilities.explicit_end = false,
+                "principal" => current.session.principal = PrincipalId::new(),
+                "epoch" => current.session.grant_epoch = Epoch::new(2).unwrap(),
+                "remote" => current.session.remote_access = false,
+                "generation" => grant.state = LogicalState::Running(GenerationId::new(10).unwrap()),
+                "unknown" => grant.state = LogicalState::Unknown,
+                "revoked" => grant.state = LogicalState::Revoked,
+                "private" => grant.remote_access = false,
+                "key" => current.denied_keys.push(key),
+                _ => unreachable!(),
+            }
+            assert!(
+                capability
+                    .authorize(&current, &current.session, &request, epoch, Some(&grant))
+                    .is_err(),
+                "{change}"
+            );
+        }
+        policy.session.capabilities.explicit_end = false;
+        policy.session.capabilities.ensure = true;
+        policy.session.capabilities.creation_allowed = true;
+        assert!(
+            capability
+                .authorize(&policy, &policy.session, &request, epoch, Some(&grant))
+                .is_err(),
+            "creation consent is never termination consent"
+        );
+        drop(guard);
+    }
 
     #[tokio::test]
     async fn ordinary_proof_binds_real_ssh_channel_route_role_nonce_and_policy() {

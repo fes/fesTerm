@@ -257,6 +257,7 @@ mod tests {
                 ordinary_access: OrdinaryAccess::ProviderOwner,
                 friendly_name: "local fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )

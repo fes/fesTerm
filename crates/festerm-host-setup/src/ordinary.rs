@@ -342,6 +342,7 @@ impl CurrentHostPolicySource {
                     ensure: true,
                     create: expected.settings.allow_creation,
                     creation_allowed: expected.settings.allow_creation,
+                    explicit_end: expected.settings.allow_session_termination,
                     ..Capabilities::default()
                 },
             },
@@ -570,70 +571,75 @@ mod tests {
 
     #[test]
     fn provider_owner_policy_uses_verified_zero_admin_key_binding_without_legacy_permissions() {
-        let (_root, store, vault) = crate::enrollment::tests::setup_origin(Origin::Desktop);
-        let owners = crate::enrollment::tests::fixture_owners(&store, vault);
-        let original = owners
-            .initialize(Path::new("host-identity"), "github:1234".into())
-            .unwrap();
-        assert!(original.keys.is_empty() && !original.remote_access);
-        let mut expected = store.snapshot().unwrap();
-        let resource = Resource {
-            tunnel_id: "owned-fixture".into(),
-            cluster: "usw3".into(),
-            account_id: 1234,
-            ownership_label: format!("festerm-owned-{}", "a".repeat(32)),
-            port: HOST_PORT,
-            labels: vec![
-                HOST_LABEL.into(),
-                format!("festerm-owned-{}", "a".repeat(32)),
-            ],
-            create_protocol: CreateProtocol::default(),
-            create_access: CreateAccess::OwnerDefault,
-        };
-        // Missing/legacy policy never acquires permission merely from identity.
-        assert!(CurrentHostPolicySource::policy_for(&expected, &original, &resource).is_err());
-        store.revoke().unwrap();
-        let stopped = store.snapshot().unwrap();
-        store
-            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
-            .unwrap();
-        let before = store.snapshot().unwrap();
-        let mut settings = before.settings.clone();
-        settings.ordinary_access = OrdinaryAccess::ProviderOwner;
-        let ticket = store.request_enable_if_current(&before, &settings).unwrap();
-        store
-            .record_provisioned(&ticket, before.binding.unwrap())
-            .unwrap();
-        expected = store.snapshot().unwrap();
-        let verified = owners.snapshot().unwrap();
-        let policy = CurrentHostPolicySource::policy_for(&expected, &verified, &resource).unwrap();
-        assert!(policy.session.capabilities.inventory && policy.session.capabilities.attach);
-        assert!(
-            !policy.session.capabilities.creation_allowed
-                && !policy.session.capabilities.explicit_end
-        );
-        assert_eq!(policy.host_info.principal, original.binding.principal);
-        let files = policy.files.as_ref().unwrap();
-        assert!(files.filesystem.is_none());
-        assert_eq!(files.scope.host, policy.host_info.route.host.host);
-        assert_eq!(files.scope.installation, policy.host_info.installation);
-        assert_ne!(
-            expected.epoch,
-            verified.revision.get(),
-            "fixture must distinguish lifecycle and enrollment epochs"
-        );
-        assert_eq!(files.scope.epoch, expected.epoch.to_string());
-        assert!(owners.snapshot().unwrap().keys.is_empty());
-        let mut legacy = resource.clone();
-        legacy.create_access = CreateAccess::LegacyGithubUsers;
-        assert!(CurrentHostPolicySource::policy_for(&expected, &verified, &legacy).is_err());
-        store.revoke().unwrap();
-        assert!(CurrentHostPolicySource::policy_for(
-            &store.snapshot().unwrap(),
-            &verified,
-            &resource
-        )
-        .is_err());
+        for (creation, termination) in [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let (_root, store, vault) = crate::enrollment::tests::setup_origin(Origin::Desktop);
+            let owners = crate::enrollment::tests::fixture_owners(&store, vault);
+            let original = owners
+                .initialize(Path::new("host-identity"), "github:1234".into())
+                .unwrap();
+            assert!(original.keys.is_empty() && !original.remote_access);
+            let mut expected = store.snapshot().unwrap();
+            let resource = Resource {
+                tunnel_id: "owned-fixture".into(),
+                cluster: "usw3".into(),
+                account_id: 1234,
+                ownership_label: format!("festerm-owned-{}", "a".repeat(32)),
+                port: HOST_PORT,
+                labels: vec![
+                    HOST_LABEL.into(),
+                    format!("festerm-owned-{}", "a".repeat(32)),
+                ],
+                create_protocol: CreateProtocol::default(),
+                create_access: CreateAccess::OwnerDefault,
+            };
+            // Missing/legacy policy never acquires permission merely from identity.
+            assert!(CurrentHostPolicySource::policy_for(&expected, &original, &resource).is_err());
+            store.revoke().unwrap();
+            let stopped = store.snapshot().unwrap();
+            store
+                .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                .unwrap();
+            let before = store.snapshot().unwrap();
+            let mut settings = before.settings.clone();
+            settings.ordinary_access = OrdinaryAccess::ProviderOwner;
+            settings.allow_creation = creation;
+            settings.allow_session_termination = termination;
+            let ticket = store.request_enable_if_current(&before, &settings).unwrap();
+            store
+                .record_provisioned(&ticket, before.binding.unwrap())
+                .unwrap();
+            expected = store.snapshot().unwrap();
+            let verified = owners.snapshot().unwrap();
+            let policy =
+                CurrentHostPolicySource::policy_for(&expected, &verified, &resource).unwrap();
+            assert!(policy.session.capabilities.inventory && policy.session.capabilities.attach);
+            assert_eq!(policy.session.capabilities.creation_allowed, creation);
+            assert_eq!(policy.session.capabilities.explicit_end, termination);
+            assert!(!policy.session.capabilities.temporary);
+            assert_eq!(policy.host_info.principal, original.binding.principal);
+            let files = policy.files.as_ref().unwrap();
+            assert!(files.filesystem.is_none());
+            assert_eq!(files.scope.host, policy.host_info.route.host.host);
+            assert_eq!(files.scope.installation, policy.host_info.installation);
+            assert_ne!(
+                expected.epoch,
+                verified.revision.get(),
+                "fixture must distinguish lifecycle and enrollment epochs"
+            );
+            assert_eq!(files.scope.epoch, expected.epoch.to_string());
+            assert!(owners.snapshot().unwrap().keys.is_empty());
+            let mut legacy = resource.clone();
+            legacy.create_access = CreateAccess::LegacyGithubUsers;
+            assert!(CurrentHostPolicySource::policy_for(&expected, &verified, &legacy).is_err());
+            store.revoke().unwrap();
+            assert!(CurrentHostPolicySource::policy_for(
+                &store.snapshot().unwrap(),
+                &verified,
+                &resource
+            )
+            .is_err());
+        }
     }
 }
 

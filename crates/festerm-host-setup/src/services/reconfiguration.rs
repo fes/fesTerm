@@ -110,6 +110,7 @@ impl<R: CommandRunner> Services<'_, R> {
         }
         let mut new = old.clone();
         new.settings.allow_creation = snapshot.settings.allow_creation;
+        new.settings.allow_session_termination = snapshot.settings.allow_session_termination;
         new.settings.ordinary_access = snapshot.settings.ordinary_access;
         // Copy only the Files policy already approved in the protected scope,
         // including explicit revocation; the remaining receipt stays pinned.

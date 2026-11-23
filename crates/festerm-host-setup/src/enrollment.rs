@@ -1668,6 +1668,7 @@ pub(crate) mod tests {
                 ordinary_access: Default::default(),
                 friendly_name: "owner fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )
@@ -3000,6 +3001,7 @@ pub(crate) mod tests {
                 ordinary_access: Default::default(),
                 friendly_name: "desktop".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )

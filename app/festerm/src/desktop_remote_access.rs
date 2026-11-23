@@ -71,6 +71,7 @@ impl FileAccessDraft {
 pub struct Draft {
     pub friendly_name: String,
     pub allow_creation: bool,
+    pub allow_session_termination: bool,
     pub ordinary_access: OrdinaryAccess,
     pub files: FileAccessDraft,
     pub startup_at_sign_in: bool,
@@ -89,6 +90,7 @@ impl Default for Draft {
         Self {
             friendly_name: host_name_label(&gethostname::gethostname()),
             allow_creation: false,
+            allow_session_termination: false,
             ordinary_access: OrdinaryAccess::ProviderOwner,
             files: FileAccessDraft::default(),
             startup_at_sign_in: false,
@@ -129,6 +131,7 @@ impl Draft {
             filesystem: self.files.policy(),
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
+            allow_session_termination: self.allow_session_termination,
             ordinary_access: self.ordinary_access,
             startup: if self.startup_at_sign_in {
                 Startup::UserSignIn
@@ -1215,6 +1218,8 @@ impl Controller {
                                         snapshot.settings.friendly_name.clone();
                                     self.view.draft.allow_creation =
                                         snapshot.settings.allow_creation;
+                                    self.view.draft.allow_session_termination =
+                                        snapshot.settings.allow_session_termination;
                                     self.view.draft.ordinary_access =
                                         snapshot.settings.ordinary_access;
                                     self.view.draft.startup_at_sign_in =

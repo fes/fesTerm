@@ -6338,6 +6338,16 @@
         "ADR-0087"
       ],
       "automated_tests": [
+        "termination_consent_is_default_off_and_preserves_legacy_canonical_bytes",
+        "native_service_stopped_termination_projection_requires_review_and_preserves_other_settings",
+        "remote_terminate_review_is_cancel_default_and_cancel_retires_preparation_without_end",
+        "remote_termination_reopens_unknown_original_and_ui_consumes_same_operation",
+        "provider_owner_policy_uses_verified_zero_admin_key_binding_without_legacy_permissions",
+        "ordinary_termination_is_separate_consent_and_rechecks_exact_current_grant",
+        "ordinary_runtime_advertises_independent_termination_consent_on_real_control_channel",
+        "ordinary_end_preserves_original_after_lost_reply_and_requires_same_issuer",
+        "ordinary_end_default_off_sends_no_end_and_cancelled_account_cannot_start",
+        "mobile_terminate_review_is_named_cancel_default_and_has_safe_phone_targets",
         "renewal_storage_failure_does_not_offer_new_account_authorization",
         "account_credential_discovery_read_failure_keeps_typed_guidance_without_new_authorization",
         "account_credential_foreground_read_failure_keeps_typed_guidance_before_provider_work",
@@ -6906,6 +6916,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Ordinary remote termination is a separate default-off reviewed setting, independent of creation. Existing protected End originals retain exact account/host/principal/key/logical/generation/operation and no automatic retry; imported local-bound shells remain refused. Portable consent/control-channel/layout tests do not qualify native termination, physical mobile behavior or another matrix case.",
         "Native terminal heartbeat/intentional-detach maintenance and Detached receipt publication retry only typed Busy before effect eligibility within the existing15s admission budget, reacquiring exact generation and fresh protected policy. Successful mutation admission or invoked input/adoption/publication makes every later result final; no effect replay. Cancellation, revocation, storage/Unknown and other refusals are not retried. Unit guards and actual owned native SSH/PTY adoption/output/Detached/temporary-grace/policy tests remain required; pre-snapshot fixture Busy retries preserve target/ticket/request and never retry adoption, while fresh read-only List probes must resolve the complete exact target set without Unknown. No new capability or installed/native-vault/mobile/Windows qualification",
         "Owned framed ensure/create fixture holds the exact generation lease during Lookup and requires typed Busy with unchanged journal/lease checkpoints. After release the same Lookup operation ID, without a creation issuance epoch, retries only Busy within the existing eight-second deadline and must observe the original exact Running target; other results fail immediately with their actual response. Required Ubuntu CI at114015f9 failed the previous one-shot Running assertion without printing its result, so the deterministic contention case does not establish that failure's cause. No production retry, new authority or native-service acceptance is introduced",
         "Actual serve_clients isolation and optional-notification liveness regressions use unmodified production VerifiedHost, not an accepting test peer. Refused optional server tcpip-forward notifications are logged without disconnecting an authenticated client; the SDK unit error also conflates peer closure, so retain the owned RunningSession/task/permit until actual completion or bounded cancellation/drain. Require bidirectional direct-TCP bytes beyond the two-second disconnect budget, session-held permit after channel closure, and unchanged healthy/new-admission/bad-cleanup/sticky-retirement/second-close/full-permit oracles. No production opt-in, listener, authentication relaxation or new protocol capability. Remove the unnecessary vendor callback/dispatcher/tests and restore their own hunks to published-base parsing/replies. Earlier e427 setup8/bridge7/vendor3 passes remain historical and did NOT prove real production-peer availability; original da9967 bridge5/1 and all cache/metadata failures remain source-specific. The new production-peer regression reproduces red at9c3f6374,0/1/0,0.10s,OS101,SendError. First corrected-source c5c2282a retains6/1/0 after successful availability assertions but an incorrect explicit-disconnect teardown expectation. Changed-source24511a63 passes bridge7/0/0,0.07s and affected all-target strict/app-fmt/exact-published-vendor-bytes/actual-main-trace/diff exit0. Interleaved diagnostic metadata was corrected against existing passing output without rerunning tests. Exact unchanged setup crate identity permits retaining e427 setup8/0/0 only as source-specific evidence, not fresh execution. Affected delta review and native manager/provider/vault/service acceptance remain pending",

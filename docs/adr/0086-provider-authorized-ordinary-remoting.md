@@ -114,9 +114,10 @@ OFF, Ensure may reuse only the exact already-Running shared
 generation. An absent, stopped, exited or unknown generation cannot be replaced
 or launched through Ensure; it refuses. Any operation that would create a new
 shell requires current global creation consent. Uncertain creation retains its
-exact original identity and cannot silently issue a replacement. The initial
-scope grants no explicit End, temporary-session or owner-policy/service/
-configuration/update/secret authority. Private profiles remain excluded.
+exact original identity and cannot silently issue a replacement. Ordinary explicit End is separately default-off: only a locally reviewed
+`allow_session_termination` grant advertises it. It does not depend on creation
+consent. Temporary-session and owner-policy/service/configuration/update/secret
+authority remain excluded. Private profiles remain excluded.
 These are protocol/RPC authorization limits, not an operating-system sandbox.
 An accepted interactive shell runs as the HOST OS user and can exercise that
 user's ordinary OS permissions. A compromised connect capability can therefore
@@ -309,7 +310,7 @@ revokes its active grants. Do not reuse a denied key automatically. A still
 provider-authorized account/token holder can generate another key; a key deny is
 not a promise to revoke a physical device or an account. Stronger account/device
 revocation requires provider credential/access revocation or a different identity
-mechanism. Temporary-session leases and End remain outside ordinary capability;
+mechanism. Temporary-session leases remain outside ordinary capability;
 transport loss never terminates a persistent shared session or replays input.
 
 ## Implementation ownership and sequence
@@ -466,3 +467,30 @@ snapshot adoption. Close cancels/locally retires the attachment without End.
 Advanced-owner tabs may refuse inline pending explicit fresh host review. Portable
 fixtures cover these boundaries; physical app-switch recovery remains a separate
 native acceptance gate.
+
+### Separately reviewed ordinary session termination
+
+The owner may enable **Allow remote clients to terminate sessions** through the
+normal reviewed HOST settings path. Missing or false settings serialize exactly
+as before; upgrading does not grant termination or invalidate old protected
+settings hashes. Creation and termination are independent default-off grants.
+A fresh authenticated control channel advertises `explicit_end` only from the
+current protected grant. No enrolled-owner permission or broader administration
+is inferred from the normal account flow.
+
+A Running session card offers **Terminate…** only when advertised. Its named
+confirmation starts with Cancel focused and explains that the shell and running
+programs will stop. Desktop and mobile use the same protected original End
+contract: exact account, host, installation, principal, key reference, logical
+session, generation and operation. Checkpoint preparation is cancellable before
+issuance. Account, epoch, privacy, selection and lifetime fences remain fresh;
+unknown results retain the original action and never retry automatically.
+An authoritative matching Ended receipt removes only that generation from the
+cached inventory; StopRequested or a lost reply does not report success.
+
+HOST-created generic and shared-profile sessions are eligible under the normal
+session grant. Imported desktop-bound local shells retain the native bound-local
+End refusal. Stopped profiles have no Terminate action. Close remains local tab
+retirement/detach and never sends End; normal retirement completion or uncertainty
+does not post technical notices on Profiles. Native/provider/physical-device
+termination qualification remains separate from portable and UI tests.

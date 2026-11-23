@@ -245,6 +245,12 @@ Naming, sharing permission, runtime existence and attachment are separate axes.
 | End session | Terminate exact authorized generation; mark logical session absent |
 | Host reboot | Live shell/process state is lost; saved client recipe may recreate on a later explicit Connect |
 
+Ordinary remote termination requires the separate default-off reviewed
+`allow_session_termination` HOST setting (ADR 0086). Creation consent never grants
+End. The existing protected original-operation and exact-generation protocol is
+reused without a wire or checkpoint format change; imported local bindings remain
+protected from remote End. Closing a tab only detaches it.
+
 Only eligible native persistent local profiles/sessions can be shared. Do not
 silently replace a nonpersistent running shell to make it eligible. Explain the
 prerequisite and offer a deliberate persistent launch.

@@ -172,6 +172,7 @@ impl Fixture {
                     ordinary_access: Default::default(),
                     friendly_name: "Update fixture".into(),
                     allow_creation: false,
+                    allow_session_termination: false,
                     startup: Startup::Manual,
                 },
             )

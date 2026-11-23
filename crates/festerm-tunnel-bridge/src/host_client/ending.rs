@@ -5,7 +5,7 @@ use std::sync::Mutex;
 /// One confirmed End action, bound to protected authority and one exact native
 /// generation. ExplicitEnd has no creation issuance epoch on the wire.
 pub struct EndIntent {
-    owner: OwnerBinding,
+    owner: client_context::Issuer,
     reference: SecretReference,
     binding: Binding,
     target: Target,
@@ -17,11 +17,12 @@ pub struct EndIntent {
 }
 
 impl EndIntent {
-    pub fn new(context: &ApprovedContext, target: Target) -> Self {
+    pub fn new<'a>(context: impl Into<ClientContextRef<'a>>, target: Target) -> Self {
+        let context = context.into();
         Self {
-            owner: context.approved.clone(),
-            reference: context.reference.duplicate_for_transport(),
-            binding: context.binding.clone(),
+            owner: context.issuer(),
+            reference: context.reference(),
+            binding: context.binding().clone(),
             target,
             operation: OperationId::new(),
             active: AtomicBool::new(false),
@@ -36,7 +37,7 @@ impl EndIntent {
         store: Arc<originals::OriginalStore>,
         review: String,
     ) -> Result<(), Failure> {
-        if !store.matches(&self.owner, &self.reference, &self.binding) {
+        if !store.matches_issuer(&self.owner, &self.reference, &self.binding) {
             return Err(Failure::BindingMismatch);
         }
         let mut original = self.original.lock().map_err(|_| Failure::OriginalStorage)?;
@@ -53,8 +54,8 @@ impl EndIntent {
         Ok(())
     }
 
-    pub(super) fn from_original(
-        context: &ApprovedContext,
+    pub(super) fn from_original<'a>(
+        context: impl Into<ClientContextRef<'a>>,
         target: Target,
         operation: OperationId,
         handle: Arc<originals::OriginalHandle>,
@@ -67,11 +68,10 @@ impl EndIntent {
     }
 
     pub fn matches_context<'a>(&self, context: impl Into<ClientContextRef<'a>>) -> bool {
-        context.into().as_enrolled_owner().is_some_and(|context| {
-            self.owner == context.approved
-                && self.reference == context.reference
-                && self.binding == context.binding
-        })
+        let context = context.into();
+        self.owner == context.issuer()
+            && self.reference == context.reference()
+            && &self.binding == context.binding()
     }
 
     pub fn target(&self) -> &Target {
@@ -146,7 +146,7 @@ pub(crate) async fn end_authenticated<S: AsyncRead + AsyncWrite + Unpin>(
         )
         .await?;
     match response.body {
-        Response::Ended { target } => {
+        Response::Ended { target } if target == intent.target => {
             if let Some(protected) = &protected {
                 protected.confirmed_end(&intent.operation, &target)?;
             }

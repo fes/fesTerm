@@ -6655,3 +6655,20 @@ arguments and cwd, corrected bare executable canonicalization/fingerprint,
 HOME/PATH override/Clear preservation, bounded startup/oversized output, and an
 actual zsh startup using only a private fixture HOME. These checks neither
 restart the production Remote shell nor qualify the managed server matrix.
+
+
+### Ordinary remote termination — source qualification pending native checks
+
+For HOST-03 / MOB-06, test the owner’s separate default-off termination setting
+with creation both off and on. Confirm a fresh client advertises termination only
+when consent is on. A Running HOST-created generic or shared-profile shell offers
+**Terminate…**; a stopped profile does not. Review the named confirmation, use
+Cancel/back/Escape first and prove the shell survives, then separately confirm
+exactly once. Verify only that logical generation ends and other sessions and
+saved profiles survive. Imported desktop-bound local shells must refuse.
+Close must detach without terminating or placing technical retirement messages on
+Profiles. Exercise account revocation, replaced/unknown generation, lock and lost
+reply: no automatic End, Create, replacement, input replay or success claim. An
+uncertain action retains its original operation for explicit reconciliation.
+Portable protected-state/control-channel and layout tests do not qualify native
+HOST process termination or physical iOS/Android behavior, and add no matrix case.

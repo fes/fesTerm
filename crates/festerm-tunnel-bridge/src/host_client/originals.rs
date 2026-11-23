@@ -270,6 +270,19 @@ impl OriginalStore {
         Self::recover_with(root, context, vault)
     }
 
+    /// Uses only the backend-selected native client namespace.
+    #[cfg(feature = "relay")]
+    pub fn recover_native<'a>(
+        context: impl Into<ClientContextRef<'a>>,
+    ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        let context = context.into();
+        let vault = match context {
+            ClientContextRef::Ordinary(c) => c.vault(),
+            _ => Arc::from(native_store().map_err(|error| Failure::OwnerKey(error.into()))?),
+        };
+        Self::recover_index(ReceiptIndex::native().map_err(failed)?, context, vault)
+    }
+
     fn recover_with<'a>(
         root: &Path,
         context: impl Into<ClientContextRef<'a>>,
@@ -343,14 +356,9 @@ impl OriginalStore {
                     issued,
                     confirmed,
                 )?)),
-                Body::End { operation, target } => {
-                    RecoveredIntent::End(Arc::new(EndIntent::from_original(
-                        context.as_enrolled_owner().ok_or(ContractError::Denied)?,
-                        target,
-                        operation,
-                        handle,
-                    )))
-                }
+                Body::End { operation, target } => RecoveredIntent::End(Arc::new(
+                    EndIntent::from_original(context, target, operation, handle),
+                )),
             };
             recovered.push(RecoveredOriginal {
                 review: action.review,
@@ -358,19 +366,6 @@ impl OriginalStore {
             });
         }
         Ok((store, recovered))
-    }
-
-    pub(super) fn matches(
-        &self,
-        owner: &OwnerBinding,
-        key: &SecretReference,
-        binding: &Binding,
-    ) -> bool {
-        self.matches_issuer(
-            &client_context::Issuer::EnrolledOwner(owner.clone()),
-            key,
-            binding,
-        )
     }
 
     pub(super) fn matches_issuer(

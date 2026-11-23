@@ -769,7 +769,7 @@ fn prepare_host_gallery(
         "hosts-forget-create" | "hosts-forget-end" => {
             Some("Forget local retry history - NOT End session")
         }
-        "hosts-end" => Some("Confirm End session — not Close tab"),
+        "hosts-end" => Some("Terminate Retained shell on Lab host?"),
         _ => None,
     };
     if let Some(label) = anchor {
@@ -882,16 +882,8 @@ fn gallery_host_review_states_render_current_widgets_without_dispatch() {
                         .is_disabled());
                 }
                 "hosts-end" => {
-                    harness
-                        .get_by_label(
-                            "I explicitly authorize End for this exact host and generation",
-                        )
-                        .click();
-                    harness.run_steps(3);
-                    assert!(harness
-                        .get_by_label("Confirm exact End once")
-                        .accesskit_node()
-                        .is_disabled());
+                    harness.get_by_label("Cancel");
+                    harness.get_by_label("Terminate");
                 }
                 "hosts-working" => {
                     harness.get_by_label("Working…");

@@ -855,6 +855,7 @@ mod tests {
             ordinary_access: crate::lifecycle::OrdinaryAccess::ProviderOwner,
             friendly_name: "Probe fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: crate::lifecycle::Startup::Manual,
         };
         let mut probe = Probe {
@@ -947,6 +948,7 @@ mod tests {
             ordinary_access: crate::lifecycle::OrdinaryAccess::ProviderOwner,
             friendly_name: "Delete probe fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: crate::lifecycle::Startup::Manual,
         };
         let mut probe = Probe {

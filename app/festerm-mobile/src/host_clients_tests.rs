@@ -783,16 +783,15 @@ impl MobileApp {
         ui.label("Synthetic public display only; no protected checkpoint or HOST action exists.");
         if gallery.end {
             let mut confirmed = false;
+            let mut cancel_focused = false;
             let _ = display::end_review(
                 ui,
                 display::EndDisplay {
-                    account: 7,
-                    target: &target,
-                    operation: &end_operation,
-                    epoch: 0,
-                    generation: self.hosts.generation,
+                    name: "Retained shell",
+                    host: "Lab host",
                 },
                 &mut confirmed,
+                &mut cancel_focused,
             );
             return;
         }
@@ -1528,11 +1527,10 @@ async fn installed_host_round_trip(intentional_close: bool, disconnect: bool) {
             .text_snapshot()
             .text()
             .contains("OWNED-MOBILE-OUTPUT"));
-        assert!(app
-            .notice
-            .as_ref()
-            .unwrap()
-            .contains("correlated attachment detach confirmed"));
+        assert!(
+            app.notice.is_none(),
+            "retirement diagnostics must not enter Profiles notices"
+        );
         assert!(
             app.hosts.ends.is_empty(),
             "retirement cannot mint End authority"
@@ -2519,6 +2517,9 @@ fn mobile_host_end_confirmation_fences_account_native_epoch_generation_and_prote
         epoch: 3,
         generation: 7,
         confirmed: false,
+        name: "Retained shell".into(),
+        host_name: "Lab host".into(),
+        cancel_focused: false,
         source: None,
     };
     assert!(review.authorize(&account, &context, 3, 7).is_err());
@@ -4802,4 +4803,48 @@ fn mobile_host_independent_ordinary_lifetime_cancellation_never_requests_sign_in
         })
         .unwrap();
     assert!(fenced.needs_sign_in() && !fenced.can_refresh());
+}
+
+#[test]
+fn mobile_terminate_review_is_named_cancel_default_and_has_safe_phone_targets() {
+    use egui_kittest::kittest::{By, Queryable};
+    for width in [320.0, 390.0, 768.0] {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(width, 844.0))
+            .build_ui_state(
+                |ui, state: &mut (bool, bool, bool, bool)| {
+                    let (confirm, cancel) = display::end_review(
+                        ui,
+                        display::EndDisplay {
+                            name: "Build shell",
+                            host: "Lab Mac",
+                        },
+                        &mut state.0,
+                        &mut state.1,
+                    );
+                    state.2 |= cancel;
+                    state.3 |= confirm;
+                    assert_eq!(confirm, state.0);
+                },
+                (false, false, false, false),
+            );
+        harness.run_steps(3);
+        harness.get(By::new().label("Terminate Build shell on Lab Mac?"));
+        let cancel = harness.get(By::new().label("Cancel")).rect();
+        let confirm = harness.get(By::new().label("Terminate")).rect();
+        for rect in [cancel, confirm] {
+            assert!(
+                rect.height() >= 44.0 && rect.left() >= 0.0 && rect.right() <= width,
+                "{rect:?}"
+            );
+        }
+        assert!(confirm.top() - cancel.bottom() >= 11.9);
+        assert!(!harness.state().0);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(1);
+        assert!(harness.state().2 && !harness.state().0);
+        harness.get(By::new().label("Terminate")).click();
+        harness.run_steps(1);
+        assert!(harness.state().3);
+    }
 }

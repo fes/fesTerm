@@ -78,6 +78,7 @@ fn host_process_recovery_managed_entries_fail_closed_without_registration_and_st
                 ordinary_access: Default::default(),
                 friendly_name: "managed refusal fixture".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )
@@ -125,6 +126,7 @@ fn desktop_native_binary_entry_refuses_headless_origin_and_never_grants_from_met
                 ordinary_access: Default::default(),
                 friendly_name: "Synthetic desktop runner".into(),
                 allow_creation: false,
+                allow_session_termination: false,
                 startup: Startup::Manual,
             },
         )
@@ -341,6 +343,7 @@ fn headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance() {
             ordinary_access: Default::default(),
             friendly_name: "Cleanup fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: Startup::Manual,
         },
     )
@@ -506,6 +509,7 @@ fn headless_configure_cannot_erase_an_unreviewable_file_grant() {
         Settings {
             friendly_name: "Files fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             startup: Startup::Manual,
             ordinary_access: OrdinaryAccess::ProviderOwner,
             filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
@@ -612,6 +616,7 @@ fn host_owner_readiness_cli_refuses_wrong_origin_or_malformed_policy_without_wri
         Settings {
             friendly_name: "public-fixture".into(),
             allow_creation: false,
+            allow_session_termination: false,
             ordinary_access: Default::default(),
             filesystem: None,
             startup: Startup::Manual,

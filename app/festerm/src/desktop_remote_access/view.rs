@@ -197,6 +197,15 @@ pub(crate) fn show(
             ) {
                 draft.allow_creation = !draft.allow_creation;
             }
+            if settings_toggle_row_enabled(
+                ui,
+                "Allow remote clients to terminate sessions",
+                "Off by default. Each termination requires confirmation. Closing a tab only disconnects it.",
+                draft.allow_session_termination,
+                true,
+            ) {
+                draft.allow_session_termination = !draft.allow_session_termination;
+            }
             ui.add_space(6.0);
             let files_editable = matches!(&view.scope, Scope::Absent)
                 || matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled);
@@ -393,6 +402,9 @@ pub(crate) fn show(
                         } else {
                             "Create additional shells: Off"
                         });
+                        ui.label(if draft.allow_session_termination {
+                            "Terminate remote sessions: On — confirm each session"
+                        } else { "Terminate remote sessions: Off" });
                         if draft.files.enabled {
                             ui.label(format!("File access folder: {}", draft.files.root.display()));
                             ui.label(if draft.files.write {

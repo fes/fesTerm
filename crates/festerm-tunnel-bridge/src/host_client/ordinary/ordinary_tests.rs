@@ -319,3 +319,126 @@ fn reconnect_changed_challenge_never_calls_device_signer() {
             .is_ok()
     );
 }
+
+#[tokio::test]
+async fn ordinary_end_preserves_original_after_lost_reply_and_requires_same_issuer() {
+    let (root, context) = fixture();
+    let target = Target {
+        logical: festerm_host_protocol::LogicalSessionId::new(),
+        generation: festerm_host_protocol::GenerationId::new(7).unwrap(),
+    };
+    let (store, _) = OriginalStore::recover(root.path(), &context).unwrap();
+    let intent = Arc::new(EndIntent::new(&context, target.clone()));
+    intent
+        .protect_original(store, "Terminate the selected shell".into())
+        .unwrap();
+    let operation = intent.operation().clone();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let expected_target = target.clone();
+    let server = tokio::spawn(async move {
+        handshake(
+            &mut peer,
+            festerm_host_protocol::Capabilities {
+                explicit_end: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let envelope = request(&mut peer).await;
+        assert_eq!(
+            envelope.body,
+            Request::ExplicitEnd {
+                target: expected_target
+            }
+        );
+        envelope
+    });
+    assert!(end_authenticated(
+        &mut client(stream, &context),
+        intent.clone(),
+        &CancellationToken::new()
+    )
+    .await
+    .is_err());
+    let first = server.await.unwrap();
+    assert!(intent.is_issued() && !intent.is_resolved());
+    let (_, mut originals) = OriginalStore::recover(root.path(), &context).unwrap();
+    let RecoveredIntent::End(restored) = originals.remove(0).intent else {
+        panic!("End original")
+    };
+    assert_eq!(restored.operation(), &operation);
+    assert_eq!(restored.target(), &target);
+    let mut replaced = context.host_info().clone();
+    replaced.principal = festerm_host_protocol::PrincipalId::new();
+    assert!(!restored.matches_context(&changed_info(&context, replaced)));
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let server = tokio::spawn(async move {
+        handshake(
+            &mut peer,
+            festerm_host_protocol::Capabilities {
+                explicit_end: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let retry = request(&mut peer).await;
+        assert_eq!(
+            retry, first,
+            "only an explicit retry retains the original operation and target"
+        );
+        respond(&mut peer, &retry, Response::Ended { target }).await;
+    });
+    assert!(matches!(
+        end_authenticated(
+            &mut client(stream, &context),
+            restored,
+            &CancellationToken::new()
+        )
+        .await,
+        Ok(Outcome::Ended { .. })
+    ));
+    server.await.unwrap();
+    assert!(OriginalStore::recover(root.path(), &context)
+        .unwrap()
+        .1
+        .is_empty());
+}
+
+#[tokio::test]
+async fn ordinary_end_default_off_sends_no_end_and_cancelled_account_cannot_start() {
+    let (root, context) = fixture();
+    let target = Target {
+        logical: festerm_host_protocol::LogicalSessionId::new(),
+        generation: festerm_host_protocol::GenerationId::new(2).unwrap(),
+    };
+    let intent = Arc::new(EndIntent::new(&context, target));
+    let (store, _) = OriginalStore::recover(root.path(), &context).unwrap();
+    intent
+        .protect_original(store, "confirmed review".into())
+        .unwrap();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let server = tokio::spawn(async move {
+        handshake(&mut peer, caps()).await;
+        let received = tokio::time::timeout(
+            std::time::Duration::from_millis(25),
+            read_frame(&mut peer, &Budgets::default()),
+        )
+        .await;
+        assert!(
+            !matches!(received, Ok(Ok(_))),
+            "no End frame without advertised consent"
+        );
+    });
+    assert!(end_authenticated(
+        &mut client(stream, &context),
+        intent.clone(),
+        &CancellationToken::new()
+    )
+    .await
+    .is_err());
+    assert!(!intent.is_issued());
+    server.await.unwrap();
+    context.0.guard.cancel.cancel();
+    assert!(context.account_guard().check().is_err());
+    assert!(!intent.is_issued());
+}

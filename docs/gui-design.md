@@ -4277,3 +4277,16 @@ session and running Remote Desktop Services (TermService). A generic unavailable
 result does not identify the failed OS prerequisite. fesTerm does not start
 services, change RDP policy or alter permissions. Unresolved native cleanup
 requires a normal app restart.
+
+
+### Confirmed remote session termination
+
+Find & Connect running-session cards show **Terminate…** only when the host
+advertises the separately approved termination permission. A named modal asks
+“Terminate <name> on <host>?” and explains that this ends the shell and stops
+programs running in it. Cancel is initially focused; mobile actions retain 44 pt
+minimum targets and 12 pt spacing. Escape, Back or dismissal cancels the review.
+Stopped profiles have no termination action. Close continues to detach only.
+Confirmed completion updates the matching session row; uncertainty remains an
+error without claiming termination or replaying the request. Profiles does not
+show technical attachment-retirement notices after a tab is closed.
