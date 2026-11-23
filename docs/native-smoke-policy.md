@@ -49,6 +49,18 @@ rejection and explicit Job Object breakaway remain native `CP-11` evidence.
 The test is ignored by default and runs once in every native-smoke job and in
 the aggregate optional-validation scripts used by the VM evidence adapter.
 
+The large-output recovery fixture measures a snapshot **after** its 1.2 MB
+burst. It first adopts the small READY snapshot, releases the existing
+repository test child's private file gate, drains END on that same live
+attachment, and performs one final takeover. It does not retry a failed
+attachment or relax the separate 512 KiB pending-candidate overflow refusal.
+Windows shell/directory assertions compare existing canonical filesystem paths;
+the default-shell probe waits for its complete split-marker response rather than
+matching echoed input or a partial path. These are fixture boundaries, not
+changes to daemon behavior. The earlier scheduled Windows EOF remains
+unattributed without its missing worker trace; corrected sequencing does not
+retrospectively prove its cause.
+
 ### Daemon-owned temporary HOST lease deadlines
 
 The real 60-second temporary-session heartbeat and reconnect-grace integration
