@@ -416,19 +416,27 @@ fn native_windows_default_shell_stays_interactive_in_the_requested_directory() {
         .to_string_lossy();
     let input = if shell.eq_ignore_ascii_case("cmd.exe") {
         assert_eq!(selected.arguments, ["/Q"]);
-        "set probe=TUNNEL_\r\necho %probe%DEFAULT_OK:%CD%\r\n"
+        "set probe=TUNNEL_\r\necho %probe%DEFAULT_OK:%CD%:END\r\n"
     } else {
         assert!(
             shell.eq_ignore_ascii_case("pwsh.exe") || shell.eq_ignore_ascii_case("powershell.exe"),
             "unexpected default Windows shell: {shell}"
         );
         assert_eq!(selected.arguments, ["-NoLogo"]);
-        "[Console]::WriteLine('TUNNEL_' + 'DEFAULT_OK:' + (Get-Location).Path)\r\n"
+        "[Console]::WriteLine('TUNNEL_' + 'DEFAULT_OK:' + (Get-Location).Path + ':END')\r\n"
     };
     session.try_send_input(input.as_bytes()).unwrap();
-    read_session_until(
-        &session,
-        &format!("TUNNEL_DEFAULT_OK:{}", runtime.display()),
+    let output = read_session_until(&session, "TUNNEL_DEFAULT_OK:");
+    let reported = output
+        .split_once("TUNNEL_DEFAULT_OK:")
+        .unwrap()
+        .1
+        .split_once(":END")
+        .unwrap()
+        .0;
+    assert_eq!(
+        fs::canonicalize(reported).unwrap(),
+        fs::canonicalize(&runtime).unwrap()
     );
 }
 
@@ -1272,8 +1280,8 @@ fn native_discovery_churn_preserves_process_and_rejects_replaced_generations() {
         assert!(selected.windows(2).all(|pair| pair[0].name < pair[1].name));
         for (index, selected) in selected.iter().enumerate() {
             assert_eq!(
-                selected.shell,
-                pty_test_child(&executable).to_string_lossy()
+                fs::canonicalize(&selected.shell).unwrap(),
+                fs::canonicalize(pty_test_child(&executable)).unwrap()
             );
             let first = PersistentSession::resume_discovered_in(
                 selected,
@@ -1796,6 +1804,11 @@ fn read_session_until(session: &festerm_sessiond::PersistentSession, marker: &st
             text.split_once("PID:")
                 .and_then(|(_, tail)| tail.split_once(":END"))
                 .is_some_and(|(pid, _)| pid.parse::<u32>().is_ok())
+        } else if marker == "TUNNEL_DEFAULT_OK:" {
+            // The command splits the start marker, so echoed input cannot
+            // satisfy this complete response from the interactive shell.
+            text.split_once(marker)
+                .is_some_and(|(_, tail)| tail.contains(":END"))
         } else {
             text.contains(marker)
         };
@@ -2296,8 +2309,10 @@ fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
     // so the raw fixture and the PTY stream have the same mode on every platform.
     let prefix = b"\x1b[?1049h\x1b[?1000h\x1b[?1004h\x1b[?1006h\x1b[?2004h\x1b[HREADY:";
     let suffix_bytes = b"\x1b[3;5HEND";
+    let start_marker = runtime_root.join("start-burst");
     let arguments = [
         format!("emit-bytes-hex:{}", hex_encode_bytes(prefix)),
+        format!("wait-for-file:{}", start_marker.display()),
         format!("emit-repeat:{repeat_count}:{repeat_text}"),
         format!("emit-bytes-hex:{}", hex_encode_bytes(suffix_bytes)),
         "spin".to_owned(),
@@ -2328,17 +2343,61 @@ fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
         .join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
 
-    let client = loop {
-        let client = connect(
-            &endpoint,
-            registry_admission(&registry.join("registry.json"), &name, true),
+    let admission = registry_admission(&registry.join("registry.json"), &name, true);
+    let (pid, generation) = (admission.pid, admission.generation);
+    let mut first = connect(&endpoint, admission);
+    #[cfg(windows)]
+    assert_windows_ready(&mut first);
+    #[cfg(unix)]
+    if !terminal_contains(&first.snapshot, b"READY") {
+        assert_contains(&mut first, b"READY");
+    }
+    bounded_poll(
+        || {
+            festerm_sessiond::list_running_sessions_in(&registry)
+                .unwrap()
+                .into_iter()
+                .any(|entry| {
+                    entry.session.pid == pid
+                        && entry.session.created_at_unix_ms == generation
+                        && entry.attached_by == Some(festerm_sessiond::AttachKind::Local)
+                })
+        },
+        "small READY attachment adopted by exact fixture generation",
+    );
+    // Exercise recovery AFTER the burst, not candidate overflow during it.
+    // The existing file gate adds no PTY input echo to the expected snapshot.
+    drop(
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&start_marker)
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 4096];
+    let mut end_seen = false;
+    while !end_seen {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "large-output END deadline"
         );
-        if terminal_contains(&client.snapshot, b"END") {
-            break client;
-        }
-        drop(client);
-        std::thread::sleep(Duration::from_millis(20));
-    };
+        let count = first.read(&mut buffer).expect("live burst output");
+        assert_ne!(count, 0, "live attachment ended before burst END");
+        let scan_from = output.len().saturating_sub(2);
+        output.extend_from_slice(&buffer[..count]);
+        assert!(
+            output.len() <= 2 * 1024 * 1024,
+            "bounded fixture burst output"
+        );
+        end_seen = output[scan_from..].windows(3).any(|bytes| bytes == b"END");
+    }
+    // Keep the initial client alive: exactly one final takeover, after END.
+    let client = connect(
+        &endpoint,
+        registry_admission(&registry.join("registry.json"), &name, true),
+    );
     assert!(client.snapshot.modes().alternate_screen());
     assert_ne!(
         client.snapshot.modes().mouse_tracking(),
