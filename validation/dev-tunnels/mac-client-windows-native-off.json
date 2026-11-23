@@ -1,0 +1,253 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned Mac-client/Windows-server creation-OFF workflow",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "macos-arm64",
+    "server": "windows-arm64"
+  },
+  "creation_policy": "off",
+  "case_complete": true,
+  "matrix_complete": false,
+  "matrix_status_after_root_acceptance": {
+    "accepted": 12,
+    "partial": 5,
+    "unstarted": 7,
+    "desktop_accepted": 12,
+    "desktop_total": 12,
+    "mobile_accepted": 0,
+    "mobile_total": 12,
+    "matrix_total": 24
+  },
+  "root_acceptance_sha256": "88e74056cb70b37395eb2131bf167a698ca6bb291593e113d63d11250413fb30",
+  "cohort_boundary": "Signed GUI/HOST21 source3895; retained native15 generation; historical local Windows19/source920 R14 references; supporting SDK777. No combined-current release or new HOME/PATH/termination acceptance.",
+  "sources": {
+    "Mac_GUI": {
+      "version": "0.17.21",
+      "source": "3895c1190aa1b32f6fb3677bdfa0cef52cd12184",
+      "release_run": 45087213294,
+      "attempt": 1
+    },
+    "Windows_HOST": {
+      "version": "0.17.21",
+      "source": "3895c1190aa1b32f6fb3677bdfa0cef52cd12184",
+      "epoch": 40,
+      "PID": 1252,
+      "locator": "festerm-ca83356f47124886bedd2fe7dc9e70fd.usw2",
+      "creation_allowed": false
+    },
+    "Windows_retained_daemon": {
+      "version": "0.17.15",
+      "source": "1046b6abf907a98161e2f26a0b8dc440886cd761",
+      "actual_loaded_ConPTY_DLL_sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+      "actual_OpenConsole_PID": 7932,
+      "actual_OpenConsole_sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+      "role": "Historical native15 retained daemon5792/OpenConsole7932/CMD4396 only; current HOST21 separately pinned.",
+      "retained_daemon_PID": 5792
+    },
+    "Windows_local_reference": {
+      "version": "0.17.19",
+      "source": "920fca574439c5521356b37e2f8893429ef6f2cd",
+      "unsigned_development_GUI": true,
+      "package_run": 44973915774,
+      "artifact": 14734714909,
+      "genuine_support_helper_source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1"
+    },
+    "supporting_SDK": {
+      "source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+      "distinct_supporting_service_proof": true
+    }
+  },
+  "workflow": {
+    "normal_discovery": "Saved-account normal host listing; public locator tooltip before selection, private70e3/rev2 omitted.",
+    "creation_OFF_inventory": "New host shell absent; never-started shared0c10/rev1 NotStarted with Start & Connect disabled; no Create/Ensure/Start issued by GUI.",
+    "retained_logical": "9e22b94a-2329-47ca-bc94-e38d05807d52",
+    "retained_generation": "1795321779475305954",
+    "saved_attach_only_recipe": "44bbc37e-85b7-4732-a184-66d150bec192",
+    "I_O_reconnect": "Fresh A/B output, normal detach, ordinary saved AttachOnly card reconnect and fresh C, same generation.",
+    "saved_recipe_attribution": "Recipe pins host/logical and AttachOnly; observed attachment proves retained generation, no claim all generation data is serialized."
+  },
+  "comparisons": {
+    "grids": [
+      [
+        74,
+        20
+      ],
+      [
+        70,
+        19
+      ]
+    ],
+    "Copilot": {
+      "version": "1.0.112",
+      "sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62",
+      "args": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "state": "Fresh normal unauthenticated initial prompt; no login/model/paid request.",
+      "cwd": "C:/Users/evidence/.ft-item8-win-copilot-reference-r1"
+    },
+    "collector_sha256": "d8f556bbf0828acb23c8be14dec18c8911b6e5f8dde723fcc4d8d0944de50abf",
+    "precondition": "Compound CLS then collector; raw LANG/LC_ALL/LC_CTYPE unset, TERM=xterm-256color, COLORTERM=truecolor, TERM_PROGRAM=fesTerm. No locale/env rewrite.",
+    "raw": "All fields equal historical R14 except case/elapsed_ms,10single replies/6raw environment fields/202inputbytes/stablegrid/restored/drained.",
+    "visual": "Root accepted both normal initial prompts at actual74\u00d720 and70\u00d719; same cell layout/colors/wrapping, no physical pixel/raster identity.",
+    "reference_compatibility": "Ten immutable source objects source920\u21923895 equal; source-version/history remains explicit.",
+    "local_originals_already_public": {
+      "local74x20.png": {
+        "path": "mac-client-windows-native/local74x20.png",
+        "bytes": 2760143,
+        "sha256": "391c5e56b56b10c2dba076e34eea4ae89d1d2951d22ee521a16d8125d7403d2b"
+      },
+      "local70x19.png": {
+        "path": "mac-client-windows-native/local70x19.png",
+        "bytes": 2910528,
+        "sha256": "342356ff0e94acbc290424a3b88df40d269d1ea35d643694fd2d0644f6a009cb"
+      },
+      "local74x20-capabilities.json": {
+        "path": "mac-client-windows-native/local74x20-capabilities.json",
+        "bytes": 1187,
+        "sha256": "903b765e609eb7cbdcece126ade37cb6e04aad5545c8c49679ec51cd15c5455c"
+      },
+      "local70x19-capabilities.json": {
+        "path": "mac-client-windows-native/local70x19-capabilities.json",
+        "bytes": 1187,
+        "sha256": "3f96de8f12b78bac877f17821395d8db69dc753222eb2667c5358fc0d55828e8"
+      }
+    },
+    "second_grid_method": "Two fresh frontends reattach same logical/generation at distinct actual PTY dimensions; no in-place native edge-drag claim."
+  },
+  "service_proof": {
+    "SDK_source": "77790c884bdbdf53c9dbcdb89bee8472ba3b1716",
+    "result": {
+      "creation_allowed": false,
+      "exit_code": 0,
+      "existing_POSIX_owned_group_drained": true,
+      "ordinary_client_pass": true,
+      "stopped_profile_denied_pass": true,
+      "blocked_marker": false,
+      "one_test_pass": true,
+      "elapsed_seconds": 18.035,
+      "tail_sha256": "6f697d3d9f641bd300a2bbedd19584a91b44d28c51825010b942c00ee408cb0f",
+      "free_after": 3200286720,
+      "service_or_OS_settings_changed": false
+    },
+    "typed_refusals": "Exactcontrolledsource checks private70e3/rev2 accepted unionDenied|Stale; genuinelyNotStarted0c10/rev1Denied/noSession; freshgenericDenied/noActor. ActualmarkerPASS means allsame-testassertions passed, does not identifywhichprivateunionmember.",
+    "only_expected_delta": {
+      "old_profiles": 6,
+      "profiles_after": 6,
+      "old_sessions": 9,
+      "sessions_after": 9,
+      "old_operations": 18,
+      "operations_after": 20,
+      "only_two_resumes": "79464217-ce74-4fa4-a114-40acc8f5f75f",
+      "same_generation": "1795082827294162672",
+      "new_actors": 0,
+      "catalog_sha256": "3dbcb65038261050e29ce50499218d003804bfaef6f10c59ba50ee0174550c3d"
+    },
+    "actual_group_drain": true,
+    "first_result_preserved": "First C account confirmation failed101/0.037s before HOST; error detail intentionally discarded, cause unknown. Root separately authorized C2 after ordinary GUI confirm/list success on same accountmetadata; no expiry/token-change/refresh mechanism inference."
+  },
+  "preservation": {
+    "Windows": "All27 durable actors/full6profiles/9sessions/old18operations/protected7/Task unchanged except two same-generation shared794 resumes18\u219220; no new actors/sessions/generations.",
+    "Mac": "All14/profiles5/sessions7/operations18 unchanged.",
+    "Linux": "All20/HOST51/oldcatalog/Files fixture unchanged.",
+    "cleanup": "Normal /exit, positive exactCLIabsence before cwd/ownvar restoration, detach/CmdQ exit0/owned supervisor/helper/carrier drain.",
+    "Windows_service": "Stopped/Manual/PID0/RDPdeny1 throughout these Mac-client phases; no temporary Windows GUI prerequisite used."
+  },
+  "first_results_and_limits": [
+    "First C account confirmation failure preserved, changed-precondition C2 is distinct.",
+    "B1 spaced CtrlC did not quit Copilot; absence guard refused dependent restore, explicit ordinary /exit then positiveabsence succeeded. No app regression or model/paid request claimed.",
+    "Mac21 firstEnable warning and Windows21 owner protected7 historical limits remain separate.",
+    "No HOME/PATH/default-shell/termination/Files/mobile/current-all-release acceptance.",
+    "Public PNGs are lossless owned-window pixel extractions from retained private originals; no Safari/device-activation background is published. Provenance records original/hash/native bounds/scale and exact pixel equality; no pixel-identity claim between platforms."
+  ],
+  "original_artifacts": {
+    "remote74x20-capabilities.json": {
+      "bytes": 1187,
+      "sha256": "fd36af9b5013a49f16676c5aa6b93d10f1a8d05167e9b192f6d2e071c59c756e"
+    },
+    "remote70x19-capabilities.json": {
+      "bytes": 1187,
+      "sha256": "fba69b6fc341ad0cac6bc1d72df91924bc2f97240f3fc6512326d9a613567ec0"
+    },
+    "sdk-first-result.json": {
+      "bytes": 404,
+      "sha256": "bbe81f1c4b747dc8bea36ce124dfce15c4c4658a4c44f2047a4a69d112fa5dd8"
+    },
+    "sdk-safe-markers.json": {
+      "bytes": 315,
+      "sha256": "f822013a0b48074d7d488d4a9d1e8cd658817ed5740da8972b0fb75d1f779927"
+    },
+    "immutable-source-reference-compatibility.json": {
+      "bytes": 2792,
+      "sha256": "cb76151fc7415497b457760de08dfebf129b0f779efb24e0c8fcf90801d459ed"
+    }
+  },
+  "private_acceptance": {
+    "root": {
+      "path": "work/native-campaign/signed-021-3895-production/ROOT-CASE12-ACCEPTANCE.json",
+      "bytes": 3039,
+      "sha256": "88e74056cb70b37395eb2131bf167a698ca6bb291593e113d63d11250413fb30",
+      "availability": "retained private campaign artifact; not included in this repository"
+    },
+    "phase_receipts": {
+      "a": {
+        "path": "work/native-campaign/signed-021-3895-production/case12-mac-windows-off-a/FINAL-CASE12-A-OFF-INVENTORY-SAVED-SAMEGEN-ABC-NORMAL-DRAIN.json",
+        "bytes": 42502,
+        "sha256": "4afa04380bc2a098011172d9ff112c94854692535c420d0b2e130b2a496c0a41",
+        "availability": "retained private campaign artifact; not included in this repository"
+      },
+      "b1": {
+        "path": "work/native-campaign/signed-021-3895-production/case12-mac-windows-off-b1/FINAL-CASE12-B1-74X20-RAW-TUI-NORMAL-DRAIN.json",
+        "bytes": 44265,
+        "sha256": "212f7ba95445f71bfecc398fbe12e58ca488faf2a2ee0d779cea235465f1c577",
+        "availability": "retained private campaign artifact; not included in this repository"
+      },
+      "b2": {
+        "path": "work/native-campaign/signed-021-3895-production/case12-mac-windows-off-b2/FINAL-CASE12-B2-70X19-RAW-TUI-NORMAL-DRAIN.json",
+        "bytes": 36034,
+        "sha256": "1c3d4b2ec02f0a252f5ac6837a25491c5bd02cb93717bb681bb29369ed6c1dcb",
+        "availability": "retained private campaign artifact; not included in this repository"
+      },
+      "c": {
+        "path": "work/native-campaign/signed-021-3895-production/case12-mac-windows-off-c/FINAL-CASE12-C-FIRST-ACCOUNT-CONFIRM-BLOCKED-DRAIN-NO-HOST-DELTA.json",
+        "bytes": 14483,
+        "sha256": "cfcf8a83b7e5f54bb38bfb9afcd8fd542fcf62ac282a073e90efbc4223fe1c40",
+        "availability": "retained private campaign artifact; not included in this repository"
+      },
+      "c2": {
+        "path": "work/native-campaign/signed-021-3895-production/case12-mac-windows-off-c2/FINAL-CASE12-C2-SDK777-OFF-PASS-TWO-RESUMES-DRAIN.json",
+        "bytes": 14364,
+        "sha256": "2710b92155067cac4fcf1f498b661be88bf2a4a96a4d2a10c7578817c30c3543",
+        "availability": "retained private campaign artifact; not included in this repository"
+      }
+    }
+  },
+  "derived_window_images": {
+    "client-exact-locator.png": {
+      "bytes": 92546,
+      "sha256": "0631496d6e12cdae52ba59da6f6db8899f1d547697f88f09fd5418fced205c4b"
+    },
+    "client-creation-disabled.png": {
+      "bytes": 262919,
+      "sha256": "215626d700107119f5dbfc1026868d412ef477f45947460c944147672594b94b"
+    },
+    "client-saved-reconnect-C.png": {
+      "bytes": 186791,
+      "sha256": "727e1d3d8bbcdccec0d398a508d1ccb3d50bcd78a684c803df5e707e7fcc6dc0"
+    },
+    "remote74x20.png": {
+      "bytes": 138739,
+      "sha256": "ed3a32a62b3334c6c34eac2caa668267d9ccdf509308b3d9f2740d63aa5f71a9"
+    },
+    "remote70x19.png": {
+      "bytes": 114810,
+      "sha256": "2daaa562bfdcdfbf1eefe934d3bfb07b51f7a734883ff2c12818500bfb1c3d4f"
+    }
+  },
+  "image_provenance": {
+    "path": "mac-client-windows-native-off/image-provenance.json",
+    "sha256": "d5430da3a8bec5370ff7f650bb23ddb260f304efaf61a20bcfa7746021e4bcab"
+  }
+}

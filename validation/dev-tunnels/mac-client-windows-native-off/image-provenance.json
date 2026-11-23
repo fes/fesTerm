@@ -1,0 +1,120 @@
+{
+  "method": "Lossless owned-window-only native-pixel extraction. No scaling, conversion, repainting or generative change. Decoded pixels equal the corresponding region of retained private original. Public PNGs are derived crops, not byte-original full screenshots.",
+  "images": {
+    "client-exact-locator.png": {
+      "private_original_basename": "12-EXACT-LOCATOR.png",
+      "private_original_bytes": 1085453,
+      "private_original_sha256": "77556d86cbe4e4458235672c3a343914e60296ded08b253435ab508fbd3dd061",
+      "native_window_id": "793",
+      "native_pid": 80981,
+      "logical_bounds": {
+        "height": 516,
+        "scale_factor": 2,
+        "width": 752,
+        "x": 162,
+        "y": 126
+      },
+      "pixel_crop_xywh": [
+        324,
+        252,
+        1504,
+        1032
+      ],
+      "decoded_pixel_equality": true,
+      "public_bytes": 92546,
+      "public_sha256": "0631496d6e12cdae52ba59da6f6db8899f1d547697f88f09fd5418fced205c4b"
+    },
+    "client-creation-disabled.png": {
+      "private_original_basename": "16-INVENTORY-SCROLL.png",
+      "private_original_bytes": 534579,
+      "private_original_sha256": "816082833adf913f0b2174870e4cfd0aa82d67a94802095e3bd74968f136366e",
+      "native_window_id": "793",
+      "native_pid": 80981,
+      "logical_bounds": {
+        "height": 901,
+        "scale_factor": 2,
+        "width": 1076,
+        "x": 0,
+        "y": 30
+      },
+      "pixel_crop_xywh": [
+        0,
+        60,
+        2152,
+        1802
+      ],
+      "decoded_pixel_equality": true,
+      "public_bytes": 262919,
+      "public_sha256": "215626d700107119f5dbfc1026868d412ef477f45947460c944147672594b94b"
+    },
+    "client-saved-reconnect-C.png": {
+      "private_original_basename": "28-SAVED-RECONNECT-FRESH-C.png",
+      "private_original_bytes": 458350,
+      "private_original_sha256": "d75dee46ee4d751e08a44149a63ae2dc7f68a5161acf4ce7de36773c9e6cc2b5",
+      "native_window_id": "793",
+      "native_pid": 80981,
+      "logical_bounds": {
+        "height": 901,
+        "scale_factor": 2,
+        "width": 1076,
+        "x": 0,
+        "y": 30
+      },
+      "pixel_crop_xywh": [
+        0,
+        60,
+        2152,
+        1802
+      ],
+      "decoded_pixel_equality": true,
+      "public_bytes": 186791,
+      "public_sha256": "727e1d3d8bbcdccec0d398a508d1ccb3d50bcd78a684c803df5e707e7fcc6dc0"
+    },
+    "remote74x20.png": {
+      "private_original_basename": "12-COPILOT-74-SETTLED.png",
+      "private_original_bytes": 1140335,
+      "private_original_sha256": "a0bced488462c0c63a5ec172ca9ae595d4167ff1f251617f4f9561187a9bd7ec",
+      "native_window_id": "801",
+      "native_pid": 85072,
+      "logical_bounds": {
+        "height": 452,
+        "scale_factor": 2,
+        "width": 640,
+        "x": 0,
+        "y": 40
+      },
+      "pixel_crop_xywh": [
+        0,
+        80,
+        1280,
+        904
+      ],
+      "decoded_pixel_equality": true,
+      "public_bytes": 138739,
+      "public_sha256": "ed3a32a62b3334c6c34eac2caa668267d9ccdf509308b3d9f2740d63aa5f71a9"
+    },
+    "remote70x19.png": {
+      "private_original_basename": "12-COPILOT70-SETTLED.png",
+      "private_original_bytes": 1116105,
+      "private_original_sha256": "0c1208b55d6d069e0dc61a425ecdd3756f450def0b2aec8975a6a6d781d8ee0b",
+      "native_window_id": "809",
+      "native_pid": 87759,
+      "logical_bounds": {
+        "height": 433,
+        "scale_factor": 2,
+        "width": 606,
+        "x": 0,
+        "y": 40
+      },
+      "pixel_crop_xywh": [
+        0,
+        80,
+        1212,
+        866
+      ],
+      "decoded_pixel_equality": true,
+      "public_bytes": 114810,
+      "public_sha256": "2daaa562bfdcdfbf1eefe934d3bfb07b51f7a734883ff2c12818500bfb1c3d4f"
+    }
+  }
+}

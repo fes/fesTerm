@@ -9,8 +9,9 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** eleven pinned cases are accepted (desktop 11/12), five
-are partial and eight are unstarted. The full 24-case native matrix and
+**Current coverage:** twelve pinned cases are accepted (desktop 12/12), five
+are partial and seven are unstarted. The final desktop case is the
+[Mac-client/Windows-server creation-OFF record](../validation/dev-tunnels/mac-client-windows-native-off.json). The full 24-case native matrix and
 combined-current-release qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
