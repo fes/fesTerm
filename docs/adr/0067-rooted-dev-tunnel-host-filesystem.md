@@ -363,6 +363,13 @@ packaged acceptance.
 
 ## Validation impact
 
+The opt-in Files-only SDK boundary test uses the existing normal provider and
+native-vault connector with an exact scope and separately admitted owned
+fixtures. Fixed negative wire probes exist only under the bridge `testing`
+feature; shipping client validation, authority and wire behavior are unchanged.
+Real-service source tests are automated; deployed provider-authenticated
+Linux/Mac/Windows path, link and read-only refusal evidence remains pending.
+
 Desktop DTFILES-01/03 idle liveness covers both independently opened Files
 streams. Actual-server paired-stream regression keeps browsing/preview alive
 beyond the unchanged wire deadline before first transfer STAT; held-Pong and

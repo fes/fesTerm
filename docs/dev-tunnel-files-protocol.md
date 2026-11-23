@@ -388,3 +388,50 @@ Legacy rooted-v1/Open2 grants introduce no delete, general rename, chmod or
 execution. Separately consented Open3 reviewed deletion is specified above;
 general rename/chmod remain unavailable. Remote content is never persisted in
 ordinary fesTerm configuration/workspaces.
+
+## Opt-in deployed boundary qualification
+
+The ignored `controlled_github_files_server_boundaries` test in the existing
+`dev_tunnel_workflow_lab` SDK uses the normal provider/native-vault Files
+connector, independently of shell/Create/Ensure tests. Its private, nonsecret
+fixture selects the exact account, configuration, locator, `HostScope`, runtime
+root and a new `festerm-boundary-` leaf (32–64 lowercase ASCII letters, digits
+or hyphens), with explicit probe consent and existing-ready-key admission.
+Before execution, the operator must verify the existing ready key record and
+vault-reference metadata for that account/host; missing or mismatched state
+blocks the run. This is not an existing-key-only connector or new credential
+authority. Never export credentials or sign in/reset a key to force a pass.
+The fixture's ready-key boolean records operator admission, not a source-side
+record check: if that prerequisite is wrong, the unchanged normal connector can
+create or complete key preparation. Such a run cannot satisfy this lab gate.
+
+Under a separately reviewed read-only grant, place `canary.txt` containing
+`fesTerm public boundary canary` plus one newline inside that new leaf. Create
+a separate owned sibling of the configured root named by the same leaf, with
+`outside.txt`, and an `escape` symlink (Unix) or junction (Windows) from the
+inside leaf to that sibling. These are OS-placed fixtures, not uploaded files.
+Record root/outside identities and hashes before and after; the test never
+creates fixtures or cleans up unknown objects. No privilege/ACL change is part
+of preparation.
+
+Only the existing bridge `testing` feature exposes the fixed negative probes;
+normal shipping builds have no probe API. It bypasses local path/write UX
+rejection while retaining `exchange` account, cancellation, deadline and frame
+checks. Traversal/drive/backslash/reserved-name probes require remote `Invalid`;
+read-only mkdir/upload require remote `Denied`. Valid link paths use the normal
+client and retain the remote `Denied`, `Invalid` or native `Io` classification.
+Local rejection, EOF, `NotFound`, timeout or unexpected success is not boundary
+acceptance. There is no arbitrary request/stream access, Finish, retry or shell
+operation. A final Ping checks the still-owned channel.
+
+Package smoke already retains the compiled Linux ARM64 SDK test artifact; no
+new builder/signing is required. Execute its exact ignored test through the
+existing bounded SDK runner, with `FESTERM_RUN_DEV_TUNNEL_FILES_BOUNDARY=1`,
+`FESTERM_DEV_TUNNEL_FILES_BOUNDARY_RECORD` and matching
+`FESTERM_SESSIOND_RUNTIME_ROOT`. Do not invoke the lab script's Cargo-building
+`--run` path inside a capacity-limited VM. Source/local filesystem tests do not
+qualify provider-authenticated boundaries on deployed Linux, Mac or Windows
+HOSTs; those native runs remain pending individually.
+This slice covers link read/directory refusal only. Upload through a link under
+a write-enabled grant and direct server reviewed-Delete denial remain separate
+native gates; read-only upload denial does not qualify either boundary.
