@@ -2638,7 +2638,11 @@ async fn native_authenticated_runtime_live_policy_fences_actions_without_stoppin
         creation.recipe.args = vec![
             "read-line".into(),
             "echo:forbidden-input".into(),
-            "spin".into(),
+            // Keep the controlled child live through the policy/I/O assertions,
+            // then exit through this same approved local attachment.
+            "read-line".into(),
+            "expect-line-suffix:fixture-cleanup".into(),
+            "exit:0".into(),
         ];
         let attachment = creation.attachment.clone();
         let target = create_remote(&mut control, creation).await;
@@ -2758,12 +2762,45 @@ async fn native_authenticated_runtime_live_policy_fences_actions_without_stoppin
         })
         .await
         .unwrap_or_else(|_| panic!("{revocation}: local activation timed out, lifecycle={:?}, lease={:?}, sessions={:?}", local.lifecycle(), fixture.lease(&target), festerm_sessiond::list_running_sessions_in(&fixture.native.root)));
+        assert_eq!(
+            festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+                .unwrap()
+                .len(),
+            1,
+            "{revocation}: controlled child stays live through all assertions"
+        );
+        // Cleanup is ordinary exit of ONLY this fixture child, not a retry of
+        // a mutating End whose Busy could have followed a partial commit.
+        local.try_send_input(b"fixture-cleanup\n").unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match local.try_recv_event() {
+                    Ok(SessionEvent::Lifecycle(festerm_session::SessionLifecycle::Exited(
+                        exit,
+                    ))) => {
+                        assert!(exit.success(), "{revocation}: controlled cleanup exit");
+                        break;
+                    }
+                    Ok(_) | Err(festerm_session::SessionTryReceiveError::Empty) => {}
+                    Err(error) => panic!("{revocation}: cleanup before exit: {error:?}"),
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("bounded controlled child cleanup exit");
+        local.shutdown(Duration::from_secs(2)).unwrap();
         drop(local);
-        fixture
-            .native
-            .control()
-            .end_local(&fixture.auth.policy.principal, &target)
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+                .unwrap()
+                .is_empty()
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("controlled daemon deregisters after child exit");
         drop((terminal, control));
         fixture.shutdown().await;
     }
