@@ -6694,6 +6694,21 @@ Portable protected-state/control-channel and layout tests do not qualify native
 HOST process termination or physical iOS/Android behavior, and add no matrix case.
 
 
+### Desktop End failure: finite client evidence
+
+For HOST-03 / DIAG-01, retain the first failed End result and existing diagnostic
+log before any further action. Expect the unchanged normal feedback and a
+`host.end_failure` event only for the current failed worker attempt. Retain only
+stage/class/refusal/I/O-kind, checkpoint observation and issued/resolved flags.
+Busy, Unknown and deadline must remain distinct; do not infer active-lease
+contention from Busy, or delivery from issued. A failed original capture sends no
+End request; a write error still leaves checkpoint presence unconfirmed. Stale,
+cancelled or another tab/request must not disclose its completion. No automatic
+retry, new operation or reconciliation is part of this diagnostic step. Portable
+framed and private-vault tests do not qualify the live signed22 failure or remote
+termination itself. Never export raw error text, paths, IDs, credentials or
+terminal output to explain this event.
+
 ### Native first-Enable observation: narrow error stages
 
 For HOST-04 / DIAG-01, retain the first GUI result before Refresh or any new

@@ -184,6 +184,13 @@ fn ordinary_cancelled_account_refuses_ready_results_and_new_workers() {
     let (sender, events) = flume::bounded(2);
     let cancel = CancellationToken::new();
     let worker = Worker {
+        end_intent: Some(Arc::new(ending::EndAttempt::new(Arc::new(EndIntent::new(
+            &context,
+            Target {
+                logical: LogicalSessionId::new(),
+                generation: festerm_host_protocol::GenerationId::new(7).unwrap(),
+            },
+        ))))),
         scope: scope.clone(),
         cancel: cancel.clone(),
         ordinary_guard: Some(context.account_guard()),
@@ -195,7 +202,13 @@ fn ordinary_cancelled_account_refuses_ready_results_and_new_workers() {
             outcome: Outcome::Failed(Failure::ProviderUnavailable),
         })
         .unwrap_or_else(|_| panic!("bounded ready event"));
+    assert!(worker
+        .end_failure_diagnostic(&scope, Failure::OriginalStorage)
+        .is_some());
     context.0.guard.cancel.cancel();
+    assert!(worker
+        .end_failure_diagnostic(&scope, Failure::OriginalStorage)
+        .is_none());
     assert!(worker.try_receive(&scope).is_none());
     assert!(cancel.is_cancelled());
     assert!(Worker::start(

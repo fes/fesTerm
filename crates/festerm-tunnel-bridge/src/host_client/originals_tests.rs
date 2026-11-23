@@ -1189,3 +1189,215 @@ fn checkpoint_fixture_child() {
     });
     println!("EXACT_ORIGINAL_REOPENED_ONCE");
 }
+
+#[tokio::test]
+async fn end_diagnostic_original_capture_failure_has_no_request_and_unconfirmed_checkpoint() {
+    for fault in [1, 2] {
+        let fixture = Fixture::new();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(4).unwrap(),
+        };
+        let intent = Arc::new(EndIntent::new(&fixture.context, target));
+        intent
+            .protect_original(fixture.store.clone(), "End review".into())
+            .unwrap();
+        fixture.vault.fault.store(fault, Ordering::SeqCst);
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            handshake(
+                &mut peer,
+                Capabilities {
+                    explicit_end: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+            let mut bytes = Vec::new();
+            peer.read_to_end(&mut bytes).await.unwrap();
+            assert!(bytes.is_empty(), "capture refusal must not send End");
+        });
+        let attempt = ending::EndAttempt::new(intent.clone());
+        let failure = ending::end_observed(
+            &mut client(stream, &fixture.context),
+            intent.clone(),
+            &CancellationToken::new(),
+            &attempt,
+        )
+        .await
+        .err()
+        .unwrap();
+        server.await.unwrap();
+        assert_eq!(failure, Failure::OriginalStorage);
+        let detail = attempt.failure_diagnostic(failure);
+        assert_eq!(detail.stage, "original-capture");
+        assert_eq!(detail.class, "original-storage");
+        assert_eq!(detail.checkpoint, "unconfirmed");
+        assert!(!detail.issued && !detail.resolved);
+        // Both an uncommitted write and a write-then-error stay unconfirmed.
+        // A client diagnostic never invents checkpoint absence after an error.
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn end_diagnostic_framed_refusal_deadline_and_cancel_preserve_original_observations() {
+    for reason in [Some(Refusal::Busy), Some(Refusal::Unknown), None] {
+        let fixture = Fixture::new();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(4).unwrap(),
+        };
+        let intent = Arc::new(EndIntent::new(&fixture.context, target));
+        intent
+            .protect_original(fixture.store.clone(), "End review".into())
+            .unwrap();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            handshake(
+                &mut peer,
+                Capabilities {
+                    explicit_end: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+            let end = request(&mut peer).await;
+            assert!(matches!(end.body, Request::ExplicitEnd { .. }));
+            sent.send(()).unwrap();
+            if let Some(reason) = reason {
+                respond(&mut peer, &end, Response::Refused { reason }).await;
+            } else {
+                // Keep the actual frame stream open past the original client deadline.
+                std::future::pending::<()>().await;
+            }
+        });
+        let attempt = ending::EndAttempt::new(intent.clone());
+        let failure = ending::end_observed(
+            &mut client(stream, &fixture.context),
+            intent.clone(),
+            &CancellationToken::new(),
+            &attempt,
+        )
+        .await
+        .err()
+        .unwrap();
+        received.await.unwrap();
+        let detail = attempt.failure_diagnostic(failure);
+        assert_eq!(detail.stage, "request");
+        assert_eq!(detail.checkpoint, "confirmed-present");
+        assert!(detail.issued && !detail.resolved);
+        match reason {
+            Some(Refusal::Busy) => {
+                assert_eq!(detail.class, "refused");
+                assert_eq!(detail.refusal, "busy");
+            }
+            Some(Refusal::Unknown) => {
+                assert_eq!(detail.class, "refused");
+                assert_eq!(detail.refusal, "unknown");
+            }
+            None => {
+                assert_eq!(failure, Failure::Control(Error::Deadline));
+                assert_eq!(detail.class, "deadline");
+                assert_eq!(detail.refusal, "not-recorded");
+            }
+            _ => unreachable!(),
+        }
+        server.abort();
+        let recovered = fixture.reopen().unwrap().1;
+        assert_eq!(recovered.len(), 1);
+    }
+    let fixture = Fixture::new();
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(4).unwrap(),
+    };
+    let intent = Arc::new(EndIntent::new(&fixture.context, target));
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let attempt = ending::EndAttempt::new(intent.clone());
+    let failure = ending::end_observed(
+        &mut client(stream, &fixture.context),
+        intent.clone(),
+        &cancel,
+        &attempt,
+    )
+    .await
+    .err()
+    .unwrap();
+    let mut bytes = Vec::new();
+    peer.read_to_end(&mut bytes).await.unwrap();
+    assert!(bytes.is_empty());
+    let detail = attempt.failure_diagnostic(failure);
+    assert_eq!(detail.stage, "admission");
+    assert_eq!(detail.class, "cancelled");
+    assert_eq!(detail.checkpoint, "not-observed");
+    assert!(!detail.issued && !detail.resolved);
+}
+
+#[tokio::test]
+async fn end_diagnostic_confirmation_failure_and_other_attempt_do_not_invent_resolution() {
+    let fixture = Fixture::new();
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(4).unwrap(),
+    };
+    let intent = Arc::new(EndIntent::new(&fixture.context, target));
+    intent
+        .protect_original(fixture.store.clone(), "End review".into())
+        .unwrap();
+    let attempt = Arc::new(ending::EndAttempt::new(intent.clone()));
+    let active = attempt.clone();
+    let current = intent.clone();
+    let vault = fixture.vault.clone();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let mut control = client(stream, &fixture.context);
+    let task = tokio::spawn(async move {
+        ending::end_observed(&mut control, current, &CancellationToken::new(), &active).await
+    });
+    handshake(
+        &mut peer,
+        Capabilities {
+            explicit_end: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let end = request(&mut peer).await;
+    // Another attempt with the same original is refused without overwriting
+    // the active worker's request stage or claiming host delivery.
+    let other = ending::EndAttempt::new(intent.clone());
+    let (stream, mut unused) = tokio::io::duplex(8192);
+    let failure = ending::end_observed(
+        &mut client(stream, &fixture.context),
+        intent.clone(),
+        &CancellationToken::new(),
+        &other,
+    )
+    .await
+    .err()
+    .unwrap();
+    let mut bytes = Vec::new();
+    unused.read_to_end(&mut bytes).await.unwrap();
+    assert!(bytes.is_empty());
+    assert_eq!(other.failure_diagnostic(failure).refusal, "busy");
+    assert_eq!(other.failure_diagnostic(failure).stage, "admission");
+    assert_eq!(attempt.failure_diagnostic(failure).stage, "request");
+    vault.fault.store(2, Ordering::SeqCst);
+    respond(
+        &mut peer,
+        &end,
+        Response::Ended {
+            target: intent.target().clone(),
+        },
+    )
+    .await;
+    let failure = task.await.unwrap().err().unwrap();
+    assert_eq!(failure, Failure::OriginalStorage);
+    let detail = attempt.failure_diagnostic(failure);
+    assert_eq!(detail.stage, "original-confirmation");
+    assert_eq!(detail.checkpoint, "unconfirmed");
+    assert!(detail.issued && !detail.resolved);
+    assert!(!intent.is_resolved());
+}

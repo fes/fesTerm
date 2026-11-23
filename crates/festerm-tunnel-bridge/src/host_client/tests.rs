@@ -130,7 +130,12 @@ fn selected_host_worker_account_request_generation_and_lock_fence_late_results()
     for change in 0..4 {
         let scope = scope();
         let (sender, events) = flume::bounded(2);
+        let intent = Arc::new(EndIntent::new(
+            &super::creation_tests::context(),
+            summary().target,
+        ));
         let worker = Worker {
+            end_intent: Some(Arc::new(ending::EndAttempt::new(intent))),
             scope: scope.clone(),
             cancel: CancellationToken::new(),
             ordinary_guard: None,
@@ -142,13 +147,30 @@ fn selected_host_worker_account_request_generation_and_lock_fence_late_results()
                 outcome: Outcome::Failed(Failure::MissingApproval),
             })
             .unwrap_or_else(|_| panic!("bounded event slot"));
+        let finite = worker
+            .end_failure_diagnostic(
+                &scope,
+                Failure::Control(Error::from(std::io::Error::other(
+                    "https://secret.invalid/private ghp_secret target=private",
+                ))),
+            )
+            .unwrap();
+        assert_eq!(finite.class, "offline");
+        assert_eq!(finite.io_kind, "other");
+        assert!(!format!("{finite:?}").contains("secret"));
         let mut current = scope;
+        assert!(worker
+            .end_failure_diagnostic(&current, Failure::Control(Error::Deadline))
+            .is_some());
         match change {
             0 => current.request = OperationId::new(),
             1 => current.generation += 1,
             2 => current.binding = binding(),
             _ => worker.cancel(),
         }
+        assert!(worker
+            .end_failure_diagnostic(&current, Failure::Control(Error::Deadline))
+            .is_none());
         assert!(worker.try_receive(&current).is_none());
         assert!(worker.cancel.is_cancelled());
     }

@@ -3300,3 +3300,27 @@ originals through unavailable observation, and hide a completed reply to verify
 uncertainty. Controlled lease/state fixtures cover pending/Busy, cancellation,
 expiry, changed generation/revocation and denied permission. Corrected managed
 native and physical-device qualification remain separate from these tests.
+
+
+### Client End failure observations (issue #887)
+
+The existing Desktop failed-End completion records a finite client attempt stage,
+failure class, refusal/contract code and I/O kind before its unchanged generic UI
+conversion. It retains only checkpoint observation, issued and resolved flags;
+there are no target/operation IDs, account references, paths, transport strings or
+credential payloads. Each worker owns its attempt stage, including when another
+attempt of the same protected original is refused. Existing browser/current
+scope, account lifetime and cancellation fences precede tracing. Reading this
+snapshot invokes no additional authority callback or I/O.
+
+Checkpoint state is **not observed**, **unconfirmed**, **confirmed present**, or
+**confirmed retired**. Merely binding a protected handle does not prove a
+checkpoint exists; failed capture/confirmation is unconfirmed even if a native
+write took effect. Reopening a verified protected original establishes presence.
+Issued retains the original’s existing conservative flag: it is set before the
+request call and on protected-original recovery. It does not prove an exchange
+began, bytes were sent or the host received them. Resolved retains
+the existing exact Ended-plus-confirmation definition. No errors, UI outcomes,
+deadlines, cancellation, End authority or replay rules change. This is a current
+native-diagnosis enabler, not a fix or cause claim for signed22's unconfirmed End;
+issue #886's PATH inheritance diagnosis is independent.
