@@ -61,6 +61,15 @@ changes to daemon behavior. The earlier scheduled Windows EOF remains
 unattributed without its missing worker trace; corrected sequencing does not
 retrospectively prove its cause.
 
+The live-policy fencing fixture keeps its controlled child blocked on a second
+input line until every revocation, forbidden-input, same-generation attachment
+and approved local-I/O assertion has passed. Cleanup sends only that child its
+expected final line through the already-adopted local connection, observes a
+successful ordinary exit and deregistration, and drains the local frontend. It
+never retries `end_local` on an ambiguous Busy. The original macOS CI cleanup
+Busy is retained without identifying its lock holder or claiming a product End
+failure; this fixture-only correction does not qualify managed termination.
+
 ### Daemon-owned temporary HOST lease deadlines
 
 The real 60-second temporary-session heartbeat and reconnect-grace integration
