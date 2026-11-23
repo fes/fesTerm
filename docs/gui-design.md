@@ -4246,6 +4246,13 @@ endpoint-readiness evidence. The worker reads bounded private
 provenance without starting a manager, requesting a credential or acquiring a
 bundle during rendering/Refresh.
 
+Opening **Update host…** reveals the existing update review once and initially
+focuses **Not now**, so Enter cancels rather than confirming an update. The user
+can scroll away while the review remains pending; repainting does not pull the
+view back. Cancelling and opening a new review reveals it again. This is
+presentation only: manual inputs, eligibility, consent and the separate explicit
+**Update host** confirmation keep their existing behavior.
+
 **Update host…** requires a bound installation with remote access Disabled and
 a strictly newer current-build target. An enabled host shows the disabled action
 and directs the user to Disable first. Review names the old/new versions and
