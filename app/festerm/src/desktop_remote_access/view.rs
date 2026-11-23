@@ -17,7 +17,10 @@ pub(crate) fn show(
     let identity = match (&view.scope, view.review) {
         (Scope::Absent, Some(Operation::Enable)) => Some((Operation::Enable, None)),
         (Scope::Present(snapshot), Some(operation @ (Operation::Enable | Operation::Update))) => {
-            Some((operation, Some((snapshot.installation.clone(), snapshot.epoch))))
+            Some((
+                operation,
+                Some((snapshot.installation.clone(), snapshot.epoch)),
+            ))
         }
         _ => None,
     };

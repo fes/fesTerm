@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "c3100ab41d98b5c7bedd9ecf9e3992ebe29ade36b1e84d8cd7dcf3131d88a869"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "b7cb158ec50ac2863719f14866b4e5df78d561fa9efa188967e090feff0d9799"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 
 ## Startup flow
 
-Use for: Startup and workspace recovery
+Use for: Startup and recovery
 
 - [`main`](../../app/festerm/src/main.rs)
 - [`FesTermApplication`](../../app/festerm/src/application.rs)
@@ -30,7 +30,7 @@ Use for: Frame logic and focused panes
 
 - [`frame_logic`](../../app/festerm/src/app.rs)
 - [`ui_content`](../../app/festerm/src/app.rs)
-- [`Binding`](../../app/festerm/src/key_file_import.rs) — Transient key-file import.
+- [`Binding`](../../app/festerm/src/key_file_import.rs)
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs)
@@ -66,7 +66,7 @@ Use for: Host discovery, inventory, attach, and creation review
 Evidence:
 - [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs)
 - [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
-- [`host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default`](../../app/festerm/src/desktop_remote_access/tests.rs) — Short-window initial/reconfiguration review footer and cancellation.
+- [`host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default`](../../app/festerm/src/desktop_remote_access/tests.rs)
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
