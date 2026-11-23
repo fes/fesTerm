@@ -6722,6 +6722,19 @@ framed and private-vault tests do not qualify the live signed22 failure or remot
 termination itself. Never export raw error text, paths, IDs, credentials or
 terminal output to explain this event.
 
+### Native inventory: bounded exact-target observation
+
+The protected-inventory native test keeps its existing eight-second observation
+budget and final one-session privacy oracle. A real held per-generation lease
+first forces an honest Unknown result for the exact other-owner target. Only
+that single target with the expected owner, grant revision, remote-access flag
+and unchanged complete nonrevoked Running record may remain pending. An empty
+result without that Unknown, an unexpected identity, extra rows, or another
+error still fails. No production retry, permission, native effect or timeout
+changes. The first merged-main Ubuntu failure returned zero summaries while
+its other-owner catalog record remained Running; its actual Unknown/error was
+not logged, so this controlled regression does not identify that failure's cause.
+
 ### End completion during native registry contention
 
 For HOST-03, the controlled real-lock regression

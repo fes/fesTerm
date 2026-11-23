@@ -2601,7 +2601,7 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
     let mut other = fixture.creation(Lifetime::Persistent {});
     other.name = Some("private other owner".into());
     let other_operation = fixture.issued();
-    retry_busy(|| {
+    let other_running = retry_busy(|| {
         fixture.control().ensure(
             &other_owner,
             &other_operation,
@@ -2658,12 +2658,54 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
             .sessions
             .is_empty()
     );
+    let other_record = fixture.state()["sessions"][other.logical.as_str()].clone();
+    assert_eq!(other_record["phase"], "Running");
+    assert_eq!(other_record["revoked"], false);
+    assert_eq!(other_record["profile_enabled"], true);
+    // A healthy private session may be honestly Unknown while its native
+    // lease is contended. Exercise that result instead of assuming one read
+    // must publish its summary. The existing retry budget is unchanged.
+    let mut held = Some(lock_generation_lease(
+        &fixture,
+        &other_running.summary.target,
+    ));
+    let mut observed_pending = false;
+    let inventory = retry_busy(|| {
+        let inventory = fixture.control().inventory(&other_owner, allow)?;
+        let forced = held.take();
+        if forced.is_some() {
+            assert!(inventory.sessions.is_empty());
+            assert_eq!(inventory.unknown.len(), 1);
+        }
+        drop(forced);
+        if inventory.sessions.is_empty() && inventory.unknown.len() == 1 {
+            let pending = &inventory.unknown[0];
+            assert_eq!(pending.target, other_running.summary.target);
+            assert_eq!(pending.grant.logical, other.logical);
+            assert_eq!(pending.grant.owner, other_owner);
+            assert!(pending.grant.remote_access);
+            assert_eq!(pending.grant.state, festerm_host_protocol::LogicalState::Unknown);
+            assert_eq!(pending.grant.revision.get(), other_record["epoch"].as_u64().unwrap());
+            assert_eq!(fixture.state()["sessions"][other.logical.as_str()], other_record);
+            if !observed_pending {
+                eprintln!("HOST control stage=protected-inventory/final-other-owner pending=exact-native-unknown");
+                observed_pending = true;
+            }
+            return Err(ControlError::Busy);
+        }
+        Ok(inventory)
+    }).unwrap();
+    assert!(observed_pending);
+    assert!(inventory.unknown.is_empty());
+    assert_eq!(inventory.sessions.len(), 1);
     assert_eq!(
-        retry_busy(|| fixture.control().inventory(&other_owner, allow))
-            .unwrap()
-            .sessions
-            .len(),
-        1
+        inventory.sessions[0].summary.target,
+        other_running.summary.target
+    );
+    assert_eq!(inventory.sessions[0].grant.owner, other_owner);
+    assert_eq!(
+        fixture.state()["sessions"][other.logical.as_str()],
+        other_record
     );
 }
 
