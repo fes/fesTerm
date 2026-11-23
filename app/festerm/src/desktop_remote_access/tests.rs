@@ -2861,7 +2861,9 @@ fn host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default(
         controller.view.draft.friendly_name = "Reviewed host".into();
         controller.view.draft.ordinary_access = OrdinaryAccess::ProviderOwner;
         controller.view.draft.files.enabled = true;
-        controller.view.draft.files.root = PathBuf::from("/fixture/public-folder");
+        controller.view.draft.files.root =
+            std::env::temp_dir().join("festerm-enable-review-fixture");
+        assert!(controller.view.draft.valid_files());
         let scope = controller.view.scope.clone();
         let draft = controller.view.draft.clone();
         let mut harness = Harness::builder()
