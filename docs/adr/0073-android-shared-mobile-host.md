@@ -138,3 +138,27 @@ preservation. Actual single-call hardware/ADB order, restart gaps, composition
 and exactly-one-keyboard behavior through custom/system/form switching remain
 native acceptance under MOB-02/MOB-06. The window policy alone does not prove
 all ingress ordering or physical-device qualification.
+
+### Editor ownership and bounded mobile input correction
+
+Plain Java hardware edits are claimed at the owned view's pre-IME boundary;
+Activity dispatch only observes posted composition. Editor ownership is an epoch
+plus each wrapper's closed state, so redundant candidates cannot retire the
+served editor and old closes cannot finish a newer composition. Context cuts
+retain focus, privacy, mode and field fences. Terminal EditorInfo has no rich
+local document/selection snapshot; forms keep their existing rich/secure input.
+
+The shared mobile gate permits native terminal edits without widget focus only
+when terminal, lifecycle, modal and privacy ownership allow it. One synchronous
+terminal pump coalesces encoded bytes up to the existing core transport bound,
+zeroizes pending bytes and refuses cross-attachment or privacy-epoch replay;
+resize flushes preceding input. This changes neither queue capacity nor the
+session/backend ownership contract. It also affects iOS shared input and thus
+requires its existing mobile regression coverage.
+
+Validation impact remains `MOB-02`/`MOB-06`: focused Java editor/lifecycle and
+Rust fallback/batching regressions pass in offline and HOST-client builds;
+focused Java instrumentation compiles, with native execution pending. A frozen
+diagnostic APK passed one genuine Gboard `e` through focused-field encoding;
+this is not current-source, unfocused-terminal, full typing or device acceptance.
+Diagnostic log hooks are excluded from the production correction.

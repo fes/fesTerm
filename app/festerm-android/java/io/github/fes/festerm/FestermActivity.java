@@ -340,9 +340,9 @@ public final class FestermActivity extends NativeActivity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // Keep ordinary hardware/ADB text in the same ordered queue as IME commits.
-        // Modified chords and system/dead keys retain NativeActivity's handling.
-        if (input != null && input.dispatchPlainKey(event)) return true;
+        // Posted soft composition keeps its asynchronous ownership fence until
+        // dispatch. This observer never claims a key or emits plain JNI input.
+        if (input != null) input.observePostedComposition(event);
         return super.dispatchKeyEvent(event);
     }
 
@@ -360,7 +360,11 @@ public final class FestermActivity extends NativeActivity {
 
     public void keyboardMode(int mode) {
         runOnUiThread(() -> {
-            if (destroyed || (!resumed && mode != 0) || input.keyboardMode == mode) return;
+            if (destroyed || (!resumed && mode != 0)) return;
+            if (input.keyboardMode == mode) {
+                if (input.canRestoreTerminalFocus(mode)) input.mode(mode);
+                return;
+            }
             ready = true;
             input.mode(mode);
             reportInsets();
@@ -517,7 +521,7 @@ public final class FestermActivity extends NativeActivity {
             if (destroyed) return;
             ready = true;
             if (covered) {
-                input.clearKeyState();
+                input.retireEditor();
                 input.hideSystemIme();
             }
             if (enabled && (hide || covered)) {
@@ -1004,6 +1008,10 @@ public final class FestermActivity extends NativeActivity {
         }
     }
 
+    private interface EditorOwner {
+        boolean ownsEditor(Object epoch);
+    }
+
     private final class InputView extends View {
         private final Editable text = new SpannableStringBuilder();
         private int keyboardMode;
@@ -1011,6 +1019,7 @@ public final class FestermActivity extends NativeActivity {
         private long sequence;
         private boolean secure, multiline, pending;
         private InputConnection connection;
+        private Object editorEpoch = new Object();
         private final Set<Integer> consumedKeys = new HashSet<>();
         private boolean nativeComposition;
         private boolean connectionComposition;
@@ -1021,9 +1030,16 @@ public final class FestermActivity extends NativeActivity {
             connectionComposition = false;
         }
 
+        private void retireEditor() {
+            clearKeyState();
+            editorEpoch = new Object();
+            connection = null;
+        }
+
         private boolean ownsInput(InputConnection owner, int mode, long id) {
             return !destroyed && ready && resumed && !(protect && cover)
-                && hasFocus() && hasWindowFocus() && connection == owner
+                && hasFocus() && hasWindowFocus() && owner instanceof EditorOwner
+                && ((EditorOwner) owner).ownsEditor(editorEpoch)
                 && keyboardMode != 0 && keyboardMode == mode
                 && (!editsField(mode) || field == id);
         }
@@ -1031,7 +1047,7 @@ public final class FestermActivity extends NativeActivity {
         private boolean plainKey(KeyEvent event) {
             if (nativeComposition) return false;
             if ((event.getMetaState() & (KeyEvent.META_CTRL_MASK | KeyEvent.META_ALT_MASK
-                    | KeyEvent.META_META_MASK | KeyEvent.META_SHIFT_MASK
+                    | KeyEvent.META_META_MASK
                     | KeyEvent.META_SYM_ON | KeyEvent.META_FUNCTION_ON)) != 0) return false;
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DEL: case KeyEvent.KEYCODE_ENTER:
@@ -1039,12 +1055,33 @@ public final class FestermActivity extends NativeActivity {
                 case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
                 case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
                 case KeyEvent.KEYCODE_FORWARD_DEL: case KeyEvent.KEYCODE_MOVE_HOME:
-                case KeyEvent.KEYCODE_MOVE_END: return true;
+                case KeyEvent.KEYCODE_MOVE_END:
+                    return (event.getMetaState() & KeyEvent.META_SHIFT_MASK) == 0;
                 default:
                     int code = event.getUnicodeChar();
                     return code >= 32 && Character.isValidCodePoint(code)
                         && (code & KeyCharacterMap.COMBINING_ACCENT) == 0
                         && !Character.isISOControl(code);
+            }
+        }
+
+        @Override public boolean dispatchKeyEventPreIme(KeyEvent event) {
+            // Claim owned plain edits before IME/native post-IME delivery. Routing
+            // them later from Activity can also leave a raw NDK key in flight.
+            // This is the only hardware routing owner, including the finite
+            // native dead-key sequence; Activity may never see declined keys.
+            boolean accepted = dispatchPlainKey(event);
+            if (accepted) return true;
+            return super.dispatchKeyEventPreIme(event);
+        }
+
+        private void observePostedComposition(KeyEvent event) {
+            if (!connectionComposition || connection == null
+                    || !ownsInput(connection, keyboardMode, field)
+                    || event.getAction() != KeyEvent.ACTION_DOWN) return;
+            int code = event.getUnicodeChar();
+            if (code != 0 && (code & KeyCharacterMap.COMBINING_ACCENT) == 0) {
+                connectionComposition = false;
             }
         }
 
@@ -1061,7 +1098,7 @@ public final class FestermActivity extends NativeActivity {
                 }
                 // NDK owns the accent and its following character as one composition.
                 if (nativeComposition) {
-                    if (code != 0) { nativeComposition = false; connectionComposition = false; }
+                    if (code != 0) nativeComposition = false;
                     return false;
                 }
             }
@@ -1099,12 +1136,12 @@ public final class FestermActivity extends NativeActivity {
         }
 
         @Override protected void onFocusChanged(boolean focused, int direction, Rect previous) {
-            if (!focused) clearKeyState();
+            if (!focused) retireEditor();
             super.onFocusChanged(focused, direction, previous);
         }
 
         @Override public void onWindowFocusChanged(boolean focused) {
-            if (!focused) clearKeyState();
+            if (!focused) retireEditor();
             super.onWindowFocusChanged(focused);
             if (focused) showSystemIme();
         }
@@ -1123,7 +1160,9 @@ public final class FestermActivity extends NativeActivity {
         }
 
         void emit(int kind, String value, int start, int end) {
-            if (!ready || !resumed || keyboardMode == 0 || (protect && cover)) return;
+            if (!ready || !resumed || keyboardMode == 0 || (protect && cover)) {
+                return;
+            }
             pending = true;
             nativeInput(editsField(keyboardMode) ? field : 0, ++sequence, kind, value, start, end);
         }
@@ -1173,11 +1212,27 @@ public final class FestermActivity extends NativeActivity {
                 .hideSoftInputFromWindow(getWindowToken(), 0);
         }
 
+        private boolean canRestoreTerminalFocus(int mode) {
+            return mode == 1 && keyboardMode == mode && field == 0 && !secure
+                && ready && resumed && !destroyed && !cover
+                && hasWindowFocus() && !hasFocus();
+        }
+
         void mode(int mode) {
             updateImeTarget(mode);
-            if (keyboardMode == mode) return;
-            clearKeyState();
-            connection = null;
+            if (keyboardMode == mode) {
+                // A surface/browser transition can leave the current terminal
+                // mode unchanged while Android retires its focused input view.
+                // Healthy per-frame publications must not restart the IME.
+                if (!canRestoreTerminalFocus(mode) || !requestFocus()) return;
+                if (!ready || !resumed || destroyed || cover || keyboardMode != mode
+                        || field != 0 || secure || !hasWindowFocus() || !hasFocus()) return;
+                retireEditor();
+                getSystemService(InputMethodManager.class).restartInput(this);
+                showSystemIme();
+                return;
+            }
+            retireEditor();
             keyboardMode = mode;
             InputMethodManager manager = getSystemService(InputMethodManager.class);
             if (mode == 0) {
@@ -1201,7 +1256,7 @@ public final class FestermActivity extends NativeActivity {
         void document(long id, String value, int start, int end, boolean secret, boolean multiple) {
             if (field == id && pending) return;
             boolean restart = field != id || secure != secret || multiline != multiple;
-            if (restart) { clearKeyState(); connection = null; }
+            if (restart) retireEditor();
             field = id;
             secure = secret;
             multiline = multiple;
@@ -1210,8 +1265,10 @@ public final class FestermActivity extends NativeActivity {
             Selection.setSelection(text, Character.offsetByCodePoints(text, 0, Math.min(start, chars)),
                 Character.offsetByCodePoints(text, 0, Math.min(end, chars)));
             InputMethodManager manager = getSystemService(InputMethodManager.class);
-            if (restart && editsField(keyboardMode)) manager.restartInput(this);
-            manager.updateSelection(this, Selection.getSelectionStart(text), Selection.getSelectionEnd(text), -1, -1);
+            if (editsField(keyboardMode)) {
+                if (restart) manager.restartInput(this);
+                manager.updateSelection(this, Selection.getSelectionStart(text), Selection.getSelectionEnd(text), -1, -1);
+            }
         }
 
         @Override public boolean onCheckIsTextEditor() { return true; }
@@ -1220,20 +1277,30 @@ public final class FestermActivity extends NativeActivity {
             boolean terminal = !editsField(keyboardMode);
             int ownerMode = keyboardMode;
             long ownerField = field;
+            Object ownerEpoch = editorEpoch;
             info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
             if (secure || terminal) info.inputType |= InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
             if (secure) info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD;
             if (multiline || terminal) info.inputType |= InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+            // A terminal has no retrievable local document: request key events
+            // rather than rich-editor deletion against its cleared Editable.
+            if (terminal) info.inputType = InputType.TYPE_NULL;
             info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
                 | (multiline || terminal ? EditorInfo.IME_ACTION_NONE : EditorInfo.IME_ACTION_NEXT);
-            info.initialSelStart = Math.max(0, Selection.getSelectionStart(text));
-            info.initialSelEnd = Math.max(0, Selection.getSelectionEnd(text));
-            clearKeyState();
-            connection = new BaseInputConnection(this, true) {
+            info.initialSelStart = terminal ? -1 : Math.max(0, Selection.getSelectionStart(text));
+            info.initialSelEnd = terminal ? -1 : Math.max(0, Selection.getSelectionEnd(text));
+            // Android can discard a redundant candidate while retaining an older
+            // served connection. Creation alone does not retire this editor epoch.
+            class EditorConnection extends BaseInputConnection implements EditorOwner {
+                EditorConnection() { super(InputView.this, true); }
+                private boolean closed;
                 private boolean composing;
                 private String composition = "";
+                @Override public boolean ownsEditor(Object epoch) {
+                    return !closed && ownerEpoch == epoch;
+                }
                 private boolean active() {
-                    return connection == this && keyboardMode == ownerMode
+                    return ownsEditor(editorEpoch) && keyboardMode == ownerMode
                         && keyboardMode != 0 && (terminal || field == ownerField);
                 }
                 private boolean bounded(CharSequence value) {
@@ -1245,6 +1312,9 @@ public final class FestermActivity extends NativeActivity {
                 }
                 @Override public Editable getEditable() { return active() ? text : null; }
                 @Override public void closeConnection() {
+                    // A retired framework wrapper may close after its replacement
+                    // is served. Base close must not finish that newer composition.
+                    closed = true;
                     composing = false;
                     composition = "";
                     super.closeConnection();
@@ -1326,7 +1396,21 @@ public final class FestermActivity extends NativeActivity {
                     emit(6, "", KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_TAB);
                     return true;
                 }
-            };
+            }
+            if (Build.VERSION.SDK_INT >= 31) {
+                // Keep the API 31 return type out of the API 29 connection class.
+                connection = new EditorConnection() {
+                    @Override public SurroundingText getSurroundingText(int before, int after, int flags) {
+                        if (before < 0 || after < 0) throw new IllegalArgumentException("Negative surrounding-text length");
+                        // Local preedit storage is not a document or remote cursor.
+                        // A null snapshot prevents framework invalidation from
+                        // replacing the terminal's unknown selection with local zero.
+                        return terminal ? null : super.getSurroundingText(before, after, flags);
+                    }
+                };
+            } else {
+                connection = new EditorConnection();
+            }
             return connection;
         }
     }

@@ -26,8 +26,11 @@ def main():
                         help="Only invoke the debug-validation Rust current-app root factory")
     parser.add_argument("--native-index-validation", action="store_true",
                         help="Only run synthetic native-index reopen and explicit fixture-only Forget")
+    parser.add_argument("--keyboard-lifecycle", action="store_true",
+                        help="Only run focused editor, key and lifecycle checks without secret/recording hooks")
     args = parser.parse_args()
-    if sum((args.recording_validation, args.root_factory_validation, args.native_index_validation)) > 1:
+    if sum((args.recording_validation, args.root_factory_validation, args.native_index_validation,
+            args.keyboard_lifecycle)) > 1:
         parser.error("Select one focused native validation case")
     if not args.build_only and not args.serial:
         parser.error("--serial is required unless --build-only is selected")
@@ -75,6 +78,7 @@ def main():
     try:
         result = build.run(*adb, "shell", "am", "instrument", "-w",
             *(["-e", "recording-validation", "true"] if args.recording_validation else []),
+            *(["-e", "keyboard-lifecycle", "true"] if args.keyboard_lifecycle else []),
             "io.github.fes.festerm.tests/."
             + ("NativeIndexForgetSmoke" if args.native_index_validation
                else "RootFactorySmoke" if args.root_factory_validation else "PlatformSmoke"),
@@ -85,6 +89,7 @@ def main():
         build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm", timeout=15)
     result_name = ("native-index-results.txt" if args.native_index_validation
                    else "native-root-results.txt" if args.root_factory_validation
+                   else "keyboard-lifecycle-results.txt" if args.keyboard_lifecycle
                    else "native-results.txt")
     (output / result_name).write_text(result)
     print(result)

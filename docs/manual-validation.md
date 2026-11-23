@@ -2205,6 +2205,19 @@ synthetic Java/JNI ownership checks are partial evidence, not qualification of
 actual NDK/IME ingress ordering. These native acceptance checks remain open for
 the window-policy correction until exercised on the candidate build.
 
+For the current Android editor-epoch/pre-IME and shared mobile batching
+correction, run the focused test-APK `keyboard-lifecycle` scope and the shared
+fallback/ownership/batching regressions before native acceptance. Shared Rust
+regressions pass in offline and HOST-client builds; focused Java instrumentation
+compiles, with native execution pending. Retain the frozen diagnostic APK's single genuine
+Gboard `e` as focused-field encoding evidence only. Requalify redundant
+InputConnection creation/close, stale epochs, terminal unknown cursor snapshots,
+form/secure editing, lost-focus restoration, 41-character bursts with finite
+transport admission, composition and exact-once mixed hardware/IME order.
+iOS shares the native terminal gate and per-pump transport batching; its existing
+privacy, form, modal, resize/refusal and attachment-replacement tests remain
+required. No full keyboard, physical-device or native HOST matrix pass is added.
+
 For mobile GitHub device sign-in (`MOB-03`/`MOB-06`), the source regression
 requires the native copy call to finish before browser handoff. It does not
 prove the code remains on the native clipboard or reaches Safari/Chrome.

@@ -495,6 +495,23 @@ impl LiveSsh {
         let _ = (operation, error);
     }
 
+    pub(super) fn input_owner(&self) -> Option<Arc<dyn Session>> {
+        self.input_enabled().then(|| self.session.clone()).flatten()
+    }
+
+    pub(super) fn send_for_owner(&mut self, owner: &Arc<dyn Session>, bytes: &[u8]) -> bool {
+        if !self.input_enabled()
+            || !self
+                .session
+                .as_ref()
+                .is_some_and(|session| Arc::ptr_eq(session, owner))
+        {
+            return false;
+        }
+        self.send(bytes);
+        self.input_enabled()
+    }
+
     pub(super) fn send(&mut self, bytes: &[u8]) {
         if !self.input_enabled() || bytes.is_empty() {
             return;
@@ -903,6 +920,7 @@ mod tests {
         resize_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         rejected: bool,
         input_error: Option<SessionSendError>,
+        input_admission: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
         closed: bool,
         shutdowns: Mutex<usize>,
     }
@@ -930,11 +948,27 @@ mod tests {
                     capacity: 1,
                 });
             }
+            if let Some(admission) = &self.input_admission {
+                admission
+                    .try_send(bytes.to_vec())
+                    .map_err(|error| match error {
+                        tokio::sync::mpsc::error::TrySendError::Full(_) => SessionSendError::Full {
+                            operation: SessionOperation::Input,
+                            capacity: admission.max_capacity(),
+                        },
+                        tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                            SessionSendError::Closed {
+                                operation: SessionOperation::Input,
+                            }
+                        }
+                    })?;
+            }
+            let mut input = self.input.lock().unwrap();
             self.viewport_calls
                 .lock()
                 .unwrap()
                 .push(ViewportCall::Input(bytes.to_vec()));
-            self.input.lock().unwrap().push(bytes.to_vec());
+            input.push(bytes.to_vec());
             Ok(())
         }
         fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
@@ -1000,6 +1034,268 @@ mod tests {
             new_trust: None,
             tunnel: None,
         }
+    }
+
+    fn eight_slot_input_probe() -> (
+        crate::ProbeSink,
+        Arc<FakeSession>,
+        tokio::sync::mpsc::Receiver<Vec<u8>>,
+    ) {
+        // Match HOST's actual finite command admission with no consumer progress.
+        let (admission, receiver) = tokio::sync::mpsc::channel(8);
+        let session = Arc::new(FakeSession {
+            input_admission: Some(admission),
+            ..Default::default()
+        });
+        let sink = crate::ProbeSink::default();
+        *sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+        (sink, session, receiver)
+    }
+
+    #[test]
+    fn mobile_input_batch_keeps_forty_one_characters_with_eight_slot_admission() {
+        use festerm_ui_egui::EncodedInputSink as _;
+        let text = "echo abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut diagnostics = Vec::new();
+        for coalesced in [false, true] {
+            let (mut sink, session, _receiver) = eight_slot_input_probe();
+            let mut terminal = terminal();
+            let mut view = crate::mobile_terminal_view();
+            let ctx = egui::Context::default();
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                view.show(ui, &mut terminal, &mut sink);
+            })
+            .drop_without_applying_deltas();
+            ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Text(text.into())],
+                    ..Default::default()
+                },
+                |ui| {
+                    if coalesced {
+                        let mut batch = sink.input_batch();
+                        view.show(ui, &mut terminal, &mut batch);
+                        batch.finish();
+                    } else {
+                        view.show(ui, &mut terminal, &mut sink);
+                    }
+                },
+            )
+            .drop_without_applying_deltas();
+            let accepted = session.input.lock().unwrap().clone();
+            if coalesced {
+                assert_eq!(accepted, [text.as_bytes()]);
+                assert!(sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .input_enabled());
+                assert_eq!(*session.shutdowns.lock().unwrap(), 0);
+            } else {
+                assert_eq!(accepted.concat(), &text.as_bytes()[..8]);
+                assert!(!sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .input_enabled());
+                assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+            }
+            diagnostics.push(sink.input_diagnostics().unwrap());
+        }
+        // Coalescing changes transport admission granularity, never encoder outcomes.
+        assert_eq!(diagnostics[0], diagnostics[1]);
+        assert_eq!(diagnostics[1].byte_count, 41);
+    }
+
+    #[test]
+    fn mobile_input_batch_preserves_control_order_and_bracketed_paste() {
+        use festerm_core::{InputEvent, Key};
+        use festerm_ui_egui::{route_input, EncodedInputSink};
+        #[derive(Default)]
+        struct Reference(Vec<u8>);
+        impl EncodedInputSink for Reference {
+            fn record_encoded_input(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let events = [
+            InputEvent::Key(Key::Character('a')),
+            InputEvent::Key(Key::Enter),
+            InputEvent::Key(Key::Backspace),
+            InputEvent::Key(Key::ArrowUp),
+            InputEvent::Paste("p\nq".into()),
+            InputEvent::Key(Key::Character('é')),
+        ];
+        let mut original = terminal();
+        original.ingest(b"\x1b[?2004h");
+        let mut reference = Reference::default();
+        for event in events.clone() {
+            route_input(&mut original, event, &mut reference);
+        }
+        let (mut sink, session, _receiver) = eight_slot_input_probe();
+        let mut terminal = terminal();
+        terminal.ingest(b"\x1b[?2004h");
+        let ctx = egui::Context::default();
+        let mut view = crate::mobile_terminal_view();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            view.show(ui, &mut terminal, &mut sink);
+        })
+        .drop_without_applying_deltas();
+        let mut ui_events = vec![egui::Event::Text("a".into())];
+        for key in [egui::Key::Enter, egui::Key::Backspace, egui::Key::ArrowUp] {
+            ui_events.extend([true, false].map(|pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }));
+        }
+        ui_events.push(egui::Event::Paste("p\nq".into()));
+        ui_events.push(egui::Event::Ime(egui::ImeEvent::Commit("é".into())));
+        ctx.run_ui(
+            egui::RawInput {
+                events: ui_events,
+                ..Default::default()
+            },
+            |ui| {
+                let mut batch = sink.input_batch();
+                view.show(ui, &mut terminal, &mut batch);
+                batch.finish();
+            },
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(reference.0, b"a\r\x7f\x1b[A\x1b[200~p\nq\x1b[201~\xc3\xa9");
+        assert_eq!(*session.input.lock().unwrap(), [reference.0]);
+    }
+
+    #[test]
+    fn mobile_input_batch_bounds_chunks_and_stops_after_atomic_refusal() {
+        use festerm_ui_egui::EncodedInputSink as _;
+        let limit = crate::INPUT_BATCH_LIMIT;
+        for size in [limit - 1, limit, limit + 1] {
+            let (mut sink, session, _receiver) = eight_slot_input_probe();
+            let payload = vec![b'x'; size];
+            let mut batch = sink.input_batch();
+            batch.record_encoded_input(&payload);
+            assert!(batch.bytes.len() < limit);
+            assert!(batch.bytes.capacity() <= limit);
+            batch.finish();
+            let accepted = session.input.lock().unwrap();
+            assert_eq!(accepted.len(), size.div_ceil(limit));
+            assert!(accepted.iter().all(|chunk| chunk.len() <= limit));
+            assert_eq!(accepted.concat(), payload);
+        }
+        let (mut sink, session, _receiver) = eight_slot_input_probe();
+        let replacement = Arc::new(FakeSession::default());
+        let holder = sink.live.connection.clone();
+        let mut batch = sink.input_batch();
+        batch.record_encoded_input(&vec![b'x'; limit * 10 + 1]);
+        assert!(batch.refused);
+        assert!(batch.bytes.is_empty());
+        *holder.borrow_mut() = Some(connection(replacement.clone()));
+        batch.record_encoded_input(b"continuation\r");
+        batch.finish();
+        assert_eq!(session.input.lock().unwrap().len(), 8);
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+        assert!(replacement.input.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mobile_input_batch_never_transfers_pending_bytes_to_a_new_or_suspended_owner() {
+        use festerm_ui_egui::EncodedInputSink as _;
+        for cut in ["replacement", "suspend", "missing", "drop"] {
+            let (mut sink, original, _receiver) = eight_slot_input_probe();
+            if cut == "missing" {
+                *sink.live.connection.borrow_mut() = None;
+            }
+            let suspension = sink.live.clone();
+            let replacement = Arc::new(FakeSession::default());
+            let mut batch = sink.input_batch();
+            batch.record_encoded_input(b"never-replay\r");
+            match cut {
+                "replacement" | "missing" => {
+                    *suspension.connection.borrow_mut() = Some(connection(replacement.clone()))
+                }
+                "suspend" => suspension.suspend(),
+                "drop" => {
+                    drop(batch);
+                    assert!(original.input.lock().unwrap().is_empty());
+                    assert!(replacement.input.lock().unwrap().is_empty());
+                    continue;
+                }
+                _ => unreachable!(),
+            }
+            batch.finish();
+            assert!(original.input.lock().unwrap().is_empty(), "{cut}");
+            assert!(replacement.input.lock().unwrap().is_empty(), "{cut}");
+        }
+    }
+
+    #[test]
+    fn mobile_input_batch_flushes_before_resize_and_stops_on_resize_refusal() {
+        use festerm_ui_egui::EncodedInputSink as _;
+        let dimensions = Dimensions::new(90, 25).unwrap();
+        let size = session_size(dimensions).unwrap();
+        for refused in [false, true] {
+            let (mut sink, session, _receiver) = eight_slot_input_probe();
+            if refused {
+                session
+                    .resize_results
+                    .lock()
+                    .unwrap()
+                    .push_back(Err(SessionSendError::Full {
+                        operation: SessionOperation::Resize,
+                        capacity: 8,
+                    }));
+            }
+            let mut batch = sink.input_batch();
+            batch.record_encoded_input(b"before");
+            batch.record_terminal_resize(dimensions);
+            batch.record_encoded_input(b"after");
+            batch.flush();
+            assert_eq!(batch.refused, refused);
+            batch.record_encoded_input(b"continuation");
+            batch.finish();
+            let calls = session.viewport_calls.lock().unwrap();
+            if refused {
+                assert_eq!(
+                    *calls,
+                    [
+                        ViewportCall::Input(b"before".to_vec()),
+                        ViewportCall::ResizeRefused(size)
+                    ]
+                );
+                assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+            } else {
+                assert_eq!(
+                    *calls,
+                    [
+                        ViewportCall::Input(b"before".to_vec()),
+                        ViewportCall::Resize(size),
+                        ViewportCall::Input(b"after".to_vec()),
+                        ViewportCall::Input(b"continuation".to_vec())
+                    ]
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "host-clients")]
+    #[test]
+    fn mobile_input_batch_discards_a_privacy_epoch_cut() {
+        use festerm_ui_egui::EncodedInputSink as _;
+        let (mut sink, session, _receiver) = eight_slot_input_probe();
+        let privacy = sink.live.host.clone();
+        let mut batch = sink.input_batch();
+        batch.record_encoded_input(b"never-replay\r");
+        privacy.invalidate();
+        batch.finish();
+        assert!(session.input.lock().unwrap().is_empty());
     }
 
     fn terminal() -> Terminal {
