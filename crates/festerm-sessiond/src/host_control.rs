@@ -3814,10 +3814,34 @@ fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
             .map_err(|_| ControlError::Invalid)?;
         (home, None::<PathBuf>, path)
     };
-    let local = profile_with_defaults(recipe, &home, shell.as_deref(), path.as_deref())?;
+    profile_for_account(recipe, &home, shell.as_deref(), path.as_deref())
+}
+
+fn profile_for_account(
+    recipe: &Recipe,
+    home: &Path,
+    shell: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+) -> Result<LocalProfile, ControlError> {
+    let local = profile_with_defaults(recipe, home, shell, path)?;
     #[cfg(unix)]
     let local = if let Some(shell) = shell {
-        festerm_pty::login_environment::with_corrected_local_path(local, shell.as_os_str(), &home)
+        // A fresh generic default is itself a login shell. Preparing its PATH
+        // with another login first would apply startup twice. Explicit and
+        // journaled effective recipes retain their existing preparation path.
+        if recipe.shell.is_none()
+            && recipe.args.is_empty()
+            && local.executable() == shell
+            && local.arguments() == [std::ffi::OsString::from("-l")]
+        {
+            local
+        } else {
+            festerm_pty::login_environment::with_corrected_local_path(
+                local,
+                shell.as_os_str(),
+                home,
+            )
+        }
     } else {
         local
     };

@@ -616,8 +616,11 @@ a native failure cause or remote diagnostic coverage.
 
 ## Host account launch defaults
 
-Fresh hosted launches share the local PTY default-shell policy and bounded
-per-child Unix login PATH/locale resolver. The service resolves its own account
+Fresh hosted launches share the local PTY default-shell policy. Explicit Unix
+programs/arguments retain the bounded login PATH/locale preparation resolver;
+a fresh generic account-shell default (`shell=None`, empty args, resolved
+account shell with `-l`) skips that probe and lets its actual login shell apply
+startup once. The service resolves its own account
 home and login shell locally; Windows obtains the current token's profile and
 only PATH from an OS-owned environment block. The complete block is released
 without copying other values. No global environment is changed. The local-only
@@ -638,3 +641,15 @@ explicit settings, bare executable/fingerprint, environment preservation, bounde
 startup and private-home native zsh fixtures cover source behavior. Managed
 macOS/Linux/Windows fresh-shell HOME/PATH and retained-generation I/O remain
 separate native checks; this does not qualify a release or alter existing shells.
+
+
+The default-only distinction does not rewrite already-issued effective recipes:
+pending reconciliation retains its stored explicit executable/argv/cwd path,
+and running attachment never relaunches a shell. It does not deduplicate PATH
+or modify any startup file. A controlled private account-shell/real-PTY fixture
+isolated from the process-wide resolver cache proves old double startup side
+effects/PATH suffixes versus one startup, while preserving explicit bare-program
+lookup and frozen fingerprints. The captured Linux21 extra `/snap/bin` remains
+a native mismatch; its exact startup-file writer is not inferred from that
+controlled fixture. Validation impact: GUI:HOST-02/03, ADR-0084. Corrected managed
+native qualification remains separate.

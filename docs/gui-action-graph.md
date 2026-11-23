@@ -2388,6 +2388,9 @@ Fresh generic creation and Start & Connect resolve omitted cwd on the server
 to its account home, using ordinary local-shell/PATH/startup defaults. Explicit
 launch fields remain exact; reconnect uses the already-issued generation. This
 changes launch defaults on the existing edges, not discovery or authority.
+Fresh generic Unix account-shell `-l` defaults apply login startup in the real
+shell once; they skip only the preparatory login probe. Explicit launch fields,
+frozen effective recipes, existing generations and Windows paths stay unchanged.
 See ADR-0025/0084 and the manual fresh-shell HOME/PATH scenario; native managed
 qualification remains separate from deterministic launch fixtures.
 

@@ -6899,6 +6899,7 @@
         "explicit_program_empty_arguments_default_to_account_home_not_service_cwd",
         "explicit_directory_and_no_profile_arguments_are_never_rewritten",
         "generic_shell_uses_account_login_defaults_and_host_home",
+        "fresh_generic_login_sources_controlled_private_home_once",
         "corrected_path_is_used_before_canonical_spawn_and_fingerprint",
         "native_home_and_path_defaults_preserve_explicit_environment_choices",
         "native_zsh_reads_only_the_private_fixture_home_startup",

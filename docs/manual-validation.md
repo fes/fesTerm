@@ -6656,6 +6656,15 @@ HOME/PATH override/Clear preservation, bounded startup/oversized output, and an
 actual zsh startup using only a private fixture HOME. These checks neither
 restart the production Remote shell nor qualify the managed server matrix.
 
+For fresh generic Unix defaults, verify the actual login shell applies startup
+once, rather than receiving a preparation login's already-modified PATH. The
+controlled private-home/real-PTY regression records startup side effects and a
+non-idempotent PATH suffix, plus explicit-command and frozen-recipe checks.
+Linux21's captured extra trailing `/snap/bin` is retained as a mismatch; source
+and controlled tests do not identify its actual startup-file writer. Do not
+normalize PATH or edit user dotfiles. Repeat the native default-only check on a
+corrected frontend/helper cohort before accepting that mismatch as resolved.
+
 
 ### Ordinary remote termination — source qualification pending native checks
 
