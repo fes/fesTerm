@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "934e4ae3bd5fa6965db794a3b3f1ef3b1381868b6b417c42040f08947e7acb8c"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "c4d2ae45d60a4829d5639082a63138bbc819ebf2323f917ab5dcda616eaf4fe6"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -46,12 +46,13 @@ Use for: When a bounded copy queue needs collision decisions, retries, or public
 
 - [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, events, batches, and commit logic.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
-- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Composes rooted atomic publication with the planner and queue. Files opts into idle Ping; other endpoints default off.
+- [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs)
 
 Evidence:
-- [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost OPEN reply preserves the primary error and reports uncertainty without deletion.
+- [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs)
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped collision decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Parks work behind the sole retained replacement review.
+- [`interrupted_copy_preserves_failed_handle_cleanup`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Keeps uncertain handle cleanup ahead of the progress callback’s cancellation classification.
 - [`files_transfer_stays_live_while_browsing_beyond_server_idle_deadline`](../../app/festerm/src/host_files.rs) — Actual paired servers retain the first transfer after idle browsing.
 
 Caveats:
@@ -64,11 +65,11 @@ Caveats:
 Use for: When GUI SFTP tabs read remote files or start a remote pane after trust resolution.
 
 - [`connect_remote_session`](../../app/festerm/src/sftp_file_manager.rs) — Bridges profile auth and host-key resolution into the GUI SFTP session.
-- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs) — Binds remote reads to the verified endpoint identity and transport generation.
+- [`RemoteFileCapability`](../../app/festerm/src/remote_files.rs)
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.
-- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The app sees host-key trust before password prompts in the same order as ssh.
+- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs)
 
 Caveats:
 - Remote reads are bound to a verified fingerprint and transport generation to avoid stale reads.

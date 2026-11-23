@@ -40,7 +40,10 @@ never authorize it. Rename/chmod/link parity and Mobile integration remain
 separate work. The grant is off by default and can be changed/revoked on
 an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/linux-files-native-readwrite.json)
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
-with Delete off; wider native/provider Desktop qualification remains pending.
+with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)
+adds a 16 MiB Linux upload and Linux-to-Mac download, mkdir, upload and reviewed
+file/empty-directory deletion, including Delete Cancel preservation. Wider
+native/provider Desktop qualification remains pending.
 
 An independent [read-only observation protocol](docs/remote-observation-protocol.md)
 adds explicitly approved roots, revision-checked offset reads, bounded native

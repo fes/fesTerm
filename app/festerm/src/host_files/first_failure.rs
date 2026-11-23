@@ -11,6 +11,36 @@ pub(crate) enum Channel {
     Transfer,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_transfer_cleanup_retains_a_content_free_uncertainty_notice() {
+        let first = FirstFailure::default();
+        let error = file_client::Error::CleanupFailed {
+            operation: Box::new(file_client::Error::LocalIo(io::ErrorKind::Interrupted)),
+            cleanup: Box::new(file_client::Error::Remote {
+                code: rpc::ErrorCode::Denied,
+                recovery_path: Some("private-path-must-not-appear".into()),
+            }),
+        };
+        first.record(Channel::Transfer, "upload", &error);
+        let notice = first.details_or("missing".into());
+        assert_eq!(
+            notice,
+            "Couldn’t confirm transfer cleanup. Check the files before trying again."
+        );
+        assert!(!notice.contains("private-path") && !notice.contains("completed"));
+        first.record(
+            Channel::Browsing,
+            "keepalive",
+            &file_client::Error::Cancelled,
+        );
+        assert_eq!(first.details_or("secondary".into()), notice);
+    }
+}
+
 impl Channel {
     pub(super) fn label(self) -> &'static str {
         match self {
@@ -43,6 +73,7 @@ impl FirstFailure {
             Error::Protocol => ("protocol", None, None),
             Error::Transport(kind) => ("transport", Some(*kind), None),
             Error::LocalIo(kind) => ("local_io", Some(*kind), None),
+            Error::CleanupFailed { .. } => ("cleanup_unconfirmed", None, None),
             Error::Remote {
                 code: rpc::ErrorCode::RecoveryRequired,
                 ..
@@ -73,6 +104,10 @@ impl FirstFailure {
         let Some(fact) = self.0.get() else {
             return fallback;
         };
+        if fact.class == "cleanup_unconfirmed" {
+            return "Couldn’t confirm transfer cleanup. Check the files before trying again."
+                .into();
+        }
         if matches!(
             fact.class,
             "uncertain_finish" | "uncertain_delete" | "recovery_required"

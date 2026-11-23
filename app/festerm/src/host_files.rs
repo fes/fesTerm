@@ -80,7 +80,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
             // The existing transfer progress callback uses Interrupted for
             // cancellation. This alone does not identify a remote failure or
             // prove why the local source/sink was interrupted.
-            self.locally_retired = true;
+            self.locally_retired = !self.client.available();
         } else if !self.client.available() {
             self.record_failure(stage, error);
         }
@@ -95,6 +95,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
     }
     fn error(path: &str, operation: &'static str, error: file_client::Error) -> SftpSessionError {
         match error {
+            file_client::Error::CleanupFailed { operation: cause, cleanup } => {
+                SftpSessionError::TransferFailedWithIncompleteCleanup {
+                    operation_error: Box::new(Self::error(path, operation, *cause)),
+                    cleanup_error: Box::new(Self::error(path, "close transfer handle", *cleanup)),
+                }
+            }
             file_client::Error::UncertainFinish(cause) => SftpSessionError::PublicationUncertain {
                 path: path.into(),
                 reason: cause.to_string(),
@@ -1050,6 +1056,7 @@ mod tests {
         let (transfer_stream, mut peer) = tokio::io::duplex(8192);
         let (seen, received) = tokio::sync::oneshot::channel();
         let (finish_write, await_write) = tokio::sync::oneshot::channel();
+        let (keepalive_seen, keepalive_received) = tokio::sync::oneshot::channel();
         let transfer_server = tokio::spawn(async move {
             opened(&mut peer).await;
             for _ in 0..8 {
@@ -1081,6 +1088,16 @@ mod tests {
                             None,
                         )
                         .await;
+                        let close = request(&mut peer).await;
+                        assert!(matches!(
+                            close.operation,
+                            rpc::Operation::Close { handle: 1 }
+                        ));
+                        reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+                        let ping = request(&mut peer).await;
+                        assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+                        reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+                        keepalive_seen.send(()).unwrap();
                         let mut byte = [0];
                         assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
                         return;
@@ -1145,6 +1162,14 @@ mod tests {
         .unwrap();
         assert_eq!(first.details_or("no failure".into()), "no failure");
         assert!(!lifetime.is_cancelled() && !parent.is_cancelled());
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        keepalive_received.await.unwrap();
+        tokio::time::resume();
+        assert!(
+            !lifetime.is_cancelled(),
+            "confirmed cancellation must keep the tab alive"
+        );
         browsing.ping().await.unwrap();
         assert!(browsing.ping().await.is_err());
         let details = first.details_or("missing".into());
@@ -1153,12 +1178,9 @@ mod tests {
             "{details}"
         );
         assert!(!details.contains("cancelled"));
-        // Existing behavior still retires the tab when its intentionally closed
-        // transfer stream next fails keepalive. Preserve that context without
-        // turning local retirement into a second primary failure.
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(20)).await;
-        tokio::time::resume();
+        // A later genuine browsing failure still retires this tab, preserving
+        // that original failure rather than blaming the earlier cancellation.
+        assert!(browsing.keepalive().await.is_err());
         tokio::time::timeout(Duration::from_secs(3), lifetime.cancelled())
             .await
             .unwrap();
@@ -1841,6 +1863,15 @@ mod tests {
                         None,
                     )
                     .await;
+                    let close = request(&mut peer).await;
+                    assert!(matches!(
+                        close.operation,
+                        rpc::Operation::Close { handle: 1 }
+                    ));
+                    reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+                    let ping = request(&mut peer).await;
+                    assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+                    reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
                 }
                 let mut eof = [0];
                 assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
@@ -1864,7 +1895,12 @@ mod tests {
                 }
             );
             assert!(endpoint.in_flight_upload.is_none());
+            assert_eq!(endpoint.client.available(), !cancel_before_begin);
+            if !cancel_before_begin {
+                endpoint.keepalive().await.unwrap();
+            }
             endpoint.cleanup().await.unwrap();
+            endpoint.client.cancel();
             joined(server).await;
         }
     }

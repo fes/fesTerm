@@ -362,6 +362,16 @@ reserved name is for deliberate **host-local operator recovery**, not a client
 delete/rename API. Never blindly retry a finish after an uncertain connection
 loss; rediscover/stat and obtain fresh explicit consent.
 
+When local source/sink I/O returns an error between complete wire exchanges,
+the client may close that exact transfer handle once within the original local
+I/O deadline. A confirmed Close consumes the handle and attempts server staging
+cleanup while keeping the framed stream usable; it does not guarantee unlink
+success on every OS failure. A missing or failed Close retains both the original
+I/O error and cleanup error and closes the stream. Dropped futures, cancelled
+authority, deadlines and unknown wire outcomes still close it immediately; no
+transfer, Close or Finish is replayed. A local flush failure after an already
+acknowledged read-handle Close does not issue a second Close.
+
 Disconnect, close or cancellation cleans incomplete staging files when the
 process can run cleanup. A force-kill/power loss can leave private staging or
 recovery files; this is not durable crash-resumable transfer. New uploaded files

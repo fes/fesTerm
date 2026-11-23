@@ -6838,8 +6838,13 @@ not claim a user action or privacy event. Do not export paths, backend error
 text or credentials. These source fixtures preserve diagnosis only; the original
 native upload cause, cancellation and live grant-revocation acceptance remain
 open, with no automatic replay or changed permission policy.
-The existing post-cancellation closed-stream keepalive may still retire the tab;
-retain that finite local-retirement event separately from the first failure.
+The signed 0.17.24 cancellation check retained a transfer-channel liveness
+failure with `locally_retired=true` after one Cancel. The partial was absent,
+but the tab disconnected; this is not full cancellation acceptance. The
+client correction closes an owned handle at a complete wire boundary within
+the original local-I/O deadline. Native preservation of the existing connection
+and a later distinct transfer still require qualification; keep the original
+failure separately.
 
 ### Transient SSH/SFTP key-file import (`AUTH-01`, `AUTH-04`)
 
@@ -6890,3 +6895,25 @@ EOFs. Native transfer, intentional cancellation and live grant revocation still
 require separate acceptance; no timeout increase or cached authorization is
 part of the fix. Preserve existing files, actor generations and first finite
 failure details.
+
+
+### Signed 0.17.24 Files component evidence
+
+The [23 November component record](../validation/dev-tunnels/files-native-0.17.24.json)
+qualifies ordinary account discovery and a completed 16 MiB Linux upload, plus
+Linux-to-Mac download, mkdir, 16 MiB upload and separately reviewed deletion of
+the new file and empty directory. Delete Cancel preserved each exact target;
+a fresh Confirm removed it. Both apps drained normally and original actors,
+catalogs, policy and canaries remained intact. These are scoped components,
+not new shell matrix cases or blanket current-release acceptance. Selecting a
+`.txt` row did not open a preview and is explicitly unqualified. Intentional
+transfer cancellation, Windows Files, native typed denials and live revocation
+remain separate checks; the successful transfers do not establish the cause
+of the original upload failures.
+
+
+The same signed 0.17.24 record separately qualifies a rendered, read-only
+83-byte Markdown snapshot placed as an owned OS fixture, not uploaded through
+the GUI. Its subsequent partial-upload Cancel cleaned the test target but
+failed connection preservation (#893). That first failure remains explicit;
+source regressions and a later corrected-client run must not erase it.

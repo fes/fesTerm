@@ -337,9 +337,10 @@ fn copy_result(
 ) -> Result<u64, CopyFileError> {
     match result {
         // An uncertain publication must retain its original classification.
-        Err(error @ SftpSessionError::PublicationUncertain { .. }) => {
-            Err(CopyFileError::Operation(error))
-        }
+        Err(
+            error @ (SftpSessionError::PublicationUncertain { .. }
+            | SftpSessionError::TransferFailedWithIncompleteCleanup { .. }),
+        ) => Err(CopyFileError::Operation(error)),
         Err(_) if interrupted => Err(CopyFileError::Cancelled),
         other => other.map_err(CopyFileError::Operation),
     }
@@ -414,6 +415,24 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ProgressIo<'_, T> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn interrupted_copy_preserves_failed_handle_cleanup() {
+        let error = SftpSessionError::TransferFailedWithIncompleteCleanup {
+            operation_error: Box::new(endpoint_error("upload", "/owned", "local interrupted")),
+            cleanup_error: Box::new(endpoint_error(
+                "close transfer handle",
+                "/owned",
+                "deadline",
+            )),
+        };
+        assert!(matches!(
+            copy_result(Err(error), true),
+            Err(CopyFileError::Operation(
+                SftpSessionError::TransferFailedWithIncompleteCleanup { .. }
+            ))
+        ));
+    }
     #[cfg(unix)]
     use tokio::io::AsyncWriteExt;
 
