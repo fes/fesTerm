@@ -192,6 +192,7 @@ pub struct OperationAdmission {
     request: Envelope<Request>,
     cancelled: Arc<AtomicBool>,
     // Captured before this control worker starts; never renewed after an effect.
+    #[cfg(feature = "relay")]
     control_deadline: Option<std::time::Instant>,
     #[cfg(feature = "relay")]
     inventory: Arc<std::sync::Mutex<Option<InventoryCapture>>>,
@@ -481,6 +482,7 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
             source: source.clone(),
             request: request.clone(),
             cancelled,
+            #[cfg(feature = "relay")]
             control_deadline: Some(deadline.into_std()),
             #[cfg(feature = "relay")]
             inventory: inventory.clone(),

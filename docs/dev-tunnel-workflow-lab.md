@@ -93,13 +93,16 @@ release. Historical local references and supporting SDK routes stay attributed.
 | --- | --- | --- |
 | Windows → Linux | [Accepted](../validation/dev-tunnels/windows-client-linux-0.17.12.json) | [Accepted](../validation/dev-tunnels/windows-client-linux-0.17.12.json) |
 | Linux → Windows | [Accepted](../validation/dev-tunnels/linux-client-windows-native.json) | [Accepted](../validation/dev-tunnels/linux-client-windows-native.json) |
-| macOS → Windows | Blocked: stopped HOST20 verification after Disable39, then separate reviewed Enable-OFF | [Accepted](../validation/dev-tunnels/mac-client-windows-native.json) |
+| macOS → Windows | [Accepted](../validation/dev-tunnels/mac-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-windows-native.json) |
 | Linux → macOS | [Accepted](../validation/dev-tunnels/linux-client-mac-native.json) | [Accepted](../validation/dev-tunnels/linux-client-mac-native-on.json) |
 | macOS → Linux | [Accepted](../validation/dev-tunnels/mac-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-linux-native.json) |
 | Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
 
-The last Windows owner phase preserved all27 durable actors after Disable39;
-this table does not claim the HOST20 update or subsequent Enable has succeeded.
+The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
+daemon and separately pinned local19 references. The genuine stopped HOST15→21
+update and separate Enable40 reached authoritative Listening, preserving all27
+original actors. Its first final-scope observation warning remains recorded; no
+clean first-Enable or combined-release qualification is inferred.
 The Windows→Mac pair uses signed test GUI/HOST20 with retained client support
 files, older Mac local R22 references and a separate SDK777 service check. The
 first OFF phase completed functional I/O and normal drain but failed its carried

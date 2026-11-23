@@ -2369,14 +2369,13 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     let original_end = end.operation().clone();
     assert!(matches!(
         client_end_worker(&mut fixture, end.clone()).await,
-        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
-            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
-        ))
+        crate::host_client::Outcome::Ended { target: ended } if ended == target
     ));
     assert!(
-        end.is_issued() && !end.is_resolved(),
-        "durable stop intent is not observed Ended"
+        end.is_issued() && end.is_resolved(),
+        "one End confirms only its observed exact gone generation"
     );
+    assert_eq!(end.operation(), &original_end);
     tokio::time::timeout(Duration::from_secs(8), async {
         while !festerm_sessiond::list_running_sessions_in(&fixture.native.root)
             .unwrap()
@@ -2426,20 +2425,43 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     };
     assert_eq!(session.target.logical, target.logical);
     assert_ne!(session.target.generation, target.generation);
+    // A resolved original is refused before handshake or another End RPC.
+    let (stream, mut peer) = tokio::io::duplex(1024);
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let mut client = ControlClient::on_authenticated_stream(stream, fixture.binding(), permit);
     assert!(matches!(
-        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::end_authenticated(&mut client, end.clone(), &CancellationToken::new())
+            .await,
+        Err(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Contract(
+                festerm_host_protocol::ContractError::Stale
+            )
+        ))
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(25), peer.read_u8())
+            .await
+            .is_err()
+    );
+    assert_eq!(end.operation(), &original_end);
+    assert!(end.is_resolved());
+    // Separately review the old generation afresh: the real server must refuse
+    // it as Stale and leave the replacement generation untouched.
+    let old_target = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
+    assert_ne!(old_target.operation(), &original_end);
+    assert!(matches!(
+        client_end_worker(&mut fixture, old_target.clone()).await,
         crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
             festerm_tunnel_client::host_control::Error::Refused(Refusal::Stale)
         ))
     ));
-    assert_eq!(end.operation(), &original_end);
-    assert!(!end.is_resolved());
+    assert!(old_target.is_issued() && !old_target.is_resolved());
     assert_eq!(
         festerm_sessiond::list_running_sessions_in(&fixture.native.root)
             .unwrap()
             .len(),
         1,
-        "retrying original End must not stop the replacement generation"
+        "neither the resolved original nor an old-generation End stops the replacement"
     );
     drop(control);
     fixture.auth.policy.capabilities.creation_allowed = false;
