@@ -6743,3 +6743,17 @@ revocation, generation replacement, cancelled request or unavailable observation
 must retain the original unconfirmed action, with no second End or stop replay.
 Check original sessions/settings/account bindings and normal frontend drain.
 Portable/owned native fixtures do not qualify a managed HOST or physical device.
+
+### Files first-failure diagnosis
+
+For DTFILES-03 / DT-07, preserve #883's signed21 upload failure before Cancel
+and its original unchanged-state evidence. On a separately admitted corrected
+client, retain the first failure details and finite diagnostic event before any
+explicit reconnect. A transfer-side timeout/interruption must remain the primary
+classification after browsing cancellation; an unattributed cancellation must
+not claim a user action or privacy event. Do not export paths, backend error
+text or credentials. These source fixtures preserve diagnosis only; the original
+native upload cause, cancellation and live grant-revocation acceptance remain
+open, with no automatic replay or changed permission policy.
+The existing post-cancellation closed-stream keepalive may still retire the tab;
+retain that finite local-retirement event separately from the first failure.

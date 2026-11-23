@@ -171,6 +171,21 @@ Desktop Files tabs reuse the SFTP pane/transfer presentation and restore
 disconnected, never with live authority. The amendment below adds separately
 reviewed delete; rename/chmod/link actions and Mobile integration remain queued.
 
+Desktop Files retains one bounded, content-free first connection failure per
+tab. Its browsing/transfer channel, fixed boundary and typed error class survive
+shared-tab retirement, so a later cancellation cannot replace the primary
+diagnosis. Existing failure details use plain wording; diagnostic events contain
+only finite classes, optional I/O kind and remote code, never paths or backend
+messages. Cancellation without a proven origin remains unattributed. This does
+not change privacy/account cancellation, grants, timeouts, cleanup or replay.
+A locally interrupted transfer may leave its protocol stream closed. Its next
+failed keepalive still retires the tab under existing behavior; a finite event
+marks that local retirement without attributing a user/privacy cause or replacing
+an earlier failure. Preserving this observation is not a cancellation-policy fix.
+Validation impact: GUI:DTFILES-03; paired framed-client EOF/deadline and
+cancellation/isolation fixtures. The native upload failure in #883 remains
+unexplained; diagnostic preservation is not its runtime repair.
+
 ### Revocation and publication cutover
 
 The protected transition into StopRequested/another non-serving phase is the

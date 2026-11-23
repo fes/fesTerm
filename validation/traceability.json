@@ -7620,7 +7620,12 @@
         "files_delete_prepared_review_waits_behind_existing_transfer_collision_dialog",
         "files_transfer_stays_live_while_browsing_beyond_server_idle_deadline",
         "files_transfer_command_arriving_during_ping_does_not_drop_exchange",
-        "files_transfer_failed_idle_ping_cancels_collision_and_only_its_child_lifetime"
+        "files_transfer_failed_idle_ping_cancels_collision_and_only_its_child_lifetime",
+        "files_first_transfer_failure_survives_secondary_browsing_cancellation",
+        "files_parent_retirement_is_unattributed_and_completed_clients_stay_live",
+        "files_explicit_collision_cancel_is_not_a_liveness_failure",
+        "files_stalled_write_keeps_deadline_before_later_closed_ping",
+        "files_cancelled_upload_does_not_mask_later_browsing_failure"
       ],
       "manual_scenarios": [
         "DT-07"

@@ -1,7 +1,9 @@
 //! Ordinary Files worker behind the existing file-manager presentation and
 //! command queue. There is no terminal, daemon session or SFTP fallback.
 use super::*;
-use crate::app::host_files::{ConnectFiles, DeleteObservation, FilesEndpoint};
+use crate::app::host_files::{
+    ConnectFiles, DeleteObservation, FilesChannel, FilesEndpoint, FirstFailure,
+};
 use festerm_ssh::RemoteTransferEndpoint;
 use tokio_util::sync::CancellationToken;
 
@@ -121,6 +123,7 @@ async fn run_files_worker(
     } = owner;
     let mut transfers = None;
     let delete_observation = DeleteObservation::default();
+    let first_failure = FirstFailure::default();
     let work = async {
         let result = match connect.await {
             Ok(connection) => {
@@ -137,6 +140,7 @@ async fn run_files_worker(
                     },
                     &mut transfers,
                     &delete_observation,
+                    first_failure.clone(),
                 )
                 .await;
                 lifetime.cancel();
@@ -145,6 +149,9 @@ async fn run_files_worker(
             Err(error) => Err(error.message),
         };
         if let Err(details) = result {
+            // Keep the first typed endpoint failure, not cancellation caused
+            // by retiring the shared tab after that failure.
+            let details = first_failure.details_or(details);
             connection_scope.retire();
             let _ = events
                 .send(WorkerEvent::ConnectionFailed {
@@ -174,6 +181,7 @@ async fn files_operations(
     notifications: SftpWorkerNotifications,
     transfers: &mut Option<SftpTransferManager>,
     delete_observation: &DeleteObservation,
+    first_failure: FirstFailure,
 ) -> Result<(), String> {
     let SftpWorkerNotifications {
         events,
@@ -183,9 +191,19 @@ async fn files_operations(
     } = notifications;
     let source = FilesSource::new(&target, connection.account_id, &connection.browsing)?;
     let lifetime = connection.lifetime;
-    let mut browsing = FilesEndpoint::new(connection.browsing, lifetime.clone());
+    let mut browsing = FilesEndpoint::new(
+        connection.browsing,
+        lifetime.clone(),
+        first_failure.clone(),
+        FilesChannel::Browsing,
+    );
     *transfers = Some(SftpTransferManager::from_remote_endpoint(
-        FilesEndpoint::new(connection.transfer, lifetime.clone()),
+        FilesEndpoint::new(
+            connection.transfer,
+            lifetime.clone(),
+            first_failure,
+            FilesChannel::Transfer,
+        ),
     ));
     let manager = transfers.as_mut().expect("installed Files manager");
     let (snapshot, metadata, skipped) = browsing
