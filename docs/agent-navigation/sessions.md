@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "067a53295e6b69c0446a5f7ba40d0e5966b4ac28767c223b6d549befa840d5ce"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "codex-source-verified", "sources": "8578cacb4fb786453c583c5b0874fde57b93e6b71a61c28a405b503b23ce4b98"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

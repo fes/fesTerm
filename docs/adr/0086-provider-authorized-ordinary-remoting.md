@@ -491,6 +491,13 @@ same control request may observe completion after its one stop commit: it uses
 that request's original deadline and cancellation, releases locks between exact
 generation observations, and freshly authorizes the ended generation before
 publishing Ended. It never resends End or renews the deadline.
+During post-stop observation only, actual contention on the existing native
+registry lock remains Busy within that same wait. The completion reader neither
+creates a missing lock nor retries malformed, aliased, missing, or otherwise
+unverifiable native state. Exact generation/lease evidence and final End
+permission remain required. Initial End admission and ordinary native readers
+retain their existing behavior; this does not repair an unclassified pre-stop
+failure merely because a later completion check is more precise.
 
 HOST-created generic and shared-profile sessions are eligible under the normal
 session grant. Imported desktop-bound local shells retain the native bound-local
