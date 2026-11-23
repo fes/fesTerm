@@ -40,7 +40,10 @@ never authorize it. Rename/chmod/link parity and Mobile integration remain
 separate work. The grant is off by default and can be changed/revoked on
 an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/linux-files-native-readwrite.json)
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
-with Delete off; wider native/provider Desktop qualification remains pending.
+with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)
+adds a 16 MiB Linux upload and Linux-to-Mac download, mkdir, upload and reviewed
+file/empty-directory deletion, including Delete Cancel preservation. Wider
+native/provider Desktop qualification remains pending.
 
 An independent [read-only observation protocol](docs/remote-observation-protocol.md)
 adds explicitly approved roots, revision-checked offset reads, bounded native
@@ -105,6 +108,10 @@ Separate attributed native components cover the [Mac 20 stopped HOST update and 
 the [Windows 20 stopped-service diagnostic and explicit prerequisite restoration](validation/dev-tunnels/windows-client-privacy-0.17.20.json),
 and [physical iPhone saved-account reopening](validation/dev-tunnels/ios-saved-account-reopen-0.17.20.json).
 They add no full matrix case.
+A separate [Linux SFTP native component record](validation/sftp/linux-native-recovery-2026-11-23.json)
+qualifies key-file imports, directory/delete and batch-conflict actions, plus an
+interrupted-upload restart, inspection, manual deletion and local acknowledgement.
+It uses a pinned development build and adds no Dev Tunnels matrix case.
 The [Mac-client/Windows-server creation-OFF record](validation/dev-tunnels/mac-client-windows-native-off.json)
 completes the desktop matrix with disabled creation, saved retained-session
 reconnection, two matched-grid Copilot/query pairs and independent service

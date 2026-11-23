@@ -1,0 +1,101 @@
+{
+  "record_version": 1,
+  "status": "scoped native components passed; remaining checks explicitly unqualified",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "date_utc": "2026-11-23",
+  "not_a_new_matrix_case": true,
+  "desktop_full_case_count": 12,
+  "mobile_full_case_count": 0,
+  "matrix_total": 24,
+  "combined_release_qualified": false,
+  "sources": {
+    "tag": "v0.17.24",
+    "commit": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+    "tree": "10c77e80f5512c669e1529147ec6354a6760274e",
+    "public_release_run": 45200242229,
+    "Linux_GUI_MAIN_sha256": "1d6147044c9b9618055b786458e76af769b6b41e2c90e5f55f6e37c24c435ce3",
+    "Linux_HOST_sha256": "142f3335523e9f3e70e41a084daf5602bf76679ce6f9f9cfdedc67be7fac650c",
+    "Mac_HOST_sha256": "878a27505370356e14ab0ae6445f0c06adeba2449fdd90bd8e89ac8a274f7626"
+  },
+  "components": [
+    {
+      "client": "Linux VM",
+      "server": "Linux VM",
+      "scope": "one ordinary 16 MiB upload",
+      "account_discovery_and_connect_once": true,
+      "upload_bytes": 16777216,
+      "source_destination_sha256": "341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1",
+      "UI": "Completed100%; Connected",
+      "partial_after_completion": false,
+      "normal_exit_and_owned_helpers_drained": true,
+      "original_actors_catalog_policy_and_canaries_preserved": true,
+      "private_receipt_sha256": "70645156e3d282e56123f86d8779eb0d45d6e94482a5c4e0623277d7cf44a69e",
+      "verified_artifact_references": 134
+    },
+    {
+      "client": "Linux VM",
+      "server": "macOS VM",
+      "scope": "normal account discovery, download, mkdir, upload and reviewed file/empty-directory deletion",
+      "connect_once": true,
+      "saved_local_profile": false,
+      "download": {
+        "bytes": 97,
+        "sha256": "d8156c8fb65a2d49d258ea575eedab60527b2933dda053da06e23aab27e8d980"
+      },
+      "upload": {
+        "bytes": 16777216,
+        "sha256": "341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1",
+        "source_destination_equal": true,
+        "UI": "Completed100%; Connected",
+        "partial_after_completion": false
+      },
+      "new_directory_created_once": true,
+      "file_delete_cancel_preserved_inode_and_hash": true,
+      "file_fresh_confirm_removed_only_owned_target": true,
+      "empty_directory_delete_cancel_preserved_inode": true,
+      "empty_directory_fresh_confirm_removed_only_owned_target": true,
+      "original_three_canaries_preserved": true,
+      "normal_GUI_exit": 0,
+      "owned_helpers_drained": true,
+      "original_Linux_and_Mac_actors_catalogs_policy_and_configs_preserved": true,
+      "Windows": "not queried; concurrent owner update separately attributed",
+      "private_receipt_sha256": "4ba92a86ba227858814fe137b420a72d3ce02a286f322ebacfac3c3d0e6a090e",
+      "verified_artifact_references": 189,
+      "preview": "NOT qualified: selected .txt row is not a preview; existing open route supports Markdown"
+    },
+    {
+      "client": "Linux VM",
+      "server": "Linux VM",
+      "scope": "native read-only Markdown preview; independent of subsequent failed Cancel",
+      "preview_bytes": 83,
+      "preview_sha256": "5ba26d441ae45a5cc316de77240681d8dade6e7d250e9e2d6d197cd9af7e427a",
+      "public_fixture_placed_by_OS_not_GUI_upload": true,
+      "visible_content_and_read_only_status": true,
+      "private_receipt_sha256": "9c16ac696e036207461fc38750c48b24cacce2c6f5e68ea02cd28e5b64681b2e",
+      "verified_artifact_references": 113
+    }
+  ],
+  "limits": [
+    "These component results do not add full shell matrix cases or qualify every client/server pair on a combined release.",
+    "Explicit mid-transfer cancellation, Windows Files, direct typed refusal, root escape/reparse, grant revocation and broader recursive/replacement behavior are not qualified by these two runs.",
+    "Successful new runs do not establish the cause of the original upload failures tracked in #883.",
+    "Original full-desktop captures remain private because their background includes unrelated browser pages. No cropped or generated replacement images are committed."
+  ],
+  "retained_failures": [
+    {
+      "tracker": "https://github.com/fes/fesTerm/issues/893",
+      "client": "Linux VM",
+      "server": "Linux VM",
+      "one_upload_then_one_Cancel": true,
+      "before_Cancel": "Running26%/4.3MiB of16MiB",
+      "first_result": "Connection failed; stale transferRunning66%/10.6MiB",
+      "before_Quit_no_final_or_staging": true,
+      "existing_finite_fact": "transfer-channel liveness failure; locally_retired=true; no primary failure class recorded",
+      "native_cause": "not inferred from this fact alone",
+      "no_retry_Refresh_or_reconnect": true,
+      "normal_exit_and_preservation": true,
+      "private_receipt_sha256": "9c16ac696e036207461fc38750c48b24cacce2c6f5e68ea02cd28e5b64681b2e",
+      "verified_artifact_references": 113
+    }
+  ]
+}

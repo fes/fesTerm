@@ -2989,7 +2989,28 @@ qualification remain under the existing SFTP scenarios on each desktop OS.
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-04 | On Local and an owned SFTP Remote, use New directory with a Unicode/spaced child name, invalid traversal/reserved names and an existing destination. Review actual side/endpoint/parent. Select owned files, symlinks and empty folders; Delete must focus Cancel and list exact paths, with no operation before confirmation. Cancel leaves them intact. Confirm removes only reviewed leaves, preserves link targets and refuses non-empty directories. Change selection/folder/connection during review; it must refuse rather than retarget. Saturate command admission, lose the connection during an operation and close the owner: inspect explicit partial/uncertain results, refresh/reselect/reconfirm without automatic replay. Local operations must still work while Remote awaits retry. | Automated owned filesystem/UI and in-process SFTP + native functional/visual/accessibility pending | Production modal geometry covers 320/460 logical-pixel windows with long folder/target names and retained button padding. Portable tests cover child admission/no-overwrite, real Local file/empty-dir/link semantics, observed changed-target refusal, stale directory events/selection/connection, both production buttons/dialogs and inert Cancel/full admission. The in-process SFTP fixture covers LSTAT and one link removal preserving target bytes. Native OS permissions, packaged keyboard/screen-reader/DPI behavior, real remote disconnect/partial-batch presentation and concurrent external path replacement remain manual; no atomic inode-conditional delete or rollback claim. |
-| SFTP-05 | Using owned GUI SFTP fixtures, interrupt an upload after exclusive OPEN and during publication, then restart the packaged app. Review the saved verified endpoint, temporary path and optional final path without connecting. Copy the report, close/reopen the list and dismiss a live notice; verify retention. With another window/process owning an active upload, acknowledgement must refuse; after owner exit, confirm local acknowledgement and verify no server operation. Fill the bounded report store and verify new upload refusal before OPEN without evicting old reports. | Portable report store/process-kill, protocol and headless action checks; native qualification pending | Automated checks cover atomic checkpoint refusal, zero OPEN and zero publication effects, cancellation, retained uncertainty, no-overwrite local reports, capacity/byte limits, endpoint separation, active cross-process locks, crash/reopen, report-only central UI actions and unchanged Completed after retirement failure. Packaged Windows/macOS/Linux restart, real server loss, short-window path/copy readability, multiwindow interaction and accessibility remain manual. Reports do not establish safe remote delete or resume. Explicitly inspect a saved report with no connected SFTP tab, the wrong selected endpoint/key, an active owner, and a changed generation: require clear guidance or refusal and no new connection. With the exact selected connected endpoint, inspect a normalized absolute parent, and require copy/manual guidance for relative, drive-only or ambiguous server paths, then require the exact unique visible regular file to be selected and revealed without changing the filter. Missing, duplicate, directory, symlink, other or filtered targets must clear unrelated selection and retain the report with guidance. Navigate while the report reloads or its listing is pending, including away and back: late inspection must not replace newer folder/history/selection. Separately review ordinary confirmed Delete and explicit local acknowledgement. Kill/restart → report → same-key inspection → manual confirmed deletion, physical keyboard/accessibility, actual server failure and path-replacement behavior remain unqualified. |
+| SFTP-05 | Using owned GUI SFTP fixtures, interrupt an upload after exclusive OPEN and during publication, then restart the packaged app. Review the saved verified endpoint, temporary path and optional final path without connecting. Copy the report, close/reopen the list and dismiss a live notice; verify retention. With another window/process owning an active upload, acknowledgement must refuse; after owner exit, confirm local acknowledgement and verify no server operation. Fill the bounded report store and verify new upload refusal before OPEN without evicting old reports. | Portable report store/process-kill, protocol/headless checks and a pinned Linux development-cohort native component; wider native qualification pending | Automated checks cover atomic checkpoint refusal, zero OPEN and zero publication effects, cancellation, retained uncertainty, no-overwrite local reports, capacity/byte limits, endpoint separation, active cross-process locks, crash/reopen, report-only central UI actions and unchanged Completed after retirement failure. Packaged Windows/macOS/Linux restart, real server loss, short-window path/copy readability, multiwindow interaction and accessibility remain manual. Reports do not establish safe remote delete or resume. Explicitly inspect a saved report with no connected SFTP tab, the wrong selected endpoint/key, an active owner, and a changed generation: require clear guidance or refusal and no new connection. With the exact selected connected endpoint, inspect a normalized absolute parent, and require copy/manual guidance for relative, drive-only or ambiguous server paths, then require the exact unique visible regular file to be selected and revealed without changing the filter. Missing, duplicate, directory, symlink, other or filtered targets must clear unrelated selection and retain the report with guidance. Navigate while the report reloads or its listing is pending, including away and back: late inspection must not replace newer folder/history/selection. Separately review ordinary confirmed Delete and explicit local acknowledgement. One pinned Linux development-cohort kill/restart → report → same-key inspection → manual confirmed deletion → separate local acknowledgement passes in the native record below. Packaged all-platform qualification, physical keyboard/accessibility, actual server failure and path-replacement behavior remain open. |
+
+### Linux SFTP native component record
+
+The [23 November record](../validation/sftp/linux-native-recovery-2026-11-23.json)
+qualifies Local/Remote New directory, Delete Cancel and separate Confirm, plus
+two-file Skip All and independent Replace All batches. One real mid-write GUI
+crash retained an 83,034,112-byte partial. A second GUI using the same private
+recovery-data root showed its original inactive report before connecting.
+Normal same-key SFTP connection and explicit inspection selected that partial;
+a named ordinary Delete removed it while retaining the report, and a separate
+local acknowledgement cleared the report. Original screenshots remain private;
+the public record identifies their hashes.
+
+This is a Linux development-build component against the existing system SFTP
+server in the same VM. The first GUI was deliberately killed; the second exited
+normally. It qualifies neither server-loss/publication-time failure nor automatic
+cleanup/resume, packaged all-platform recovery, clipboard/accessibility checks,
+or Dev Tunnels Files. The wider `SFTP-04`/`SFTP-05` inventory above remains open;
+the earlier unqualified profile-picker attempt and original harness refusals are
+retained in the attributed private receipts. The screenshots predate the
+breadcrumb correction and do not qualify it.
 
 ### SFTP GUI backlog and transfer history
 
@@ -6817,8 +6838,13 @@ not claim a user action or privacy event. Do not export paths, backend error
 text or credentials. These source fixtures preserve diagnosis only; the original
 native upload cause, cancellation and live grant-revocation acceptance remain
 open, with no automatic replay or changed permission policy.
-The existing post-cancellation closed-stream keepalive may still retire the tab;
-retain that finite local-retirement event separately from the first failure.
+The signed 0.17.24 cancellation check retained a transfer-channel liveness
+failure with `locally_retired=true` after one Cancel. The partial was absent,
+but the tab disconnected; this is not full cancellation acceptance. The
+client correction closes an owned handle at a complete wire boundary within
+the original local-I/O deadline. Native preservation of the existing connection
+and a later distinct transfer still require qualification; keep the original
+failure separately.
 
 ### Transient SSH/SFTP key-file import (`AUTH-01`, `AUTH-04`)
 
@@ -6832,8 +6858,12 @@ form, switch tabs away/back, or submit while import is pending. Every stale or
 refused completion must preserve current fields. Close the original window
 with a pending picker: another window must not start an additional import until
 the actual old worker returns. No selected path or key belongs in diagnostics,
-configuration or workspace output. Native picker/authenticated SFTP acceptance
-remains pending; headless delivery tests do not qualify platform dialogs.
+configuration or workspace output. The [23 November Linux native record](../validation/sftp/linux-native-recovery-2026-11-23.json)
+qualifies masked import on all three entry points and ordinary primary-form
+SFTP authentication/listing on its pinned development cohort. The saved-profile
+component cancelled without Save or Connect; it does not qualify vault storage.
+Other platforms and the broader refusal/stale/multiwindow checks remain pending;
+headless delivery tests do not qualify platform dialogs.
 
 
 ### Mac first-Enable callback snapshot contention
@@ -6865,3 +6895,25 @@ EOFs. Native transfer, intentional cancellation and live grant revocation still
 require separate acceptance; no timeout increase or cached authorization is
 part of the fix. Preserve existing files, actor generations and first finite
 failure details.
+
+
+### Signed 0.17.24 Files component evidence
+
+The [23 November component record](../validation/dev-tunnels/files-native-0.17.24.json)
+qualifies ordinary account discovery and a completed 16 MiB Linux upload, plus
+Linux-to-Mac download, mkdir, 16 MiB upload and separately reviewed deletion of
+the new file and empty directory. Delete Cancel preserved each exact target;
+a fresh Confirm removed it. Both apps drained normally and original actors,
+catalogs, policy and canaries remained intact. These are scoped components,
+not new shell matrix cases or blanket current-release acceptance. Selecting a
+`.txt` row did not open a preview and is explicitly unqualified. Intentional
+transfer cancellation, Windows Files, native typed denials and live revocation
+remain separate checks; the successful transfers do not establish the cause
+of the original upload failures.
+
+
+The same signed 0.17.24 record separately qualifies a rendered, read-only
+83-byte Markdown snapshot placed as an owned OS fixture, not uploaded through
+the GUI. Its subsequent partial-upload Cancel cleaned the test target but
+failed connection preservation (#893). That first failure remains explicit;
+source regressions and a later corrected-client run must not erase it.

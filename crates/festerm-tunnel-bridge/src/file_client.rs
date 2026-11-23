@@ -19,6 +19,12 @@ pub enum Error {
     Protocol,
     Transport(io::ErrorKind),
     LocalIo(io::ErrorKind),
+    /// Local I/O ended, but closing its connection-local transfer handle was
+    /// not confirmed. Preserve both failures; never retry the transfer.
+    CleanupFailed {
+        operation: Box<Error>,
+        cleanup: Box<Error>,
+    },
     Remote {
         code: rpc::ErrorCode,
         recovery_path: Option<String>,
@@ -38,6 +44,10 @@ impl fmt::Display for Error {
             Self::Protocol => f.write_str("rooted file protocol refused"),
             Self::Transport(kind) => write!(f, "rooted file transport failed ({kind:?})"),
             Self::LocalIo(kind) => write!(f, "local transfer I/O failed ({kind:?})"),
+            Self::CleanupFailed { operation, cleanup } => write!(
+                f,
+                "{operation}; transfer handle cleanup could not be confirmed: {cleanup}"
+            ),
             Self::Remote { code, .. } => write!(f, "rooted file operation refused ({code:?})"),
             Self::UncertainDelete(cause) => {
                 write!(f, "delete result is uncertain; do not replay: {cause}")
@@ -91,9 +101,16 @@ async fn bounded<T>(
     cancel: &CancellationToken,
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
+    bounded_until(cancel, tokio::time::Instant::now() + DEADLINE, work).await
+}
+async fn bounded_until<T>(
+    cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
+    work: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
     tokio::select! { biased;
         _ = cancel.cancelled() => Err(Error::Cancelled),
-        result = tokio::time::timeout(DEADLINE, work) => result.map_err(|_| Error::Deadline)?,
+        result = tokio::time::timeout_at(deadline, work) => result.map_err(|_| Error::Deadline)?,
     }
 }
 fn transport(error: io::Error) -> Error {
@@ -940,12 +957,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 )
                 .await?;
             transfer.client.ready()?;
-            bounded(&transfer.client.cancel, async {
+            let deadline = tokio::time::Instant::now() + DEADLINE;
+            let written = bounded_until(&transfer.client.cancel, deadline, async {
                 sink.write_all(&chunk.bytes)
                     .await
                     .map_err(|error| Error::LocalIo(error.kind()))
             })
-            .await?;
+            .await;
+            match written {
+                Err(error @ Error::LocalIo(_)) => {
+                    return Err(transfer.abort(&handle, error, deadline).await);
+                }
+                other => other?,
+            }
             offset += chunk.bytes.len() as u64;
             if chunk.eof {
                 break;
@@ -953,12 +977,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         }
         transfer.client.close(&handle).await?;
         transfer.client.ready()?;
-        bounded(&transfer.client.cancel, async {
+        let flushed = bounded(&transfer.client.cancel, async {
             sink.flush()
                 .await
                 .map_err(|error| Error::LocalIo(error.kind()))
         })
-        .await?;
+        .await;
+        if let Err(error @ Error::LocalIo(_)) = flushed {
+            // Close was already acknowledged. Do not issue a second Close or
+            // discard a healthy channel for a returned local flush failure.
+            transfer.client.ready()?;
+            transfer.finish();
+            return Err(error);
+        }
+        flushed?;
         transfer.client.ready()?;
         transfer.finish();
         Ok(size)
@@ -985,26 +1017,40 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         while offset < size {
             transfer.client.ready()?;
             let length = (size - offset).min(bytes.len() as u64) as usize;
-            let read = bounded(&transfer.client.cancel, async {
+            let deadline = tokio::time::Instant::now() + DEADLINE;
+            let read = bounded_until(&transfer.client.cancel, deadline, async {
                 source
                     .read(&mut bytes[..length])
                     .await
                     .map_err(|error| Error::LocalIo(error.kind()))
             })
-            .await?;
+            .await;
+            let read = match read {
+                Err(error @ Error::LocalIo(_)) => {
+                    return Err(transfer.abort(&handle, error, deadline).await);
+                }
+                other => other?,
+            };
             if read == 0 {
                 return Err(Error::Invalid);
             }
             offset = transfer.client.write(&handle, &bytes[..read]).await?;
         }
         transfer.client.ready()?;
-        let extra = bounded(&transfer.client.cancel, async {
+        let deadline = tokio::time::Instant::now() + DEADLINE;
+        let extra = bounded_until(&transfer.client.cancel, deadline, async {
             source
                 .read(&mut bytes[..1])
                 .await
                 .map_err(|error| Error::LocalIo(error.kind()))
         })
-        .await?;
+        .await;
+        let extra = match extra {
+            Err(error @ Error::LocalIo(_)) => {
+                return Err(transfer.abort(&handle, error, deadline).await);
+            }
+            other => other?,
+        };
         if extra != 0 {
             return Err(Error::Invalid);
         }
@@ -1037,6 +1083,48 @@ struct Transfer<'a, S> {
 impl<S> Transfer<'_, S> {
     fn finish(mut self) {
         self.complete = true;
+    }
+}
+impl<S: AsyncRead + AsyncWrite + Unpin> Transfer<'_, S> {
+    async fn abort(
+        mut self,
+        handle: &Handle,
+        operation: Error,
+        deadline: tokio::time::Instant,
+    ) -> Error {
+        // Local I/O returned between complete wire exchanges. Abort that exact
+        // handle once within the original local-I/O deadline. An acknowledged
+        // Close consumes the handle and attempts server staging cleanup; it is
+        // not a universal unlink guarantee. Unknown/drop paths still fence the
+        // entire stream through Transfer::drop.
+        let cleanup = if tokio::time::Instant::now() >= deadline {
+            Err(Error::Deadline)
+        } else {
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(deadline) => Err(Error::Deadline),
+                result = self.client.close(handle) => {
+                    // A task can resume late with an already-readable reply.
+                    // Observing it after the original deadline never permits
+                    // retaining the stream, even if Close itself returned Ok.
+                    if tokio::time::Instant::now() >= deadline {
+                        Err(Error::Deadline)
+                    } else {
+                        result
+                    }
+                }
+            }
+        };
+        match cleanup {
+            Ok(()) => {
+                self.complete = true;
+                operation
+            }
+            Err(cleanup) => Error::CleanupFailed {
+                operation: Box::new(operation),
+                cleanup: Box::new(cleanup),
+            },
+        }
     }
 }
 impl<S> Drop for Transfer<'_, S> {
@@ -1912,6 +2000,399 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    struct InterruptedSource {
+        prefix: &'static [u8],
+        delay: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    }
+    impl AsyncRead for InterruptedSource {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buffer: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            if !self.prefix.is_empty() {
+                let length = buffer.remaining().min(self.prefix.len());
+                buffer.put_slice(&self.prefix[..length]);
+                self.prefix = &self.prefix[length..];
+                return std::task::Poll::Ready(Ok(()));
+            }
+            if let Some(delay) = self.delay.as_mut() {
+                std::task::ready!(std::future::Future::poll(delay.as_mut(), cx));
+            }
+            std::task::Poll::Ready(Err(io::ErrorKind::Interrupted.into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable() {
+        let (root, files) = grant(true);
+        let (stream, server, target) = service(files);
+        let mut client = Client::open(stream, target, CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(matches!(
+            client
+                .upload(
+                    "/cancelled",
+                    14,
+                    None,
+                    &mut InterruptedSource {
+                        prefix: b"partial",
+                        delay: None,
+                    }
+                )
+                .await,
+            Err(Error::LocalIo(io::ErrorKind::Interrupted))
+        ));
+        assert!(
+            client.available(),
+            "confirmed abort must preserve the stream"
+        );
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        let mut source = &b"next"[..];
+        assert_eq!(
+            client.upload("/next", 4, None, &mut source).await.unwrap(),
+            4
+        );
+        assert_eq!(std::fs::read(root.join("next")).unwrap(), b"next");
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rooted_client_interrupted_eof_check_aborts_instead_of_finishing() {
+        let (root, files) = grant(true);
+        let (stream, server, target) = service(files);
+        let mut client = Client::open(stream, target, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut source = InterruptedSource {
+            prefix: b"a",
+            delay: None,
+        };
+        assert!(matches!(
+            client.upload("/not-published", 1, None, &mut source).await,
+            Err(Error::LocalIo(io::ErrorKind::Interrupted))
+        ));
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rooted_client_returned_download_io_failures_preserve_channel() {
+        struct InterruptedSink {
+            write_fails: bool,
+            bytes: Vec<u8>,
+        }
+        impl AsyncWrite for InterruptedSink {
+            fn poll_write(
+                mut self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                bytes: &[u8],
+            ) -> std::task::Poll<io::Result<usize>> {
+                if self.write_fails {
+                    return std::task::Poll::Ready(Err(io::ErrorKind::Interrupted.into()));
+                }
+                self.bytes.extend_from_slice(bytes);
+                std::task::Poll::Ready(Ok(bytes.len()))
+            }
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                std::task::Poll::Ready(Err(io::ErrorKind::Interrupted.into()))
+            }
+            fn poll_shutdown(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        for write_fails in [true, false] {
+            let (root, files) = grant(true);
+            std::fs::write(root.join("source"), b"unchanged").unwrap();
+            let (stream, server, target) = service(files);
+            let mut client = Client::open(stream, target, CancellationToken::new())
+                .await
+                .unwrap();
+            let mut sink = InterruptedSink {
+                write_fails,
+                bytes: Vec::new(),
+            };
+            assert!(matches!(
+                client.download("/source", &mut sink).await,
+                Err(Error::LocalIo(io::ErrorKind::Interrupted))
+            ));
+            assert!(client.available());
+            client.ping().await.unwrap();
+            let mut next = Vec::new();
+            client.download("/source", &mut next).await.unwrap();
+            assert_eq!(next, b"unchanged");
+            assert_eq!(std::fs::read(root.join("source")).unwrap(), b"unchanged");
+            client.cancel();
+            stopped(server).await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rooted_client_failed_abort_preserves_both_errors_and_original_deadline() {
+        for withheld in [true, false] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_open(&mut peer).await;
+                let begin = request(&mut peer).await;
+                assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+                reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+                let write = request(&mut peer).await;
+                assert!(matches!(write.operation, Operation::Write { .. }));
+                let (kind, data) = crate::wire::read_frame(&mut peer).await.unwrap();
+                assert_eq!(kind, rpc::DATA);
+                assert_eq!(&data[..4], &write.id.to_be_bytes());
+                assert_eq!(&data[4..], b"a");
+                reply(&mut peer, write.id, Reply::Written { offset: "1".into() }).await;
+                let close = request(&mut peer).await;
+                assert!(matches!(close.operation, Operation::Close { handle: 1 }));
+                if !withheld {
+                    reply(&mut peer, close.id, Reply::Pong).await;
+                }
+                let mut byte = [0];
+                assert_eq!(peer.read(&mut byte).await.unwrap(), 0, "no retry or Finish");
+            });
+            let mut client = Client::open(stream, selected().1, CancellationToken::new())
+                .await
+                .unwrap();
+            let started = tokio::time::Instant::now();
+            let mut source = InterruptedSource {
+                prefix: b"a",
+                delay: Some(Box::pin(tokio::time::sleep(
+                    DEADLINE - std::time::Duration::from_secs(1),
+                ))),
+            };
+            let error = client
+                .upload("/cancelled", 2, None, &mut source)
+                .await
+                .unwrap_err();
+            match error {
+                Error::CleanupFailed { operation, cleanup } => {
+                    assert!(matches!(
+                        *operation,
+                        Error::LocalIo(io::ErrorKind::Interrupted)
+                    ));
+                    if withheld {
+                        assert!(matches!(*cleanup, Error::Deadline));
+                        assert_eq!(started.elapsed(), DEADLINE);
+                    } else {
+                        assert!(matches!(*cleanup, Error::Protocol));
+                    }
+                }
+                other => panic!("both failures required: {other:?}"),
+            }
+            assert!(!client.available());
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_client_late_ready_abort_ack_cannot_keep_stream() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let (replied, reply_ready) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            scripted_open(&mut peer).await;
+            let begin = request(&mut peer).await;
+            assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+            reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+            let close = request(&mut peer).await;
+            assert!(matches!(close.operation, Operation::Close { handle: 1 }));
+            seen.send(()).unwrap();
+            released.await.unwrap();
+            reply(&mut peer, close.id, Reply::Closed).await;
+            replied.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let mut client = Client::open(stream, selected().1, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut source = InterruptedSource {
+            prefix: b"",
+            delay: None,
+        };
+        let mut upload = Box::pin(client.upload("/cancelled", 1, None, &mut source));
+        tokio::select! {
+            result = &mut upload => panic!("Close must remain pending: {result:?}"),
+            result = received => result.unwrap(),
+        }
+        release.send(()).unwrap();
+        reply_ready.await.unwrap();
+        // The response is readable, but the client task is not polled until
+        // after its original local-I/O deadline. A late reply cannot win.
+        tokio::time::pause();
+        tokio::time::advance(DEADLINE + std::time::Duration::from_secs(1)).await;
+        assert!(
+            matches!(upload.await, Err(Error::CleanupFailed { operation, cleanup })
+            if matches!(*operation, Error::LocalIo(io::ErrorKind::Interrupted))
+                && matches!(*cleanup, Error::Deadline))
+        );
+        assert!(!client.available());
+        server.await.unwrap();
+    }
+
+    #[cfg(feature = "host-routing")]
+    #[tokio::test]
+    async fn ordinary_files_client_flush_error_fences_late_account_cutover() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct CutoverFlush(Arc<AtomicBool>);
+        impl AsyncWrite for CutoverFlush {
+            fn poll_write(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                bytes: &[u8],
+            ) -> std::task::Poll<io::Result<usize>> {
+                std::task::Poll::Ready(Ok(bytes.len()))
+            }
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                self.0.store(false, Ordering::SeqCst);
+                std::task::Poll::Ready(Err(io::ErrorKind::Interrupted.into()))
+            }
+            fn poll_shutdown(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        let scope = rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        };
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            scripted_host_open(&mut peer, &expected).await;
+            let open = request(&mut peer).await;
+            assert!(matches!(open.operation, Operation::OpenRead { .. }));
+            reply(
+                &mut peer,
+                open.id,
+                Reply::File {
+                    handle: 1,
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "1".into(),
+                        modified_ms: None,
+                    },
+                },
+            )
+            .await;
+            let read = request(&mut peer).await;
+            assert!(matches!(read.operation, Operation::Read { handle: 1, .. }));
+            reply(
+                &mut peer,
+                read.id,
+                Reply::Read {
+                    offset: "0".into(),
+                    length: 1,
+                    eof: true,
+                },
+            )
+            .await;
+            let mut data = read.id.to_be_bytes().to_vec();
+            data.push(b'x');
+            write_frame(&mut peer, rpc::DATA, &data).await.unwrap();
+            let close = request(&mut peer).await;
+            assert!(matches!(close.operation, Operation::Close { handle: 1 }));
+            reply(&mut peer, close.id, Reply::Closed).await;
+            // No second Close or other request after the flush retires its account.
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let current = Arc::new(AtomicBool::new(true));
+        let checked = current.clone();
+        let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+            CancellationToken::new(),
+            Arc::new(move || {
+                if checked.load(Ordering::SeqCst) {
+                    Ok(())
+                } else {
+                    Err(festerm_host_protocol::ContractError::Stale)
+                }
+            }),
+        );
+        let (mut client, _) = Client::open_host_guarded(
+            stream,
+            &scope.host,
+            &scope.installation,
+            None,
+            guard,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            client.download("/source", &mut CutoverFlush(current)).await,
+            Err(Error::Cancelled)
+        ));
+        assert!(!client.available());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rooted_client_dropped_or_cancelled_abort_still_fences_stream() {
+        for cancel_during_close in [false, true] {
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let (seen, received) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                scripted_open(&mut peer).await;
+                let begin = request(&mut peer).await;
+                assert!(matches!(begin.operation, Operation::BeginUpload { .. }));
+                reply(&mut peer, begin.id, Reply::Upload { handle: 1 }).await;
+                let close = request(&mut peer).await;
+                assert!(matches!(close.operation, Operation::Close { handle: 1 }));
+                seen.send(()).unwrap();
+                let mut byte = [0];
+                assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+            });
+            let cancel = CancellationToken::new();
+            let mut client = Client::open(stream, selected().1, cancel.clone())
+                .await
+                .unwrap();
+            let mut source = InterruptedSource {
+                prefix: b"",
+                delay: None,
+            };
+            {
+                let mut upload = Box::pin(client.upload("/cancelled", 1, None, &mut source));
+                tokio::select! {
+                    result = &mut upload => panic!("Close must remain pending: {result:?}"),
+                    result = received => result.unwrap(),
+                }
+                if cancel_during_close {
+                    cancel.cancel();
+                    assert!(
+                        matches!(upload.await, Err(Error::CleanupFailed { cleanup, .. })
+                        if matches!(*cleanup, Error::Cancelled))
+                    );
+                }
+            }
+            assert!(!client.available());
+            server.await.unwrap();
+        }
     }
 
     #[tokio::test]
