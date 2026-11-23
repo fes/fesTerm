@@ -2971,6 +2971,19 @@ open under item 17.
 | --- | --- | --- | --- |
 | SFTP-02 | In an owned text SFTP session, paste a command above 256 KiB, including one whose trimmed prefix would be valid. Finish with CRLF or Ctrl+C, then run a small valid command. No prefix or fragment may execute; refusal must be visible without disconnecting. Exercise a chunk-split CRLF and UTF-8 scalar, Backspace/Delete, cancel after a large paste, and briefly blocked frontend delivery. Confirm SSH-shell input is unchanged. | Automated byte/state, metrics/notifier and owned real-loopback; native keyboard/refusal visibility and usability pending | Exact 262144-byte acceptance, overflow/refusal across 64 KiB chunks, allocation release, UTF-8 byte accounting, bounded scalar lookback, backspace reclamation, retained/coalesced notice identity under a full event queue and retry during awaited I/O are automated. The real loopback records remote mkdir requests and proves only the next valid command executes. Native paste/keyboard gestures, transcript clarity and accessible refusal feedback remain manual on Windows/macOS/Linux. |
 
+### File-manager breadcrumb bounds
+
+`SFTPG-01` / `SFTP-03`: long Local and Remote paths must remain inside the
+fixed-height toolbar, above the filter and New directory/Delete controls. The
+horizontal viewport initially shows the current end; ancestor navigation and
+full-path editing retain their existing actions. Empty-background double-click
+still opens the full path editor. Headless production-pane checks cover both
+panes at 280/330/460 logical pixels and 1×/2× scale, including that pointer action.
+The old native Linux 752×516 Files capture demonstrated wrapping over the lower
+controls; it is a retained counterexample, not acceptance of the correction.
+Native horizontal-wheel/touch, keyboard reachability and narrow-pane visual
+qualification remain under the existing SFTP scenarios on each desktop OS.
+
 ### SFTP directory creation and deletion
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

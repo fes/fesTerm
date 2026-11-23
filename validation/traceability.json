@@ -4841,6 +4841,7 @@
         "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
         "replay_warp_ui_surfaces_shared_panels",
         "breadcrumb_segments_expose_clickable_ancestors",
+        "long_breadcrumbs_stay_inside_the_toolbar_above_filter_and_actions",
         "arrow_selection_extends_contiguous_range",
         "pane_order_preference_swaps_visual_sides_only",
         "transfer_action_requires_selection_connection_and_writable_destination",
