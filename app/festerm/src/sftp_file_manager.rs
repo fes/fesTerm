@@ -536,6 +536,7 @@ impl Drop for SecretWidgetState {
 
 #[derive(Default)]
 pub(crate) struct AuthenticationFormState {
+    key_import: crate::key_file_import::Binding,
     secret_widgets: SecretWidgetState,
     /// Immutable launch identity this draft belongs to. The state is normally
     /// owned by one authentication-tab content instance, but this binding is
@@ -572,6 +573,40 @@ pub(crate) struct AuthenticationFormState {
 }
 
 impl AuthenticationFormState {
+    fn observe_key_import(&mut self, context: &egui::Context) {
+        crate::key_file_import::route(context, self.key_import.route());
+        self.key_import.observe((
+            &self.username,
+            &self.host,
+            &self.port,
+            self.mode as u8,
+            self.source
+                .saved_policy()
+                .ok()
+                .map(|policy| format!("{policy:?}")),
+        ));
+    }
+
+    fn finish_key_import(&mut self, context: &egui::Context, submitted: bool) {
+        self.observe_key_import(context);
+        if submitted {
+            self.key_import.changed();
+        }
+        if let Some(result) = crate::key_file_import::take(context, &self.key_import) {
+            match result {
+                Ok(text) => {
+                    self.private_key.clear();
+                    egui::TextBuffer::insert_text(
+                        &mut self.private_key,
+                        &text,
+                        egui::text::CharIndex(0),
+                    );
+                }
+                Err(message) => self.feedback = Some(message.to_owned()),
+            }
+        }
+    }
+
     fn password_widget_id(&self) -> egui::Id {
         self.secret_widgets.password_widget_id()
     }
@@ -684,6 +719,7 @@ pub(crate) fn show_authentication_required(
         state.source = LocalBindDraft::from_policy(target.local_bind_policy);
         state.destination_initialized = true;
     }
+    state.observe_key_import(ui.ctx());
     let pass = ui.ctx().cumulative_pass_nr();
     // Consecutive passes mean the user never left; anything else means this
     // screen was just (re)entered.
@@ -721,13 +757,13 @@ pub(crate) fn show_authentication_required(
                     ui.label("Destination");
                     ui.horizontal(|ui| {
                         ui.label("Username");
-                        ui.add(
+                        if ui.add(
                             TextEdit::singleline(&mut state.username).desired_width(120.0),
-                        );
+                        ).changed() { state.key_import.changed(); }
                         ui.label("Host");
-                        ui.add(TextEdit::singleline(&mut state.host).desired_width(160.0));
+                        if ui.add(TextEdit::singleline(&mut state.host).desired_width(160.0)).changed() { state.key_import.changed(); }
                         ui.label("Port");
-                        ui.add(TextEdit::singleline(&mut state.port).desired_width(60.0));
+                        if ui.add(TextEdit::singleline(&mut state.port).desired_width(60.0)).changed() { state.key_import.changed(); }
                     });
                 }
                 ui.add_space(10.0);
@@ -785,6 +821,8 @@ pub(crate) fn show_authentication_required(
                                 .desired_rows(8)
                                 .id(private_key_widget_id),
                         );
+                        if key_response.changed() { state.key_import.changed(); }
+                        crate::key_file_import::button(ui, &state.key_import);
                         if focus_secret {
                             key_response.request_focus();
                         }
@@ -800,6 +838,7 @@ pub(crate) fn show_authentication_required(
                                 .sensitive(true)
                                 .id(passphrase_widget_id),
                         );
+                        if response.changed() { state.key_import.changed(); }
                         enter_pressed |= response.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
@@ -832,6 +871,7 @@ pub(crate) fn show_authentication_required(
                 }
                 let connect = ui.add(egui::Button::new("Open SFTP file manager"));
                 if connect.clicked() || enter_pressed {
+                    state.key_import.changed();
                     match resolve_edited_target(target, state) {
                         Err(feedback) => {
                             state.feedback = Some(feedback);
@@ -883,6 +923,7 @@ pub(crate) fn show_authentication_required(
             });
         });
     });
+    state.finish_key_import(ui.ctx(), command.is_some());
     command
 }
 
@@ -7760,6 +7801,48 @@ pub(crate) mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
     use std::ffi::OsString;
+
+    #[test]
+    fn key_file_import_gui_sftp_preserves_passphrase_and_refuses_new_connection_target() {
+        let mut target = test_launch_target(Some("profile-a"));
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut (AuthenticationFormState, SftpFileManagerLaunchTarget)| {
+                assert!(show_authentication_required(
+                    ui,
+                    crate::tabs::TabId::from_chip_id(99),
+                    &state.1,
+                    true,
+                    &mut state.0
+                )
+                .is_none());
+            },
+            (
+                AuthenticationFormState {
+                    mode: AuthMode::PrivateKey,
+                    private_key: SecretText::new("old"),
+                    passphrase: SecretText::new("keep"),
+                    ..Default::default()
+                },
+                target.clone(),
+            ),
+        );
+        harness.run();
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &harness.state().0.key_import);
+        finish("chosen key");
+        harness.run();
+        assert_eq!(harness.state().0.private_key.as_str(), "chosen key");
+        assert_eq!(harness.state().0.passphrase.as_str(), "keep");
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &harness.state().0.key_import);
+        target.profile_id = Some("profile-b".into());
+        harness.state_mut().1 = target;
+        harness.run();
+        finish("old connection key");
+        harness.run();
+        assert!(harness.state().0.private_key.is_empty());
+        assert!(harness.state().0.passphrase.is_empty());
+    }
 
     struct AuthenticationHarnessState {
         command: Option<crate::tabs::AppCommand>,

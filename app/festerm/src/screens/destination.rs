@@ -129,7 +129,7 @@ pub(super) fn labeled_text_edit(
             None => edit,
         })
     };
-    match options.style {
+    let response = match options.style {
         FieldStyle::Stacked => {
             ui.vertical(|ui| {
                 let label = show_label(ui);
@@ -146,7 +146,11 @@ pub(super) fn labeled_text_edit(
             })
             .inner
         }
+    };
+    if response.changed() {
+        crate::key_file_import::edited(ui.ctx());
     }
+    response
 }
 
 /// Pads an already-drawn inline label out to the shared label lane, so

@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "49fcaeb601c01f93d6fd159c4d047158e2c95ccb3f17da2b81a929d841eae002"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "1a64d10fa2bd0727ef0546cab606c0fa219abfbe5101acebd9b63d089ed783fc"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the desktop shell lifecycle, pane/frame rendering, and screen-level host/profile/settings routing for fesTerm.
+Owns desktop lifecycle, frames and host/profile/settings routing.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
@@ -30,6 +30,7 @@ Use for: Frame logic and focused panes
 
 - [`frame_logic`](../../app/festerm/src/app.rs)
 - [`ui_content`](../../app/festerm/src/app.rs)
+- [`Binding`](../../app/festerm/src/key_file_import.rs) — Transient key-file import.
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs)

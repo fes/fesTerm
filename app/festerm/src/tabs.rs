@@ -9209,6 +9209,13 @@ impl AppState {
         }
     }
 
+    pub(crate) fn key_import_navigation_revision(&self) -> u64 {
+        self.presentation_workspace
+            .as_ref()
+            .and_then(crate::automation::WorkspaceRevision::current)
+            .unwrap_or(u64::MAX)
+    }
+
     pub(crate) fn set_presentation_workspace(
         &mut self,
         revision: &crate::automation::WorkspaceRevision,

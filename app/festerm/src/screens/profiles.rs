@@ -854,6 +854,7 @@ impl LocalProfileDraft {
 
 #[derive(Clone)]
 struct SshProfileDraft {
+    key_import: crate::key_file_import::Binding,
     original_id: Option<String>,
     name: String,
     host: String,
@@ -1032,6 +1033,7 @@ impl Default for SshProfileDraft {
     /// than leaving it empty.
     fn default() -> Self {
         Self {
+            key_import: Default::default(),
             original_id: None,
             name: String::new(),
             host: String::new(),
@@ -1057,6 +1059,38 @@ impl Default for SshProfileDraft {
 }
 
 impl SshProfileDraft {
+    fn observe_key_import(&mut self, context: &egui::Context) {
+        crate::key_file_import::route(context, self.key_import.route());
+        self.key_import.observe((
+            &self.original_id,
+            &self.name,
+            &self.host,
+            &self.port,
+            &self.username,
+            &self.quick_connect,
+            self.auth_method as u8,
+            self.profile_kind as u8,
+            self.sftp_gui_mode,
+            self.local_bind
+                .saved_policy()
+                .ok()
+                .map(|policy| format!("{policy:?}")),
+        ));
+    }
+
+    fn finish_key_import(&mut self, context: &egui::Context, submitted: bool) {
+        self.observe_key_import(context);
+        if submitted {
+            self.key_import.changed();
+        }
+        if let Some(result) = crate::key_file_import::take(context, &self.key_import) {
+            match result {
+                Ok(mut text) => crate::key_file_import::replace(&mut self.private_key, &mut text),
+                Err(message) => self.error = Some(message.to_owned()),
+            }
+        }
+    }
+
     fn destination(&mut self) -> DestinationFields<'_> {
         DestinationFields {
             username: &mut self.username,
@@ -1107,6 +1141,7 @@ impl SshProfileDraft {
     fn from_profile(ssh: &SshProfileConfiguration) -> Self {
         let stored_credential_kind = ssh.credential_kind();
         Self {
+            key_import: Default::default(),
             original_id: Some(ssh.identifier().to_owned()),
             name: ssh.identifier().to_owned(),
             host: ssh.host().to_owned(),
@@ -1643,6 +1678,11 @@ pub(crate) fn show_profiles(
         let content_width = (ui.available_width() - SIDE_MARGIN).max(0.0);
         ui.vertical(|ui| {
             ui.set_max_width(content_width);
+    if let ProfilesScreenMode::EditSsh(draft) = &mut state.mode {
+        draft.observe_key_import(ui.ctx());
+    } else {
+        crate::key_file_import::route(ui.ctx(), 0);
+    }
     match &mut state.mode {
         #[cfg(feature = "experimental-dev-tunnels")]
         ProfilesScreenMode::HostRecipes(recipes) => {
@@ -2589,20 +2629,21 @@ pub(crate) fn show_profiles(
                                             },
                                         );
                                         ui.add_space(4.0);
-                                        ssh_multiline_secret_text_edit(
+                                        if ssh_multiline_secret_text_edit(
                                             ui,
                                             tab_id,
                                             "private_key",
                                             "OpenSSH private key",
                                             &mut draft.private_key,
-                                        );
-                                        profile_password_edit(
+                                        ).changed() { draft.key_import.changed(); }
+                                        crate::key_file_import::button(ui, &draft.key_import);
+                                        if profile_password_edit(
                                             ui,
                                             tab_id,
                                             "key_passphrase",
                                             "Key passphrase (optional)",
                                             &mut draft.key_passphrase,
-                                        );
+                                        ).changed() { draft.key_import.changed(); }
                                         if let Some(profile_id) = draft.original_id.clone() {
                                             ui.add_space(4.0);
                                             if ui
@@ -2656,6 +2697,7 @@ pub(crate) fn show_profiles(
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
+                                draft.key_import.changed();
                                 let trimmed_name = draft.name.trim();
                                 if ssh_profile_name_collides(
                                     configuration,
@@ -2960,6 +3002,11 @@ pub(crate) fn show_profiles(
         state.mode = mode;
     }
 
+    if let ProfilesScreenMode::EditSsh(draft) = &mut state.mode {
+        draft.finish_key_import(ui.ctx(), command.is_some());
+    } else {
+        crate::key_file_import::route(ui.ctx(), 0);
+    }
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
 }
@@ -2977,6 +3024,72 @@ mod tests {
         tab_id: TabId,
         configuration: festerm_config::Configuration,
         command: Option<AppCommand>,
+    }
+
+    #[test]
+    fn key_file_import_saved_editor_preserves_passphrase_and_rejects_replaced_draft() {
+        let mut harness = profiles_harness(Configuration::empty());
+        let tab = harness.state().tab_id;
+        let install = |context: &egui::Context| {
+            context.data_mut(|data| {
+                data.insert_temp(
+                    profiles_state_id(tab),
+                    ProfilesScreenState {
+                        mode: ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft {
+                            auth_method: SshAuthenticationMethod::PrivateKey,
+                            private_key: "original".into(),
+                            key_passphrase: "unchanged".into(),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    },
+                )
+            });
+        };
+        let draft = |context: &egui::Context| {
+            let state = context
+                .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+                .unwrap();
+            let ProfilesScreenMode::EditSsh(draft) = state.mode else {
+                panic!("editor");
+            };
+            draft
+        };
+        install(&harness.ctx);
+        harness.run();
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &draft(&harness.ctx).key_import);
+        finish("chosen material");
+        harness.run();
+        assert_eq!(draft(&harness.ctx).private_key, "chosen material");
+        assert_eq!(draft(&harness.ctx).key_passphrase, "unchanged");
+        assert!(harness.state().command.is_none());
+        let directory = tempfile::tempdir().unwrap();
+        let selected = directory.path().join("never-display-selected-name");
+        std::fs::write(&selected, [0xff]).unwrap();
+        crate::key_file_import::stage_read_for_test(
+            &harness.ctx,
+            &draft(&harness.ctx).key_import,
+            &selected,
+        );
+        harness.run();
+        assert_eq!(draft(&harness.ctx).private_key, "chosen material");
+        assert_eq!(draft(&harness.ctx).key_passphrase, "unchanged");
+        assert_eq!(
+            draft(&harness.ctx).error.as_deref(),
+            Some("The key file must contain UTF-8 text.")
+        );
+        assert!(harness
+            .query_by_label("never-display-selected-name")
+            .is_none());
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &draft(&harness.ctx).key_import);
+        install(&harness.ctx);
+        harness.run();
+        finish("old draft material");
+        harness.run();
+        assert_eq!(draft(&harness.ctx).private_key, "original");
+        assert_eq!(draft(&harness.ctx).key_passphrase, "unchanged");
     }
 
     #[test]
