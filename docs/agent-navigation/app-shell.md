@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "e5092f6698c1e0cea5ec1f2ff33b6e7ce2622a3f14eb9cddad5cd2c9fbab8d1f"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "d80a6f0d4dc6b3fd8f2338b8381a5b04accc830e3f0e04c20dd8ad58deb04d43"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -10,7 +10,7 @@ Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-n
 
 ## Startup flow
 
-Use for: Startup and workspace recovery
+Use for: Startup and recovery
 
 - [`main`](../../app/festerm/src/main.rs)
 - [`FesTermApplication`](../../app/festerm/src/application.rs)
@@ -30,7 +30,7 @@ Use for: Frame logic and focused panes
 
 - [`frame_logic`](../../app/festerm/src/app.rs)
 - [`ui_content`](../../app/festerm/src/app.rs)
-- [`Binding`](../../app/festerm/src/key_file_import.rs) — Transient key-file import.
+- [`Binding`](../../app/festerm/src/key_file_import.rs)
 
 Evidence:
 - [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs)
@@ -66,6 +66,7 @@ Use for: Host discovery, inventory, attach, and creation review
 Evidence:
 - [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs)
 - [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
+- [`host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default`](../../app/festerm/src/desktop_remote_access/tests.rs)
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.

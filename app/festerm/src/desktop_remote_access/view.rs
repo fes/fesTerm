@@ -12,17 +12,23 @@ pub(crate) fn show(
 ) -> Option<Action> {
     ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
     let mut action = None;
-    // Presentation only: reveal each newly opened Update review once. One
-    // fixed entry replaces the old identity; it is not consent or operation state.
+    // Presentation only: reveal each newly opened Enable/Update review once.
+    // One fixed entry is not consent or operation state; closing clears it.
     let identity = match (&view.scope, view.review) {
-        (Scope::Present(snapshot), Some(Operation::Update)) => {
-            Some((snapshot.installation.clone(), snapshot.epoch))
+        (Scope::Absent, Some(Operation::Enable)) => Some((Operation::Enable, None)),
+        (Scope::Present(snapshot), Some(operation @ (Operation::Enable | Operation::Update))) => {
+            Some((
+                operation,
+                Some((snapshot.installation.clone(), snapshot.epoch)),
+            ))
         }
         _ => None,
     };
-    let reveal_update = ui.data_mut(|data| {
-        let key = ui.id().with("host_update_review_reveal");
-        let previous = data.get_temp::<Option<(String, u64)>>(key).flatten();
+    let reveal_review = ui.data_mut(|data| {
+        let key = ui.id().with("host_review_reveal");
+        let previous = data
+            .get_temp::<Option<(Operation, Option<(String, u64)>)>>(key)
+            .flatten();
         let reveal = identity.is_some() && previous != identity;
         data.insert_temp(key, identity);
         reveal
@@ -481,7 +487,7 @@ pub(crate) fn show(
                         ui.label("A running process or successful command is not proof of endpoint readiness.");
                     }
                 }
-                ui.horizontal(|ui| {
+                let footer = ui.horizontal(|ui| {
                     let role = if matches!(operation, Operation::Disable | Operation::Uninstall) {
                         ActionButtonRole::DangerOutline
                     } else {
@@ -491,14 +497,21 @@ pub(crate) fn show(
                         action = Some(Action::Confirm);
                     }
                     let cancel = action_button(ui, ActionButtonRole::Secondary, "Not now");
-                    if reveal_update { cancel.request_focus(); }
+                    if reveal_review { cancel.request_focus(); }
                     if cancel.clicked() {
                         action = Some(Action::Dismiss);
                     }
                 });
+                footer.response
             });
-            if reveal_update {
-                review.response.scroll_to_me(Some(egui::Align::Center));
+            if reveal_review {
+                if operation == Operation::Enable {
+                    // Enable's consent summary can exceed the viewport. Reveal
+                    // its explicit actions rather than centering a too-tall group.
+                    review.inner.scroll_to_me(Some(egui::Align::Center));
+                } else {
+                    review.response.scroll_to_me(Some(egui::Align::Center));
+                }
             }
         }
         if !share_targets.is_empty() || view.share_review.is_some() || view.sharing.is_some() {

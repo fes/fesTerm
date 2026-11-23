@@ -7372,6 +7372,7 @@
         "desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation",
         "host_update_review_reveals_from_collapsed_details_and_cancel_is_safe_default",
         "host_update_review_reveals_from_expanded_manual_inputs_without_forced_scroll",
+        "host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default",
         "desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition",
         "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
         "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback",

@@ -2419,6 +2419,11 @@ HOST-04/06 Update host review: the header action reveals the existing review onc
 and focuses Not now. Enter cancels; ordinary scrolling remains free while it is
 pending, and cancel/reopen reveals again. No acquisition or worker starts from
 revealing/focusing; the existing explicit confirmation and protected gates remain.
+Enable shares this once-per-open presentation behavior for initial setup and
+disabled-host reconfiguration. Its unchanged consent summary may exceed the
+viewport, so the action footer is revealed and Not now is focused; no setup,
+authorization or policy mutation follows without explicit confirmation.
+
 
 
 HOST-04 non-Mac ordinary Enable retains the existing service-operation ownership
