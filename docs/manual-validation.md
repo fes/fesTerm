@@ -6805,3 +6805,16 @@ real-lease fixtures do not qualify
 this native behavior, repair the old warnings or establish their contention
 actor. Use only existing finite stages/kinds; no raw environment, argv, paths,
 credentials or terminal content is needed.
+
+
+### Files protected-policy read contention
+
+DTFILES-03 / DT-07: with a corrected authenticated HOST and an approved owned
+fixture, retain the first upload result before any Cancel, Refresh or retry.
+Portable actual-wire/real-lock coverage now exercises a brief competing policy
+read without replaying the upload RPC, plus changed grant, cancellation and
+budget refusals. This does not establish the cause of #883's original native
+EOFs. Native transfer, intentional cancellation and live grant revocation still
+require separate acceptance; no timeout increase or cached authorization is
+part of the fix. Preserve existing files, actor generations and first finite
+failure details.
