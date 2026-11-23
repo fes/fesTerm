@@ -6943,7 +6943,16 @@ existing-ready-key admission and owned root/outside pre/post preservation remain
 pending. No live revocation, universal unlink, arbitrary request or new release
 acceptance is implied.
 Link-upload escape under a write-enabled grant and direct server
-reviewed-Delete denial remain outside this read-only SDK slice.
+reviewed-Delete denial remain outside the read-only SDK slice. A separate
+ignored `controlled_github_files_write_server_boundaries` test now prepares
+those gates using the same V1 fixture under a reviewed RW/Delete-off grant:
+normal zero-byte BeginUpload through the owned escape link must be remotely
+refused without chunk/Finish, and a fixed owned-canary Stat/ReviewEntry must
+receive remote Denied without Delete/confirmation. Re-read the canary and Ping;
+compare all owned root/outside identities and contents before/after. Local
+real-service tests cover the wire denials and cancellation/deadline fences;
+actual provider-authenticated Linux/Mac/Windows write-slice runs remain pending.
+No new runner, credential authority, shipping capability or native pass is implied.
 
 The [23 November component record](../validation/dev-tunnels/files-native-0.17.24.json)
 qualifies ordinary account discovery and a completed 16 MiB Linux upload, plus

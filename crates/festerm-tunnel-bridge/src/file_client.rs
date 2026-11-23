@@ -76,7 +76,7 @@ pub enum BoundaryProbe {
 }
 
 #[cfg(feature = "testing")]
-fn boundary_operation(probe: BoundaryProbe, leaf: &str) -> Result<Operation> {
+fn validate_boundary_leaf(leaf: &str) -> Result<()> {
     if !leaf.starts_with("festerm-boundary-")
         || !(32..=64).contains(&leaf.len())
         || !leaf
@@ -85,6 +85,12 @@ fn boundary_operation(probe: BoundaryProbe, leaf: &str) -> Result<Operation> {
     {
         return Err(Error::Invalid);
     }
+    Ok(())
+}
+
+#[cfg(feature = "testing")]
+fn boundary_operation(probe: BoundaryProbe, leaf: &str) -> Result<Operation> {
+    validate_boundary_leaf(leaf)?;
     Ok(match probe {
         BoundaryProbe::ParentTraversal => Operation::OpenRead {
             path: format!("/../{leaf}/outside.txt"),
@@ -684,6 +690,37 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             Err(error) => Err(error),
             // Unexpected acceptance is a failed test, never Finish/retry. Drop
             // the channel and let the server's existing handle cleanup run.
+            Ok(_) => self.protocol(),
+        }
+    }
+
+    /// Fixed lab-only deletion-preparation denial on the owned public canary.
+    /// Never sends Delete/confirmation or exposes an arbitrary path or request.
+    #[cfg(feature = "testing")]
+    pub async fn probe_delete_off_refusal(&mut self, owned_leaf: &str) -> Result<rpc::ErrorCode> {
+        validate_boundary_leaf(owned_leaf)?;
+        self.ready()?;
+        if !self.capabilities.write || self.delete_advertised() {
+            return Err(Error::Invalid);
+        }
+        let path = format!("/{owned_leaf}/canary.txt");
+        let info = self.stat(&path).await?;
+        if !matches!(info.kind, rpc::Kind::File) {
+            return self.protocol();
+        }
+        match self
+            .exchange(
+                Operation::ReviewEntry {
+                    path,
+                    purpose: rpc::ReviewPurpose::Delete,
+                },
+                None,
+            )
+            .await
+        {
+            Err(Error::Remote { code, .. }) => Ok(code),
+            Err(error) => Err(error),
+            // An accepted review is a failed test, never Delete/Close/retry.
             Ok(_) => self.protocol(),
         }
     }
@@ -1482,6 +1519,340 @@ mod tests {
         assert!(!client.available());
         assert_eq!(client.next_id, 1);
         server.await.unwrap();
+    }
+
+    #[cfg(all(feature = "testing", unix))]
+    #[tokio::test]
+    async fn boundary_write_link_upload_reaches_real_service_without_publication() {
+        let (root, files) = grant(true);
+        let outside = crate::test_support::private_directory("festerm-boundary-outside");
+        let leaf = "festerm-boundary-0123456789abcdef";
+        std::fs::create_dir(root.join(leaf)).unwrap();
+        std::fs::write(root.join(leaf).join("canary.txt"), b"public canary").unwrap();
+        std::fs::write(outside.join("outside.txt"), b"outside canary").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join(leaf).join("escape")).unwrap();
+        let (stream, server, target) = service(files);
+        let mut client = Client::open(stream, target, CancellationToken::new())
+            .await
+            .unwrap();
+        let before = client.next_id;
+        assert!(matches!(
+            client
+                .begin_upload(&format!("/{leaf}/escape/denied-upload"), 0, None)
+                .await,
+            Err(Error::Remote {
+                code: rpc::ErrorCode::Denied | rpc::ErrorCode::Invalid | rpc::ErrorCode::Io,
+                ..
+            })
+        ));
+        assert_eq!(
+            client.next_id,
+            before + 1,
+            "valid path reached the real server once"
+        );
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(outside.join("outside.txt")).unwrap(),
+            b"outside canary"
+        );
+        assert_eq!(
+            std::fs::read(root.join(leaf).join("canary.txt")).unwrap(),
+            b"public canary"
+        );
+        client.cancel();
+        stopped(server).await;
+        // Remove the owned link itself, never recurse through its destination.
+        std::fs::remove_file(root.join(leaf).join("escape")).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_write_delete_off_reaches_reviewed_service_and_preserves_canary() {
+        let root = crate::test_support::private_directory("festerm-boundary-reviewed-off");
+        let leaf = "festerm-boundary-0123456789abcdef";
+        std::fs::create_dir(root.join(leaf)).unwrap();
+        std::fs::write(root.join(leaf).join("canary.txt"), b"public canary").unwrap();
+        let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
+            root: root.clone(),
+            write: true,
+            delete: false,
+        })
+        .unwrap();
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            write_frame(
+                &mut peer,
+                rpc::HOST_DESCRIPTION,
+                &json(&rpc::HostDescription {
+                    version: rpc::HOST_VERSION,
+                    scope: expected.clone(),
+                    filesystem: Some(filesystem.capabilities()),
+                })
+                .unwrap(),
+            )
+            .await?;
+            let (kind, bytes) = crate::wire::read_frame(&mut peer).await?;
+            assert_eq!(kind, rpc::OPEN);
+            let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(open.version, rpc::HOST_REVIEWED_VERSION);
+            assert_eq!(open.scope, expected);
+            crate::filesystem::serve_authorized_reviewed(
+                peer,
+                filesystem,
+                Arc::new(|_| Ok(())),
+                CancellationToken::new(),
+            )
+            .await
+        });
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(client.capabilities().write);
+        assert!(!client.delete_advertised());
+        let before = client.next_id;
+        assert_eq!(
+            client.probe_delete_off_refusal(leaf).await.unwrap(),
+            rpc::ErrorCode::Denied
+        );
+        assert_eq!(
+            client.next_id,
+            before + 2,
+            "fresh Stat then exactly one review preparation"
+        );
+        let before = client.next_id;
+        assert!(matches!(
+            client.probe_delete_off_refusal("unowned").await,
+            Err(Error::Invalid)
+        ));
+        assert_eq!(client.next_id, before);
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read_dir(root.join(leaf)).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(root.join(leaf).join("canary.txt")).unwrap(),
+            b"public canary"
+        );
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(feature = "testing")]
+    fn boundary_canary_metadata() -> rpc::Metadata {
+        rpc::Metadata {
+            kind: rpc::Kind::File,
+            size: "31".into(),
+            modified_ms: None,
+        }
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_write_probe_wrong_grant_sends_no_stat_or_review() {
+        let (root, files) = grant(false);
+        let (stream, server, target) = service(files);
+        let mut client = Client::open(stream, target, CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(!client.capabilities().write);
+        assert!(matches!(
+            client
+                .probe_delete_off_refusal("festerm-boundary-0123456789abcdef")
+                .await,
+            Err(Error::Invalid)
+        ));
+        assert_eq!(client.next_id, 0);
+        client.ping().await.unwrap();
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+
+        let (root, stream, server, scope) =
+            native_reviewed_service(rpc::HOST_REVIEWED_VERSION, false);
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(client.capabilities().write && client.delete_advertised());
+        assert!(matches!(
+            client
+                .probe_delete_off_refusal("festerm-boundary-0123456789abcdef")
+                .await,
+            Err(Error::Invalid)
+        ));
+        assert_eq!(client.next_id, 0);
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read(root.join("file")).unwrap(), b"owned source");
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_write_probe_cancellation_fences_stat_and_review() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for cutover_after_stat in [false, true] {
+            for account_cutover in [false, true] {
+                let scope = reviewed_scope();
+                let expected = scope.clone();
+                let (stream, mut peer) = tokio::io::duplex(8192);
+                let current = Arc::new(AtomicBool::new(true));
+                let checked = current.clone();
+                let current_control = current.clone();
+                let cancel = CancellationToken::new();
+                let cancelled = cancel.clone();
+                let server = tokio::spawn(async move {
+                    scripted_host_open(&mut peer, &expected).await;
+                    if cutover_after_stat {
+                        let stat = request(&mut peer).await;
+                        assert!(
+                            matches!(stat.operation, Operation::Stat { path } if path == "/festerm-boundary-0123456789abcdef/canary.txt")
+                        );
+                        if account_cutover {
+                            current.store(false, Ordering::SeqCst);
+                        } else {
+                            cancelled.cancel();
+                        }
+                        // The client may already have retired after cancellation.
+                        let _ = write_frame(
+                            &mut peer,
+                            rpc::RESPONSE,
+                            &json(&rpc::Response {
+                                id: stat.id,
+                                result: Some(Reply::Stat {
+                                    metadata: boundary_canary_metadata(),
+                                }),
+                                error: None,
+                                recovery_path: None,
+                            })
+                            .unwrap(),
+                        )
+                        .await;
+                    }
+                    assert!(
+                        crate::wire::read_frame(&mut peer).await.is_err(),
+                        "no review or Delete after cancellation"
+                    );
+                });
+                let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+                    CancellationToken::new(),
+                    Arc::new(move || {
+                        if checked.load(Ordering::SeqCst) {
+                            Ok(())
+                        } else {
+                            Err(festerm_host_protocol::ContractError::Stale)
+                        }
+                    }),
+                );
+                let (mut client, _) = Client::open_host_guarded(
+                    stream,
+                    &scope.host,
+                    &scope.installation,
+                    None,
+                    guard,
+                    cancel.clone(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                if !cutover_after_stat {
+                    if account_cutover {
+                        /* same captured guard, no credential fallback */
+                        current_control.store(false, Ordering::SeqCst);
+                    } else {
+                        cancel.cancel();
+                    }
+                }
+                assert!(matches!(
+                    client
+                        .probe_delete_off_refusal("festerm-boundary-0123456789abcdef")
+                        .await,
+                    Err(Error::Cancelled)
+                ));
+                assert_eq!(client.next_id, u32::from(cutover_after_stat));
+                server.await.unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test(start_paused = true)]
+    async fn boundary_write_probe_deadline_and_unexpected_review_never_send_followup() {
+        for accept in [false, true] {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_host_open(&mut peer, &expected).await;
+                let stat = request(&mut peer).await;
+                assert!(matches!(stat.operation, Operation::Stat { .. }));
+                reply(
+                    &mut peer,
+                    stat.id,
+                    Reply::Stat {
+                        metadata: boundary_canary_metadata(),
+                    },
+                )
+                .await;
+                let review = request(&mut peer).await;
+                assert!(
+                    matches!(review.operation, Operation::ReviewEntry { path, purpose: rpc::ReviewPurpose::Delete } if path == "/festerm-boundary-0123456789abcdef/canary.txt")
+                );
+                if accept {
+                    reply(
+                        &mut peer,
+                        review.id,
+                        Reply::EntryReview {
+                            handle: 1,
+                            metadata: boundary_canary_metadata(),
+                        },
+                    )
+                    .await;
+                }
+                assert!(
+                    crate::wire::read_frame(&mut peer).await.is_err(),
+                    "no Delete/Close/retry after acceptance or deadline"
+                );
+            });
+            let (mut client, _) = Client::open_host(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let started = tokio::time::Instant::now();
+            let result = client
+                .probe_delete_off_refusal("festerm-boundary-0123456789abcdef")
+                .await;
+            if accept {
+                assert!(matches!(result, Err(Error::Protocol)));
+            } else {
+                assert!(matches!(result, Err(Error::Deadline)));
+                assert_eq!(started.elapsed(), DEADLINE);
+            }
+            assert_eq!(client.next_id, 2);
+            assert!(!client.available());
+            server.await.unwrap();
+        }
     }
     async fn reply(stream: &mut DuplexStream, id: u32, result: Reply) {
         write_frame(
