@@ -105,6 +105,10 @@ Separate attributed native components cover the [Mac 20 stopped HOST update and 
 the [Windows 20 stopped-service diagnostic and explicit prerequisite restoration](validation/dev-tunnels/windows-client-privacy-0.17.20.json),
 and [physical iPhone saved-account reopening](validation/dev-tunnels/ios-saved-account-reopen-0.17.20.json).
 They add no full matrix case.
+A separate [Linux SFTP native component record](validation/sftp/linux-native-recovery-2026-11-23.json)
+qualifies key-file imports, directory/delete and batch-conflict actions, plus an
+interrupted-upload restart, inspection, manual deletion and local acknowledgement.
+It uses a pinned development build and adds no Dev Tunnels matrix case.
 The [Mac-client/Windows-server creation-OFF record](validation/dev-tunnels/mac-client-windows-native-off.json)
 completes the desktop matrix with disabled creation, saved retained-session
 reconnection, two matched-grid Copilot/query pairs and independent service

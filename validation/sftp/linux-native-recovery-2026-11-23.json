@@ -1,0 +1,118 @@
+{
+  "record_version": 1,
+  "status": "accepted Linux development-cohort SFTP components; wider native qualification remains open",
+  "date_utc": "2026-11-23",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "manual_checks": [
+    "AUTH-01",
+    "AUTH-04",
+    "SFTP-03",
+    "SFTP-04",
+    "SFTP-05"
+  ],
+  "not_a_Dev_Tunnels_matrix_case": true,
+  "combined_release_qualified": false,
+  "source": {
+    "GUI": "f35201f940cdd629bb627f80741848e5e6b55009",
+    "tree": "377b2a382ceeafa3d197e423f631bef9809933b8",
+    "development_version": "0.17.22",
+    "producer_run": 45157491569,
+    "artifact": 14808718825,
+    "MAIN_sha256": "8c57dd5362a2ba1e3c15827fa7fff2dc68ff8181e0a867de22963bd2c6c1607b",
+    "runtime": "existing qualified 13-file Linux ARM64 development GUI",
+    "official_release_cohort": false
+  },
+  "endpoint": {
+    "client": "dedicated Linux VM",
+    "server": "existing system OpenSSH SFTP on the same Linux VM",
+    "host_key_verification": "one-time acceptance of independently verified ED25519 fingerprint",
+    "authority": "dedicated evidence account; operations limited to owned public fixtures; initial server directory is not a filesystem jail",
+    "temporary_public_key_grants_removed": true,
+    "existing_authorization_preserved": true,
+    "private_key_exported": false,
+    "Dev_Tunnels_Files_transport_tested": false
+  },
+  "key_picker": {
+    "SSH_launcher": "masked import then Back; no Connect or Save",
+    "primary_GUI_SFTP": "picker Cancel preserved empty field; separate import populated hidden field; normal Connect, Accept Once and actual remote listing passed",
+    "new_SSH_saved_profile_draft": "fresh normal native picker imported into hidden field; Cancel with no Save or Connect; all nonworkspace configuration unchanged",
+    "profile_character_count_limit": "known key-file size was 432 bytes; profile widget did not independently display a character count",
+    "earlier_unqualified_attempt_retained": "an earlier saved-profile draft picker attempt was cancelled without import acceptance; the later fresh component passed",
+    "scope_limit": "Linux native chooser/import components only; not vault persistence or every stale/invalid-file/multiwindow scenario"
+  },
+  "file_actions": {
+    "local_and_remote_mkdir": true,
+    "Delete_Cancel": "both new directories retained their observed inode",
+    "separate_Delete_Confirm": "only the two reviewed empty directories removed",
+    "Skip_All": "two-file batch skipped; both original destination hashes preserved",
+    "Replace_All": "separate two-file batch completed; both destination hashes equal new source hashes",
+    "batch_scope": "second batch asked again after prior Skip All; prior batch choice did not carry over"
+  },
+  "interrupted_upload": {
+    "source_bytes": 134217728,
+    "source_sha256": "a626d17da2e502f5b4b8e3ebd23f0bf9daef6255688d8e0bb482b3ae3794a682",
+    "fault": "one deliberate SIGKILL to the exact owned GUI, bound by kernel pidfd and process/file identity; no server or supervisor signal",
+    "positive_partial_growth_bytes": [
+      196608,
+      82903040
+    ],
+    "GUI1_exit": -9,
+    "drained_partial_bytes": 83034112,
+    "drained_partial_sha256": "3892eceddef3da8ee5b67211d1ac50e4182644f8b361f12fede2c88a7310abed",
+    "final_destination_never_published": true,
+    "restart": "second normal GUI launched with the same private recovery-data root; original inactive report appeared before connecting",
+    "inspection": "ordinary SFTP connection to the exact verified endpoint, followed by explicit report inspection selected the unique regular partial",
+    "remote_cleanup": "one named ordinary Delete confirmation removed the partial; report remained present afterwards",
+    "local_acknowledgement": "separate explicit acknowledgement removed only the local report; report map became empty",
+    "GUI2_exit": 0,
+    "automatic_cleanup_or_resume": false,
+    "GUI_positive_progress_frame_claimed": false,
+    "source_cleanup": "after acceptance, only the new public 128 MiB source was selectively retired; 134217728 bytes actually reclaimed"
+  },
+  "preservation": {
+    "all_original_actors": {
+      "Linux": 20,
+      "macOS": 14,
+      "Windows": 27
+    },
+    "original_catalogs_accounts_profiles_settings": "unchanged at each attributed phase baseline",
+    "unknown_End_targets": "no End, lookup, reconciliation, inventory or own-exit actions",
+    "existing_real_recovery_ledger": "metadata preserved; contents not read or moved",
+    "frontend_and_owned_helpers": "normally drained except the explicitly killed first GUI; no SFTP server processes retained"
+  },
+  "remaining_native_gates": [
+    "Windows/macOS picker, SFTP workflow and packaged restart qualification",
+    "Actual server/transport failure, publication-time interruption and verified resume",
+    "Multiwindow/active-owner refusal, clipboard/report copy, accessibility and physical keyboard checks",
+    "Concurrent path replacement and other adversarial remote filesystem behavior",
+    "Native breadcrumb correction, narrow-window/DPI and progress usability; these captures predate the breadcrumb fix",
+    "Dev Tunnels Files and the twelve mobile matrix cases remain separate"
+  ],
+  "private_receipts_sha256": {
+    "picker_and_small_batches": "a5d193b057b456b9e7ae4001516db5a5ab15cf2eb8c3a7d61f5aec717900dd7b",
+    "interruption_restart_inspect_delete_ack": "2857d7e6b8b1f91232ddebb0d6e9d3ab3517880573039f5905d79a0cb44889e5",
+    "final_profile_picker": "376a771f45911ef8e47dc6c3b6ca9d9a37087c6dd3248d7de581237cc247bb56",
+    "public_source_retirement": "ef90fc22a98cb69595d31b58086e91e2167cb26a586bde8251130db17b1856f8"
+  },
+  "private_original_captures": {
+    "restart-report.png": {
+      "bytes": 157050,
+      "sha256": "4b017bf190a1c3817e838e17eb73736d70d4ca753fdd774b30d4579745a75424",
+      "unmodified_original_capture": true,
+      "public_copy_in_repository": false
+    },
+    "delete-review.png": {
+      "bytes": 185453,
+      "sha256": "69fe5761ebf8b2fe2c938fe0743ff165e0525366dadb1656ab3179b1ffac78d0",
+      "unmodified_original_capture": true,
+      "public_copy_in_repository": false
+    },
+    "after-local-acknowledgement.png": {
+      "bytes": 165996,
+      "sha256": "ba812853880efd2ad5bef14724414839addb3e17cdca5de885157568f8b9d50f",
+      "unmodified_original_capture": true,
+      "public_copy_in_repository": false
+    }
+  },
+  "capture_handling": "Original full-desktop screenshots remain in private campaign evidence because they include unrelated browser context. Hashes identify the reviewed originals; no screenshot pixels were reconstructed or edited for publication."
+}
