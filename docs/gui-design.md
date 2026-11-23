@@ -1962,6 +1962,12 @@ shared host; they are never adopted or silently migrated.
 
 ##### Account, host and session browser
 
+Files connection failures retain their first finite diagnosis even when shared
+tab retirement later cancels browsing. Normal failure details stay concise;
+content-free diagnostic events distinguish the channel, boundary and typed
+class. A cancellation with no proven origin must not claim a user or privacy
+action. Reconnection remains explicit and never replays a mutation.
+
 The normal **Find & Connect** workflow follows account → host → sessions.
 Opening it starts one account-scoped directory request through ADR 0086's
 ordinary provider-authorized route. Selecting a host obtains its authorized

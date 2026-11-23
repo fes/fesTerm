@@ -20,10 +20,16 @@ use tokio_util::sync::CancellationToken;
 #[path = "host_files/reviewed_delete.rs"]
 mod reviewed_delete;
 pub(crate) use reviewed_delete::{DeleteObservation, DeleteOutcome};
+#[path = "host_files/first_failure.rs"]
+mod first_failure;
+pub(crate) use first_failure::{Channel as FilesChannel, FirstFailure};
 
 pub(crate) struct FilesEndpoint<S> {
     client: Client<S>,
     lifetime: CancellationToken,
+    first_failure: FirstFailure,
+    channel: FilesChannel,
+    locally_retired: bool,
     next: u64,
     generation: uuid::Uuid,
     in_flight_upload: Option<(uuid::Uuid, String)>,
@@ -32,10 +38,18 @@ pub(crate) struct FilesEndpoint<S> {
     delete_review: Option<reviewed_delete::PreparedDelete>,
 }
 impl FilesEndpoint<FilesStream> {
-    pub(crate) fn new(files: Files, lifetime: CancellationToken) -> Self {
+    pub(crate) fn new(
+        files: Files,
+        lifetime: CancellationToken,
+        first_failure: FirstFailure,
+        channel: FilesChannel,
+    ) -> Self {
         Self {
             client: files.into_client(),
             lifetime,
+            first_failure,
+            channel,
+            locally_retired: false,
             next: 1,
             generation: uuid::Uuid::new_v4(),
             in_flight_upload: None,
@@ -46,6 +60,31 @@ impl FilesEndpoint<FilesStream> {
     }
 }
 impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
+    fn record_failure(&self, stage: &'static str, error: &file_client::Error) {
+        // Dropping an opaque upload intentionally closes this protocol stream.
+        // Its later Closed/Cancelled is not a new remote failure.
+        if !self.locally_retired
+            || !matches!(
+                error,
+                file_client::Error::Closed | file_client::Error::Cancelled
+            )
+        {
+            self.first_failure.record(self.channel, stage, error);
+        }
+    }
+    fn record_transfer_failure(&mut self, stage: &'static str, error: &file_client::Error) {
+        if matches!(
+            error,
+            file_client::Error::LocalIo(std::io::ErrorKind::Interrupted)
+        ) {
+            // The existing transfer progress callback uses Interrupted for
+            // cancellation. This alone does not identify a remote failure or
+            // prove why the local source/sink was interrupted.
+            self.locally_retired = true;
+        } else if !self.client.available() {
+            self.record_failure(stage, error);
+        }
+    }
     fn next_id(&mut self) -> Result<u64, SftpSessionError> {
         let id = self.next;
         self.next = self
@@ -127,12 +166,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
 {
     fn check_current(&mut self) -> Result<(), SftpSessionError> {
         if self.lifetime.is_cancelled() {
+            self.record_failure("authority", &file_client::Error::Cancelled);
             self.client.cancel();
             return Err(SftpSessionError::SessionClosed);
         }
-        self.client
-            .check_current()
-            .map_err(|error| Self::error("/", "check Files authority", error))
+        self.client.check_current().map_err(|error| {
+            self.record_failure("authority", &error);
+            Self::error("/", "check Files authority", error)
+        })
     }
     fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let lifetime = self.lifetime.clone();
@@ -145,6 +186,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
         Box::pin(async move {
             let result = self.ping().await;
             if result.is_err() {
+                tracing::warn!(target: "festerm::sftp", channel = self.channel.label(),
+                    locally_retired = self.locally_retired,
+                    "Files tab retired after liveness failure");
                 // Retire only this Files tab's child lifetime. The browsing
                 // worker reports ConnectionFailed and drains owned transfers.
                 self.lifetime.cancel();
@@ -167,6 +211,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
                 }
             }
             if let Some((generation, path)) = interrupted {
+                self.locally_retired = true;
                 self.client.cancel();
                 return Err(SftpSessionError::PublicationUncertain { path, reason: format!("The upload future ended before its publication result was observed (connection {generation}). Inspect before starting new work.") });
             }
@@ -354,6 +399,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
             };
             self.in_flight_upload = Some((self.generation, path.into()));
             let result = self.client.upload(path, size, expected, &mut source).await;
+            if let Err(error) = &result {
+                self.record_transfer_failure("upload", error);
+            }
             // All returned outcomes retain their actual classification. Only a
             // dropped opaque future leaves the conservative observation marker.
             self.in_flight_upload = None;
@@ -366,10 +414,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
         mut sink: &'a mut (dyn AsyncWrite + Unpin + Send),
     ) -> RemoteTransferFuture<'a, u64> {
         Box::pin(async move {
-            self.client
-                .download(path, &mut sink)
-                .await
-                .map_err(|error| Self::error(path, "download", error))
+            let result = self.client.download(path, &mut sink).await;
+            if let Err(error) = &result {
+                self.record_transfer_failure("download", error);
+            }
+            result.map_err(|error| Self::error(path, "download", error))
         })
     }
 }
@@ -393,10 +442,10 @@ const FILES_DIRECTORY_PAGE_LIMIT: usize = 1024;
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
     pub(crate) async fn ping(&mut self) -> Result<(), SftpSessionError> {
         self.check_current()?;
-        self.client
-            .ping()
-            .await
-            .map_err(|error| Self::error("/", "check Files connection", error))?;
+        self.client.ping().await.map_err(|error| {
+            self.record_failure("liveness", &error);
+            Self::error("/", "check Files connection", error)
+        })?;
         self.check_current()
     }
     pub(crate) async fn directory_snapshot(
@@ -783,6 +832,9 @@ mod tests {
         FilesEndpoint {
             client,
             lifetime,
+            first_failure: FirstFailure::default(),
+            channel: FilesChannel::Transfer,
+            locally_retired: false,
             next: 1,
             generation: uuid::Uuid::nil(),
             in_flight_upload: None,
@@ -851,6 +903,387 @@ mod tests {
         .unwrap();
         assert!(!reason.contains("transport"), "{reason}");
         assert!(!lifetime.is_cancelled());
+        manager.shutdown().await.unwrap();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_first_transfer_failure_survives_secondary_browsing_cancellation() {
+        for timeout in [false, true] {
+            let (transfer_stream, mut transfer_peer) = tokio::io::duplex(8192);
+            let (browsing_stream, mut browsing_peer) = tokio::io::duplex(8192);
+            let (transfer_seen, transfer_received) = tokio::sync::oneshot::channel();
+            let (browsing_seen, browsing_received) = tokio::sync::oneshot::channel();
+            let (release, released) = tokio::sync::oneshot::channel();
+            let mut release = Some(release);
+            let transfer_server = tokio::spawn(async move {
+                opened(&mut transfer_peer).await;
+                assert!(matches!(
+                    request(&mut transfer_peer).await.operation,
+                    rpc::Operation::Ping {}
+                ));
+                transfer_seen.send(()).unwrap();
+                let _ = released.await;
+                // EOF (or a withheld reply) is the actual primary wire failure.
+            });
+            let browsing_server = tokio::spawn(async move {
+                opened(&mut browsing_peer).await;
+                assert!(matches!(
+                    request(&mut browsing_peer).await.operation,
+                    rpc::Operation::Ping {}
+                ));
+                browsing_seen.send(()).unwrap();
+                let mut byte = [0];
+                assert_eq!(browsing_peer.read(&mut byte).await.unwrap(), 0);
+            });
+            let parent = CancellationToken::new();
+            let sibling = parent.child_token();
+            let lifetime = parent.child_token();
+            let failure = FirstFailure::default();
+            let mut transfer = endpoint(transfer_stream, lifetime.child_token()).await;
+            transfer.lifetime = lifetime.clone();
+            transfer.first_failure = failure.clone();
+            let mut browsing = endpoint(browsing_stream, lifetime.child_token()).await;
+            browsing.lifetime = lifetime.clone();
+            browsing.channel = FilesChannel::Browsing;
+            browsing.first_failure = failure.clone();
+            assert!(transfer.client.available() && browsing.client.available());
+            if timeout {
+                tokio::time::pause();
+            }
+            let transfer_task = tokio::spawn(async move { transfer.keepalive().await });
+            transfer_received.await.unwrap();
+            // Browsing has its own later deadline, so only transfer can time out.
+            if timeout {
+                tokio::time::advance(Duration::from_secs(15)).await;
+            }
+            let browsing_task = tokio::spawn(async move { browsing.ping().await });
+            browsing_received.await.unwrap();
+            if timeout {
+                tokio::time::advance(Duration::from_secs(15) + Duration::from_millis(1)).await;
+            } else {
+                release.take().unwrap().send(()).unwrap();
+            }
+            assert!(transfer_task.await.unwrap().is_err());
+            let secondary = browsing_task.await.unwrap().unwrap_err().to_string();
+            assert!(secondary.contains("cancelled"), "{secondary}");
+            let details = failure.details_or(secondary);
+            assert!(details.contains("file transfer connection"), "{details}");
+            assert!(
+                details.contains(if timeout { "timed out" } else { "interrupted" }),
+                "{details}"
+            );
+            assert!(
+                !details.contains("cancelled"),
+                "secondary cancellation replaced the primary: {details}"
+            );
+            assert!(lifetime.is_cancelled());
+            assert!(!parent.is_cancelled() && !sibling.is_cancelled());
+            if timeout {
+                tokio::time::resume();
+                drop(release);
+            }
+            joined(transfer_server).await;
+            joined(browsing_server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn files_stalled_write_keeps_deadline_before_later_closed_ping() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let begin = request(&mut peer).await;
+            assert!(matches!(
+                begin.operation,
+                rpc::Operation::BeginUpload { .. }
+            ));
+            reply(
+                &mut peer,
+                begin.id,
+                Some(rpc::Result::Upload { handle: 1 }),
+                None,
+            )
+            .await;
+            let write = request(&mut peer).await;
+            assert!(matches!(
+                write.operation,
+                rpc::Operation::Write { length: 1, .. }
+            ));
+            assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::DATA);
+            seen.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let lifetime = CancellationToken::new();
+        let mut transfer = endpoint(stream, lifetime.child_token()).await;
+        transfer.lifetime = lifetime.clone();
+        let first = transfer.first_failure.clone();
+        tokio::time::pause();
+        let task = tokio::spawn(async move {
+            let mut source = &b"x"[..];
+            let result = transfer.upload("/owned-new", 1, None, &mut source).await;
+            (transfer, result)
+        });
+        received.await.unwrap();
+        tokio::time::advance(Duration::from_secs(30) + Duration::from_millis(1)).await;
+        let (mut transfer, result) = task.await.unwrap();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("deadline exceeded"));
+        let primary = first.details_or("missing".into());
+        assert!(
+            primary.contains("transfer") && primary.contains("timed out"),
+            "{primary}"
+        );
+        assert!(transfer.keepalive().await.is_err());
+        assert_eq!(first.details_or("secondary".into()), primary);
+        assert!(lifetime.is_cancelled());
+        tokio::time::resume();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_cancelled_upload_does_not_mask_later_browsing_failure() {
+        let (transfer_stream, mut peer) = tokio::io::duplex(8192);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let (finish_write, await_write) = tokio::sync::oneshot::channel();
+        let transfer_server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            for _ in 0..8 {
+                let call = request(&mut peer).await;
+                match call.operation {
+                    rpc::Operation::Stat { .. } => {
+                        reply(&mut peer, call.id, None, Some(rpc::ErrorCode::NotFound)).await
+                    }
+                    rpc::Operation::BeginUpload { .. } => {
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Upload { handle: 1 }),
+                            None,
+                        )
+                        .await
+                    }
+                    rpc::Operation::Write { offset, length, .. } => {
+                        assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::DATA);
+                        seen.send(()).unwrap();
+                        await_write.await.unwrap();
+                        reply(
+                            &mut peer,
+                            call.id,
+                            Some(rpc::Result::Written {
+                                offset: (offset.parse::<u64>().unwrap() + u64::from(length))
+                                    .to_string(),
+                            }),
+                            None,
+                        )
+                        .await;
+                        let mut byte = [0];
+                        assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+                        return;
+                    }
+                    other => panic!("unexpected operation: {other:?}"),
+                }
+            }
+            panic!("write was not observed");
+        });
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let browsing_server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let ping = request(&mut peer).await;
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            assert!(matches!(
+                request(&mut peer).await.operation,
+                rpc::Operation::Ping {}
+            ));
+            // A subsequent genuine browsing EOF must be the first failure.
+        });
+        let parent = CancellationToken::new();
+        let lifetime = parent.child_token();
+        let first = FirstFailure::default();
+        let mut browsing = endpoint(stream, lifetime.child_token()).await;
+        browsing.lifetime = lifetime.clone();
+        browsing.channel = FilesChannel::Browsing;
+        browsing.first_failure = first.clone();
+        let mut transfer = endpoint(transfer_stream, lifetime.child_token()).await;
+        transfer.lifetime = lifetime.clone();
+        transfer.first_failure = first.clone();
+        let mut manager = SftpTransferManager::from_remote_endpoint(transfer);
+        let folder = tempfile::tempdir().unwrap();
+        let source = folder.path().join("owned-source");
+        std::fs::write(&source, b"public contents").unwrap();
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::local(&source),
+                SftpPath::remote("/owned-new"),
+            )
+            .unwrap()])
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), received)
+            .await
+            .unwrap()
+            .unwrap();
+        manager.cancel_all_transfers().unwrap();
+        finish_write.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut cancelled = false;
+            loop {
+                match manager.recv_event().await.unwrap() {
+                    festerm_ssh::SftpTransferEvent::ItemCancelled { .. } => cancelled = true,
+                    festerm_ssh::SftpTransferEvent::BatchFinished { .. } => {
+                        assert!(cancelled);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(first.details_or("no failure".into()), "no failure");
+        assert!(!lifetime.is_cancelled() && !parent.is_cancelled());
+        browsing.ping().await.unwrap();
+        assert!(browsing.ping().await.is_err());
+        let details = first.details_or("missing".into());
+        assert!(
+            details.contains("browsing") && details.contains("interrupted"),
+            "{details}"
+        );
+        assert!(!details.contains("cancelled"));
+        // Existing behavior still retires the tab when its intentionally closed
+        // transfer stream next fails keepalive. Preserve that context without
+        // turning local retirement into a second primary failure.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        tokio::time::resume();
+        tokio::time::timeout(Duration::from_secs(3), lifetime.cancelled())
+            .await
+            .unwrap();
+        assert!(!parent.is_cancelled());
+        assert_eq!(first.details_or("secondary".into()), details);
+        manager.shutdown().await.unwrap();
+        assert_eq!(std::fs::read(source).unwrap(), b"public contents");
+        joined(transfer_server).await;
+        joined(browsing_server).await;
+    }
+
+    #[tokio::test]
+    async fn files_parent_retirement_is_unattributed_and_completed_clients_stay_live() {
+        async fn peer(mut peer: DuplexStream) {
+            opened(&mut peer).await;
+            for _ in 0..2 {
+                let ping = request(&mut peer).await;
+                assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+                reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            }
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        }
+        let (a, ap) = tokio::io::duplex(8192);
+        let (b, bp) = tokio::io::duplex(8192);
+        let servers = [tokio::spawn(peer(ap)), tokio::spawn(peer(bp))];
+        let parent = CancellationToken::new();
+        let lifetime = parent.child_token();
+        let first = FirstFailure::default();
+        let mut browsing = endpoint(a, lifetime.child_token()).await;
+        browsing.lifetime = lifetime.clone();
+        browsing.channel = FilesChannel::Browsing;
+        browsing.first_failure = first.clone();
+        let mut transfer = endpoint(b, lifetime.child_token()).await;
+        transfer.lifetime = lifetime.clone();
+        transfer.first_failure = first.clone();
+        // The successful open futures and temporary clones have completed.
+        // Both retained protocol clients must still work, independently.
+        for _ in 0..2 {
+            browsing.ping().await.unwrap();
+            transfer.keepalive().await.unwrap();
+        }
+        assert_eq!(first.details_or("no failure".into()), "no failure");
+        assert!(!lifetime.is_cancelled());
+        parent.cancel();
+        assert!(browsing.ping().await.is_err());
+        assert!(transfer.keepalive().await.is_err());
+        let details = first.details_or("secondary".into());
+        assert!(details.contains("browsing") && details.contains("interrupted"));
+        assert!(!details.contains("privacy") && !details.contains("user"));
+        for server in servers {
+            joined(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn files_explicit_collision_cancel_is_not_a_liveness_failure() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let stat = request(&mut peer).await;
+            reply(
+                &mut peer,
+                stat.id,
+                Some(rpc::Result::Stat {
+                    metadata: rpc::Metadata {
+                        kind: rpc::Kind::File,
+                        size: "1".into(),
+                        modified_ms: None,
+                    },
+                }),
+                None,
+            )
+            .await;
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let lifetime = CancellationToken::new();
+        let endpoint = endpoint(stream, lifetime.child_token()).await;
+        let first = endpoint.first_failure.clone();
+        let mut manager = SftpTransferManager::from_remote_endpoint(endpoint);
+        let folder = tempfile::tempdir().unwrap();
+        let destination = folder.path().join("existing");
+        std::fs::write(&destination, b"original").unwrap();
+        manager
+            .enqueue_batch(vec![SftpTransferRequest::new(
+                SftpPath::remote("/source"),
+                SftpPath::local(&destination),
+            )
+            .unwrap()])
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if matches!(
+                    manager.recv_event().await.unwrap(),
+                    festerm_ssh::SftpTransferEvent::Collision(_)
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        manager.cancel_all_transfers().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut cancelled = false;
+            loop {
+                match manager.recv_event().await.unwrap() {
+                    festerm_ssh::SftpTransferEvent::ItemCancelled { .. } => cancelled = true,
+                    festerm_ssh::SftpTransferEvent::BatchFinished { .. } => {
+                        assert!(cancelled);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            first.details_or("explicit cancellation".into()),
+            "explicit cancellation"
+        );
+        assert!(!lifetime.is_cancelled());
+        assert_eq!(std::fs::read(destination).unwrap(), b"original");
         manager.shutdown().await.unwrap();
         joined(server).await;
     }
@@ -1164,6 +1597,10 @@ mod tests {
         assert_eq!(metadata.size, Some(3));
         endpoint.release_replacement(review).await.unwrap();
         endpoint.ping().await.unwrap();
+        assert_eq!(
+            endpoint.first_failure.details_or("no failure".into()),
+            "no failure"
+        );
         endpoint.cleanup().await.unwrap();
         endpoint.client.cancel();
         joined(server).await;
@@ -1363,6 +1800,12 @@ mod tests {
         };
         assert_eq!(path, "/target");
         assert!(reason.contains("/folder/.festerm-transfer-owned"));
+        let details = endpoint.first_failure.details_or("missing".into());
+        assert!(
+            details.contains("Couldn’t confirm")
+                && details.contains("Check the files before trying again")
+        );
+        assert!(!details.contains("/target") && !details.contains("/folder/"));
         assert!(!endpoint.client.available());
         assert!(endpoint.in_flight_upload.is_none());
         endpoint.cleanup().await.unwrap();
@@ -1685,6 +2128,9 @@ mod tests {
         FilesEndpoint {
             client,
             lifetime,
+            first_failure: FirstFailure::default(),
+            channel: FilesChannel::Transfer,
+            locally_retired: false,
             next: 1,
             generation: uuid::Uuid::nil(),
             in_flight_upload: None,

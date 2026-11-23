@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "8d684929b4b4b2abd758d9c210e52ff4aa3ec5edfd6d70d598ee61e6c650fe24"} -->
+<!-- agent-navigation: {"domain": "terminal-ui", "generator": "2", "model": "codex-source-verified", "sources": "51019ec024144b7a17d73fb468990436c425641ad89130d722d4dc8c4c9ae8c3"} -->
 # Terminal presentation and rendering
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
