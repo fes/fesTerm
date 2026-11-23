@@ -432,6 +432,24 @@ existing bounded SDK runner, with `FESTERM_RUN_DEV_TUNNEL_FILES_BOUNDARY=1`,
 `--run` path inside a capacity-limited VM. Source/local filesystem tests do not
 qualify provider-authenticated boundaries on deployed Linux, Mac or Windows
 HOSTs; those native runs remain pending individually.
-This slice covers link read/directory refusal only. Upload through a link under
-a write-enabled grant and direct server reviewed-Delete denial remain separate
-native gates; read-only upload denial does not qualify either boundary.
+The read-only test covers link read/directory refusal only. The separate ignored
+`controlled_github_files_write_server_boundaries` test reuses the same V1
+fixture and normal connector, requiring a fresh write-enabled, Delete-off grant.
+After the positive public canary read it calls normal `begin_upload` for the
+valid `/<owned-leaf>/escape/denied-upload` path, with size zero and no replacement
+handle. Only remote `Denied`, `Invalid` or `Io` qualifies refusal. An accepted
+handle retires the channel and fails: no chunk, Close, Finish or retry is sent.
+
+One additional fixed `testing`-only helper normal-stats only the owned
+`canary.txt`, then sends the existing `ReviewEntry` with Delete purpose even
+though Delete was not advertised. The server must return `Denied`; this is a
+preparation refusal, never a Delete/confirmation request. Unexpected acceptance
+retires the channel without further operations. The canary is read again and
+Ping must succeed after the expected refusals. Local rejection, `NotFound`,
+EOF, timeout and unexpected success never count as these boundaries.
+
+Local real-service/framed tests cover the write-enabled link refusal,
+reviewed-protocol Delete-off denial and existing account/cancellation/deadline
+fences. Provider-authenticated runs of this write slice remain pending on each
+native HOST. Read-only upload denial does not qualify link-upload escape or
+reviewed-Delete denial, and these tests make no Finish/publication claim.

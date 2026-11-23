@@ -432,3 +432,21 @@ expiry/cancellation/fatal refusal and queued-expiry tests. The source-proven
 contention defect can produce EOF; it does not establish the cause or lock
 holder of issue #883's native uploads. Native current-helper transfer,
 cancellation and grant-revocation qualification remain separate.
+
+### Opt-in write-boundary qualification
+
+The existing controlled SDK has a separate ignored write-boundary test using
+its unchanged private V1 fixture and normal account/native-vault connector.
+It requires write enabled and Delete off. A valid owned link path must refuse
+normal BeginUpload before any chunk/Finish; one fixed `testing`-only helper
+stats the owned public canary then requests ReviewEntry(Delete) solely to prove
+server Denied despite local Delete UX gating. It never sends Delete or exposes
+arbitrary requests/paths. Unexpected acceptance retires the channel without a
+follow-up. Existing account, cancellation, deadline and framing fences remain.
+
+Validation impact: GUI:DTFILES-01, GUI:DTFILES-02; real-service link upload and
+reviewed Delete-off refusals, no-follow-up and guard/deadline tests. These source
+fixtures do not qualify provider-authenticated native boundaries; each deployed
+HOST write-slice run, exact ready-key admission and owned root/outside
+preservation remain separate gates. No protocol, permission or Finish semantics
+change, new credential authority or shipping test API is introduced.

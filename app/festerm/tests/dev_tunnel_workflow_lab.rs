@@ -553,6 +553,116 @@ fn controlled_github_files_server_boundaries() {
     });
 }
 
+#[test]
+#[ignore = "real provider/native-vault/owned Files boundary fixture; prebuilt controlled SDK only"]
+fn controlled_github_files_write_server_boundaries() {
+    use festerm_tunnel_bridge::{file_client::Error as FileError, file_protocol::ErrorCode};
+    assert_eq!(
+        std::env::var("FESTERM_RUN_DEV_TUNNEL_FILES_BOUNDARY").as_deref(),
+        Ok("1"),
+        "explicit Files-only opt-in required"
+    );
+    let record = PathBuf::from(
+        std::env::var_os("FESTERM_DEV_TUNNEL_FILES_BOUNDARY_RECORD").unwrap_or_else(|| blocked()),
+    );
+    let fixture: FilesBoundaryFixture = require(serde_json::from_slice(&private_bytes(&record)));
+    assert!(
+        fixture.valid(),
+        "exact owned Files boundary fixture required"
+    );
+    assert_eq!(
+        std::env::var_os("FESTERM_SESSIOND_RUNTIME_ROOT").map(PathBuf::from),
+        Some(fixture.runtime_root.clone())
+    );
+    let (identity, guard) = native_account(&fixture.configuration, &fixture.account);
+    let runtime = require(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build(),
+    );
+    let cancel = CancellationToken::new();
+    runtime.block_on(async {
+        require(
+            tokio::time::timeout(Duration::from_secs(120), async {
+                require(
+                    identity
+                        .confirm_account(&require(Https::new()), &cancel)
+                        .await,
+                );
+                let hosts = require(service::list_hosts(&identity, &cancel).await);
+                assert!(
+                    hosts.iter().any(|host| host.locator == fixture.locator),
+                    "exact fixture host required"
+                );
+                let mut files = require(
+                    ordinary::open_files_reviewed(
+                        &identity,
+                        &fixture.locator,
+                        require(OrdinaryKeyIndex::native()),
+                        &host_client::Budgets::default(),
+                        guard,
+                        &cancel,
+                        Some(&fixture.scope),
+                    )
+                    .await,
+                )
+                .unwrap_or_else(|| blocked());
+                assert!(
+                    files.scope() == &fixture.scope,
+                    "exact captured Files scope required"
+                );
+                assert!(
+                    files.client().capabilities().write && !files.delete_advertised(),
+                    "fresh write-enabled, Delete-off grant required"
+                );
+                let canary = format!("/{}/canary.txt", fixture.owned_leaf);
+                let (handle, metadata) = require(files.client().open_read(&canary).await);
+                let expected = b"fesTerm public boundary canary\n";
+                assert_eq!(metadata.size, expected.len().to_string());
+                let data = require(files.client().read(&handle, 0, 128).await);
+                assert_eq!(data.bytes, expected);
+                assert!(data.eof);
+                require(files.client().close(&handle).await);
+                let link = format!("/{}/escape/denied-upload", fixture.owned_leaf);
+                match files.client().begin_upload(&link, 0, None).await {
+                    Err(FileError::Remote {
+                        code: code @ (ErrorCode::Denied | ErrorCode::Invalid | ErrorCode::Io),
+                        ..
+                    }) => println!("FESTERM_FILES_WRITE_BOUNDARY link_upload_remote={code:?}"),
+                    _ => {
+                        // A valid accepted handle is never used, closed or finished.
+                        files.client().cancel();
+                        blocked();
+                    }
+                }
+                let code = require(
+                    files
+                        .client()
+                        .probe_delete_off_refusal(&fixture.owned_leaf)
+                        .await,
+                );
+                assert_eq!(
+                    code,
+                    ErrorCode::Denied,
+                    "remote Delete-off preparation refusal required"
+                );
+                println!("FESTERM_FILES_WRITE_BOUNDARY delete_review_remote={code:?}");
+                let (read, info) = require(files.client().open_read(&canary).await);
+                assert_eq!(info.size, expected.len().to_string());
+                let data = require(files.client().read(&read, 0, 128).await);
+                assert_eq!(data.bytes, expected);
+                assert!(data.eof);
+                require(files.client().close(&read).await);
+                require(files.client().ping().await);
+                require(files.check_current());
+                files.client().cancel();
+                println!("FESTERM_FILES_WRITE_BOUNDARY_PASS");
+            })
+            .await,
+        );
+    });
+}
+
 struct Peer {
     context: OrdinaryContext,
     budgets: host_client::Budgets,
