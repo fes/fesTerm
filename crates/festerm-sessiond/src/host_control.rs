@@ -1163,6 +1163,192 @@ mod end_confirmation_tests {
         );
     }
 
+    #[test]
+    fn end_completion_cancel_deadline_and_final_authority_do_not_reissue_stop() {
+        for case in [
+            "cancel_before",
+            "expired",
+            "cancel_final",
+            "revoked_final",
+            "gone",
+        ] {
+            let (_directory, control, owner, target) = observed_fixture();
+            let before = std::fs::read(control.root.join(STATE_FILE)).unwrap();
+            let cancelled = AtomicBool::new(case == "cancel_before");
+            let calls = std::cell::Cell::new(0);
+            let result = control.end_until(
+                &owner,
+                &target,
+                Instant::now()
+                    + if case == "expired" {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_secs(1)
+                    },
+                &cancelled,
+                |state| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(state.effect, Effect::End);
+                    assert_eq!(
+                        state.grant.as_ref().unwrap().state,
+                        LogicalState::Ended(target.generation)
+                    );
+                    if case == "cancel_final" {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                    if case == "revoked_final" {
+                        return Err(ControlError::Revoked);
+                    }
+                    Ok(())
+                },
+            );
+            assert_eq!(
+                result,
+                match case {
+                    "cancel_before" | "cancel_final" => Err(ControlError::Cancelled),
+                    "expired" => Err(ControlError::CommittedButNotPublished),
+                    "revoked_final" => Err(ControlError::Revoked),
+                    _ => Ok(EndOutcome::ObservedEnded),
+                }
+            );
+            assert_eq!(
+                calls.get(),
+                usize::from(!matches!(case, "cancel_before" | "expired"))
+            );
+            assert_eq!(
+                std::fs::read(control.root.join(STATE_FILE)).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn end_completion_observation_requires_exact_stopped_lease_and_fresh_permission() {
+        for case in [
+            "gone",
+            "foreign",
+            "replaced",
+            "revoked",
+            "missing_identity",
+            "retired",
+            "not_stopped",
+            "busy",
+            "permission_off",
+        ] {
+            let (_directory, control, mut owner, mut target) = observed_fixture();
+            let mut tx = control.transaction().unwrap();
+            let record = tx.state.sessions.get_mut(&target.logical).unwrap();
+            match case {
+                "foreign" => owner = PrincipalId::new(),
+                "replaced" => target.generation = GenerationId::new(2).unwrap(),
+                "revoked" => record.revoked = true,
+                "missing_identity" => record.identity = None,
+                "retired" => record.artifacts_retired = true,
+                "not_stopped" => {
+                    let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+                    let mut lease = guard.read().unwrap();
+                    lease.stopped = false;
+                    guard.replace(&mut lease).unwrap();
+                }
+                _ => {}
+            }
+            tx.save().unwrap();
+            drop(tx);
+            let held = (case == "busy")
+                .then(|| LeaseGuard::acquire(&control.root, target.generation).unwrap());
+            let result = control.observe_end(&owner, &target, &mut |_| {
+                if case == "permission_off" {
+                    Err(ControlError::Denied)
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(
+                result,
+                match case {
+                    "gone" => Ok(true),
+                    "foreign" | "permission_off" => Err(ControlError::Denied),
+                    "replaced" => Err(ControlError::Stale),
+                    "revoked" => Err(ControlError::Revoked),
+                    "busy" => Err(ControlError::Busy),
+                    _ => Err(ControlError::Unknown),
+                },
+                "{case}"
+            );
+            drop(held);
+        }
+    }
+
+    #[test]
+    fn end_completion_wait_observes_only_and_bounds_pending_busy_and_cancellation() {
+        for case in ["gone", "cancel", "deadline", "fatal", "replaced", "revoked"] {
+            let (_directory, control, owner, target) = observed_fixture();
+            let cancelled = AtomicBool::new(false);
+            let reads = std::cell::Cell::new(0);
+            let until = Instant::now()
+                + if case == "deadline" {
+                    Duration::from_millis(1)
+                } else {
+                    Duration::from_secs(1)
+                };
+            let result = SessionControl::wait_for_end(until, &cancelled, || {
+                reads.set(reads.get() + 1);
+                // No catalog or native lease may remain held between reads.
+                let mut tx = control.transaction().unwrap();
+                let lease = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+                drop(lease);
+                if reads.get() == 1 {
+                    drop(tx);
+                    if case == "cancel" {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                    return Ok(false);
+                }
+                if reads.get() == 2 && case == "gone" {
+                    return Err(ControlError::Busy);
+                }
+                if case == "replaced" {
+                    tx.state
+                        .sessions
+                        .get_mut(&target.logical)
+                        .unwrap()
+                        .generation = GenerationId::new(2).unwrap();
+                    tx.state.last_generation = 2;
+                    tx.save().unwrap();
+                }
+                if case == "revoked" {
+                    tx.state.sessions.get_mut(&target.logical).unwrap().revoked = true;
+                    tx.save().unwrap();
+                }
+                drop(tx);
+                if case == "fatal" {
+                    return Err(ControlError::Unknown);
+                }
+                control.observe_end(&owner, &target, &mut |_| Ok(()))
+            });
+            assert_eq!(
+                result,
+                match case {
+                    "gone" => Ok(EndOutcome::ObservedEnded),
+                    "cancel" => Err(ControlError::Cancelled),
+                    "deadline" => Err(ControlError::CommittedButNotPublished),
+                    "fatal" => Err(ControlError::Unknown),
+                    "replaced" => Err(ControlError::Stale),
+                    _ => Err(ControlError::Revoked),
+                },
+                "{case}"
+            );
+            assert_eq!(
+                reads.get(),
+                match case {
+                    "gone" => 3,
+                    "cancel" | "deadline" => 1,
+                    _ => 2,
+                }
+            );
+        }
+    }
+
     fn unpublished_fixture() -> (
         storage::PrivateTestDirectory,
         SessionControl,
@@ -3430,6 +3616,124 @@ impl SessionControl {
         Ok(EndOutcome::StopRequested)
     }
 
+    /// One stop mutation followed only by observation of that exact generation.
+    /// The caller supplies its already-running request's absolute deadline.
+    pub fn end_until<G>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        until: Instant,
+        cancelled: &AtomicBool,
+        mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<EndOutcome, ControlError> {
+        let check = || {
+            if cancelled.load(Ordering::Acquire) {
+                Err(ControlError::Cancelled)
+            } else if Instant::now() >= until {
+                Err(ControlError::CommittedButNotPublished)
+            } else {
+                Ok(())
+            }
+        };
+        check()?;
+        let mut admit = |state: &AdmissionState| {
+            check()?;
+            admit(state)
+        };
+        // end owns and releases its transaction, native lease and policy guard
+        // before returning. Waiting must never prevent the daemon reading stop.
+        if self.end(owner, target, &mut admit)? == EndOutcome::ObservedEnded {
+            check()?;
+            return Ok(EndOutcome::ObservedEnded);
+        }
+        Self::wait_for_end(until, cancelled, || {
+            self.observe_end(owner, target, &mut admit)
+        })
+    }
+
+    fn wait_for_end(
+        until: Instant,
+        cancelled: &AtomicBool,
+        mut observe: impl FnMut() -> Result<bool, ControlError>,
+    ) -> Result<EndOutcome, ControlError> {
+        let check = || {
+            if cancelled.load(Ordering::Acquire) {
+                Err(ControlError::Cancelled)
+            } else if Instant::now() >= until {
+                Err(ControlError::CommittedButNotPublished)
+            } else {
+                Ok(())
+            }
+        };
+        loop {
+            check()?;
+            match observe() {
+                Ok(true) => {
+                    check()?;
+                    return Ok(EndOutcome::ObservedEnded);
+                }
+                Ok(false) | Err(ControlError::Busy) => {}
+                Err(error) => return Err(error),
+            }
+            // All observation locks/guards were dropped before this wait.
+            std::thread::sleep(
+                Duration::from_millis(10).min(until.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
+
+    fn observe_end<G>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<bool, ControlError> {
+        let mut tx = self.transaction()?;
+        let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
+        let record = tx
+            .state
+            .sessions
+            .get_mut(&target.logical)
+            .ok_or(ControlError::Denied)?;
+        if &record.owner != owner || record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
+        if record.revoked || !record.profile_enabled {
+            return Err(ControlError::Revoked);
+        }
+        if record.generation != target.generation {
+            return Err(ControlError::Stale);
+        }
+        if record.artifacts_retired || record.identity.is_none() {
+            return Err(ControlError::Unknown);
+        }
+        if !matches!(record.phase, Phase::Ending | Phase::Absent) {
+            return Err(ControlError::Stale);
+        }
+        {
+            let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+                .map_err(storage_error)?;
+            let lease = guard.read().map_err(|_| ControlError::Unknown)?;
+            if !lease.stopped
+                || !record.lease_matches(&lease)
+                || !same_grant(&record.grant(), &lease.grant)
+            {
+                return Err(ControlError::Unknown);
+            }
+        }
+        self.reconcile(record)?;
+        if record.revoked {
+            return Err(ControlError::Revoked);
+        }
+        if !matches!(record.phase, Phase::Absent) {
+            return Ok(false);
+        }
+        // Reuse the exact ended-generation lease and fresh End authorization
+        // fence. No pending/Unknown grant is promoted to remote authority.
+        let (_, _admission) = self.exact(&mut tx, owner, target, Effect::End, &mut admit)?;
+        Ok(true)
+    }
+
     /// Intentional cancellation after creation committed but before adoption.
     /// A pending or committed transfer makes this original authority stale.
     pub fn cancel_initial_lease<G>(
@@ -3814,10 +4118,34 @@ fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
             .map_err(|_| ControlError::Invalid)?;
         (home, None::<PathBuf>, path)
     };
-    let local = profile_with_defaults(recipe, &home, shell.as_deref(), path.as_deref())?;
+    profile_for_account(recipe, &home, shell.as_deref(), path.as_deref())
+}
+
+fn profile_for_account(
+    recipe: &Recipe,
+    home: &Path,
+    shell: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+) -> Result<LocalProfile, ControlError> {
+    let local = profile_with_defaults(recipe, home, shell, path)?;
     #[cfg(unix)]
     let local = if let Some(shell) = shell {
-        festerm_pty::login_environment::with_corrected_local_path(local, shell.as_os_str(), &home)
+        // A fresh generic default is itself a login shell. Preparing its PATH
+        // with another login first would apply startup twice. Explicit and
+        // journaled effective recipes retain their existing preparation path.
+        if recipe.shell.is_none()
+            && recipe.args.is_empty()
+            && local.executable() == shell
+            && local.arguments() == [std::ffi::OsString::from("-l")]
+        {
+            local
+        } else {
+            festerm_pty::login_environment::with_corrected_local_path(
+                local,
+                shell.as_os_str(),
+                home,
+            )
+        }
     } else {
         local
     };

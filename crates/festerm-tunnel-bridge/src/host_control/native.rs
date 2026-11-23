@@ -432,11 +432,16 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                 })
             }
             Request::ExplicitEnd { target } => {
+                let until = admission.control_deadline.ok_or(Refusal::Unsupported)?;
                 let outcome = self
                     .sessions
-                    .end(admission.principal(), target, |state| {
-                        self.admit(admission, state, request)
-                    })
+                    .end_until(
+                        admission.principal(),
+                        target,
+                        until,
+                        &admission.cancelled,
+                        |state| self.admit(admission, state, request),
+                    )
                     .map_err(refusal)?;
                 match outcome {
                     EndOutcome::StopRequested => Err(Refusal::OutcomeUncertain),

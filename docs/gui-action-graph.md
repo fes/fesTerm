@@ -2388,6 +2388,9 @@ Fresh generic creation and Start & Connect resolve omitted cwd on the server
 to its account home, using ordinary local-shell/PATH/startup defaults. Explicit
 launch fields remain exact; reconnect uses the already-issued generation. This
 changes launch defaults on the existing edges, not discovery or authority.
+Fresh generic Unix account-shell `-l` defaults apply login startup in the real
+shell once; they skip only the preparatory login probe. Explicit launch fields,
+frozen effective recipes, existing generations and Windows paths stay unchanged.
 See ADR-0025/0084 and the manual fresh-shell HOME/PATH scenario; native managed
 qualification remains separate from deterministic launch fixtures.
 
@@ -2423,3 +2426,10 @@ and absolute deadline through the final protected-scope read. Only WouldBlock
 may wait for a fresh full-Snapshot match; cancel, fatal errors or changed scope
 refuse without another Start or credential action. The original Mac path and
 all explicit recovery/retry edges remain unchanged; native acceptance is pending.
+
+
+HOST-03 / MOB-06 Terminate confirmation keeps one stop mutation and the original
+request deadline through exact-generation completion observation. Ended requires
+observed absence plus fresh permission; pending/Busy may wait, while cancellation,
+revocation, replacement or fatal observation remains uncertain without replay.
+Close/Cancel and the separate default-off termination grant are unchanged.

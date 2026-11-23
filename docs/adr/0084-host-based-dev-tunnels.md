@@ -3259,3 +3259,44 @@ expiry, cancellation and fatal reads; service fixtures retain the native lock
 and original deadline through completion with zero/one Start. Native corrected
 first-result qualification remains pending; source tests do not qualify a VM or
 repair the already captured first Windows result retroactively.
+
+
+### Fresh generic Unix login startup once
+
+Only a fresh generic Unix recipe with omitted shell and empty arguments whose
+resolved default is the native account shell with `-l` skips the preparation
+login-environment probe. The real login shell initializes its own environment;
+native HOME/cwd/default argv remain unchanged. Explicit commands/arguments,
+pending stored effective recipes, running generations, Windows and the shared
+GUI resolver keep their prior paths. There is no PATH deduplication or startup
+file repair. The private controlled account-shell/real-PTY regression proves
+one startup side effect and PATH suffix rather than two, with explicit command
+lookup and fingerprint preservation. It does not identify the actual Linux21
+`/snap/bin` writer or qualify a corrected native build.
+
+Validation impact: GUI:HOST-02/03 / ADR-0025.
+
+### One End mutation and bounded completion observation
+
+The signed Linux21 first confirmed Terminate committed its target to Ending and
+its daemon/shell disappeared, but the GUI correctly retained an unconfirmed
+outcome. End does not insert a Create/Ensure operation receipt; the unchanged
+operation count is expected. The old live-End handler returned StopRequested
+immediately and only a later request could reconcile native absence.
+
+The control dispatcher now carries its original absolute request deadline into
+End completion. After one unchanged stop mutation, its transaction, native lease
+and policy guard are released. Only short exact-generation observations follow;
+still-stopping or lock contention can wait within the same deadline. A matching
+stopped lease and native identity are required, with fresh End permission,
+principal, ownership and revocation checks before Ended publication. Other
+errors, cancellation, replacement and expiry remain unconfirmed. There is no
+second End, creation/stop replay, new operation, deadline renewal or wire/store
+format change. Imported desktop-bound shells retain their refusal.
+
+Validation impact: GUI:HOST-03 / GUI:MOB-06 / ADR0086. Real authenticated native
+fixtures require the first End worker to confirm exact absence, retain protected
+originals through unavailable observation, and hide a completed reply to verify
+uncertainty. Controlled lease/state fixtures cover pending/Busy, cancellation,
+expiry, changed generation/revocation and denied permission. Corrected managed
+native and physical-device qualification remain separate from these tests.

@@ -4288,6 +4288,11 @@ requires a normal app restart.
 
 ### Confirmed remote session termination
 
+A confirmed request can wait for the selected generation's observed exit within
+its original request budget. It sends the stop action once. Only authoritative
+absence and fresh permission produce success; pending, cancelled or unavailable
+observation retains the existing unconfirmed presentation and original action.
+
 Find & Connect running-session cards show **Terminate…** only when the host
 advertises the separately approved termination permission. A named modal asks
 “Terminate <name> on <host>?” and explains that this ends the shell and stops

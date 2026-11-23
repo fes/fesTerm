@@ -486,7 +486,11 @@ session, generation and operation. Checkpoint preparation is cancellable before
 issuance. Account, epoch, privacy, selection and lifetime fences remain fresh;
 unknown results retain the original action and never retry automatically.
 An authoritative matching Ended receipt removes only that generation from the
-cached inventory; StopRequested or a lost reply does not report success.
+cached inventory; StopRequested or a lost reply does not report success. The
+same control request may observe completion after its one stop commit: it uses
+that request's original deadline and cancellation, releases locks between exact
+generation observations, and freshly authorizes the ended generation before
+publishing Ended. It never resends End or renews the deadline.
 
 HOST-created generic and shared-profile sessions are eligible under the normal
 session grant. Imported desktop-bound local shells retain the native bound-local

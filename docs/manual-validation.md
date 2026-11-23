@@ -1162,14 +1162,25 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has eleven accepted pinned functional cases (desktop11/12), five partial cases
-and eight unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has twelve accepted pinned functional cases (desktop12/12), five partial cases
+and seven unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
 original actors remain plus the intended new three. The second Mac grid is an
 actual PTY resize on a fresh attachment to the same generation. Unsuccessful
 edge-drag commands are retained and do not qualify Mac edge-drag resizing.
+
+The [Mac-client/Windows-server creation-OFF record](../validation/dev-tunnels/mac-client-windows-native-off.json)
+completes the desktop cases: normal account discovery, disabled generic/stopped
+creation, private-profile exclusion, retained and saved same-generation I/O,
+and fresh 74×20 / 70×19 Copilot/query comparisons. Signed GUI/HOST21, retained
+native15 daemon, historical local19 references and supporting SDK777 are
+separately attributed. The first SDK account-confirmation failure remains
+recorded; a distinct authorized run after ordinary GUI account readiness passed.
+Only two existing-session resume records were added; no actors were created.
+Public screenshots are lossless app-window crops with pixel provenance. This
+adds no HOME/PATH, termination, Files, mobile or combined-release qualification.
 
 The [Linux-client/Mac-server creation-OFF record](../validation/dev-tunnels/linux-client-mac-native.json)
 adds normal exact-locator selection, Running/Not-started shared-profile inventory,
@@ -6656,6 +6667,15 @@ HOME/PATH override/Clear preservation, bounded startup/oversized output, and an
 actual zsh startup using only a private fixture HOME. These checks neither
 restart the production Remote shell nor qualify the managed server matrix.
 
+For fresh generic Unix defaults, verify the actual login shell applies startup
+once, rather than receiving a preparation login's already-modified PATH. The
+controlled private-home/real-PTY regression records startup side effects and a
+non-idempotent PATH suffix, plus explicit-command and frozen-recipe checks.
+Linux21's captured extra trailing `/snap/bin` is retained as a mismatch; source
+and controlled tests do not identify its actual startup-file writer. Do not
+normalize PATH or edit user dotfiles. Repeat the native default-only check on a
+corrected frontend/helper cohort before accepting that mismatch as resolved.
+
 
 ### Ordinary remote termination — source qualification pending native checks
 
@@ -6711,3 +6731,15 @@ Start replay. Require a fresh first result and preserved existing sessions,
 settings, registration and Files policy. Mac parent/child behavior and its
 separate ambiguous warning are unchanged. Owned source fixtures are automated
 evidence only; corrected managed native qualification remains pending.
+
+
+### First confirmed remote Terminate completion
+
+For HOST-03 / MOB-06, preserve Linux21's first unconfirmed result and expected
+unchanged Create/Ensure operation count. On a corrected cohort, use only a fresh
+owned shell: Cancel preserves its generation and I/O; one named confirmation
+must report success only after exact native absence is observed. Delayed exit,
+revocation, generation replacement, cancelled request or unavailable observation
+must retain the original unconfirmed action, with no second End or stop replay.
+Check original sessions/settings/account bindings and normal frontend drain.
+Portable/owned native fixtures do not qualify a managed HOST or physical device.

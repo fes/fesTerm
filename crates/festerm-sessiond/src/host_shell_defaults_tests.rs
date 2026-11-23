@@ -157,3 +157,140 @@ fn native_home_and_path_defaults_preserve_explicit_environment_choices() {
         clear
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn fresh_generic_login_sources_controlled_private_home_once() {
+    use festerm_session::{Session, SessionEvent, SessionTryReceiveError};
+    use std::os::unix::fs::PermissionsExt;
+
+    // The resolver cache is process-wide. A single-test child makes the OLD
+    // preparation probe observable regardless of other tests' execution order.
+    const INNER: &str = "FESTERM_TEST_FRESH_LOGIN_INNER";
+    if std::env::var_os(INNER).as_deref() != Some(std::ffi::OsStr::new("1")) {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "host_control::shell_defaults_tests::fresh_generic_login_sources_controlled_private_home_once", "--nocapture"])
+            .env(INNER, "1")
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "isolated controlled login fixture: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let private = storage::private_test_directory();
+    let home = private.path().join("home");
+    let _directory = storage::private_directory(&home, true).unwrap();
+    let bin = home.join("private-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let shell = home.join("controlled-login-shell");
+    std::fs::write(&shell, "#!/bin/sh\n[ \"$1\" = -l ] || exit 81\nshift\n. \"$HOME/.profile\"\nunset ENV BASH_ENV\nif [ \"$#\" -eq 0 ]; then exec /bin/sh -i; fi\nexec /bin/sh \"$@\"\n").unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(home.join(".profile"), "printf 'startup\\n' >> \"$HOME/start-count\"\nPATH=\"$PATH:$HOME/private-bin\"\nexport PATH\n").unwrap();
+    let tool = bin.join("fixture-tool");
+    std::fs::write(&tool, "#!/bin/sh\nprintf 'private-tool-ok'\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let generic = recipe(None, &[], None);
+    let p = profile_for_account(&generic, &home, Some(&shell), None).unwrap();
+    assert_eq!(p.arguments(), &[std::ffi::OsString::from("-l")]);
+    let fingerprint = detached::spawn_fingerprint(&p).unwrap();
+    let session = festerm_pty::LocalPtySession::start(p.clone(), terminal_size()).unwrap();
+    // Split markers prevent the shell's input echo from satisfying the reply.
+    session.try_send_input(b"printf 'FES''TERM_LOGIN_BEGIN\\n%s\\n%s\\n%s\\nFES''TERM_LOGIN_END\\n' \"$HOME\" \"$PWD\" \"$PATH\"\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut output = Vec::new();
+    let text = loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Output(bytes)) => output.extend(bytes),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(error) => panic!("controlled login closed: {error:?}"),
+        }
+        assert!(output.len() <= 64 * 1024);
+        let text = String::from_utf8_lossy(&output);
+        if text.contains("FESTERM_LOGIN_BEGIN\r\n") && text.contains("FESTERM_LOGIN_END") {
+            break text.into_owned();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "controlled login response deadline"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let block = text
+        .split_once("FESTERM_LOGIN_BEGIN\r\n")
+        .unwrap()
+        .1
+        .split_once("FESTERM_LOGIN_END")
+        .unwrap()
+        .0;
+    let fields: Vec<_> = block.lines().collect();
+    assert_eq!(fields.len(), 3);
+    assert_eq!(Path::new(fields[0]), home);
+    assert_eq!(
+        std::fs::canonicalize(fields[1]).unwrap(),
+        std::fs::canonicalize(&home).unwrap()
+    );
+    let suffixes = std::env::split_paths(std::ffi::OsStr::new(fields[2]))
+        .filter(|p| p == &bin)
+        .count();
+    let startups = std::fs::read_to_string(home.join("start-count"))
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(
+        (startups, suffixes),
+        (1, 1),
+        "startup side effects and PATH suffix count"
+    );
+    assert_eq!(detached::spawn_fingerprint(&p).unwrap(), fingerprint);
+    session.try_send_input(b"exit\n").unwrap();
+    let exit_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Lifecycle(festerm_session::SessionLifecycle::Exited(_))) => break,
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(error) => panic!("controlled login exit: {error:?}"),
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "controlled login ordinary exit deadline"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    session.shutdown(Duration::from_secs(2)).unwrap();
+    drop(session);
+
+    // Explicit commands and stored effective recipes keep their preparation
+    // path. Their argv/cwd/fingerprint are not rewritten by the default fix.
+    let explicit = recipe(Some("fixture-tool"), &[], Some(home.to_str().unwrap()));
+    let tool_profile = profile_for_account(&explicit, &home, Some(&shell), None).unwrap();
+    assert_eq!(tool_profile.executable(), tool);
+    assert!(tool_profile.arguments().is_empty());
+    assert_eq!(
+        std::process::Command::new(tool_profile.executable())
+            .output()
+            .unwrap()
+            .stdout,
+        b"private-tool-ok"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join("start-count"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    let frozen = recipe(
+        Some(p.executable().to_str().unwrap()),
+        &["-l"],
+        p.working_directory().unwrap().to_str(),
+    );
+    let restored = profile_for_account(&frozen, &home, Some(&shell), None).unwrap();
+    assert_eq!(restored.executable(), p.executable());
+    assert_eq!(restored.arguments(), p.arguments());
+    assert_eq!(restored.working_directory(), p.working_directory());
+    assert_eq!(detached::spawn_fingerprint(&restored).unwrap(), fingerprint);
+}
