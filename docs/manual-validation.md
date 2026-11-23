@@ -6931,6 +6931,20 @@ failure details.
 
 ### Signed 0.17.24 Files component evidence
 
+Direct server path/link/read-only refusal remains a separate native gate from
+GUI validation and disabled controls. The existing controlled SDK now has an
+ignored Files-only provider test, with fixed probes behind the bridge `testing`
+feature and an exact private fixture; see
+[the boundary qualification contract](dev-tunnel-files-protocol.md#opt-in-deployed-boundary-qualification).
+Local real-service tests prove correlated remote refusals and unchanged owned
+files, plus account/cancellation/deadline and unexpected-acceptance fences.
+They do not qualify deployed HOST behavior. Linux/Mac/Windows provider runs,
+existing-ready-key admission and owned root/outside pre/post preservation remain
+pending. No live revocation, universal unlink, arbitrary request or new release
+acceptance is implied.
+Link-upload escape under a write-enabled grant and direct server
+reviewed-Delete denial remain outside this read-only SDK slice.
+
 The [23 November component record](../validation/dev-tunnels/files-native-0.17.24.json)
 qualifies ordinary account discovery and a completed 16 MiB Linux upload, plus
 Linux-to-Mac download, mkdir, 16 MiB upload and separately reviewed deletion of

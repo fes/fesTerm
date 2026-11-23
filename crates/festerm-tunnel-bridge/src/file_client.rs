@@ -62,6 +62,53 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 type Result<T> = std::result::Result<T, Error>;
 
+/// Fixed negative probes for the opt-in provider/native-files lab only.
+/// Normal shipping builds do not enable the existing `testing` feature.
+#[cfg(feature = "testing")]
+#[derive(Clone, Copy, Debug)]
+pub enum BoundaryProbe {
+    ParentTraversal,
+    Backslash,
+    DrivePath,
+    ReservedName,
+    ReadOnlyMkdir,
+    ReadOnlyUpload,
+}
+
+#[cfg(feature = "testing")]
+fn boundary_operation(probe: BoundaryProbe, leaf: &str) -> Result<Operation> {
+    if !leaf.starts_with("festerm-boundary-")
+        || !(32..=64).contains(&leaf.len())
+        || !leaf
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(Error::Invalid);
+    }
+    Ok(match probe {
+        BoundaryProbe::ParentTraversal => Operation::OpenRead {
+            path: format!("/../{leaf}/outside.txt"),
+        },
+        BoundaryProbe::Backslash => Operation::OpenRead {
+            path: format!("/{leaf}\\outside.txt"),
+        },
+        BoundaryProbe::DrivePath => Operation::OpenRead {
+            path: format!("C:/{leaf}/outside.txt"),
+        },
+        BoundaryProbe::ReservedName => Operation::OpenRead {
+            path: format!("/{leaf}/.festerm-transfer-probe"),
+        },
+        BoundaryProbe::ReadOnlyMkdir => Operation::Mkdir {
+            path: format!("/{leaf}/denied-mkdir"),
+        },
+        BoundaryProbe::ReadOnlyUpload => Operation::BeginUpload {
+            path: format!("/{leaf}/denied-upload"),
+            size: "0".into(),
+            expected: None,
+        },
+    })
+}
+
 /// A connection-local handle; it cannot authorize a coincidentally equal handle
 /// on another stream. EOF does not close it: call `close` explicitly.
 pub struct Handle {
@@ -615,6 +662,32 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             _ => self.protocol(),
         }
     }
+    /// Sends only a fixed lab negative probe, bypassing local path/write UX
+    /// checks so a *remote* refusal can be distinguished from local rejection.
+    /// Keeps exchange's account, cancellation, framing and deadline fences.
+    #[cfg(feature = "testing")]
+    pub async fn probe_boundary_refusal(
+        &mut self,
+        probe: BoundaryProbe,
+        owned_leaf: &str,
+    ) -> Result<rpc::ErrorCode> {
+        let operation = boundary_operation(probe, owned_leaf)?;
+        if matches!(
+            probe,
+            BoundaryProbe::ReadOnlyMkdir | BoundaryProbe::ReadOnlyUpload
+        ) && self.capabilities.write
+        {
+            return Err(Error::Invalid);
+        }
+        match self.exchange(operation, None).await {
+            Err(Error::Remote { code, .. }) => Ok(code),
+            Err(error) => Err(error),
+            // Unexpected acceptance is a failed test, never Finish/retry. Drop
+            // the channel and let the server's existing handle cleanup run.
+            Ok(_) => self.protocol(),
+        }
+    }
+
     pub async fn ping(&mut self) -> Result<()> {
         match self.exchange(Operation::Ping {}, None).await? {
             (Reply::Pong, None) => Ok(()),
@@ -1196,6 +1269,219 @@ mod tests {
             page_limit: rpc::PAGE_LIMIT,
             handle_limit: rpc::HANDLE_LIMIT,
         }
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_probes_reach_real_read_only_service_and_preserve_owned_files() {
+        let (root, files) = grant(false);
+        let leaf = "festerm-boundary-0123456789abcdef";
+        std::fs::create_dir(root.join(leaf)).unwrap();
+        std::fs::write(root.join(leaf).join("canary.txt"), b"public canary").unwrap();
+        let (stream, server, target) = service(files);
+        let mut client = Client::open(stream, target, CancellationToken::new())
+            .await
+            .unwrap();
+        let (read, _) = client
+            .open_read(&format!("/{leaf}/canary.txt"))
+            .await
+            .unwrap();
+        assert_eq!(
+            client.read(&read, 0, 64).await.unwrap().bytes,
+            b"public canary"
+        );
+        client.close(&read).await.unwrap();
+        for (probe, expected) in [
+            (BoundaryProbe::ParentTraversal, rpc::ErrorCode::Invalid),
+            (BoundaryProbe::Backslash, rpc::ErrorCode::Invalid),
+            (BoundaryProbe::DrivePath, rpc::ErrorCode::Invalid),
+            (BoundaryProbe::ReservedName, rpc::ErrorCode::Invalid),
+            (BoundaryProbe::ReadOnlyMkdir, rpc::ErrorCode::Denied),
+            (BoundaryProbe::ReadOnlyUpload, rpc::ErrorCode::Denied),
+        ] {
+            let before = client.next_id;
+            assert_eq!(
+                client.probe_boundary_refusal(probe, leaf).await.unwrap(),
+                expected
+            );
+            assert_eq!(
+                client.next_id,
+                before + 1,
+                "one correlated wire request, never a local denial"
+            );
+        }
+        let before = client.next_id;
+        for invalid in [
+            "unowned",
+            "festerm-boundary-../../outside",
+            "festerm-boundary-0123456789abcdef/child",
+        ] {
+            assert!(matches!(
+                client
+                    .probe_boundary_refusal(BoundaryProbe::ParentTraversal, invalid)
+                    .await,
+                Err(Error::Invalid)
+            ));
+        }
+        assert_eq!(
+            client.next_id, before,
+            "invalid ownership labels send no request"
+        );
+        client.ping().await.unwrap();
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(root.join(leaf)).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(root.join(leaf).join("canary.txt")).unwrap(),
+            b"public canary"
+        );
+        client.cancel();
+        stopped(server).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_probe_account_or_request_cancellation_sends_no_request() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for account_cutover in [false, true] {
+            let scope = rpc::HostScope {
+                host: Default::default(),
+                installation: Default::default(),
+                epoch: "29".into(),
+            };
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                scripted_host_open(&mut peer, &expected).await;
+                assert!(crate::wire::read_frame(&mut peer).await.is_err());
+            });
+            let current = Arc::new(AtomicBool::new(true));
+            let checked = current.clone();
+            let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+                CancellationToken::new(),
+                Arc::new(move || {
+                    if checked.load(Ordering::SeqCst) {
+                        Ok(())
+                    } else {
+                        Err(festerm_host_protocol::ContractError::Stale)
+                    }
+                }),
+            );
+            let cancel = CancellationToken::new();
+            let (mut client, _) = Client::open_host_guarded(
+                stream,
+                &scope.host,
+                &scope.installation,
+                None,
+                guard,
+                cancel.clone(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            if account_cutover {
+                current.store(false, Ordering::SeqCst);
+            } else {
+                cancel.cancel();
+            }
+            assert!(matches!(
+                client
+                    .probe_boundary_refusal(
+                        BoundaryProbe::ParentTraversal,
+                        "festerm-boundary-0123456789abcdef"
+                    )
+                    .await,
+                Err(Error::Cancelled)
+            ));
+            assert_eq!(client.next_id, 0);
+            server.await.unwrap();
+        }
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test(start_paused = true)]
+    async fn boundary_probe_uses_existing_deadline_without_replay() {
+        let scope = rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        };
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            scripted_host_open(&mut peer, &expected).await;
+            let request = request(&mut peer).await;
+            assert!(
+                matches!(request.operation, Operation::OpenRead { path } if path == "/../festerm-boundary-0123456789abcdef/outside.txt")
+            );
+            assert!(
+                crate::wire::read_frame(&mut peer).await.is_err(),
+                "no retry or Finish after the original deadline"
+            );
+        });
+        let (mut client, _) = Client::open_host(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let started = tokio::time::Instant::now();
+        assert!(matches!(
+            client
+                .probe_boundary_refusal(
+                    BoundaryProbe::ParentTraversal,
+                    "festerm-boundary-0123456789abcdef"
+                )
+                .await,
+            Err(Error::Deadline)
+        ));
+        assert_eq!(started.elapsed(), DEADLINE);
+        assert!(!client.available());
+        assert_eq!(client.next_id, 1);
+        server.await.unwrap();
+    }
+
+    #[cfg(feature = "testing")]
+    #[tokio::test]
+    async fn boundary_probe_never_accepts_success_or_issues_followup_after_it() {
+        let scope = rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "29".into(),
+        };
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            scripted_host_open(&mut peer, &expected).await;
+            let request = request(&mut peer).await;
+            assert!(matches!(request.operation, Operation::OpenRead { .. }));
+            reply(&mut peer, request.id, Reply::Created).await;
+            assert!(crate::wire::read_frame(&mut peer).await.is_err());
+        });
+        let (mut client, _) = Client::open_host(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            client
+                .probe_boundary_refusal(
+                    BoundaryProbe::ParentTraversal,
+                    "festerm-boundary-0123456789abcdef"
+                )
+                .await,
+            Err(Error::Protocol)
+        ));
+        assert!(!client.available());
+        assert_eq!(client.next_id, 1);
+        server.await.unwrap();
     }
     async fn reply(stream: &mut DuplexStream, id: u32, result: Reply) {
         write_frame(

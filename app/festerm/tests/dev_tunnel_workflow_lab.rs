@@ -53,6 +53,91 @@ struct Fixture {
     shell: Shell,
 }
 
+/// A separate opt-in record: no shell/Create/Ensure fields or authority.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesBoundaryFixture {
+    schema_version: u32,
+    account: String,
+    configuration: PathBuf,
+    runtime_root: PathBuf,
+    locator: String,
+    scope: festerm_tunnel_bridge::file_protocol::HostScope,
+    owned_leaf: String,
+    allow_direct_server_probes: bool,
+    // Operator admission must verify existing ready records for this exact
+    // account/host before running. The unchanged connector is not a new
+    // existing-key-only API and this attestation does not grant credentials.
+    existing_ready_keys_verified: bool,
+}
+impl FilesBoundaryFixture {
+    fn valid(&self) -> bool {
+        self.schema_version == 1
+            && self.account == "fes-festerm1"
+            && self.configuration.is_absolute()
+            && self.runtime_root.is_absolute()
+            && self.allow_direct_server_probes
+            && self.existing_ready_keys_verified
+            && self.scope.validate().is_ok()
+            && self.locator.len() <= 256
+            && self.locator.contains('.')
+            && self
+                .locator
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
+            && self.owned_leaf.starts_with("festerm-boundary-")
+            && (32..=64).contains(&self.owned_leaf.len())
+            && self
+                .owned_leaf
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }
+}
+
+#[test]
+fn files_boundary_fixture_is_files_only_owned_and_explicit() {
+    let scope = festerm_tunnel_bridge::file_protocol::HostScope {
+        host: Default::default(),
+        installation: Default::default(),
+        epoch: "29".into(),
+    };
+    let fixture = serde_json::json!({
+        "schema_version": 1, "account": "fes-festerm1",
+        "configuration": std::env::temp_dir().join("boundary/config.toml"),
+        "runtime_root": std::env::temp_dir().join("boundary/runtime"),
+        "locator": "fixture.region", "scope": scope,
+        "owned_leaf": "festerm-boundary-0123456789abcdef",
+        "allow_direct_server_probes": true, "existing_ready_keys_verified": true
+    });
+    assert!(
+        serde_json::from_value::<FilesBoundaryFixture>(fixture.clone())
+            .unwrap()
+            .valid()
+    );
+    for (field, value) in [
+        ("schema_version", serde_json::json!(2)),
+        ("account", serde_json::json!("other-account")),
+        ("configuration", serde_json::json!("relative.toml")),
+        ("runtime_root", serde_json::json!("relative")),
+        ("locator", serde_json::json!("https://unreviewed.example")),
+        (
+            "owned_leaf",
+            serde_json::json!("festerm-boundary-../../outside"),
+        ),
+        ("allow_direct_server_probes", serde_json::json!(false)),
+        ("existing_ready_keys_verified", serde_json::json!(false)),
+    ] {
+        let mut invalid = fixture.clone();
+        invalid[field] = value;
+        assert!(!serde_json::from_value::<FilesBoundaryFixture>(invalid)
+            .unwrap()
+            .valid());
+    }
+    let mut shell = fixture;
+    shell["allow_shell_input"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<FilesBoundaryFixture>(shell).is_err());
+}
+
 // Inventory is assembled from all correlated pages; uncertainty is never absence.
 fn not_started(inventory: &Inventory, logical: &LogicalSessionId) -> bool {
     !inventory
@@ -299,6 +384,175 @@ fn private_bytes(path: &Path) -> Vec<u8> {
     bytes
 }
 
+// Both opt-in tests use the ordinary account credential in place. No token,
+// device key, config content or native-store error is exported to the runner.
+fn native_account(configuration_path: &Path, login: &str) -> (Identity, OrdinaryAccountGuard) {
+    assert_eq!(login, "fes-festerm1", "controlled account required");
+    let configuration_bytes = private_bytes(configuration_path);
+    let configuration = require(Configuration::parse(require(std::str::from_utf8(
+        &configuration_bytes,
+    ))));
+    let mut accounts = configuration
+        .accounts()
+        .iter()
+        .filter(|account| account.login() == login);
+    let account = accounts.next().unwrap_or_else(|| blocked());
+    assert!(
+        accounts.next().is_none(),
+        "unique controlled account required"
+    );
+    let store = require(native_store());
+    let secret = require(store.get(account.credential_reference()));
+    let identity = require(secret.with_bytes(|bytes| {
+        Identity::decode_private(
+            bytes,
+            account.account_id(),
+            identity::registered_client_id().unwrap_or_else(|| blocked()),
+        )
+    }));
+    assert_eq!(
+        identity.account.login, login,
+        "native identity must match the controlled account"
+    );
+    let configuration_path = configuration_path.to_owned();
+    let guard = OrdinaryAccountGuard::new(
+        CancellationToken::new(),
+        Arc::new(move || {
+            if private_bytes(&configuration_path) == configuration_bytes {
+                Ok(())
+            } else {
+                Err(ContractError::Stale)
+            }
+        }),
+    );
+    (identity, guard)
+}
+
+#[test]
+#[ignore = "real provider/native-vault/owned Files boundary fixture; prebuilt controlled SDK only"]
+fn controlled_github_files_server_boundaries() {
+    use festerm_tunnel_bridge::{
+        file_client::{BoundaryProbe, Error as FileError},
+        file_protocol::ErrorCode,
+    };
+    assert_eq!(
+        std::env::var("FESTERM_RUN_DEV_TUNNEL_FILES_BOUNDARY").as_deref(),
+        Ok("1"),
+        "explicit Files-only opt-in required"
+    );
+    let record = PathBuf::from(
+        std::env::var_os("FESTERM_DEV_TUNNEL_FILES_BOUNDARY_RECORD").unwrap_or_else(|| blocked()),
+    );
+    let fixture: FilesBoundaryFixture = require(serde_json::from_slice(&private_bytes(&record)));
+    assert!(
+        fixture.valid(),
+        "exact owned Files boundary fixture required"
+    );
+    assert_eq!(
+        std::env::var_os("FESTERM_SESSIOND_RUNTIME_ROOT").map(PathBuf::from),
+        Some(fixture.runtime_root.clone())
+    );
+    let (identity, guard) = native_account(&fixture.configuration, &fixture.account);
+    let runtime = require(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build(),
+    );
+    let cancel = CancellationToken::new();
+    runtime.block_on(async {
+        require(
+            tokio::time::timeout(Duration::from_secs(120), async {
+                require(
+                    identity
+                        .confirm_account(&require(Https::new()), &cancel)
+                        .await,
+                );
+                let hosts = require(service::list_hosts(&identity, &cancel).await);
+                assert!(
+                    hosts.iter().any(|host| host.locator == fixture.locator),
+                    "exact fixture host required"
+                );
+                let mut files = require(
+                    ordinary::open_files_reviewed(
+                        &identity,
+                        &fixture.locator,
+                        require(OrdinaryKeyIndex::native()),
+                        &host_client::Budgets::default(),
+                        guard,
+                        &cancel,
+                        Some(&fixture.scope),
+                    )
+                    .await,
+                )
+                .unwrap_or_else(|| blocked());
+                assert!(
+                    files.scope() == &fixture.scope,
+                    "exact captured Files scope required"
+                );
+                assert!(
+                    !files.client().capabilities().write && !files.delete_advertised(),
+                    "fresh read-only grant required"
+                );
+                let canary = format!("/{}/canary.txt", fixture.owned_leaf);
+                let (handle, metadata) = require(files.client().open_read(&canary).await);
+                let expected = b"fesTerm public boundary canary\n";
+                assert_eq!(metadata.size, expected.len().to_string());
+                let data = require(files.client().read(&handle, 0, 128).await);
+                assert_eq!(data.bytes, expected);
+                assert!(data.eof);
+                require(files.client().close(&handle).await);
+                for (probe, expected) in [
+                    (BoundaryProbe::ParentTraversal, ErrorCode::Invalid),
+                    (BoundaryProbe::Backslash, ErrorCode::Invalid),
+                    (BoundaryProbe::DrivePath, ErrorCode::Invalid),
+                    (BoundaryProbe::ReservedName, ErrorCode::Invalid),
+                    (BoundaryProbe::ReadOnlyMkdir, ErrorCode::Denied),
+                    (BoundaryProbe::ReadOnlyUpload, ErrorCode::Denied),
+                ] {
+                    let code = require(
+                        files
+                            .client()
+                            .probe_boundary_refusal(probe, &fixture.owned_leaf)
+                            .await,
+                    );
+                    assert_eq!(
+                        code, expected,
+                        "remote boundary refusal must match the protocol contract"
+                    );
+                    println!("FESTERM_FILES_BOUNDARY probe={probe:?} remote={code:?}");
+                }
+                // These are valid virtual paths: the public client sends them.
+                // Existing Unix nofollow/Windows reparse errors have finite native
+                // classifications; NotFound alone is not an escape-boundary proof.
+                let escape = format!("/{}/escape", fixture.owned_leaf);
+                for directory in [true, false] {
+                    let result = if directory {
+                        files.client().open_directory(&escape).await.map(|_| ())
+                    } else {
+                        files
+                            .client()
+                            .open_read(&format!("{escape}/outside.txt"))
+                            .await
+                            .map(|_| ())
+                    };
+                    match result {
+                        Err(FileError::Remote {
+                            code: code @ (ErrorCode::Denied | ErrorCode::Invalid | ErrorCode::Io),
+                            ..
+                        }) => println!("FESTERM_FILES_BOUNDARY link_remote={code:?}"),
+                        _ => blocked(),
+                    }
+                }
+                require(files.client().ping().await);
+                require(files.check_current());
+                files.client().cancel();
+                println!("FESTERM_FILES_BOUNDARY_PASS");
+            })
+            .await,
+        );
+    });
+}
+
 struct Peer {
     context: OrdinaryContext,
     budgets: host_client::Budgets,
@@ -498,29 +752,7 @@ fn controlled_github_host_service_client_workflow() {
     );
     assert_ne!(fixture.private_logical, fixture.generic_logical);
     assert_ne!(fixture.private_logical, fixture.denied_logical);
-    let configuration_bytes = private_bytes(&fixture.configuration);
-    let configuration = require(Configuration::parse(require(std::str::from_utf8(
-        &configuration_bytes,
-    ))));
-    let account = configuration
-        .accounts()
-        .iter()
-        .find(|account| account.login() == fixture.account)
-        .unwrap_or_else(|| blocked());
-    let account_id = account.account_id();
-    let store = require(native_store());
-    let secret = require(store.get(account.credential_reference()));
-    let identity = require(secret.with_bytes(|bytes| {
-        Identity::decode_private(
-            bytes,
-            account_id,
-            identity::registered_client_id().unwrap_or_else(|| blocked()),
-        )
-    }));
-    assert_eq!(
-        identity.account.login, "fes-festerm1",
-        "native identity must match the controlled account"
-    );
+    let (identity, guard) = native_account(&fixture.configuration, &fixture.account);
     let cancel = CancellationToken::new();
     let runtime = require(
         tokio::runtime::Builder::new_current_thread()
@@ -529,17 +761,6 @@ fn controlled_github_host_service_client_workflow() {
     );
     let budgets = host_client::Budgets::default();
     let index = require(OrdinaryKeyIndex::native());
-    let configuration_path = fixture.configuration.clone();
-    let guard = OrdinaryAccountGuard::new(
-        CancellationToken::new(),
-        Arc::new(move || {
-            if private_bytes(&configuration_path) == configuration_bytes {
-                Ok(())
-            } else {
-                Err(ContractError::Stale)
-            }
-        }),
-    );
     let (context, discovered_inventory) = runtime.block_on(async {
         require(
             tokio::time::timeout(Duration::from_secs(30), async {
