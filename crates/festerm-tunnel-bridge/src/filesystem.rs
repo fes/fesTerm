@@ -340,8 +340,55 @@ pub(crate) enum AdmissionStage {
 }
 pub(crate) type Admission = Arc<dyn Fn(AdmissionStage) -> io::Result<()> + Send + Sync>;
 
+// This wrapper belongs to one native job, including its queue time. Only a
+// fresh protected-policy read may wait; the filesystem operation is never replayed.
+fn scoped_admission(
+    admission: Admission,
+    deadline: tokio::time::Instant,
+    cancel: CancellationToken,
+) -> Admission {
+    Arc::new(move |stage| {
+        let mut busy = None;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            let Some(_) = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+            else {
+                return Err(busy.unwrap_or_else(|| io::ErrorKind::TimedOut.into()));
+            };
+            match admission(stage) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    busy = Some(error);
+                    // The failed callback has released its lease before waiting.
+                    if !cancel.is_cancelled() {
+                        if let Some(remaining) =
+                            deadline.checked_duration_since(tokio::time::Instant::now())
+                        {
+                            std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
+                Ok(()) => {
+                    if cancel.is_cancelled() {
+                        return Err(io::ErrorKind::PermissionDenied.into());
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(busy.unwrap_or_else(|| io::ErrorKind::TimedOut.into()));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+    })
+}
+
 struct Session {
     reviewed_operations: bool,
+    #[cfg(test)]
     admission: Admission,
     filesystem: Arc<Filesystem>,
     handles: HashMap<u32, Handle>,
@@ -360,11 +407,22 @@ impl Session {
         Ok(id)
     }
 
+    #[cfg(test)]
     fn execute(
         &mut self,
         operation: Operation,
         data: Vec<u8>,
         cancel: &CancellationToken,
+    ) -> Outcome<(Reply, Option<Vec<u8>>)> {
+        self.execute_admitted(operation, data, cancel, &self.admission.clone())
+    }
+
+    fn execute_admitted(
+        &mut self,
+        operation: Operation,
+        data: Vec<u8>,
+        cancel: &CancellationToken,
+        admission: &Admission,
     ) -> Outcome<(Reply, Option<Vec<u8>>)> {
         if cancel.is_cancelled() {
             return Err(ErrorCode::Denied.into());
@@ -400,7 +458,7 @@ impl Session {
                 let Some(Handle::EntryReview(entry)) = self.handles.remove(&review) else {
                     unreachable!()
                 };
-                reviewed_delete::remove(entry, &self.admission, cancel)?;
+                reviewed_delete::remove(entry, admission, cancel)?;
                 Reply::Deleted
             }
             Operation::Ping {} => Reply::Pong,
@@ -641,7 +699,7 @@ impl Session {
                 upload.file.sync_all()?;
                 // Final publication admission is distinct from the request job.
                 // The callback releases protected policy before native commit.
-                (self.admission)(AdmissionStage::Publication)?;
+                admission(AdmissionStage::Publication)?;
                 finish(&mut upload, cancel)?;
                 Reply::Finished {
                     size: upload.size.to_string(),
@@ -818,6 +876,7 @@ async fn serve_authorized_mode(
     write_frame(&mut stream, rpc::RESPONSE, &serde_json::to_vec(&ready)?).await?;
     let state = Arc::new(Mutex::new(Session {
         reviewed_operations,
+        #[cfg(test)]
         admission: admission.clone(),
         filesystem,
         handles: HashMap::new(),
@@ -856,19 +915,29 @@ async fn serve_authorized_mode(
         };
         let session = state.clone();
         let token = cancel.clone();
-        let admission = admission.clone();
+        let deadline = tokio::time::Instant::now() + DEADLINE;
+        let admission = scoped_admission(admission.clone(), deadline, token.clone());
         let job = tokio::task::spawn_blocking(move || {
             admission(AdmissionStage::Request)?;
             let result = session
                 .lock()
                 .map_err(|_| Failure::from(ErrorCode::Io))
-                .and_then(|mut session| session.execute(request.operation, data, &token));
+                .and_then(|mut session| {
+                    // Queue/lock time cannot renew the admission budget.
+                    if token.is_cancelled() {
+                        return Err(io::Error::from(io::ErrorKind::PermissionDenied).into());
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(io::Error::from(io::ErrorKind::TimedOut).into());
+                    }
+                    session.execute_admitted(request.operation, data, &token, &admission)
+                });
             // Admission of this concrete disclosure precedes releasing its
             // result to async framing. No lease crosses filesystem/network I/O.
             admission(AdmissionStage::Disclosure)?;
             Ok::<_, io::Error>(result)
         });
-        let result = tokio::time::timeout(DEADLINE, job)
+        let result = tokio::time::timeout_at(deadline, job)
             .await
             .map_err(|_| invalid())?
             .map_err(|_| invalid())??;
@@ -1586,6 +1655,475 @@ mod tests {
             drop(filesystem);
             std::fs::remove_dir_all(path).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn rooted_wire_busy_then_policy_change_refuses_request_and_disclosure() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        for stage in [AdmissionStage::Request, AdmissionStage::Disclosure] {
+            let (path, fixture) = session(true);
+            let filesystem = fixture.filesystem.clone();
+            drop(fixture);
+            std::fs::write(path.join("canary"), b"old").unwrap();
+            let armed = Arc::new(AtomicBool::new(false));
+            let active = armed.clone();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let admission: Admission = Arc::new(move |current| {
+                if current == stage && active.load(Ordering::SeqCst) {
+                    return Err(if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        io::ErrorKind::WouldBlock
+                    } else {
+                        io::ErrorKind::PermissionDenied
+                    }
+                    .into());
+                }
+                Ok(())
+            });
+            let parent = CancellationToken::new();
+            let (mut client, server) = tokio::io::duplex(8192);
+            let worker = tokio::spawn(serve_authorized(
+                server,
+                filesystem.clone(),
+                admission,
+                parent.clone(),
+            ));
+            crate::wire::read_frame(&mut client).await.unwrap();
+            armed.store(true, Ordering::SeqCst);
+            write_frame(
+                &mut client,
+                rpc::REQUEST,
+                &serde_json::to_vec(&rpc::Request {
+                    id: 1,
+                    operation: Operation::BeginUpload {
+                        path: "/new".into(),
+                        size: "0".into(),
+                        expected: None,
+                    },
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                crate::wire::read_frame(&mut client)
+                    .await
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::UnexpectedEof
+            );
+            assert_eq!(
+                worker.await.unwrap().unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert!(!parent.is_cancelled());
+            assert_eq!(filesystem.slots.available_permits(), 2);
+            assert!(!path.join("new").exists());
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+            assert_eq!(std::fs::read(path.join("canary")).unwrap(), b"old");
+            drop(client);
+            drop(filesystem);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn rooted_scoped_publication_never_reuses_approval_after_busy_cancel_or_expiry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // Exercise the actual replacement publication boundary, not a formatter
+        // or a synthetic model of the filesystem operation.
+        for mode in ["changed", "cancelled", "fatal", "allowed"] {
+            let (path, mut session) = session(true);
+            std::fs::write(path.join("target"), b"old").unwrap();
+            let expected = handle(run(
+                &mut session,
+                Operation::OpenRead {
+                    path: "/target".into(),
+                },
+            ));
+            let upload = handle(run(
+                &mut session,
+                Operation::BeginUpload {
+                    path: "/target".into(),
+                    size: "3".into(),
+                    expected: Some(expected),
+                },
+            ));
+            session
+                .execute(
+                    Operation::Write {
+                        handle: upload,
+                        offset: "0".into(),
+                        length: 3,
+                    },
+                    b"new".to_vec(),
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let cancel = CancellationToken::new();
+            let cancellation = cancel.clone();
+            let base: Admission = Arc::new(move |stage| {
+                assert!(stage == AdmissionStage::Publication);
+                let call = observed.fetch_add(1, Ordering::SeqCst);
+                if mode == "fatal" || (mode == "changed" && call > 0) {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+                if mode == "cancelled" {
+                    cancellation.cancel();
+                }
+                if call == 0 {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                Ok(())
+            });
+            let deadline = tokio::time::Instant::now() + DEADLINE;
+            let admission = scoped_admission(base, deadline, cancel.clone());
+            let result = session.execute_admitted(
+                Operation::FinishUpload { handle: upload },
+                Vec::new(),
+                &cancel,
+                &admission,
+            );
+            assert_eq!(result.is_ok(), mode == "allowed");
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                if mode == "allowed" || mode == "changed" {
+                    2
+                } else {
+                    1
+                }
+            );
+            assert_eq!(
+                std::fs::read(path.join("target")).unwrap(),
+                if mode == "allowed" { b"new" } else { b"old" }
+            );
+            drop(session);
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rooted_publication_busy_uses_original_budget_without_late_read_or_mutation() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (path, mut session) = session(true);
+        std::fs::write(path.join("target"), b"old").unwrap();
+        let expected = handle(run(
+            &mut session,
+            Operation::OpenRead {
+                path: "/target".into(),
+            },
+        ));
+        let upload = handle(run(
+            &mut session,
+            Operation::BeginUpload {
+                path: "/target".into(),
+                size: "3".into(),
+                expected: Some(expected),
+            },
+        ));
+        session
+            .execute(
+                Operation::Write {
+                    handle: upload,
+                    offset: "0".into(),
+                    length: 3,
+                },
+                b"new".to_vec(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let reads = calls.clone();
+        let (started, seen) = tokio::sync::oneshot::channel();
+        let started = Mutex::new(Some(started));
+        let (release, held) = std::sync::mpsc::channel();
+        let held = Mutex::new(held);
+        let callback: Admission = Arc::new(move |stage| {
+            assert!(stage == AdmissionStage::Publication);
+            reads.fetch_add(1, Ordering::SeqCst);
+            started.lock().unwrap().take().unwrap().send(()).unwrap();
+            held.lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap();
+            Err(io::ErrorKind::WouldBlock.into())
+        });
+        let deadline = tokio::time::Instant::now() + DEADLINE;
+        let cancel = CancellationToken::new();
+        let admission = scoped_admission(callback, deadline, cancel.clone());
+        let job = tokio::task::spawn_blocking(move || {
+            let result = session.execute_admitted(
+                Operation::FinishUpload { handle: upload },
+                Vec::new(),
+                &cancel,
+                &admission,
+            );
+            (session, result)
+        });
+        seen.await.unwrap();
+        // Expire the original clock while the actual publication read is held;
+        // no real 30-second sleep and no second budget or callback invocation.
+        tokio::time::advance(DEADLINE).await;
+        release.send(()).unwrap();
+        let (session, result) = job.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read(path.join("target")).unwrap(), b"old");
+        drop(session);
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn rooted_scoped_admission_rejects_queued_expired_and_post_read_cancelled_work() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for stage in [
+            AdmissionStage::Request,
+            AdmissionStage::Disclosure,
+            AdmissionStage::Publication,
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let read = calls.clone();
+            let callback: Admission = Arc::new(move |_| {
+                read.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            });
+            let expired = scoped_admission(
+                callback,
+                tokio::time::Instant::now(),
+                CancellationToken::new(),
+            );
+            assert_eq!(expired(stage).unwrap_err().kind(), io::ErrorKind::TimedOut);
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            let cancel = CancellationToken::new();
+            let during_read = cancel.clone();
+            let callback: Admission = Arc::new(move |_| {
+                during_read.cancel();
+                Ok(())
+            });
+            let cancelled =
+                scoped_admission(callback, tokio::time::Instant::now() + DEADLINE, cancel);
+            assert_eq!(
+                cancelled(stage).unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rooted_transfer_survives_short_competing_policy_read_without_replay() {
+        use fs2::FileExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct ReadLease(File);
+        impl Drop for ReadLease {
+            fn drop(&mut self) {
+                let _ = FileExt::unlock(&self.0);
+            }
+        }
+        fn policy_read(
+            directory: &File,
+            busy: Option<&Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+        ) -> io::Result<ReadLease> {
+            // Distinct opens, not duplicated descriptors: the real exclusive
+            // lifecycle-read primitive must actually contend across readers.
+            let file = crate::setup_storage::open_private_file(
+                directory,
+                Path::new("host-lifecycle.lock"),
+                false,
+            )?;
+            if let Err(error) = file.try_lock_exclusive() {
+                if fs2::lock_contended_error()
+                    .raw_os_error()
+                    .is_some_and(|code| error.raw_os_error() == Some(code))
+                {
+                    if let Some(sender) = busy.and_then(|slot| slot.lock().unwrap().take()) {
+                        let _ = sender.send(());
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "fixture.policy_read_busy",
+                    ));
+                }
+                return Err(error);
+            }
+            let lease = ReadLease(file);
+            if crate::setup_storage::read_private(directory, Path::new("policy"), 64)?.as_slice()
+                != b"same scope/root/grant"
+            {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(lease)
+        }
+
+        let (path, fixture) = session(true);
+        let filesystem = fixture.filesystem.clone();
+        drop(fixture);
+        std::fs::write(path.join("canary"), b"original").unwrap();
+        let policy_path = crate::test_support::private_directory("festerm-policy-read-contention");
+        let directory =
+            Arc::new(crate::setup_storage::private_directory(&policy_path, false).unwrap());
+        drop(
+            crate::setup_storage::open_private_file(
+                &directory,
+                Path::new("host-lifecycle.lock"),
+                true,
+            )
+            .unwrap(),
+        );
+        crate::setup_storage::write_new_private(
+            &directory,
+            Path::new("policy"),
+            b"same scope/root/grant",
+        )
+        .unwrap();
+        let (busy_sender, busy_seen) = tokio::sync::oneshot::channel();
+        let busy_sender = Mutex::new(Some(busy_sender));
+        let transfer_directory = directory.clone();
+        let transfer_admission: Admission = Arc::new(move |_| {
+            let _lease = policy_read(&transfer_directory, Some(&busy_sender))?;
+            Ok(())
+        });
+        let hold = Arc::new(AtomicBool::new(false));
+        let hold_read = hold.clone();
+        let (held_sender, held_seen) = tokio::sync::oneshot::channel();
+        let held_sender = Mutex::new(Some(held_sender));
+        let (release, released) = std::sync::mpsc::channel();
+        let released = Mutex::new(released);
+        let browse_directory = directory.clone();
+        let browse_admission: Admission = Arc::new(move |stage| {
+            let _lease = policy_read(&browse_directory, None)?;
+            if stage == AdmissionStage::Request && hold_read.swap(false, Ordering::AcqRel) {
+                held_sender
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .unwrap();
+                // Emergency fixture bound only; normal release is synchronized
+                // with the competing transfer's actual OS-lock WouldBlock.
+                released
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(3))
+                    .unwrap();
+            }
+            Ok(())
+        });
+        let parent = CancellationToken::new();
+        let (mut transfer, server) = tokio::io::duplex(8192);
+        let transfer_worker = tokio::spawn(serve_authorized(
+            server,
+            filesystem.clone(),
+            transfer_admission,
+            parent.clone(),
+        ));
+        crate::wire::read_frame(&mut transfer).await.unwrap();
+        let (mut browse, server) = tokio::io::duplex(8192);
+        let browse_worker = tokio::spawn(serve_authorized(
+            server,
+            filesystem.clone(),
+            browse_admission,
+            parent.clone(),
+        ));
+        crate::wire::read_frame(&mut browse).await.unwrap();
+        assert_eq!(filesystem.slots.available_permits(), 0);
+        let upload = handle(
+            exchange(
+                &mut transfer,
+                1,
+                Operation::BeginUpload {
+                    path: "/owned".into(),
+                    size: "2".into(),
+                    expected: None,
+                },
+                None,
+            )
+            .await,
+        );
+        assert!(matches!(exchange(&mut transfer, 2, Operation::Write {
+            handle: upload, offset: "0".into(), length: 1,
+        }, Some(b"a")).await, Reply::Written { offset } if offset == "1"));
+        assert!(!path.join("owned").exists());
+
+        hold.store(true, Ordering::Release);
+        let browse_ping = tokio::spawn(async move {
+            assert!(matches!(
+                exchange(&mut browse, 1, Operation::Ping {}, None).await,
+                Reply::Pong
+            ));
+            browse
+        });
+        held_seen.await.unwrap();
+        let transfer_request = tokio::spawn(async move {
+            let request = rpc::Request {
+                id: 3,
+                operation: Operation::Write {
+                    handle: upload,
+                    offset: "1".into(),
+                    length: 1,
+                },
+            };
+            write_frame(
+                &mut transfer,
+                rpc::REQUEST,
+                &serde_json::to_vec(&request).unwrap(),
+            )
+            .await
+            .unwrap();
+            write_frame(&mut transfer, rpc::DATA, &[0, 0, 0, 3, b'b'])
+                .await
+                .unwrap();
+            let result = crate::wire::read_frame(&mut transfer).await;
+            (transfer, result)
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(3), busy_seen)
+            .await
+            .unwrap()
+            .unwrap();
+        release.send(()).unwrap();
+        let mut browse = browse_ping.await.unwrap();
+        let (mut transfer, result) = transfer_request.await.unwrap();
+        let result_kind = result.as_ref().err().map(io::Error::kind);
+        if let Ok((kind, bytes)) = &result {
+            assert_eq!(*kind, rpc::RESPONSE);
+            let response: rpc::Response = serde_json::from_slice(bytes).unwrap();
+            assert_eq!(response.id, 3);
+            assert!(response.error.is_none());
+            assert!(matches!(response.result, Some(Reply::Written { offset }) if offset == "2"));
+            assert!(
+                matches!(exchange(&mut transfer, 4, Operation::FinishUpload { handle: upload }, None).await, Reply::Finished { size } if size == "2")
+            );
+            assert_eq!(std::fs::read(path.join("owned")).unwrap(), b"ab");
+        }
+        // A refused/closed transfer must not cancel its sibling or parent.
+        assert!(!parent.is_cancelled());
+        assert!(matches!(
+            exchange(&mut browse, 2, Operation::Ping {}, None).await,
+            Reply::Pong
+        ));
+        drop(transfer);
+        drop(browse);
+        let transfer_exit = transfer_worker.await.unwrap();
+        let _ = browse_worker.await.unwrap();
+        assert!(!parent.is_cancelled());
+        assert_eq!(filesystem.slots.available_permits(), 2);
+        assert_eq!(std::fs::read(path.join("canary")).unwrap(), b"original");
+        assert!(!std::fs::read_dir(&path).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(RESERVED)));
+        drop(filesystem);
+        drop(directory);
+        std::fs::remove_dir_all(path).unwrap();
+        std::fs::remove_dir_all(policy_path).unwrap();
+        assert!(result.is_ok(), "one transfer RPC must survive released read contention; client={result_kind:?}, server={:?}", transfer_exit.err().map(|error| error.kind()));
     }
 
     #[tokio::test]

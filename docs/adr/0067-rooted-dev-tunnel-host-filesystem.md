@@ -405,3 +405,23 @@ change; native/provider qualification remains separate.
   command, bounded old/malformed helper refusal and post-probe fences. DT-05
   retains packaged signed-helper/UI and accessibility qualification.
 - **Coverage superseded:** None.
+
+### Bounded current-policy read contention
+
+Two independently authenticated Files streams can briefly contend for the same
+exclusive native lifecycle read lease. After framing one request, its existing
+native-job budget starts before queuing; Request, Disclosure and Publication
+reads share that absolute deadline. Only `WouldBlock` permits another fresh
+policy read, after at most 25 ms or the remaining budget. Cancellation and
+expiry are checked before another read and after a successful read. Scope or
+grant changes and fatal errors remain immediate refusals. No protected lease or
+cached approval crosses a wait, filesystem I/O or network I/O, and no file
+operation, credential exchange or request is replayed. Timed-out native work
+retains its stream permit until drained.
+
+Validation impact: GUI:DTFILES-03; real-lock two-client wire transfer,
+changed-policy Request/Disclosure refusal, actual upload publication
+expiry/cancellation/fatal refusal and queued-expiry tests. The source-proven
+contention defect can produce EOF; it does not establish the cause or lock
+holder of issue #883's native uploads. Native current-helper transfer,
+cancellation and grant-revocation qualification remain separate.

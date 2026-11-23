@@ -28,7 +28,7 @@ Each pane has the same hierarchy:
 
 1. Explicit identity line: **LOCAL · This computer** or **REMOTE · user@host**; remote includes connection state.
 2. Compact toolbar: Back, Up, Home, Refresh, followed by a breadcrumb/path bar.
-3. Breadcrumb segments are individually clickable. The final segment is current. `Ctrl/Cmd+L` converts the bar to an editable path field; Enter navigates, Escape restores the breadcrumb.
+3. Breadcrumb segments are individually clickable. The final segment is current. Long paths use one bounded horizontal row, initially showing the current end, so they cannot wrap over the filter or directory actions. The row scrolls horizontally; double-clicking its empty background still opens the full path editor. `Ctrl/Cmd+L` converts the bar to an editable path field; Enter navigates, Escape restores the breadcrumb.
 4. Lightweight **Filter this folder** field. Filtering is immediate, case-insensitive by default, scoped to the loaded directory, and never implies an expensive recursive remote search. The filter remains active while navigating folders.
 5. File table with Name, Size, Modified, and Type. Clicking a heading sorts; the active sort and direction are visible and announced. Default is folders first, then natural Name order. Sorting/filtering is independent per pane.
 

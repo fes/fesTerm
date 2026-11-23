@@ -3224,58 +3224,71 @@ impl SftpFileManagerTab {
                                                 ui.set_min_width(content_width);
                                                 ui.set_max_width(content_width);
                                                 ui.set_min_height(SFTP_BREADCRUMB_HEIGHT);
-                                                ui.horizontal_wrapped(|ui| {
-                                                    let mut previous_label_was_root_slash = false;
-                                                    for (index, segment) in
-                                                        breadcrumb_segments(&pane.current_path)
-                                                            .into_iter()
-                                                            .enumerate()
-                                                    {
-                                                        // The root segment's own label is already
-                                                        // "/" (see `breadcrumb_segments`), so adding
-                                                        // another "/" separator right after it would
-                                                        // render as "//" before the next segment
-                                                        // (e.g. "//config" instead of "/config").
-                                                        if index > 0
-                                                            && !previous_label_was_root_slash
-                                                        {
-                                                            ui.label(
-                                                                RichText::new("/")
-                                                                    .font(font_for_text_role(
-                                                                        SftpTextRole::Breadcrumb,
-                                                                    ))
-                                                                    .color(theme::TEXT_MUTED),
-                                                            );
-                                                        }
-                                                        previous_label_was_root_slash =
-                                                            segment.label == "/";
-                                                        let text =
-                                                            RichText::new(segment.label.clone())
-                                                                .font(font_for_text_role(
-                                                                    SftpTextRole::Breadcrumb,
-                                                                ))
-                                                                .color(if segment.current {
-                                                                    theme::TEXT_PRIMARY
-                                                                } else {
-                                                                    theme::TEXT_SECONDARY
-                                                                });
-                                                        if segment.current {
-                                                            ui.label(text);
-                                                        } else if ui
-                                                            .add(
-                                                                egui::Button::new(text)
-                                                                    .fill(Color32::TRANSPARENT)
-                                                                    .stroke(egui::Stroke::NONE)
-                                                                    .min_size(egui::vec2(
-                                                                        0.0, 18.0,
-                                                                    )),
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            request_breadcrumb = Some(segment.path);
-                                                        }
-                                                    }
-                                                });
+                                                // The toolbar has a fixed height. Keep long
+                                                // paths in its viewport instead of wrapping
+                                                // ancestor buttons over the filter/actions.
+                                                egui::ScrollArea::horizontal()
+                                                    .id_salt((focus, "breadcrumb-scroll"))
+                                                    .max_width(content_width)
+                                                    .max_height(SFTP_BREADCRUMB_HEIGHT)
+                                                    .auto_shrink([false, false])
+                                                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                                                    .stick_to_right(true)
+                                                    .show(ui, |ui| {
+                                                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                                        ui.horizontal_centered(|ui| {
+                                                            let mut previous_label_was_root_slash = false;
+                                                            for (index, segment) in
+                                                                breadcrumb_segments(&pane.current_path)
+                                                                    .into_iter()
+                                                                    .enumerate()
+                                                            {
+                                                                // The root segment's own label is already
+                                                                // "/" (see `breadcrumb_segments`), so adding
+                                                                // another "/" separator right after it would
+                                                                // render as "//" before the next segment
+                                                                // (e.g. "//config" instead of "/config").
+                                                                if index > 0
+                                                                    && !previous_label_was_root_slash
+                                                                {
+                                                                    ui.label(
+                                                                        RichText::new("/")
+                                                                            .font(font_for_text_role(
+                                                                                SftpTextRole::Breadcrumb,
+                                                                            ))
+                                                                            .color(theme::TEXT_MUTED),
+                                                                    );
+                                                                }
+                                                                previous_label_was_root_slash =
+                                                                    segment.label == "/";
+                                                                let text =
+                                                                    RichText::new(segment.label.clone())
+                                                                        .font(font_for_text_role(
+                                                                            SftpTextRole::Breadcrumb,
+                                                                        ))
+                                                                        .color(if segment.current {
+                                                                            theme::TEXT_PRIMARY
+                                                                        } else {
+                                                                            theme::TEXT_SECONDARY
+                                                                        });
+                                                                if segment.current {
+                                                                    ui.label(text);
+                                                                } else if ui
+                                                                    .add(
+                                                                        egui::Button::new(text)
+                                                                            .fill(Color32::TRANSPARENT)
+                                                                            .stroke(egui::Stroke::NONE)
+                                                                            .min_size(egui::vec2(
+                                                                                0.0, 18.0,
+                                                                            )),
+                                                                    )
+                                                                    .clicked()
+                                                                {
+                                                                    request_breadcrumb = Some(segment.path);
+                                                                }
+                                                            }
+                                                        });
+                                                    });
                                             });
                                         let _ = bar.response;
                                         bar_bg_response.widget_info(|| {
@@ -8801,6 +8814,76 @@ pub(crate) mod tests {
             }
         }
         tab
+    }
+
+    #[test]
+    fn long_breadcrumbs_stay_inside_the_toolbar_above_filter_and_actions() {
+        for focus in [PaneFocus::Local, PaneFocus::Remote] {
+            for width in [280.0, 330.0, 460.0] {
+                for scale in [1.0, 2.0] {
+                    let context = egui::Context::default();
+                    let mut tab = paint_fixture(&context, 0);
+                    let path = "/home/evidence/.local/share/festerm-native-campaign/GUI-F352-R45157491569/public-source";
+                    let pane = match focus {
+                        PaneFocus::Local => &mut tab.local_pane,
+                        PaneFocus::Remote => &mut tab.remote_pane,
+                    };
+                    pane.current_path = match focus {
+                        PaneFocus::Local => SftpPath::local(path),
+                        PaneFocus::Remote => SftpPath::remote(path),
+                    };
+                    pane.path_text = pane.current_path.display();
+                    let path_label = format!("{} path {}", focus.label(), pane.path_text);
+                    let mut harness = Harness::builder()
+                        .with_size(egui::vec2(width, 500.0))
+                        .with_pixels_per_point(scale)
+                        .with_step_dt(1.0 / 60.0)
+                        .with_max_steps(100)
+                        .build_ui_state(
+                            |ui, tab: &mut SftpFileManagerTab| {
+                                tab.show_pane(ui, focus);
+                            },
+                            tab,
+                        );
+                    harness.run();
+                    let bar = harness.get_by_label(&path_label).rect();
+                    let leaf = harness.get_by_label("public-source").rect();
+                    let filter = harness.get_by_role(egui::accesskit::Role::TextInput).rect();
+                    let action = harness
+                        .get_by_label(&format!("New directory in {} folder", focus.label()))
+                        .rect();
+                    assert!(leaf.bottom() <= bar.bottom(), "breadcrumb escapes toolbar at {focus:?}, width={width}, scale={scale}: {leaf:?}, {bar:?}");
+                    assert!(
+                        leaf.bottom() < filter.top() && leaf.bottom() < action.top(),
+                        "breadcrumb overlaps controls at {focus:?}, width={width}, scale={scale}"
+                    );
+                    // Double-clicking the empty frame margin still edits the
+                    // full path; breadcrumb labels retain text selection.
+                    let empty_margin = egui::pos2(bar.right() - 3.0, bar.center().y);
+                    for _ in 0..2 {
+                        harness.event(egui::Event::PointerMoved(empty_margin));
+                        for pressed in [true, false] {
+                            harness.event(egui::Event::PointerButton {
+                                pos: empty_margin,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::default(),
+                            });
+                        }
+                        harness.run();
+                    }
+                    let pane = match focus {
+                        PaneFocus::Local => &harness.state().local_pane,
+                        PaneFocus::Remote => &harness.state().remote_pane,
+                    };
+                    assert!(
+                        pane.editing_path,
+                        "double-click path at {focus:?}, width={width}, scale={scale}"
+                    );
+                    assert_eq!(pane.path_text, path);
+                }
+            }
+        }
     }
 
     #[test]

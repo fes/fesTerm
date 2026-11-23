@@ -90,7 +90,12 @@ nonzero, strictly increasing **u32** IDs. Process one request at a time; no
 pipelining, reconnect replay, handle reuse across streams, or transfer resumption.
 All JSON field names/types and enum spellings are defined by the portable DTOs.
 Unknown fields/operations and malformed framing refuse. Each frame/read/job has
-a 30-second deadline. `ping` can keep an otherwise idle stream alive.
+a 30-second deadline. A request's native-job deadline is captured before queuing
+its work. Only a transient `WouldBlock` from a fresh protected-policy read may
+wait within that same budget, with cancellation checked before another read.
+Request, disclosure and publication share the budget; changed grants or other
+errors refuse immediately. The filesystem operation and wire request are never
+replayed, and no approval is cached across a wait. `ping` can keep an otherwise idle stream alive.
 Desktop Files clients ping both independently opened browsing and transfer
 streams every 20 seconds while idle. A transfer Ping completes before the queue
 admits another command; a failed Ping retires only that Files tab and drains its
