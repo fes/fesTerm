@@ -26,6 +26,12 @@ pub(super) struct OperationGuard {
 }
 
 impl OperationGuard {
+    pub(super) fn deadline(&self) -> io::Result<Instant> {
+        UNTIL
+            .with(|slot| slot.get())
+            .ok_or_else(|| super::refused("host.service_native_timeout"))
+    }
+
     pub(super) fn remaining(&self) -> io::Result<Duration> {
         let until = UNTIL
             .with(|slot| slot.get())

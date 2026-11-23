@@ -2416,3 +2416,10 @@ HOST-04/06 Update host review: the header action reveals the existing review onc
 and focuses Not now. Enter cancels; ordinary scrolling remains free while it is
 pending, and cancel/reopen reveals again. No acquisition or worker starts from
 revealing/focusing; the existing explicit confirmation and protected gates remain.
+
+
+HOST-04 non-Mac ordinary Enable retains the existing service-operation ownership
+and absolute deadline through the final protected-scope read. Only WouldBlock
+may wait for a fresh full-Snapshot match; cancel, fatal errors or changed scope
+refuse without another Start or credential action. The original Mac path and
+all explicit recovery/retry edges remain unchanged; native acceptance is pending.

@@ -6698,3 +6698,16 @@ update. Reopen, scroll away and repaint: the view must not snap back repeatedly.
 Cancel/reopen should reveal once again. Controller/ScrollArea tests cover this
 presentation and zero-worker cancellation; native platform/DPI follow-up remains
 separate from component trust, stopped update and authorization qualification.
+
+
+### Windows/Linux final Enable protected-scope contention
+
+For HOST-04, preserve the first result before Refresh or a new operation. Signed
+Windows 0.17.21's service Start succeeded before `final_scope` returned Busy;
+Listening40 does not identify the competing lock holder. A corrected frontend
+keeps this read and the full approved Snapshot comparison inside the original
+native operation's remaining budget, with cancellation before each read and no
+Start replay. Require a fresh first result and preserved existing sessions,
+settings, registration and Files policy. Mac parent/child behavior and its
+separate ambiguous warning are unchanged. Owned source fixtures are automated
+evidence only; corrected managed native qualification remains pending.

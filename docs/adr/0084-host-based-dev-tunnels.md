@@ -3236,3 +3236,26 @@ cover an early Transitioning read (zero manager starts), a Mac-like scope
 callback after Running (one start, no callback retry), and the original deadline
 exhaustion. Native source-cause attribution still requires the narrower event;
 these diagnostic tests do not repair or requalify the first Enable warning.
+
+### Final foreground Enable scope under the original native operation
+
+Windows signed 0.17.21 completed service Start and reached Listening40, then
+reported a Busy warning at the app's distinct `final_scope` snapshot. This pins
+the refused read to final protected lifecycle observation; the competing holder
+is not identified. It is separate from Mac's still-ambiguous earlier warning.
+
+For the non-Mac ordinary Enable path, a trusted completion callback retains the
+existing private service-operation guard and its original absolute deadline
+through that same final full-Snapshot comparison. Only snapshot WouldBlock may
+wait and read again; cancellation is checked before every read, other errors and
+changed consent/scope refuse immediately, and exhaustion retains the last Busy.
+No manager, credential, registration or setup work is repeated and no deadline
+is renewed. The existing Start API keeps its identity completion. The Mac
+parent/child path keeps its existing one-shot final read and behavior.
+
+Validation impact: GUI:HOST-04 / ADR0084. Owned lifecycle-lease fixtures cover
+transient contention, unchanged versus changed full consent at the same epoch,
+expiry, cancellation and fatal reads; service fixtures retain the native lock
+and original deadline through completion with zero/one Start. Native corrected
+first-result qualification remains pending; source tests do not qualify a VM or
+repair the already captured first Windows result retroactively.
