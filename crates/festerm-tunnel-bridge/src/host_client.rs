@@ -37,8 +37,9 @@ pub mod originals;
 mod session;
 pub(crate) use creation::create_authenticated;
 pub use creation::{Created, CreationIntent, CreationMode};
+#[cfg(any(test, feature = "testing"))]
 pub(crate) use ending::end_authenticated;
-pub use ending::EndIntent;
+pub use ending::{EndFailureDiagnostic, EndIntent};
 pub use festerm_host_protocol::{
     AttachmentId, Budgets, Creation, EnsureDisposition, LogicalSessionId, Target,
 };
@@ -540,6 +541,7 @@ impl Adoption {
 /// Keep this owner alive alongside a live terminal. Dropping it cancels the
 /// runtime, never reports Detached and never reconnects or replays input.
 pub struct Worker {
+    end_intent: Option<Arc<ending::EndAttempt>>,
     scope: Scope,
     cancel: CancellationToken,
     events: flume::Receiver<Completion>,
@@ -594,15 +596,31 @@ impl Worker {
         }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
-        Self::spawn_with_guard(
+        let end_intent = match &operation {
+            Operation::End(intent) => Some(Arc::new(ending::EndAttempt::new(intent.clone()))),
+            _ => None,
+        };
+        let attempt = end_intent.clone();
+        let mut worker = Self::spawn_with_guard(
             scope,
             wake,
             cancel,
             context.ordinary_guard(),
             move |scope, cancel, events, wake| async move {
-                execute(context, permit, &scope, operation, &cancel, &events, &wake).await
+                execute(
+                    context,
+                    permit,
+                    &scope,
+                    (operation, attempt),
+                    &cancel,
+                    &events,
+                    &wake,
+                )
+                .await
             },
-        )
+        )?;
+        worker.end_intent = end_intent;
+        Ok(worker)
     }
 
     #[cfg(any(all(test, feature = "relay", unix), feature = "testing"))]
@@ -722,11 +740,33 @@ impl Worker {
             })
             .map_err(|_| Failure::WorkerUnavailable)?;
         Ok(Self {
+            end_intent: None,
             scope,
             cancel,
             events: receiver,
             ordinary_guard,
         })
+    }
+
+    /// Read finite observations after completion delivery's existing guard check.
+    /// This does not invoke the guard callback or perform additional I/O.
+    pub fn end_failure_diagnostic(
+        &self,
+        current: &Scope,
+        failure: Failure,
+    ) -> Option<EndFailureDiagnostic> {
+        if current != &self.scope
+            || self.cancel.is_cancelled()
+            || self
+                .ordinary_guard
+                .as_ref()
+                .is_some_and(|guard| guard.cancel.is_cancelled())
+        {
+            return None;
+        }
+        self.end_intent
+            .as_ref()
+            .map(|intent| intent.failure_diagnostic(failure))
     }
 
     pub fn scope(&self) -> &Scope {
@@ -767,11 +807,12 @@ async fn execute(
     context: ClientContext,
     permit: ConnectionPermit,
     scope: &Scope,
-    operation: Operation,
+    operation: (Operation, Option<Arc<ending::EndAttempt>>),
     cancel: &CancellationToken,
     events: &flume::Sender<Completion>,
     wake: &Arc<dyn Fn() + Send + Sync>,
 ) -> Result<Outcome, Failure> {
+    let (operation, end_attempt) = operation;
     let role = match operation {
         Operation::Inventory
         | Operation::EnsureProfile { .. }
@@ -812,7 +853,13 @@ async fn execute(
         }
         Operation::End(intent) => {
             let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
-            end_authenticated(&mut client, intent, cancel).await
+            ending::end_observed(
+                &mut client,
+                intent,
+                cancel,
+                end_attempt.as_deref().expect("End worker attempt"),
+            )
+            .await
         }
         Operation::AttachReserved { target, attachment } => {
             attach_reserved_authenticated(

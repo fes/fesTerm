@@ -1905,6 +1905,27 @@ impl FesTermApp {
         });
         if let Some(completion) = completion {
             let completed_scope = completion.scope;
+            // Preserve only finite failure observations after current browser,
+            // account/lifetime and worker scope fences, before generic UI text.
+            if let Outcome::Failed(error) = &completion.outcome {
+                if let Some(detail) = browser
+                    .worker
+                    .as_ref()
+                    .and_then(|worker| worker.end_failure_diagnostic(&completed_scope, *error))
+                {
+                    tracing::warn!(
+                        event = "host.end_failure",
+                        stage = detail.stage,
+                        class = detail.class,
+                        refusal = detail.refusal,
+                        io_kind = detail.io_kind,
+                        checkpoint = detail.checkpoint,
+                        issued = detail.issued,
+                        resolved = detail.resolved,
+                        "Session termination could not be confirmed"
+                    );
+                }
+            }
             browser.worker = None;
             let ending = std::mem::take(&mut browser.ending);
             match completion.outcome {

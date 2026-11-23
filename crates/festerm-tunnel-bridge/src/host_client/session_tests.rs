@@ -70,6 +70,7 @@ fn selected_host_mobile_cancel_records_closed_state_after_shared_token_cancel() 
     let (_sender, events) = flume::bounded(2);
     let session = HostSession::from_worker(
         Worker {
+            end_intent: None,
             scope: scope(),
             cancel: cancel.clone(),
             ordinary_guard: None,
@@ -102,6 +103,7 @@ async fn presentation_round_trip(intentional_detach: bool) {
     let cancel = CancellationToken::new();
     let session = HostSession::from_worker(
         Worker {
+            end_intent: None,
             scope: scope.clone(),
             cancel: cancel.clone(),
             ordinary_guard: None,
@@ -303,6 +305,7 @@ fn selected_host_session_app_lock_cancels_without_fabricated_detach_or_input() {
     let cancel = CancellationToken::new();
     let session = HostSession::from_worker(
         Worker {
+            end_intent: None,
             scope: scope(),
             cancel: cancel.clone(),
             ordinary_guard: None,
@@ -328,6 +331,7 @@ fn selected_host_starting_resize_cache_is_discarded_on_failure_cancel_and_stop()
         let (sender, events) = flume::bounded(2);
         let session = HostSession::from_worker(
             Worker {
+                end_intent: None,
                 scope: scope.clone(),
                 cancel: CancellationToken::new(),
                 ordinary_guard: None,
@@ -493,6 +497,7 @@ async fn definitive_remote_end_or_displacement_survives_privacy_cancellation() {
         let (_sender, events) = flume::bounded(2);
         let session = HostSession::from_worker(
             Worker {
+                end_intent: None,
                 scope: scope(),
                 cancel: CancellationToken::new(),
                 ordinary_guard: None,

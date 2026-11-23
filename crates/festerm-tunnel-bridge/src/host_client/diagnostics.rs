@@ -1,4 +1,4 @@
-//! Finite attachment context only. Never retain transport strings or payloads.
+//! Finite client failure context only. Never retain transport strings or payloads.
 use super::{Error, Failure};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,49 +50,7 @@ impl Failure {
         let Self::Attachment { stage, error } = self else {
             return self.message().to_owned();
         };
-        let category = match error {
-            Error::Offline | Error::Io(_) => "offline",
-            Error::Closed => "closed",
-            Error::Deadline => "deadline",
-            Error::Cancelled => "cancelled",
-            Error::Contract(_) => "contract",
-            Error::Refused(_) => "refused",
-            Error::HostUpdateRequired => "host-update-required",
-            Error::HostPolicyRefreshRequired => "host-policy-refresh-required",
-        };
-        let kind = match error {
-            Error::Io(kind) => match kind {
-                std::io::ErrorKind::UnexpectedEof => "unexpected-eof",
-                std::io::ErrorKind::BrokenPipe => "broken-pipe",
-                std::io::ErrorKind::ConnectionReset => "connection-reset",
-                std::io::ErrorKind::ConnectionAborted => "connection-aborted",
-                std::io::ErrorKind::NotConnected => "not-connected",
-                std::io::ErrorKind::TimedOut => "timed-out",
-                std::io::ErrorKind::WouldBlock => "would-block",
-                std::io::ErrorKind::Interrupted => "interrupted",
-                std::io::ErrorKind::InvalidData => "invalid-data",
-                std::io::ErrorKind::InvalidInput => "invalid-input",
-                std::io::ErrorKind::PermissionDenied => "permission-denied",
-                std::io::ErrorKind::NotFound => "not-found",
-                _ => "other",
-            },
-            _ => "not-recorded",
-        };
-        let refusal = match error {
-            Error::Refused(reason) => match reason {
-                festerm_host_protocol::Refusal::Denied => "denied",
-                festerm_host_protocol::Refusal::Offline => "offline",
-                festerm_host_protocol::Refusal::Unknown => "unknown",
-                festerm_host_protocol::Refusal::Busy => "busy",
-                festerm_host_protocol::Refusal::Incompatible => "incompatible",
-                festerm_host_protocol::Refusal::Stale => "stale",
-                festerm_host_protocol::Refusal::RecipeConflict => "recipe-conflict",
-                festerm_host_protocol::Refusal::Revoked => "revoked",
-                festerm_host_protocol::Refusal::OutcomeUncertain => "outcome-uncertain",
-                festerm_host_protocol::Refusal::Unsupported => "unsupported",
-            },
-            _ => "not-recorded",
-        };
+        let (category, refusal, kind) = error_fields(error);
         format!(
             "{} Attachment stage: {}; category: {}; I/O kind: {}; refusal: {}.",
             self.message(),
@@ -104,6 +62,91 @@ impl Failure {
     }
 }
 
+/// Closed labels only. Never format a source error or retain its payload.
+pub(super) fn failure_fields(failure: Failure) -> (&'static str, &'static str, &'static str) {
+    let error = match failure {
+        Failure::Control(error) | Failure::Attachment { error, .. } => error,
+        other => {
+            return (
+                match other {
+                    Failure::OrdinaryKey(_) => "ordinary-key",
+                    Failure::OwnerKey(_) => "owner-key",
+                    Failure::ProviderIdentityExpired => "identity-expired",
+                    Failure::ProviderUnavailable => "provider-unavailable",
+                    Failure::MissingApproval => "missing-approval",
+                    Failure::BindingMismatch => "binding-mismatch",
+                    Failure::WorkerUnavailable => "worker-unavailable",
+                    Failure::OriginalStorage => "original-storage",
+                    Failure::Control(_) | Failure::Attachment { .. } => unreachable!(),
+                },
+                "not-recorded",
+                "not-recorded",
+            )
+        }
+    };
+    let (category, refusal, kind) = error_fields(error);
+    let refusal = match error {
+        Error::Contract(reason) => match reason {
+            festerm_host_protocol::ContractError::Malformed => "malformed",
+            festerm_host_protocol::ContractError::UnsupportedVersion => "unsupported-version",
+            festerm_host_protocol::ContractError::Limit => "limit",
+            festerm_host_protocol::ContractError::Denied => "denied",
+            festerm_host_protocol::ContractError::Stale => "stale",
+            festerm_host_protocol::ContractError::Busy => "busy",
+            festerm_host_protocol::ContractError::Exhausted => "exhausted",
+        },
+        _ => refusal,
+    };
+    (category, refusal, kind)
+}
+
+fn error_fields(error: Error) -> (&'static str, &'static str, &'static str) {
+    let category = match error {
+        Error::Offline | Error::Io(_) => "offline",
+        Error::Closed => "closed",
+        Error::Deadline => "deadline",
+        Error::Cancelled => "cancelled",
+        Error::Contract(_) => "contract",
+        Error::Refused(_) => "refused",
+        Error::HostUpdateRequired => "host-update-required",
+        Error::HostPolicyRefreshRequired => "host-policy-refresh-required",
+    };
+    let kind = match error {
+        Error::Io(kind) => match kind {
+            std::io::ErrorKind::UnexpectedEof => "unexpected-eof",
+            std::io::ErrorKind::BrokenPipe => "broken-pipe",
+            std::io::ErrorKind::ConnectionReset => "connection-reset",
+            std::io::ErrorKind::ConnectionAborted => "connection-aborted",
+            std::io::ErrorKind::NotConnected => "not-connected",
+            std::io::ErrorKind::TimedOut => "timed-out",
+            std::io::ErrorKind::WouldBlock => "would-block",
+            std::io::ErrorKind::Interrupted => "interrupted",
+            std::io::ErrorKind::InvalidData => "invalid-data",
+            std::io::ErrorKind::InvalidInput => "invalid-input",
+            std::io::ErrorKind::PermissionDenied => "permission-denied",
+            std::io::ErrorKind::NotFound => "not-found",
+            _ => "other",
+        },
+        _ => "not-recorded",
+    };
+    let refusal = match error {
+        Error::Refused(reason) => match reason {
+            festerm_host_protocol::Refusal::Denied => "denied",
+            festerm_host_protocol::Refusal::Offline => "offline",
+            festerm_host_protocol::Refusal::Unknown => "unknown",
+            festerm_host_protocol::Refusal::Busy => "busy",
+            festerm_host_protocol::Refusal::Incompatible => "incompatible",
+            festerm_host_protocol::Refusal::Stale => "stale",
+            festerm_host_protocol::Refusal::RecipeConflict => "recipe-conflict",
+            festerm_host_protocol::Refusal::Revoked => "revoked",
+            festerm_host_protocol::Refusal::OutcomeUncertain => "outcome-uncertain",
+            festerm_host_protocol::Refusal::Unsupported => "unsupported",
+        },
+        _ => "not-recorded",
+    };
+
+    (category, refusal, kind)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
