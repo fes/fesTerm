@@ -6686,3 +6686,15 @@ I/O kind/OS code. Use only these content-free fields. Do not infer deadline
 exhaustion from Busy or replay Start/Enable for diagnosis. Controlled real-lease
 fixtures verify these labels and unchanged effects/error behavior; actual
 native attribution and any causal correction remain pending separately.
+
+
+### Update-host review visibility
+
+HOST-04/06: at a small normal Settings window, open the header **Update host…**
+with details collapsed, then with the manual signed-bundle inputs expanded.
+The review summary and both actions should become visible without searching
+below the fold, with **Not now** focused. Enter must cancel with no acquisition or
+update. Reopen, scroll away and repaint: the view must not snap back repeatedly.
+Cancel/reopen should reveal once again. Controller/ScrollArea tests cover this
+presentation and zero-worker cancellation; native platform/DPI follow-up remains
+separate from component trust, stopped update and authorization qualification.

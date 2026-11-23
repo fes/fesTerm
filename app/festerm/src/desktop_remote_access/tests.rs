@@ -2725,3 +2725,118 @@ fn desktop_remote_access_native_timeout_clears_stale_scope_without_replay_and_re
         .query_by_label(Failure::PrivateStorage.notice())
         .is_none());
 }
+
+fn update_review_reveals_once_in_small_scroll_area(advanced_open: bool) {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let calls = Arc::new(AtomicU8::new(0));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        recorded.fetch_add(1, Ordering::AcqRel);
+        Err(Failure::InvalidDraft)
+    })));
+    controller.view.scope = update_fixture_scope();
+    controller.view.release = Some(update_fixture_release());
+    controller.view.draft.manual_bundle = true;
+    controller.view.draft.manifest = "C:/fixture/host.manifest.json".into();
+    controller.view.draft.signature = "C:/fixture/host.manifest.json.sig".into();
+    controller.view.draft.archive = "C:/fixture/host.zip".into();
+    let original_scope = controller.view.scope.clone();
+    let original_draft = controller.view.draft.clone();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(752.0, 516.0))
+        .build_ui_state(
+            |ui, state: &mut (Controller, egui::Rect)| {
+                let view = state.0.view();
+                let shown = egui::ScrollArea::vertical()
+                    .id_salt("remote_access_scroll_review_test")
+                    .show(ui, |ui| show(ui, &view, &[]));
+                state.1 = shown.inner_rect;
+                if let Some(action) = shown.inner {
+                    state.0.action(action, ui.ctx());
+                }
+            },
+            (controller, egui::Rect::NOTHING),
+        );
+    harness.run_steps(3);
+    if advanced_open {
+        harness.get_by_label("Advanced / Recovery").click();
+        harness.run_steps(3);
+        harness
+            .get_by_label("Advanced · explicit signed local bundle")
+            .scroll_to_me();
+        harness.run_steps(3);
+        harness
+            .get_by_label("Advanced · explicit signed local bundle")
+            .click();
+        harness.run_steps(3);
+        harness.get_by_label("Update host…").scroll_to_me();
+        harness.run_steps(3);
+    }
+    harness.get_by_label("Update host…").click();
+    harness.run_steps(10);
+    assert_eq!(harness.state().0.view.review, Some(Operation::Update));
+    for label in ["Update host components?", "Update host", "Not now"] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(
+            harness.state().1.contains_rect(rect),
+            "{label}: {rect:?} outside {:?}",
+            harness.state().1
+        );
+    }
+    assert_eq!(calls.load(Ordering::Acquire), 0);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    assert!(
+        harness.state().0.view.review.is_none(),
+        "Enter must cancel, never update"
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 0);
+    assert_eq!(harness.state().0.view.scope, original_scope);
+    assert_eq!(harness.state().0.view.draft, original_draft);
+
+    harness.get_by_label("Update host…").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_label("Update host…").click();
+    harness.run_steps(10);
+    assert!(
+        harness
+            .state()
+            .1
+            .contains_rect(harness.get_by_label("Not now").rect()),
+        "a reopened review is revealed again"
+    );
+    harness.get_by_label("Update host…").scroll_to_me();
+    harness.run_steps(10);
+    assert!(harness
+        .state()
+        .1
+        .contains_rect(harness.get_by_label("Update host…").rect()));
+    harness.run_steps(10);
+    if advanced_open {
+        assert!(
+            !harness
+                .state()
+                .1
+                .contains_rect(harness.get_by_label("Not now").rect()),
+            "pending review must not force scrolling every frame"
+        );
+    }
+    assert_eq!(harness.state().0.view.review, Some(Operation::Update));
+    harness.get_by_label("Not now").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_label("Not now").click();
+    harness.run_steps(3);
+    assert!(harness.state().0.view.review.is_none());
+    assert_eq!(calls.load(Ordering::Acquire), 0);
+    assert!(harness.state().0.pending.is_none() && !harness.state().0.view.busy);
+}
+
+#[test]
+fn host_update_review_reveals_from_collapsed_details_and_cancel_is_safe_default() {
+    update_review_reveals_once_in_small_scroll_area(false);
+}
+
+#[test]
+fn host_update_review_reveals_from_expanded_manual_inputs_without_forced_scroll() {
+    update_review_reveals_once_in_small_scroll_area(true);
+}

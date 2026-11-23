@@ -2410,3 +2410,9 @@ fence-read budget. These error-only stages preserve the first error and normal
 recovery edges; they add no read/retry, manager command, deadline or authority.
 An old `final_fence` Busy plus Listening remains ambiguous and is not a repaired
 first-result qualification.
+
+
+HOST-04/06 Update host review: the header action reveals the existing review once
+and focuses Not now. Enter cancels; ordinary scrolling remains free while it is
+pending, and cancel/reopen reveals again. No acquisition or worker starts from
+revealing/focusing; the existing explicit confirmation and protected gates remain.

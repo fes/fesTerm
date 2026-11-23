@@ -12,6 +12,21 @@ pub(crate) fn show(
 ) -> Option<Action> {
     ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(24.0);
     let mut action = None;
+    // Presentation only: reveal each newly opened Update review once. One
+    // fixed entry replaces the old identity; it is not consent or operation state.
+    let identity = match (&view.scope, view.review) {
+        (Scope::Present(snapshot), Some(Operation::Update)) => {
+            Some((snapshot.installation.clone(), snapshot.epoch))
+        }
+        _ => None,
+    };
+    let reveal_update = ui.data_mut(|data| {
+        let key = ui.id().with("host_update_review_reveal");
+        let previous = data.get_temp::<Option<(String, u64)>>(key).flatten();
+        let reveal = identity.is_some() && previous != identity;
+        data.insert_temp(key, identity);
+        reveal
+    });
     let mut requested = view
         .access_requested
         .unwrap_or_else(|| view.access_enabled());
@@ -379,7 +394,7 @@ pub(crate) fn show(
             action = Some(Action::Refresh);
         }
         if let Some(operation) = view.review {
-            ui.group(|ui| {
+            let review = ui.group(|ui| {
                 let (title, confirm_label) = confirmation_labels(operation, &draft);
                 ui.strong(title);
                 if operation == Operation::Reconcile {
@@ -475,11 +490,16 @@ pub(crate) fn show(
                     if action_button(ui, role, confirm_label).clicked() {
                         action = Some(Action::Confirm);
                     }
-                    if action_button(ui, ActionButtonRole::Secondary, "Not now").clicked() {
+                    let cancel = action_button(ui, ActionButtonRole::Secondary, "Not now");
+                    if reveal_update { cancel.request_focus(); }
+                    if cancel.clicked() {
                         action = Some(Action::Dismiss);
                     }
                 });
             });
+            if reveal_update {
+                review.response.scroll_to_me(Some(egui::Align::Center));
+            }
         }
         if !share_targets.is_empty() || view.share_review.is_some() || view.sharing.is_some() {
         ui.collapsing("Session sharing / Recovery", |ui| {
