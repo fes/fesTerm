@@ -2759,7 +2759,13 @@
         "new_sftp_profile_saves_an_initial_password_with_the_profile",
         "new_ssh_profile_can_stage_an_initial_private_key",
         "creating_a_profile_cannot_replace_an_existing_profiles_secret_reference",
-        "renaming_a_profile_cannot_replace_another_profiles_secret_reference"
+        "renaming_a_profile_cannot_replace_another_profiles_secret_reference",
+        "key_file_reader_bounds_utf8_regular_handle_and_preserves_exact_text",
+        "key_file_pending_slot_survives_cancel_and_stale_delivery_is_discarded",
+        "key_file_worker_admission_survives_closed_window_until_actual_return",
+        "key_file_import_launcher_routes_exactly_and_fences_edits_mode_destination_and_submit",
+        "key_file_import_saved_editor_preserves_passphrase_and_rejects_replaced_draft",
+        "key_file_import_gui_sftp_preserves_passphrase_and_refuses_new_connection_target"
       ],
       "manual_scenarios": [
         "TI-07",

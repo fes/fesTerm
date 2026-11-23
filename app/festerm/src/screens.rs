@@ -778,6 +778,7 @@ fn sanitize_session_name_from_profile_name(profile_name: &str) -> String {
 /// never a profile, workspace, diagnostic, or application-state field.
 #[derive(Clone)]
 struct SshLauncherForm {
+    key_import: crate::key_file_import::Binding,
     host: String,
     port: String,
     username: String,
@@ -831,6 +832,7 @@ impl Default for SshLauncherForm {
     /// fields are one click away.
     fn default() -> Self {
         Self {
+            key_import: Default::default(),
             host: String::new(),
             port: Self::DEFAULT_PORT.to_string(),
             username: String::new(),
@@ -859,6 +861,36 @@ impl Default for SshLauncherForm {
 }
 
 impl SshLauncherForm {
+    fn observe_key_import(&mut self, context: &egui::Context) {
+        crate::key_file_import::route(context, self.key_import.route());
+        self.key_import.observe((
+            &self.host,
+            &self.port,
+            &self.username,
+            &self.quick_connect,
+            &self.saved_profile_id,
+            self.authentication_method as u8,
+            self.sftp_gui_mode,
+            self.local_bind
+                .saved_policy()
+                .ok()
+                .map(|policy| format!("{policy:?}")),
+        ));
+    }
+
+    fn finish_key_import(&mut self, context: &egui::Context, submitted: bool) {
+        self.observe_key_import(context);
+        if submitted {
+            self.key_import.changed();
+        }
+        if let Some(result) = crate::key_file_import::take(context, &self.key_import) {
+            match result {
+                Ok(mut text) => crate::key_file_import::replace(&mut self.private_key, &mut text),
+                Err(message) => self.feedback = Some(message.to_owned()),
+            }
+        }
+    }
+
     const DEFAULT_PORT: u16 = DEFAULT_SSH_PORT;
 
     fn destination(&mut self) -> DestinationFields<'_> {
@@ -892,6 +924,7 @@ impl SshLauncherForm {
     }
 
     fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
+        self.key_import.changed();
         self.host = profile.host().to_owned();
         self.port = profile.port().to_string();
         self.username = profile.username().to_owned();
@@ -1061,6 +1094,7 @@ impl SshLauncherForm {
     /// Taking every secret first ensures each submit attempt removes it from UI
     /// state, including attempts rejected by non-secret input validation.
     fn submit(&mut self) -> Result<AppCommand, String> {
+        self.key_import.changed();
         let password = std::mem::take(&mut self.password);
         let private_key = std::mem::take(&mut self.private_key);
         let key_passphrase = std::mem::take(&mut self.key_passphrase);
@@ -1127,6 +1161,7 @@ impl SshLauncherForm {
 
     /// Converts the transient form into the application's typed SFTP command.
     fn submit_sftp(&mut self) -> Result<AppCommand, String> {
+        self.key_import.changed();
         if self.sftp_gui_mode {
             let profile = self.connection_profile()?;
             return Ok(AppCommand::OpenSftpFileManager {
@@ -1198,6 +1233,7 @@ impl SshLauncherForm {
     /// branch) rather than attempting to connect with no credential.
     #[cfg(test)]
     fn submit_quick_connect(&mut self) -> Result<AppCommand, String> {
+        self.key_import.changed();
         self.parse_quick_connect()?;
         self.password.clear();
         self.authentication_method = SshAuthenticationMethod::Password;
@@ -1205,6 +1241,7 @@ impl SshLauncherForm {
     }
 
     fn submit_quick_connect_sftp(&mut self) -> Result<AppCommand, String> {
+        self.key_import.changed();
         self.parse_quick_connect()?;
         self.password.clear();
         self.authentication_method = SshAuthenticationMethod::Password;
@@ -2098,15 +2135,20 @@ fn show_authentication_section(
             submit
         }
         SshAuthenticationMethod::PrivateKey => {
-            ssh_multiline_secret_text_edit(
+            if ssh_multiline_secret_text_edit(
                 ui,
                 tab_id,
                 "private_key",
                 "OpenSSH private key",
                 &mut form.private_key,
-            );
+            )
+            .changed()
+            {
+                form.key_import.changed();
+            }
+            crate::key_file_import::button(ui, &form.key_import);
             ssh_paragraph(ui, "The key is kept in memory only, never saved.");
-            ssh_text_edit(
+            let passphrase_response = ssh_text_edit(
                 ui,
                 tab_id,
                 "key_passphrase",
@@ -2114,23 +2156,31 @@ fn show_authentication_section(
                 &mut form.key_passphrase,
                 true,
                 false,
-            )
-            .lost_focus()
+            );
+            if passphrase_response.changed() {
+                form.key_import.changed();
+            }
+            passphrase_response.lost_focus()
                 && ui.input(|input| input.key_pressed(egui::Key::Enter))
         }
         SshAuthenticationMethod::Certificate => {
-            ssh_multiline_secret_text_edit(
+            if ssh_multiline_secret_text_edit(
                 ui,
                 tab_id,
                 "private_key",
                 "OpenSSH private key",
                 &mut form.private_key,
-            );
+            )
+            .changed()
+            {
+                form.key_import.changed();
+            }
+            crate::key_file_import::button(ui, &form.key_import);
             ssh_paragraph(
                 ui,
                 "The private key and certificate are kept in memory only, never saved.",
             );
-            ssh_text_edit(
+            let passphrase_response = ssh_text_edit(
                 ui,
                 tab_id,
                 "key_passphrase",
@@ -2139,15 +2189,22 @@ fn show_authentication_section(
                 true,
                 false,
             );
+            if passphrase_response.changed() {
+                form.key_import.changed();
+            }
             ui.add_space(4.0);
-            ssh_multiline_text_edit(
+            if ssh_multiline_text_edit(
                 ui,
                 tab_id,
                 "certificate",
                 "OpenSSH certificate",
                 &mut form.certificate,
                 false,
-            );
+            )
+            .changed()
+            {
+                form.key_import.changed();
+            }
             ssh_paragraph(
                 ui,
                 "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
@@ -2168,6 +2225,7 @@ fn show_ssh_form(
     configuration: Option<&Configuration>,
     native_store_available: bool,
 ) -> Option<AppCommand> {
+    form.observe_key_import(ui.ctx());
     ui.add_space(16.0);
     let mut result = None;
     // The Quick connect field leads the form, so it takes the opening focus;
@@ -2293,6 +2351,7 @@ fn show_ssh_form(
             }
         },
     );
+    form.finish_key_import(ui.ctx(), result.is_some());
     result
 }
 
@@ -2544,6 +2603,7 @@ fn show_sftp_form(
     form: &mut SshLauncherForm,
     native_store_available: bool,
 ) -> Option<AppCommand> {
+    form.observe_key_import(ui.ctx());
     ui.add_space(16.0);
     let mut result = None;
     let focus_username = form.focus_username;
@@ -2657,6 +2717,7 @@ fn show_sftp_form(
             }
         },
     );
+    form.finish_key_import(ui.ctx(), result.is_some());
     result
 }
 
@@ -3979,6 +4040,9 @@ pub fn show_launcher(
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     state.selected = state.selected.min(items.len().saturating_sub(1));
+    if !state.ssh_open && !state.sftp_open {
+        crate::key_file_import::route(ui.ctx(), 0);
+    }
 
     if state.local_open {
         state
@@ -4061,6 +4125,7 @@ pub fn show_launcher(
             });
         });
         if back_clicked {
+            state.ssh.key_import.changed();
             state.ssh_open = false;
             command = Some(AppCommand::CancelConnectionSetup { tab_id });
         }
@@ -4100,6 +4165,7 @@ pub fn show_launcher(
             });
         });
         if back_clicked {
+            state.sftp.key_import.changed();
             state.sftp_open = false;
             command = Some(AppCommand::CancelConnectionSetup { tab_id });
         }
@@ -5233,6 +5299,82 @@ mod tests {
     use crate::local_bind::ResolvedLocalBind;
     use crate::tabs::AppState;
     use egui_kittest::{kittest::Queryable, Harness};
+
+    #[test]
+    fn key_file_import_launcher_routes_exactly_and_fences_edits_mode_destination_and_submit() {
+        let mut harness = Harness::new_ui_state(
+            |ui, form: &mut SshLauncherForm| {
+                let command = show_ssh_form(ui, TabId::from_chip_id(77), form, None, true);
+                assert!(command.is_none());
+            },
+            SshLauncherForm {
+                authentication_method: SshAuthenticationMethod::PrivateKey,
+                host: "example.test".into(),
+                username: "test".into(),
+                private_key: "old key".into(),
+                key_passphrase: "keep passphrase".into(),
+                ..Default::default()
+            },
+        );
+        harness.run();
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &harness.state().key_import);
+        finish("imported key\r\n");
+        harness.run();
+        assert_eq!(harness.state().private_key, "imported key\r\n");
+        assert_eq!(harness.state().key_passphrase, "keep passphrase");
+        let finish =
+            crate::key_file_import::stage_for_test(&harness.ctx, &harness.state().key_import);
+        harness.run();
+        harness.get_by_label("Cancel key import").click();
+        harness.run();
+        finish("cancelled key");
+        harness.run();
+        assert_eq!(harness.state().private_key, "imported key\r\n");
+        assert_eq!(harness.state().key_passphrase, "keep passphrase");
+        for field in 0..5 {
+            let finish =
+                crate::key_file_import::stage_for_test(&harness.ctx, &harness.state().key_import);
+            match field {
+                0 => {
+                    harness.get_by_label("OpenSSH private key").focus();
+                    harness
+                        .get_by_label("OpenSSH private key")
+                        .type_text("manual edit");
+                    harness.run();
+                }
+                1 => {
+                    harness.state_mut().authentication_method = SshAuthenticationMethod::Password;
+                    harness.run();
+                    harness.state_mut().authentication_method = SshAuthenticationMethod::PrivateKey;
+                    harness.run();
+                }
+                2 => {
+                    harness.state_mut().host = "other.test".into();
+                    harness.run();
+                    harness.state_mut().host = "example.test".into();
+                    harness.run();
+                }
+                3 => {
+                    let context = harness.ctx.clone();
+                    harness.state_mut().finish_key_import(&context, true);
+                }
+                _ => {
+                    harness.get_by_label("Key passphrase (optional)").focus();
+                    harness
+                        .get_by_label("Key passphrase (optional)")
+                        .type_text("manual passphrase");
+                    harness.run();
+                }
+            }
+            let expected_passphrase = harness.state().key_passphrase.clone();
+            let before = harness.state().private_key.clone();
+            finish("must not replace");
+            harness.run();
+            assert_eq!(harness.state().private_key, before);
+            assert_eq!(harness.state().key_passphrase, expected_passphrase);
+        }
+    }
 
     #[test]
     fn visible_relative_ages_request_only_minute_scale_repaints() {

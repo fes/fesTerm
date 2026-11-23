@@ -120,3 +120,32 @@ resolves either kind uniformly.
 
 Update `validation/traceability.json` in the same change whenever this section
 adds, removes, or changes a trace relationship.
+
+## Addendum: transient key-file import
+
+The normal SSH/terminal-SFTP launcher, saved-profile key editor and GUI SFTP
+credential form offer **Choose key file…** as another way to fill the existing
+hidden key field. This is an architectural enabler for current native SFTP
+validation and the ordinary user workflow, not a new authentication or storage
+format. Parsing, optional passphrase validation and the combined secure-store
+payload limit remain on the existing Connect/Save paths; import never connects
+or saves automatically. Literal key-path references and SSH-agent integration
+remain deferred.
+
+A shared app-private worker reads at most 64 KiB plus one overflow byte from a
+regular, read-only handle; special files, unreadable files, oversized input and
+invalid UTF-8 refuse without replacing either current secret field. Paths are
+transient picker inputs, never configuration or log fields. Background results
+are zeroizing and contain no raw errors. Delivery is pinned to the original
+form identity, monotonic edit revision, route and existing workspace revision;
+a bounded nonsecret fingerprint detects programmatic destination changes without
+retaining even malformed pasted destination text;
+manual edits, mode/endpoint/profile changes, submission and navigation ABA
+cannot replace newer input. Cancellation preserves the actual pending slot
+until return, and one app-wide permit stays owned by the worker even after its
+window closes. No blocked native picker/read is joined on the UI thread.
+
+`AUTH-01` and `AUTH-04` retain their existing authority. Reader-boundary,
+three-form delivery/refusal and closed-window admission tests accompany this
+addendum; actual native picker and authenticated SFTP qualification remain
+separate manual gates.

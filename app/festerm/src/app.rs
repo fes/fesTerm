@@ -8079,6 +8079,12 @@ impl FesTermApp {
                     return;
                 }
                 let open_automation_activity = std::mem::take(&mut self.open_automation_settings);
+                // Read the current monotonic selection after chrome/shortcut commands,
+                // immediately before any form can consume a picker completion.
+                crate::key_file_import::navigation(
+                    ui.ctx(),
+                    self.state.key_import_navigation_revision(),
+                );
                 let tab = self.state.active_tab_mut();
                 match &mut tab.content {
                     TabContent::Launcher => {

@@ -36,6 +36,7 @@ mod javascript_program_lifecycle;
 #[cfg(feature = "javascript-program-dev")]
 #[allow(dead_code)]
 mod javascript_program_storage;
+mod key_file_import;
 mod keyboard;
 mod local_bind;
 mod local_command;

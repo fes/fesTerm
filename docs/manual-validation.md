@@ -6757,3 +6757,18 @@ native upload cause, cancellation and live grant-revocation acceptance remain
 open, with no automatic replay or changed permission policy.
 The existing post-cancellation closed-stream keepalive may still retire the tab;
 retain that finite local-retirement event separately from the first failure.
+
+### Transient SSH/SFTP key-file import (`AUTH-01`, `AUTH-04`)
+
+In the SSH/terminal-SFTP connection form, saved SSH/SFTP profile editor and GUI
+SFTP authentication-required form, choose an owned OpenSSH key file. Verify the
+existing hidden key field receives the exact text, the optional passphrase is
+preserved and no connection or save starts. Cancel the picker/import; select a
+directory, oversized or invalid-text fixture; edit the key/passphrase, change
+host/port/user or authentication mode and return, replace the profile/reconnect
+form, switch tabs away/back, or submit while import is pending. Every stale or
+refused completion must preserve current fields. Close the original window
+with a pending picker: another window must not start an additional import until
+the actual old worker returns. No selected path or key belongs in diagnostics,
+configuration or workspace output. Native picker/authenticated SFTP acceptance
+remains pending; headless delivery tests do not qualify platform dialogs.
