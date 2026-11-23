@@ -2840,3 +2840,72 @@ fn host_update_review_reveals_from_collapsed_details_and_cancel_is_safe_default(
 fn host_update_review_reveals_from_expanded_manual_inputs_without_forced_scroll() {
     update_review_reveals_once_in_small_scroll_area(true);
 }
+
+#[test]
+fn host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    for present in [false, true] {
+        let calls = Arc::new(AtomicU8::new(0));
+        let recorded = calls.clone();
+        let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+            recorded.fetch_add(1, Ordering::AcqRel);
+            Err(Failure::InvalidDraft)
+        })));
+        controller.view.scope = if present { update_fixture_scope() } else { Scope::Absent };
+        controller.view.access_requested = Some(true);
+        controller.view.draft.account = "42".into();
+        controller.view.draft.friendly_name = "Reviewed host".into();
+        controller.view.draft.ordinary_access = OrdinaryAccess::ProviderOwner;
+        controller.view.draft.files.enabled = true;
+        controller.view.draft.files.root = PathBuf::from("/fixture/public-folder");
+        let scope = controller.view.scope.clone();
+        let draft = controller.view.draft.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 300.0))
+            .build_ui_state(
+                |ui, state: &mut (Controller, egui::Rect)| {
+                    let view = state.0.view();
+                    let shown = egui::ScrollArea::vertical()
+                        .id_salt("enable_review_viewport")
+                        .show(ui, |ui| show(ui, &view, &[]));
+                    state.1 = shown.inner_rect;
+                    if let Some(action) = shown.inner { state.0.action(action, ui.ctx()); }
+                },
+                (controller, egui::Rect::NOTHING),
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Review Enable and start…").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Review Enable and start…").click();
+        harness.run_steps(10);
+        assert_eq!(harness.state().0.view.review, Some(Operation::Enable));
+        for label in ["Enable and start", "Not now"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(harness.state().1.contains_rect(rect),
+                "present={present}: {label} footer {rect:?} outside {:?}", harness.state().1);
+        }
+        assert_eq!(calls.load(Ordering::Acquire), 0);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+        assert!(harness.state().0.view.review.is_none(), "Enter cancels Enable");
+        assert_eq!(harness.state().0.view.scope, scope);
+        assert_eq!(harness.state().0.view.draft, draft);
+        // Dismiss intentionally clears the requested-access draft. Reopen
+        // through the ordinary toggle rather than bypassing that safe reset.
+        harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Allow remote access to this computer").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Allow remote access to this computer").click();
+        harness.run_steps(3);
+        harness.get_by_label("Review Enable and start…").scroll_to_me();
+        harness.run_steps(3);
+        harness.get_by_label("Review Enable and start…").click();
+        harness.run_steps(10);
+        assert!(harness.state().1.contains_rect(harness.get_by_label("Not now").rect()));
+        harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Allow remote access to this computer").scroll_to_me();
+        harness.run_steps(10);
+        assert!(!harness.state().1.contains_rect(harness.get_by_label("Not now").rect()),
+            "open review must not force repeated scrolling");
+        assert_eq!(calls.load(Ordering::Acquire), 0);
+        assert!(harness.state().0.pending.is_none());
+    }
+}

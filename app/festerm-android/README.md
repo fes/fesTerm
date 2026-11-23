@@ -158,7 +158,12 @@ Each bounded encoder write, including bracketed paste, stays whole on refusal.
 
 The test APK's `keyboard-lifecycle=true` instrumentation mode selects only the
 focused editor/key/lifecycle checks, without secret-store or recording tests.
-These new checks have not yet been executed on this current-source candidate.
+At source `150c8371` (merged in PR #895), the focused `keyboard-lifecycle`
+instrumentation passed on the owned Android emulator. In the same app process,
+actual Gboard `e`, Backspace, `x` and Return advanced the input counter 0→4
+without an intermediate menu or Reset. The owned emulator exited normally.
+This is component evidence, not full typing, physical-device or HOST matrix
+acceptance.
 The frozen diagnostic APK's genuine Gboard single `e` reached the focused-field
 encoder path only; it does not qualify terminal fallback, long typing or full
 keyboard behavior. No diagnostic logging hooks ship with this correction.

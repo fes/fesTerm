@@ -2208,8 +2208,12 @@ the window-policy correction until exercised on the candidate build.
 For the current Android editor-epoch/pre-IME and shared mobile batching
 correction, run the focused test-APK `keyboard-lifecycle` scope and the shared
 fallback/ownership/batching regressions before native acceptance. Shared Rust
-regressions pass in offline and HOST-client builds; focused Java instrumentation
-compiles, with native execution pending. Retain the frozen diagnostic APK's single genuine
+regressions pass in offline and HOST-client builds. The focused Java
+`keyboard-lifecycle` instrumentation passed on source
+`150c8371` (PR #895). Same-process native Gboard `e`, Backspace, `x` and Return
+advanced the counter 0→4 without an intermediate menu or Reset; owned emulator
+shutdown was normal. This component pass does not establish full typing,
+physical-device or HOST matrix acceptance. Retain the frozen diagnostic APK's single genuine
 Gboard `e` as focused-field encoding evidence only. Requalify redundant
 InputConnection creation/close, stale epochs, terminal unknown cursor snapshots,
 form/secure editing, lost-focus restoration, 41-character bursts with finite
@@ -6810,7 +6814,7 @@ fixtures verify these labels and unchanged effects/error behavior; actual
 native attribution and any causal correction remain pending separately.
 
 
-### Update-host review visibility
+### Enable and Update host review visibility
 
 HOST-04/06: at a small normal Settings window, open the header **Update host…**
 with details collapsed, then with the manual signed-bundle inputs expanded.
@@ -6820,6 +6824,15 @@ update. Reopen, scroll away and repaint: the view must not snap back repeatedly.
 Cancel/reopen should reveal once again. Controller/ScrollArea tests cover this
 presentation and zero-worker cancellation; native platform/DPI follow-up remains
 separate from component trust, stopped update and authorization qualification.
+For initial Enable and disabled-host reconfiguration, also open a long Files
+consent review in a short window. The explicit Enable and Not now footer must
+be reachable immediately, even when the full summary is taller than the viewport.
+Not now receives focus; Enter cancels without setup or policy changes. Scroll
+back through the complete unchanged summary: later repaints must not force the
+footer back into view. Cancel/reopen reveals it once again. Headless coverage
+uses both Absent and Present/Disabled; native Mac confirmation visibility remains
+to be requalified after deploying this presentation correction.
+
 
 
 ### Windows/Linux final Enable protected-scope contention

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "e5092f6698c1e0cea5ec1f2ff33b6e7ce2622a3f14eb9cddad5cd2c9fbab8d1f"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "c3100ab41d98b5c7bedd9ecf9e3992ebe29ade36b1e84d8cd7dcf3131d88a869"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -66,6 +66,7 @@ Use for: Host discovery, inventory, attach, and creation review
 Evidence:
 - [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs)
 - [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
+- [`host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default`](../../app/festerm/src/desktop_remote_access/tests.rs) — Short-window initial/reconfiguration review footer and cancellation.
 
 Caveats:
 - Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
