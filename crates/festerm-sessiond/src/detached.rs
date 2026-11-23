@@ -333,6 +333,10 @@ pub fn lock_legacy_start_in(
 
 fn registry(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
     let _lock = lock(open_lock(directory, Path::new("registry.lock"))?, false)?;
+    registry_contents(directory)
+}
+
+fn registry_contents(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
     match storage::read_private(directory, Path::new("registry.json"), REGISTRY_LIMIT) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| refused("invalid native registry")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SessionRegistry::default()),
@@ -833,9 +837,51 @@ pub(crate) fn host_generation_state(
 ) -> Result<bool, PersistentSessionError> {
     let directory = storage::private_directory(root, false).map_err(storage_error)?;
     let records = registry(&directory)?;
-    match matching_record(&records, &selected.name)? {
+    generation_state(root, &directory, &records, selected, expected)
+}
+
+#[derive(Debug)]
+pub(crate) enum EndObservationError {
+    RegistryBusy,
+    Unknown,
+}
+
+/// End already owns an absolute deadline. Preserve only actual registry-lock
+/// contention for its existing observation wait; no native operation is retried.
+pub(crate) fn host_generation_state_for_end(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+    expected: &str,
+) -> Result<bool, EndObservationError> {
+    let directory =
+        storage::private_directory(root, false).map_err(|_| EndObservationError::Unknown)?;
+    let records = {
+        let file = storage::open_private_file(&directory, Path::new("registry.lock"), false)
+            .map_err(|_| EndObservationError::Unknown)?;
+        let guard = storage::UnlockOnDrop(file);
+        FileExt::try_lock_shared(&*guard).map_err(|error| {
+            if lock_is_contended(&error) {
+                EndObservationError::RegistryBusy
+            } else {
+                EndObservationError::Unknown
+            }
+        })?;
+        registry_contents(&directory).map_err(|_| EndObservationError::Unknown)?
+    };
+    generation_state(root, &directory, &records, selected, expected)
+        .map_err(|_| EndObservationError::Unknown)
+}
+
+fn generation_state(
+    root: &Path,
+    directory: &File,
+    records: &SessionRegistry,
+    selected: &NativeSessionIdentity,
+    expected: &str,
+) -> Result<bool, PersistentSessionError> {
+    match matching_record(records, &selected.name)? {
         Some(record) if NativeSessionIdentity::from_record(record) == *selected => {
-            if !verified_live(root, &directory, record)? {
+            if !verified_live(root, directory, record)? {
                 return Ok(false);
             }
             check_evidence(record, expected)?;
@@ -846,7 +892,7 @@ pub(crate) fn host_generation_state(
         )),
         None => {
             let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
-            match storage::open_private_file(&directory, Path::new(&name), false) {
+            match storage::open_private_file(directory, Path::new(&name), false) {
                 Ok(lease) => match FileExt::try_lock_shared(&*storage::UnlockOnDrop(lease)) {
                     Ok(()) => Ok(false),
                     Err(_) => Err(refused("native generation outcome is unknown")),

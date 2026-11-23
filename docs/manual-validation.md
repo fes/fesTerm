@@ -6722,6 +6722,40 @@ framed and private-vault tests do not qualify the live signed22 failure or remot
 termination itself. Never export raw error text, paths, IDs, credentials or
 terminal output to explain this event.
 
+### Native inventory: bounded exact-target observation
+
+The protected-inventory native test keeps its existing eight-second observation
+budget and final one-session privacy oracle. A real held per-generation lease
+first forces an honest Unknown result for the exact other-owner target. Only
+that single target with the expected owner, grant revision, remote-access flag
+and unchanged complete nonrevoked Running record may remain pending. An empty
+result without that Unknown, an unexpected identity, extra rows, or another
+error still fails. No production retry, permission, native effect or timeout
+changes. The first merged-main Ubuntu failure returned zero summaries while
+its other-owner catalog record remained Running; its actual Unknown/error was
+not logged, so this controlled regression does not identify that failure's cause.
+
+### End completion during native registry contention
+
+For HOST-03, the controlled real-lock regression
+`end_completion_survives_real_native_registry_contention_after_stop` reproduces
+an old terminal Unknown after Stop committed. The corrected completion path
+waits only for actual registry-lock Busy under the original request deadline,
+then freshly proves absence and End permission. The companion
+`end_completion_registry_wait_keeps_deadline_cancellation_and_unknowns` checks
+original-budget expiry, cancellation, malformed registry data, an aliased lock,
+and a missing lock without creating it or changing the stopped record.
+
+The signed22 native first End of one disposable shell committed Stop and both
+processes exited, but the client returned Unknown and its catalog remained
+Ending. The actual lock holder and cause remain unproved. Preserve that first
+failure and its original checkpoint; do not Retry, Refresh, reconcile or end a
+different generation to hide it. Native qualification of the corrected helper
+requires another explicitly owned fixture and a successful first completion.
+The earlier failure that left its shell Running/stopped=false remains separate;
+initial End admission is unchanged by this correction. These controlled tests
+add no matrix case and do not qualify Windows, Linux or macOS native termination.
+
 ### Native first-Enable observation: narrow error stages
 
 For HOST-04 / DIAG-01, retain the first GUI result before Refresh or any new

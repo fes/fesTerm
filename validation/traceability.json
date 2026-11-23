@@ -6791,6 +6791,8 @@
         "end_completion_cancel_deadline_and_final_authority_do_not_reissue_stop",
         "end_completion_observation_requires_exact_stopped_lease_and_fresh_permission",
         "end_completion_wait_observes_only_and_bounds_pending_busy_and_cancellation",
+        "end_completion_survives_real_native_registry_contention_after_stop",
+        "end_completion_registry_wait_keeps_deadline_cancellation_and_unknowns",
         "end_confirmation_refuses_foreign_revoked_replaced_unbound_retired_or_missing_records",
         "end_confirmation_refuses_contended_or_corrupt_native_lease",
         "committed_grant_sync_waits_out_bounded_daemon_lease_contention",

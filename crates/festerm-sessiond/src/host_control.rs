@@ -1163,6 +1163,186 @@ mod end_confirmation_tests {
         );
     }
 
+    fn ending_fixture() -> (
+        storage::PrivateTestDirectory,
+        SessionControl,
+        PrincipalId,
+        Target,
+    ) {
+        let fixture = observed_fixture();
+        let (_directory, control, _owner, target) = &fixture;
+        let mut tx = control.transaction().unwrap();
+        let record = tx.state.sessions.get_mut(&target.logical).unwrap();
+        record.phase = Phase::Ending;
+        record.epoch = Epoch::new(3).unwrap();
+        let native = record.native().unwrap();
+        let fingerprint = record.fingerprint.clone();
+        let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.grant = record.grant();
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        tx.save().unwrap();
+        drop(tx);
+        let directory = storage::private_directory(&control.root, false).unwrap();
+        // A released, exact native lifetime lease is the existing absence
+        // proof. The still-live test process is not mistaken for a daemon.
+        let _lifetime = storage::open_private_file(
+            &directory,
+            Path::new(&format!(
+                "lease-{}-{}",
+                native.pid, native.created_at_unix_ms
+            )),
+            true,
+        )
+        .unwrap();
+        assert!(!detached::host_generation_state(&control.root, &native, &fingerprint).unwrap());
+        fixture
+    }
+
+    #[test]
+    fn end_completion_survives_real_native_registry_contention_after_stop() {
+        let (_directory, control, owner, target) = ending_fixture();
+        let tx = control.transaction().unwrap();
+        let native = tx
+            .state
+            .sessions
+            .get(&target.logical)
+            .unwrap()
+            .native()
+            .unwrap();
+        let before_operations = serde_json::to_value(&tx.state.operations).unwrap();
+        drop(tx);
+        let directory = storage::private_directory(&control.root, false).unwrap();
+        let holder =
+            storage::open_private_file(&directory, Path::new("registry.lock"), false).unwrap();
+        fs2::FileExt::try_lock_exclusive(&holder).unwrap();
+        let probe =
+            storage::open_private_file(&directory, Path::new("registry.lock"), false).unwrap();
+        assert!(crate::lock_is_contended(
+            &fs2::FileExt::try_lock_shared(&probe).unwrap_err()
+        ));
+        drop(probe);
+        let mut holder = Some(holder);
+        let reads = std::cell::Cell::new(0);
+        let authorizations = std::cell::Cell::new(0);
+        let result = SessionControl::wait_for_end(
+            Instant::now() + Duration::from_secs(2),
+            &AtomicBool::new(false),
+            || {
+                reads.set(reads.get() + 1);
+                let result = control.observe_end(&owner, &target, &mut |state| {
+                    assert_eq!(state.effect, Effect::End);
+                    assert_eq!(
+                        state.grant.as_ref().unwrap().state,
+                        LogicalState::Ended(target.generation)
+                    );
+                    authorizations.set(authorizations.get() + 1);
+                    Ok(())
+                });
+                // Release only after the actual first protected-store read.
+                drop(holder.take());
+                result
+            },
+        );
+        assert_eq!(result, Ok(EndOutcome::ObservedEnded));
+        assert_eq!(reads.get(), 2);
+        assert_eq!(authorizations.get(), 1);
+        let tx = control.transaction().unwrap();
+        assert_eq!(
+            serde_json::to_value(&tx.state.operations).unwrap(),
+            before_operations
+        );
+        let record = tx.state.sessions.get(&target.logical).unwrap();
+        assert_eq!(record.phase, Phase::Absent);
+        assert_eq!(record.epoch.get(), 4);
+        assert_eq!(record.generation, target.generation);
+        assert_eq!(record.native(), Some(native));
+        assert!(
+            LeaseGuard::acquire(&control.root, target.generation)
+                .unwrap()
+                .read()
+                .unwrap()
+                .stopped
+        );
+    }
+
+    #[test]
+    fn end_completion_registry_wait_keeps_deadline_cancellation_and_unknowns() {
+        for case in [
+            "cancel",
+            "deadline",
+            "malformed",
+            "aliased_lock",
+            "missing_lock",
+        ] {
+            let (_directory, control, owner, target) = ending_fixture();
+            let before = std::fs::read(control.root.join(STATE_FILE)).unwrap();
+            let directory = storage::private_directory(&control.root, false).unwrap();
+            let holder =
+                storage::open_private_file(&directory, Path::new("registry.lock"), false).unwrap();
+            let busy = matches!(case, "cancel" | "deadline");
+            if busy {
+                fs2::FileExt::try_lock_exclusive(&holder).unwrap();
+            } else if case == "malformed" {
+                storage::write_new_private(&directory, Path::new("registry.json"), b"{").unwrap();
+            } else {
+                std::fs::remove_file(control.root.join("registry.lock")).unwrap();
+                if case == "aliased_lock" {
+                    std::os::unix::fs::symlink(
+                        "never-follow-this",
+                        control.root.join("registry.lock"),
+                    )
+                    .unwrap();
+                }
+            }
+            let cancelled = AtomicBool::new(false);
+            let reads = std::cell::Cell::new(0);
+            let until = Instant::now() + Duration::from_secs(1);
+            let result = SessionControl::wait_for_end(until, &cancelled, || {
+                reads.set(reads.get() + 1);
+                let result =
+                    control.observe_end(&owner, &target, &mut |_| -> Result<(), ControlError> {
+                        panic!("pending or unreadable native state cannot authorize End completion")
+                    });
+                if case == "cancel" {
+                    assert_eq!(result, Err(ControlError::Busy));
+                    cancelled.store(true, Ordering::Release);
+                } else if case == "deadline" {
+                    assert_eq!(result, Err(ControlError::Busy));
+                    // Expire the original budget only after observing the
+                    // real lock refusal; filesystem speed is irrelevant.
+                    std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                }
+                result
+            });
+            assert_eq!(
+                result,
+                Err(match case {
+                    "cancel" => ControlError::Cancelled,
+                    "deadline" => ControlError::CommittedButNotPublished,
+                    _ => ControlError::Unknown,
+                }),
+                "{case}"
+            );
+            assert_eq!(reads.get(), 1, "{case}");
+            assert_eq!(
+                std::fs::read(control.root.join(STATE_FILE)).unwrap(),
+                before
+            );
+            let lease = LeaseGuard::acquire(&control.root, target.generation)
+                .unwrap()
+                .read()
+                .unwrap();
+            assert!(lease.stopped);
+            assert_eq!(lease.grant.revision.get(), 3);
+            assert_eq!(lease.grant.state, LogicalState::Unknown);
+            if case == "missing_lock" {
+                assert!(!control.root.join("registry.lock").exists());
+            }
+        }
+    }
+
     #[test]
     fn end_completion_cancel_deadline_and_final_authority_do_not_reissue_stop() {
         for case in [
@@ -1873,6 +2053,14 @@ impl SessionControl {
     }
 
     fn reconcile(&self, record: &mut Record) -> Result<(), ControlError> {
+        self.reconcile_observation(record, false)
+    }
+
+    fn reconcile_observation(
+        &self,
+        record: &mut Record,
+        end_observation: bool,
+    ) -> Result<(), ControlError> {
         if record.revoked || record.artifacts_retired {
             return Ok(());
         }
@@ -1901,7 +2089,7 @@ impl SessionControl {
         }
         drop(guard);
         let mut next = record.clone();
-        self.reconcile_native(&mut next)?;
+        self.reconcile_native_observation(&mut next, end_observation)?;
         self.sync_profile_grant(&mut next, Some(record))?;
         *record = next;
         Ok(())
@@ -1985,6 +2173,14 @@ impl SessionControl {
     }
 
     fn reconcile_native(&self, record: &mut Record) -> Result<(), ControlError> {
+        self.reconcile_native_observation(record, false)
+    }
+
+    fn reconcile_native_observation(
+        &self,
+        record: &mut Record,
+        end_observation: bool,
+    ) -> Result<(), ControlError> {
         if matches!(record.phase, Phase::Absent) {
             return Ok(());
         }
@@ -2035,12 +2231,22 @@ impl SessionControl {
             }
         }
         if let Some(identity) = record.native() {
-            match detached::host_generation_state(&self.root, &identity, &record.fingerprint) {
+            let state = if end_observation {
+                detached::host_generation_state_for_end(&self.root, &identity, &record.fingerprint)
+                    .map_err(|error| match error {
+                        detached::EndObservationError::RegistryBusy => ControlError::Busy,
+                        detached::EndObservationError::Unknown => ControlError::Unknown,
+                    })
+            } else {
+                detached::host_generation_state(&self.root, &identity, &record.fingerprint)
+                    .map_err(|_| ControlError::Unknown)
+            };
+            match state {
                 Ok(true) => {}
                 Ok(false) => record.phase = Phase::Absent,
                 // Observation failure is not a transition back to creation.
                 // Keep the bound incarnation and phase for a later retry.
-                Err(_) => return Err(ControlError::Unknown),
+                Err(error) => return Err(error),
             }
         }
         if record.phase != previous {
@@ -3721,7 +3927,7 @@ impl SessionControl {
                 return Err(ControlError::Unknown);
             }
         }
-        self.reconcile(record)?;
+        self.reconcile_observation(record, true)?;
         if record.revoked {
             return Err(ControlError::Revoked);
         }
