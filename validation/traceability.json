@@ -7327,6 +7327,8 @@
         "native_start_post_manager_fence_refuses_expired_cancelled_fatal_and_superseded_reads",
         "native_start_final_fence_waits_for_same_snapshot_without_replaying_manager",
         "native_start_scope_callback_busy_is_distinct_from_fence_budget_exhaustion",
+        "native_start_scope_callback_waits_for_same_scope_without_replaying_manager",
+        "native_start_scope_callback_refuses_expired_cancelled_fatal_and_changed_scope",
         "native_start_completion_retains_operation_and_original_deadline_without_replay",
         "desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot",
         "desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads",

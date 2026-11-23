@@ -3324,3 +3324,29 @@ the existing exact Ended-plus-confirmation definition. No errors, UI outcomes,
 deadlines, cancellation, End authority or replay rules change. This is a current
 native-diagnosis enabler, not a fix or cause claim for signed22's unconfirmed End;
 issue #886's PATH inheritance diagnosis is independent.
+
+
+### Mac post-manager callback snapshot contention (issue #888)
+
+Signed 0.17.22's first Mac Enable reached Provisioned23/Listening23 while its
+child recorded `observation_callback` Busy inside the enclosing `final_fence`.
+That callback checks the parent lifetime and exact protected Desktop scope via
+`Store::snapshot`; it runs before the observation helper's own snapshot read.
+This narrows the refused boundary beyond the earlier ambiguous Mac21 warning,
+but identifies neither a competing actor nor self-contention.
+
+The existing post-manager observation helper now treats only its read-only
+callback's WouldBlock like its own protected snapshot contention. Both use the
+same still-owned service-operation guard, original absolute deadline and last
+Busy. Every new read still checks current parent cancellation/scope; other
+errors and changed scope return immediately, and the own-fence full captured
+Snapshot comparison remains. After a Busy, exhaustion before/after a callback
+cannot authorize another read or reset the budget. Initial/pre-manager checks,
+manager Start, credentials, registration and staging do not replay. There is no
+new callback ABI, global guard accessor, timer, protocol or authority.
+
+Owned real-lifecycle-lease fixtures cover transient release, original expiry,
+callback-time expiry, cancellation, fatal I/O and changed scope/settings with
+one Start/two credential checks; existing early refusal/zero-Start cases remain.
+Native corrected first-result qualification remains required and does not
+retroactively change either captured Mac warning.

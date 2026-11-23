@@ -1242,18 +1242,29 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     ) -> io::Result<Snapshot> {
         let mut last_busy = None;
         loop {
-            observe_start(&self.state, StartStage::ObservationCallback, check())?;
-            if let Some(error) = last_busy.take() {
-                if guard.remaining().is_err() {
-                    return observe_start(
-                        &self.state,
-                        StartStage::ObservationBudgetExhausted,
-                        Err(error),
-                    );
+            if last_busy.is_some() && guard.remaining().is_err() {
+                return observe_start(
+                    &self.state,
+                    StartStage::ObservationBudgetExhausted,
+                    Err(last_busy.take().expect("previous protected read was Busy")),
+                );
+            }
+            // Mac's read-only callback checks the parent's lifetime and exact
+            // protected scope. Its snapshot can contend just like our own read.
+            let checked = observe_start(&self.state, StartStage::ObservationCallback, check());
+            if checked.is_ok() {
+                if let Some(error) = last_busy.take() {
+                    if guard.remaining().is_err() {
+                        return observe_start(
+                            &self.state,
+                            StartStage::ObservationBudgetExhausted,
+                            Err(error),
+                        );
+                    }
                 }
             }
-            let result = self
-                .fence(expected.epoch, Phase::Provisioned)
+            let result = checked
+                .and_then(|()| self.fence(expected.epoch, Phase::Provisioned))
                 .and_then(|current| {
                     if &current != expected {
                         return Err(refused("host.service_stale_or_unapproved_operation"));

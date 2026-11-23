@@ -6787,3 +6787,21 @@ with a pending picker: another window must not start an additional import until
 the actual old worker returns. No selected path or key belongs in diagnostics,
 configuration or workspace output. Native picker/authenticated SFTP acceptance
 remains pending; headless delivery tests do not qualify platform dialogs.
+
+
+### Mac first-Enable callback snapshot contention
+
+HOST-04 / DIAG-01: retain signed22's first `observation_callback` Busy followed
+by `final_fence`, alongside Provisioned23/Listening23. These identify the callback
+snapshot boundary, not the lock holder or deadline exhaustion. With a corrected
+native host/frontend cohort, perform one separately approved ordinary Enable
+and retain its first result plus original sessions, settings, registration and
+Files policy. The post-manager callback snapshot may wait only within the
+original operation budget; no manager Start, credential work, Refresh or Enable
+replay is part of that wait. Cancellation, scope change, fatal errors and
+exhaustion remain refusal/uncertainty. A transient callback Busy event alone
+is not a final failure; retain the actual completion result as well. Portable
+real-lease fixtures do not qualify
+this native behavior, repair the old warnings or establish their contention
+actor. Use only existing finite stages/kinds; no raw environment, argv, paths,
+credentials or terminal content is needed.
