@@ -2218,6 +2218,12 @@ iOS shares the native terminal gate and per-pump transport batching; its existin
 privacy, form, modal, resize/refusal and attachment-replacement tests remain
 required. No full keyboard, physical-device or native HOST matrix pass is added.
 
+Focused instrumentation must verify Shift+A then Ctrl+D stays on native
+key dispatch without a Java/JNI sequence increment. The real-encoder regression
+requires a prefix plus a near-limit bracketed paste with one backend admission
+slot: only the prefix may be accepted. Retain the existing two-lane ordering
+limit; direct callback tests do not qualify actual mixed IME/hardware order.
+
 For mobile GitHub device sign-in (`MOB-03`/`MOB-06`), the source regression
 requires the native copy call to finish before browser handoff. It does not
 prove the code remains on the native clipboard or reaches Safari/Chrome.

@@ -1047,7 +1047,7 @@ public final class FestermActivity extends NativeActivity {
         private boolean plainKey(KeyEvent event) {
             if (nativeComposition) return false;
             if ((event.getMetaState() & (KeyEvent.META_CTRL_MASK | KeyEvent.META_ALT_MASK
-                    | KeyEvent.META_META_MASK
+                    | KeyEvent.META_META_MASK | KeyEvent.META_SHIFT_MASK
                     | KeyEvent.META_SYM_ON | KeyEvent.META_FUNCTION_ON)) != 0) return false;
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DEL: case KeyEvent.KEYCODE_ENTER:
@@ -1055,8 +1055,7 @@ public final class FestermActivity extends NativeActivity {
                 case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
                 case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
                 case KeyEvent.KEYCODE_FORWARD_DEL: case KeyEvent.KEYCODE_MOVE_HOME:
-                case KeyEvent.KEYCODE_MOVE_END:
-                    return (event.getMetaState() & KeyEvent.META_SHIFT_MASK) == 0;
+                case KeyEvent.KEYCODE_MOVE_END: return true;
                 default:
                     int code = event.getUnicodeChar();
                     return code >= 32 && Character.isValidCodePoint(code)

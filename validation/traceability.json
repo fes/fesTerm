@@ -6131,6 +6131,7 @@
         "native_terminal_fix_preserves_focused_form_input",
         "mobile_input_batch_keeps_forty_one_characters_with_eight_slot_admission",
         "mobile_input_batch_preserves_control_order_and_bracketed_paste",
+        "mobile_input_batch_never_fragments_an_atomic_bracketed_paste",
         "mobile_input_batch_bounds_chunks_and_stops_after_atomic_refusal",
         "mobile_input_batch_never_transfers_pending_bytes_to_a_new_or_suspended_owner",
         "mobile_input_batch_flushes_before_resize_and_stops_on_resize_refusal",

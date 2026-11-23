@@ -824,22 +824,34 @@ impl TerminalInputBatch<'_> {
 }
 
 impl EncodedInputSink for TerminalInputBatch<'_> {
-    fn record_encoded_input(&mut self, mut bytes: &[u8]) {
+    fn record_encoded_input(&mut self, bytes: &[u8]) {
+        use zeroize::Zeroize as _;
         self.sink.diagnostics.byte_count = self
             .sink
             .diagnostics
             .byte_count
             .saturating_add(bytes.len() as u64);
-        if !bytes.is_empty() && !self.refused && self.bytes.capacity() == 0 {
+        // Core bounds each encoded event, including both bracketed-paste
+        // markers, before this callback. Never fragment that atomic write.
+        if bytes.len() > INPUT_BATCH_LIMIT {
+            self.refused = true;
+            self.bytes.zeroize();
+        }
+        if bytes.is_empty() || self.refused {
+            return;
+        }
+        if self.bytes.len() + bytes.len() > INPUT_BATCH_LIMIT {
+            self.flush();
+            if self.refused {
+                return;
+            }
+        }
+        if self.bytes.capacity() == 0 {
             self.bytes.reserve_exact(INPUT_BATCH_LIMIT);
         }
-        while !bytes.is_empty() && !self.refused {
-            let count = bytes.len().min(INPUT_BATCH_LIMIT - self.bytes.len());
-            self.bytes.extend_from_slice(&bytes[..count]);
-            bytes = &bytes[count..];
-            if self.bytes.len() == INPUT_BATCH_LIMIT {
-                self.flush();
-            }
+        self.bytes.extend_from_slice(bytes);
+        if self.bytes.len() == INPUT_BATCH_LIMIT {
+            self.flush();
         }
     }
 

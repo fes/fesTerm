@@ -1174,10 +1174,42 @@ mod tests {
     }
 
     #[test]
+    fn mobile_input_batch_never_fragments_an_atomic_bracketed_paste() {
+        use festerm_core::{InputEvent, Key};
+        use festerm_ui_egui::route_input;
+        let (admission, _receiver) = tokio::sync::mpsc::channel(1);
+        let session = Arc::new(FakeSession {
+            input_admission: Some(admission),
+            ..Default::default()
+        });
+        let mut sink = crate::ProbeSink::default();
+        *sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+        let mut terminal = terminal();
+        terminal.ingest(b"\x1b[?2004h");
+        let mut batch = sink.input_batch();
+        route_input(
+            &mut terminal,
+            InputEvent::Key(Key::Character('x')),
+            &mut batch,
+        );
+        // The real encoder adds two six-byte bracket markers to this payload.
+        route_input(
+            &mut terminal,
+            InputEvent::Paste("p".repeat(crate::INPUT_BATCH_LIMIT - 12)),
+            &mut batch,
+        );
+        batch.finish();
+        // One backend slot admits the prefix. Paste must refuse as a whole,
+        // never publish an opening marker whose closing marker was refused.
+        assert_eq!(*session.input.lock().unwrap(), [b"x".to_vec()]);
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+    }
+
+    #[test]
     fn mobile_input_batch_bounds_chunks_and_stops_after_atomic_refusal() {
         use festerm_ui_egui::EncodedInputSink as _;
         let limit = crate::INPUT_BATCH_LIMIT;
-        for size in [limit - 1, limit, limit + 1] {
+        for size in [limit - 1, limit] {
             let (mut sink, session, _receiver) = eight_slot_input_probe();
             let payload = vec![b'x'; size];
             let mut batch = sink.input_batch();
@@ -1190,11 +1222,23 @@ mod tests {
             assert!(accepted.iter().all(|chunk| chunk.len() <= limit));
             assert_eq!(accepted.concat(), payload);
         }
+        // A malformed direct callback is refused, never split; real core
+        // encoding refuses this size before calling the sink.
+        let (mut sink, session, _receiver) = eight_slot_input_probe();
+        let mut batch = sink.input_batch();
+        batch.record_encoded_input(&vec![b'x'; limit + 1]);
+        assert!(batch.refused);
+        assert!(batch.bytes.is_empty());
+        batch.finish();
+        assert!(session.input.lock().unwrap().is_empty());
+
         let (mut sink, session, _receiver) = eight_slot_input_probe();
         let replacement = Arc::new(FakeSession::default());
         let holder = sink.live.connection.clone();
         let mut batch = sink.input_batch();
-        batch.record_encoded_input(&vec![b'x'; limit * 10 + 1]);
+        for _ in 0..10 {
+            batch.record_encoded_input(&vec![b'x'; limit]);
+        }
         assert!(batch.refused);
         assert!(batch.bytes.is_empty());
         *holder.borrow_mut() = Some(connection(replacement.clone()));

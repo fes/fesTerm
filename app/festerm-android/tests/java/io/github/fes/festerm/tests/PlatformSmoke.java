@@ -381,53 +381,27 @@ public final class PlatformSmoke extends Instrumentation {
         }
     }
 
-    /** Shift resolves printable Unicode inside the same owner, never through NDK fallback. */
-    private static void shiftedPlainKeys(FestermActivity activity, View input) throws Exception {
+    /** Modified printable/control pairs stay together on native dispatch. */
+    private static void modifiedKeysStayNative(FestermActivity activity, View input) throws Exception {
         Field sequence = input.getClass().getDeclaredField("sequence");
         sequence.setAccessible(true);
         activity.keyboardMode(0);
         activity.fieldDocument(2402, "", 0, 0, false, false);
         activity.keyboardMode(3);
-        InputConnection connection = input.onCreateInputConnection(new EditorInfo());
+        input.onCreateInputConnection(new EditorInfo());
         long before = sequence.getLong(input);
-        String expected = "aA_bB";
-        KeyCharacterMap map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
-        for (int index = 0; index < expected.length(); index++) {
-            for (KeyEvent event : map.getEvents(new char[]{expected.charAt(index)})) {
-                if (event.getKeyCode() == KeyEvent.KEYCODE_SHIFT_LEFT
-                        || event.getKeyCode() == KeyEvent.KEYCODE_SHIFT_RIGHT) {
-                    require(!input.dispatchKeyEventPreIme(event), "Shift modifier itself retains native path");
-                    continue;
-                }
-                long previous = sequence.getLong(input);
-                require(index % 2 == 0 ? input.dispatchKeyEventPreIme(event) : connection.sendKeyEvent(event),
-                    "resolved printable uses current single input owner");
-                require(sequence.getLong(input) == previous + (event.getAction() == KeyEvent.ACTION_DOWN ? 1 : 0),
-                    "printable emits once on down and never on release");
-            }
+        for (boolean pressed : new boolean[]{true, false}) {
+            require(!input.dispatchKeyEventPreIme(new KeyEvent(0, 0,
+                pressed ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_A, 0, KeyEvent.META_SHIFT_ON)), "Shift+A retains native dispatch");
         }
-        require(sequence.getLong(input) == before + expected.length(), "five shifted/plain characters emit exactly once");
-        require(expected.contentEquals(connection.getTextBeforeCursor(20, 0)), "mixed ingress preserves exact aA_bB order");
-        before = sequence.getLong(input);
-        for (int code : new int[]{KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_DEL,
-                KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_DPAD_UP,
-                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
-                KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.KEYCODE_MOVE_END}) {
-            require(!input.dispatchKeyEventPreIme(new KeyEvent(0, 0, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_SHIFT_ON)),
-                "Shift special/edit/navigation retains native semantics");
+        for (boolean pressed : new boolean[]{true, false}) {
+            require(!input.dispatchKeyEventPreIme(new KeyEvent(0, 0,
+                pressed ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_D, 0, KeyEvent.META_CTRL_ON)), "following Ctrl+D retains native dispatch");
         }
-        for (int meta : new int[]{KeyEvent.META_CTRL_ON, KeyEvent.META_ALT_ON, KeyEvent.META_META_ON,
-                KeyEvent.META_SYM_ON, KeyEvent.META_FUNCTION_ON}) {
-            require(!input.dispatchKeyEventPreIme(new KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0,
-                KeyEvent.META_SHIFT_ON | meta)), "Shift with another modifier remains delegated");
-        }
-        KeyEvent accent = new KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_APOSTROPHE, 0, KeyEvent.META_SHIFT_ON) {
-            @Override public int getUnicodeChar() { return KeyCharacterMap.COMBINING_ACCENT | 0x301; }
-        };
-        require(!input.dispatchKeyEventPreIme(accent), "shifted dead accent remains native composition");
-        require(!input.dispatchKeyEventPreIme(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_E)),
-            "following native composed character remains delegated");
-        require(sequence.getLong(input) == before, "all modified/dead-key negatives emit no plain text");
+        require(sequence.getLong(input) == before,
+            "Shift+A then Ctrl+D must not append a reordered Java/JNI printable");
         activity.keyboardMode(0);
     }
 
@@ -1061,7 +1035,7 @@ public final class PlatformSmoke extends Instrumentation {
                 preImePlainKeys(activity, input);
                 orderedPlainKeys(activity, input);
                 unchangedTerminalFocus(activity, input);
-                shiftedPlainKeys(activity, input);
+                modifiedKeysStayNative(activity, input);
                 editorConnectionLifecycle(activity, input);
                 terminalUnicodeCallbacks(activity, input);
             } catch (Exception error) { throw new AssertionError(error); }
@@ -1251,7 +1225,7 @@ public final class PlatformSmoke extends Instrumentation {
             });
             // New terminal JNI input must not precede the older synthetic privacy groups.
             onMain(() -> {
-                try { unchangedTerminalFocus(activity, input); shiftedPlainKeys(activity, input);
+                try { unchangedTerminalFocus(activity, input); modifiedKeysStayNative(activity, input);
                     editorConnectionLifecycle(activity, input);
                     terminalUnicodeCallbacks(activity, input); }
                 catch (Exception error) { throw new AssertionError(error); }
