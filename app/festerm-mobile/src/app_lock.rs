@@ -74,7 +74,6 @@ impl LockHost {
         settings.enabled && settings.hide_app_switcher_preview
     }
 
-    #[cfg(feature = "live-ssh")]
     pub fn content_available(&self) -> bool {
         self.lock.should_draw_content()
     }

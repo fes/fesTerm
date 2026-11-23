@@ -145,3 +145,27 @@ and hardware input/restart, Unicode composition, modifiers and focus changes.
 Connection-null/restart ordering and uninterrupted actual-field composition remain
 native checks (ADR 0073, MOB-02/MOB-06); no all-ingress success is inferred from
 host compilation or window flags alone.
+
+The current keyboard correction routes plain hardware edits at the owned view's
+pre-IME boundary; Shift/Ctrl/Alt-modified keys retain native dispatch. This does
+not unify the native and Java/JNI input lanes. Redundant InputConnection creation does not retire a served
+editor; explicit context changes retire its epoch, and closing one wrapper
+cannot finish a newer composition. Terminal EditorInfo exposes no local document
+or cursor snapshot; form fields retain their rich/secure contracts. The shared
+mobile input gate accepts unfocused terminal edits only on the eligible terminal
+surface, and batches one pump into bounded, attachment-fenced transport chunks.
+Each bounded encoder write, including bracketed paste, stays whole on refusal.
+
+The test APK's `keyboard-lifecycle=true` instrumentation mode selects only the
+focused editor/key/lifecycle checks, without secret-store or recording tests.
+These new checks have not yet been executed on this current-source candidate.
+The frozen diagnostic APK's genuine Gboard single `e` reached the focused-field
+encoder path only; it does not qualify terminal fallback, long typing or full
+keyboard behavior. No diagnostic logging hooks ship with this correction.
+
+Build the existing focused instrumentation with
+`python3 scripts/smoke-android.py --build-only --keyboard-lifecycle`; after the
+matching app is installed on an explicitly selected isolated emulator, run
+`python3 scripts/smoke-android.py --serial <owned-emulator> --keyboard-lifecycle`.
+Its distinct result is `target/android-smoke/keyboard-lifecycle-results.txt`.
+This selector is mutually exclusive with recording/root/index validation.

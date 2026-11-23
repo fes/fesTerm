@@ -17,7 +17,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns HOST selection, consent, native services and enterprise/PowerShell metadata. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, Finder/AppKit integration, and OS wake/privacy hooks for the desktop app. |
-| [Mobile hosts (iOS and Android)](mobile.md) | Owns the shared mobile app runtime, protected local state, and native/SSH/HOST session flows across iOS and Android. |
+| [Mobile hosts (iOS and Android)](mobile.md) | Owns shared iOS/Android runtime, private state, native input and session flows. |
 | [Desktop application shell and screens](app-shell.md) | Owns desktop lifecycle, frames and host/profile/settings routing. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |

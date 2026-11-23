@@ -752,6 +752,123 @@ impl EncodedInputSink for ProbeSink {
     }
 }
 
+// Production transport batching for one synchronous terminal pump, bounded by
+// the existing core/HOST input chunk; offline mode only counts encoded bytes.
+// Bytes never survive this pump, move to a new attachment, or replay on refusal.
+const INPUT_BATCH_LIMIT: usize = festerm_core::TRANSPORT_QUEUE_HIGH_WATERMARK;
+
+struct TerminalInputBatch<'a> {
+    sink: &'a mut ProbeSink,
+    bytes: zeroize::Zeroizing<Vec<u8>>,
+    refused: bool,
+    #[cfg(feature = "live-ssh")]
+    owner: Option<std::sync::Arc<dyn festerm_session::Session>>,
+    #[cfg(feature = "host-clients")]
+    privacy_epoch: u64,
+}
+
+impl ProbeSink {
+    fn input_batch(&mut self) -> TerminalInputBatch<'_> {
+        #[cfg(feature = "host-clients")]
+        let privacy_epoch = self.live.host.epoch();
+        #[cfg(feature = "live-ssh")]
+        let owner = self
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .and_then(live_ssh::LiveSsh::input_owner);
+        #[cfg(feature = "live-ssh")]
+        let refused = owner.is_none();
+        #[cfg(not(feature = "live-ssh"))]
+        let refused = true;
+        TerminalInputBatch {
+            sink: self,
+            bytes: zeroize::Zeroizing::new(Vec::new()),
+            refused,
+            #[cfg(feature = "live-ssh")]
+            owner,
+            #[cfg(feature = "host-clients")]
+            privacy_epoch,
+        }
+    }
+}
+
+impl TerminalInputBatch<'_> {
+    fn flush(&mut self) {
+        use zeroize::Zeroize as _;
+        if self.bytes.is_empty() {
+            return;
+        }
+        #[cfg(feature = "host-clients")]
+        if self.sink.live.host.epoch() != self.privacy_epoch {
+            self.refused = true;
+        }
+        #[cfg(feature = "live-ssh")]
+        if !self.refused {
+            self.refused = !self.owner.as_ref().is_some_and(|owner| {
+                self.sink
+                    .live
+                    .connection
+                    .borrow_mut()
+                    .as_mut()
+                    .is_some_and(|live| live.send_for_owner(owner, &self.bytes))
+            });
+        }
+        self.bytes.zeroize();
+    }
+
+    fn finish(mut self) {
+        self.flush();
+    }
+}
+
+impl EncodedInputSink for TerminalInputBatch<'_> {
+    fn record_encoded_input(&mut self, bytes: &[u8]) {
+        use zeroize::Zeroize as _;
+        self.sink.diagnostics.byte_count = self
+            .sink
+            .diagnostics
+            .byte_count
+            .saturating_add(bytes.len() as u64);
+        // Core bounds each encoded event, including both bracketed-paste
+        // markers, before this callback. Never fragment that atomic write.
+        if bytes.len() > INPUT_BATCH_LIMIT {
+            self.refused = true;
+            self.bytes.zeroize();
+        }
+        if bytes.is_empty() || self.refused {
+            return;
+        }
+        if self.bytes.len() + bytes.len() > INPUT_BATCH_LIMIT {
+            self.flush();
+            if self.refused {
+                return;
+            }
+        }
+        if self.bytes.capacity() == 0 {
+            self.bytes.reserve_exact(INPUT_BATCH_LIMIT);
+        }
+        self.bytes.extend_from_slice(bytes);
+        if self.bytes.len() == INPUT_BATCH_LIMIT {
+            self.flush();
+        }
+    }
+
+    fn observe_input_route(&mut self, route: InputRoute) {
+        self.sink.observe_input_route(route);
+    }
+
+    fn record_terminal_resize(&mut self, dimensions: Dimensions) {
+        self.flush();
+        self.sink.record_terminal_resize(dimensions);
+    }
+
+    fn input_diagnostics(&self) -> Option<InputSinkDiagnostics> {
+        self.sink.input_diagnostics()
+    }
+}
+
 pub fn fixture_terminal() -> Terminal {
     let mut terminal = Terminal::with_scrollback_limit(
         Dimensions::new(80, 24).expect("fixed valid dimensions"),
@@ -1510,7 +1627,7 @@ impl MobileApp {
                         speech.phase() == festerm_ios_window::DictationPhase::Review
                     })
                 {
-                    apply_field_input(ui.ctx(), inputs);
+                    self.apply_native_input(ui.ctx(), inputs);
                 }
             }
             apply_field_edit(ui.ctx());
@@ -3289,6 +3406,38 @@ impl MobileApp {
         self.show_terminal(ui, lifecycle);
     }
 
+    fn apply_native_input(&self, ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldInput>) {
+        if !self.lifecycle.get().active
+            || !ctx.input(|input| input.focused)
+            || self
+                .lock
+                .as_ref()
+                .is_some_and(|lock| !lock.content_available())
+        {
+            return;
+        }
+        if ctx.memory(|memory| memory.focused()).is_some() {
+            apply_field_input(ctx, inputs);
+        } else if self.terminal_surface()
+            && self.terminal_input_ready(self.lifecycle.get())
+            && !self.menu_open
+            && !self.dictation_open()
+            && !self.dictation_owns_frame
+            && !self.host_setup.open
+            && self.field_ime.is_none()
+            && ctx.memory(|memory| memory.top_modal_layer()).is_none()
+        {
+            #[cfg(feature = "host-clients")]
+            if self.hosts.open {
+                return;
+            }
+            // The native bridge already fences field targets and epochs. Terminal
+            // ownership does not depend on egui retaining a widget's focus between
+            // frames; only selection edits require a focused TextEdit.
+            apply_input_events(ctx, inputs, None);
+        }
+    }
+
     fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
         let ready = lifecycle.active
             && !self.shell.sessions_sheet
@@ -3493,10 +3642,11 @@ impl MobileApp {
         terminal_ui.set_clip_rect(terminal_rect);
         #[cfg(feature = "live-ssh")]
         let dimensions_before = self.terminal.dimensions();
+        let mut input_batch = self.sink.input_batch();
         self.view.show_with_options(
             &mut terminal_ui,
             &mut self.terminal,
-            &mut self.sink,
+            &mut input_batch,
             TerminalViewOptions {
                 paste_available: false,
                 terminal_input_enabled: history_ready && !self.menu_open && !gesture.block_pointer,
@@ -3509,6 +3659,7 @@ impl MobileApp {
                 ..Default::default()
             },
         );
+        input_batch.finish();
         #[cfg(feature = "live-ssh")]
         if self.terminal.dimensions() != dimensions_before {
             if let Some(stream) = self
@@ -5248,6 +5399,193 @@ mod tests {
     }
 
     #[test]
+    fn native_terminal_insert_without_widget_focus_reaches_the_encoder_in_full() {
+        #[derive(Default)]
+        struct Sink(Vec<u8>);
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        let ctx = egui::Context::default();
+        let mut sink = Sink::default();
+        let public_input = "echo abcdefghijklmnopqrstuvwxyz0123456789";
+        assert_eq!(public_input.len(), 41);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.view.show(ui, &mut app.terminal, &mut sink);
+        })
+        .drop_without_applying_deltas();
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert!(ui.input(|input| input.focused));
+            assert!(ui.ctx().memory(|memory| memory.focused()).is_none());
+            assert!(app.terminal_surface());
+            assert!(app.terminal_input_ready(app.lifecycle.get()));
+            assert!(!app.menu_open && !app.dictation_open() && !app.dictation_owns_frame);
+            assert!(!app.host_setup.open && app.field_ime.is_none());
+            assert!(ui.ctx().memory(|memory| memory.top_modal_layer()).is_none());
+            app.apply_native_input(
+                ui.ctx(),
+                vec![festerm_ios_window::FieldInput::Insert(public_input.into())],
+            );
+            app.view.show(ui, &mut app.terminal, &mut sink);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(sink.0, public_input.as_bytes());
+    }
+
+    #[test]
+    fn native_terminal_unfocused_fallback_keeps_input_ownership_fences() {
+        for case in [
+            "inactive",
+            "window-unfocused",
+            "tabs",
+            "files",
+            "editor",
+            "sessions",
+            "menu",
+            "tab-menu",
+            "confirmation",
+            "host-setup",
+            "dictation-frame",
+            "stale-field",
+            "modal",
+            #[cfg(feature = "host-clients")]
+            "hosts",
+            "locked",
+        ] {
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+                active: case != "inactive",
+                ..Default::default()
+            })));
+            match case {
+                "tabs" => app.surface = Surface::Tabs,
+                "files" => app.workspace = workspaces::Workspace::Files,
+                "editor" => app.editor.open = true,
+                "sessions" => app.shell.sessions_sheet = true,
+                "menu" => app.menu_open = true,
+                "tab-menu" => app.tab_menu = Some(1),
+                "confirmation" => app.confirm_close = Some(1),
+                "host-setup" => app.host_setup.open = true,
+                "dictation-frame" => app.dictation_owns_frame = true,
+                "stale-field" => {
+                    app.field_ime = Some((
+                        egui::Id::new("old-field"),
+                        egui::output::IMEOutput {
+                            purpose: egui::IMEPurpose::Normal,
+                            rect: egui::Rect::ZERO,
+                            cursor_rect: egui::Rect::ZERO,
+                            should_interrupt_composition: false,
+                        },
+                    ))
+                }
+                #[cfg(feature = "host-clients")]
+                "hosts" => app.hosts.open = true,
+                "locked" => {
+                    use festerm_ios_lock::{
+                        AppLock, Availability, BiometryKind, FakeLocker, LockSettings, ManualClock,
+                    };
+                    let lock = AppLock::new(
+                        None,
+                        FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+                        std::sync::Arc::new(ManualClock::new()),
+                        || {},
+                    );
+                    lock.apply_settings(LockSettings {
+                        enabled: true,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    lock.lock_now();
+                    app = app.with_lock(lock, None);
+                    assert!(!app.lock.as_ref().unwrap().content_available());
+                }
+                _ => {}
+            }
+            let ctx = egui::Context::default();
+            if case == "modal" {
+                ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.ctx().memory_mut(|memory| {
+                        memory.set_modal_layer(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("modal"),
+                        ))
+                    });
+                })
+                .drop_without_applying_deltas();
+            }
+            ctx.run_ui(
+                egui::RawInput {
+                    focused: case != "window-unfocused",
+                    ..Default::default()
+                },
+                |ui| {
+                    assert!(ui.ctx().memory(|memory| memory.focused()).is_none());
+                    app.apply_native_input(
+                        ui.ctx(),
+                        vec![festerm_ios_window::FieldInput::Insert(
+                            "public-input".into(),
+                        )],
+                    );
+                    assert!(ui.input(|input| input.events.is_empty()), "{case}");
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+    }
+
+    #[test]
+    fn native_terminal_selection_without_widget_focus_does_not_create_field_state() {
+        let app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.apply_native_input(ui.ctx(), vec![festerm_ios_window::FieldInput::Select(1..3)]);
+            assert!(ui.ctx().memory(|memory| memory.focused()).is_none());
+            assert!(ui.input(|input| input.events.is_empty()));
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn native_terminal_fix_preserves_focused_form_input() {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.surface = Surface::Tabs;
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let id = egui::Id::new("native-form");
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut text).id(id))
+                .request_focus();
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert_eq!(ui.ctx().memory(|memory| memory.focused()), Some(id));
+            app.apply_native_input(
+                ui.ctx(),
+                vec![festerm_ios_window::FieldInput::Insert("public-form".into())],
+            );
+            ui.add(egui::TextEdit::singleline(&mut text).id(id));
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(text, "public-form");
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+    }
+
+    #[test]
     fn mobile_clipboard_shortcut_paste_reaches_the_encoder_before_trailing_text() {
         #[derive(Default)]
         struct Sink(Vec<u8>);
@@ -5610,10 +5948,18 @@ fn clipboard_text() -> Option<String> {
 /// egui's `TextEdit` handles. A selection change leads its batch and is set
 /// on the field's state directly, before the field runs this frame.
 fn apply_field_input(ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldInput>) {
-    use festerm_ios_window::FieldInput;
     let Some(field) = ctx.memory(|memory| memory.focused()) else {
         return;
     };
+    apply_input_events(ctx, inputs, Some(field));
+}
+
+fn apply_input_events(
+    ctx: &egui::Context,
+    inputs: Vec<festerm_ios_window::FieldInput>,
+    field: Option<egui::Id>,
+) {
+    use festerm_ios_window::FieldInput;
     let key = |key| {
         [true, false].map(|pressed| egui::Event::Key {
             key,
@@ -5642,6 +5988,7 @@ fn apply_field_input(ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldI
                 }));
             }
             FieldInput::Select(range) => {
+                let Some(field) = field else { continue };
                 let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
                 state
                     .cursor
