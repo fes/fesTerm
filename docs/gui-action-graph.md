@@ -2426,3 +2426,10 @@ and absolute deadline through the final protected-scope read. Only WouldBlock
 may wait for a fresh full-Snapshot match; cancel, fatal errors or changed scope
 refuse without another Start or credential action. The original Mac path and
 all explicit recovery/retry edges remain unchanged; native acceptance is pending.
+
+
+HOST-03 / MOB-06 Terminate confirmation keeps one stop mutation and the original
+request deadline through exact-generation completion observation. Ended requires
+observed absence plus fresh permission; pending/Busy may wait, while cancellation,
+revocation, replacement or fatal observation remains uncertain without replay.
+Close/Cancel and the separate default-off termination grant are unchanged.

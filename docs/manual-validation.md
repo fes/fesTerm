@@ -6720,3 +6720,15 @@ Start replay. Require a fresh first result and preserved existing sessions,
 settings, registration and Files policy. Mac parent/child behavior and its
 separate ambiguous warning are unchanged. Owned source fixtures are automated
 evidence only; corrected managed native qualification remains pending.
+
+
+### First confirmed remote Terminate completion
+
+For HOST-03 / MOB-06, preserve Linux21's first unconfirmed result and expected
+unchanged Create/Ensure operation count. On a corrected cohort, use only a fresh
+owned shell: Cancel preserves its generation and I/O; one named confirmation
+must report success only after exact native absence is observed. Delayed exit,
+revocation, generation replacement, cancelled request or unavailable observation
+must retain the original unconfirmed action, with no second End or stop replay.
+Check original sessions/settings/account bindings and normal frontend drain.
+Portable/owned native fixtures do not qualify a managed HOST or physical device.

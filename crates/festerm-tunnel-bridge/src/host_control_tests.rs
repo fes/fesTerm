@@ -1317,10 +1317,10 @@ pub(crate) mod native_routes {
                         let committed = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
                         let before_record = &before["sessions"][target.logical.as_str()];
                         let committed_record = &committed["sessions"][target.logical.as_str()];
-                        assert_eq!(committed_record["phase"], "Ending");
+                        assert_eq!(committed_record["phase"], "Absent");
                         assert_eq!(committed_record["generation"], before_record["generation"]);
                         assert_eq!(committed_record["identity"], before_record["identity"]);
-                        assert_eq!(committed_record["epoch"].as_u64().unwrap(), before_record["epoch"].as_u64().unwrap() + 1);
+                        assert_eq!(committed_record["epoch"].as_u64().unwrap(), before_record["epoch"].as_u64().unwrap() + 2);
                         assert_eq!(committed["operations"], before["operations"]);
                         assert_eq!(committed["issuance_epoch"], before["issuance_epoch"]);
                         let stopped = fixture.checkpoint(&lease_name, 4096);
@@ -1429,7 +1429,7 @@ pub(crate) mod native_routes {
             let committed = matches!(
                 (&request.body, &result),
                 (Request::Ensure { .. }, Ok(Response::Ensured { .. }))
-                    | (Request::ExplicitEnd { .. }, Err(Refusal::OutcomeUncertain))
+                    | (Request::ExplicitEnd { .. }, Ok(Response::Ended { .. }))
             );
             if committed && self.first.swap(false, Ordering::AcqRel) {
                 self.committed.notify_one();
@@ -1438,6 +1438,11 @@ pub(crate) mod native_routes {
                     .release
                     .wait_timeout_while(pause, Duration::from_secs(3), |paused| *paused)
                     .unwrap();
+                // Deliberately hide a completed End reply. First normal End now
+                // waits for absence; lost publication must still stay uncertain.
+                if matches!(request.body, Request::ExplicitEnd { .. }) {
+                    return Err(Refusal::OutcomeUncertain);
+                }
             }
             result
         }

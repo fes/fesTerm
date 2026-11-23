@@ -2067,8 +2067,6 @@ async fn authenticated_runtime_terminal_role_uses_separate_bounded_framing() {
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_authenticated_runtime_end_confirms_original_exact_gone_generation() {
-    use festerm_host_protocol::Refusal;
-
     let mut fixture = NativeRuntimeFixture::new();
     let mut control = fixture.control().await;
     let issued = control.issue_operation().unwrap();
@@ -2082,69 +2080,11 @@ async fn native_authenticated_runtime_end_confirms_original_exact_gone_generatio
     let context = fixture.client_context();
     let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
     let original = end.operation().clone();
-    // A freshly created generation's lease may still be held by its starting
-    // daemon. End refuses that contention as Busy before any effect, so retry
-    // the same original operation, as the user would, within a bounded deadline.
-    let deadline = std::time::Instant::now() + Duration::from_secs(8);
-    let first_end = loop {
-        let outcome = client_end_worker(&mut fixture, end.clone()).await;
-        if matches!(
-            &outcome,
-            crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
-                festerm_tunnel_client::host_control::Error::Refused(Refusal::Busy)
-            ))
-        ) && std::time::Instant::now() < deadline
-        {
-            assert_eq!(end.operation(), &original);
-            assert!(!end.is_resolved());
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            continue;
-        }
-        break outcome;
-    };
+    let first_end = client_end_worker(&mut fixture, end.clone()).await;
     assert!(
-        matches!(
-            &first_end,
-            crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
-                festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
-            ))
-        ),
-        "native End stage=initial-worker-completion actual={} issued={} resolved={} operation_unchanged={}",
-        native_end_outcome_diagnostic(&first_end, &target),
-        end.is_issued(),
-        end.is_resolved(),
-        end.operation() == &original,
+        matches!(first_end, crate::host_client::Outcome::Ended { target: ended } if ended == target),
+        "one confirmed End must observe this exact generation gone"
     );
-    assert!(end.is_issued() && !end.is_resolved());
-    tokio::time::timeout(Duration::from_secs(8), async {
-        loop {
-            let response = control
-                .request(
-                    OperationId::new(),
-                    Request::Lookup {
-                        logical: target.logical.clone(),
-                    },
-                    &CancellationToken::new(),
-                )
-                .await
-                .unwrap();
-            if matches!(
-                response.body,
-                Response::Lookup {
-                    result: festerm_host_protocol::LookupResult::Absent { .. }
-                }
-            ) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(matches!(
-        client_end_worker(&mut fixture, end.clone()).await,
-        crate::host_client::Outcome::Ended { target: ended } if ended == target
-    ));
     assert_eq!(end.operation(), &original);
     assert!(end.is_resolved());
     assert!(
@@ -2165,7 +2105,7 @@ async fn native_protected_original_end_reopens_and_settles_exact_generation() {
         originals::{testing, RecoveredIntent},
         CreationIntent, CreationMode, EndIntent, Outcome,
     };
-    use festerm_host_protocol::{GenerationId, LookupResult, Refusal, Target};
+    use festerm_host_protocol::{GenerationId, Refusal, Target};
 
     let mut fixture = NativeRuntimeFixture::new();
     fixture.auth.approved.account = "github:7".into();
@@ -2268,10 +2208,22 @@ async fn native_protected_original_end_reopens_and_settles_exact_generation() {
     end.protect_original(store.clone(), "owned exact End review".into())
         .unwrap();
     let original_end = end.operation().clone();
+    // Deliberately unavailable protected observation must retain the original.
+    // A missing daemon lease also fails closed; no native-effect attribution is
+    // inferred from this fixture's failed first confirmation.
+    let lease = fixture
+        .native
+        .root
+        .join(format!("host-daemon-{}.json", target.generation.get()));
+    let held = lease.with_extension("protected-original-held");
+    let lease_bytes = std::fs::read(&lease).unwrap();
+    std::fs::rename(&lease, &held).unwrap();
+    let first_end = client_end_worker(&mut fixture, end.clone()).await;
+    std::fs::rename(&held, &lease).unwrap();
     assert!(matches!(
-        client_end_worker(&mut fixture, end.clone()).await,
+        first_end,
         Outcome::Failed(host_client::Failure::Control(
-            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::Unknown)
         ))
     ));
     assert!(end.is_issued() && !end.is_resolved());
@@ -2280,7 +2232,7 @@ async fn native_protected_original_end_reopens_and_settles_exact_generation() {
     assert_eq!(
         recovered.len(),
         3,
-        "uncertain stop must retain creation and both End originals"
+        "unconfirmed End must retain creation and both End originals"
     );
     let end = recovered
         .into_iter()
@@ -2290,37 +2242,6 @@ async fn native_protected_original_end_reopens_and_settles_exact_generation() {
         })
         .unwrap();
     assert!(end.is_issued() && !end.is_resolved());
-    tokio::time::timeout(Duration::from_secs(8), async {
-        loop {
-            let observed = control
-                .request(
-                    OperationId::new(),
-                    Request::Lookup {
-                        logical: target.logical.clone(),
-                    },
-                    &CancellationToken::new(),
-                )
-                .await
-                .unwrap();
-            if matches!(
-                observed.body,
-                Response::Lookup {
-                    result: LookupResult::Absent { .. }
-                }
-            ) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let lease = fixture
-        .native
-        .root
-        .join(format!("host-daemon-{}.json", target.generation.get()));
-    let held = lease.with_extension("protected-original-held");
-    let lease_bytes = std::fs::read(&lease).unwrap();
     std::fs::rename(&lease, &held).unwrap();
     let unknown = client_end_worker(&mut fixture, end.clone()).await;
     std::fs::rename(&held, &lease).unwrap();
