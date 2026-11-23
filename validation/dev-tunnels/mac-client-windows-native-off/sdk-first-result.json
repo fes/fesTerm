@@ -1,0 +1,13 @@
+{
+  "creation_allowed": false,
+  "exit_code": 0,
+  "existing_POSIX_owned_group_drained": true,
+  "ordinary_client_pass": true,
+  "stopped_profile_denied_pass": true,
+  "blocked_marker": false,
+  "one_test_pass": true,
+  "elapsed_seconds": 18.035,
+  "tail_sha256": "6f697d3d9f641bd300a2bbedd19584a91b44d28c51825010b942c00ee408cb0f",
+  "free_after": 3200286720,
+  "service_or_OS_settings_changed": false
+}

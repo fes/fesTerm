@@ -105,11 +105,12 @@ Separate attributed native components cover the [Mac 20 stopped HOST update and 
 the [Windows 20 stopped-service diagnostic and explicit prerequisite restoration](validation/dev-tunnels/windows-client-privacy-0.17.20.json),
 and [physical iPhone saved-account reopening](validation/dev-tunnels/ios-saved-account-reopen-0.17.20.json).
 They add no full matrix case.
-There are eleven accepted pinned cases (desktop 11/12), five partial cases
-and eight unstarted cases. The full 24-case matrix and combined-release
-qualification remain incomplete. Mac-client/Windows-server creation-OFF still
-requires verification of the stopped Windows HOST20 transition after Disable39
-and a separate reviewed Enable-OFF; no successful update/start is claimed. A separate
+The [Mac-client/Windows-server creation-OFF record](validation/dev-tunnels/mac-client-windows-native-off.json)
+completes the desktop matrix with disabled creation, saved retained-session
+reconnection, two matched-grid Copilot/query pairs and independent service
+policy checks. There are twelve accepted pinned cases (desktop 12/12), five
+partial cases and seven unstarted cases. The remaining twelve cases are mobile;
+the full 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
 creation keeps its issued action after an uncertain result, with no replacement

@@ -1,0 +1,68 @@
+{
+  "status": "HOST_ONLY_IMMUTABLE_SOURCE_COMPARISON",
+  "local_reference": "Windows19/source920 R14; explicit historical reference, not21 local GUI acceptance",
+  "source21": "3895c1190aa1b32f6fb3677bdfa0cef52cd12184",
+  "rows": [
+    {
+      "path": "crates/festerm-core",
+      "local19_source920_object": "8362202cab63d4a29e01c10051934f980d364634",
+      "source21_3895_object": "8362202cab63d4a29e01c10051934f980d364634",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-host-protocol",
+      "local19_source920_object": "e5c5ba0b14b5af14c4154dc618ee1348ec07d108",
+      "source21_3895_object": "e5c5ba0b14b5af14c4154dc618ee1348ec07d108",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/renderer.rs",
+      "local19_source920_object": "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556",
+      "source21_3895_object": "ee9ab5a535922a8ff4e1e6dca021c55ce48cc556",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/renderer",
+      "local19_source920_object": "7dd98d142ac7454e091ee15bf881a52f8c255113",
+      "source21_3895_object": "7dd98d142ac7454e091ee15bf881a52f8c255113",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-tunnel-bridge/src/host_terminal.rs",
+      "local19_source920_object": "080ae9f50e8c297222e24f2e69de0ec67c055b2f",
+      "source21_3895_object": "080ae9f50e8c297222e24f2e69de0ec67c055b2f",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-tunnel-bridge/src/host_terminal/client.rs",
+      "local19_source920_object": "53f092aa04495b878fcff25649cb25a0a963fb3b",
+      "source21_3895_object": "53f092aa04495b878fcff25649cb25a0a963fb3b",
+      "equal": true
+    },
+    {
+      "path": "assets/fonts",
+      "local19_source920_object": "7b95cd8780461b8b485c31faadc674331fa91702",
+      "source21_3895_object": "7b95cd8780461b8b485c31faadc674331fa91702",
+      "equal": true
+    },
+    {
+      "path": "vendor/epaint/src/text",
+      "local19_source920_object": "8d4a9e387e5d429fb3909c4a8b15d034429f60c8",
+      "source21_3895_object": "8d4a9e387e5d429fb3909c4a8b15d034429f60c8",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/theme.rs",
+      "local19_source920_object": "2a4838a4da90a410ae6127f90065faad414f9bd6",
+      "source21_3895_object": "2a4838a4da90a410ae6127f90065faad414f9bd6",
+      "equal": true
+    },
+    {
+      "path": "crates/festerm-ui-egui/src/fonts.rs",
+      "local19_source920_object": "fd66e481fb560a8323846460f9a9099ec51b9a5d",
+      "source21_3895_object": "fd66e481fb560a8323846460f9a9099ec51b9a5d",
+      "equal": true
+    }
+  ],
+  "limit": "Actual fresh remote raw capability/query and Copilot grids still required. Changed whole-file objects need scoped diff review; no terminal environment overrides implicitly approved."
+}
