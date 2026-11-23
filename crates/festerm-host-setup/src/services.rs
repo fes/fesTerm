@@ -1090,7 +1090,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         if before == ProcessState::Transitioning {
             observe_start(
                 &self.state,
-                StartStage::FinalFence,
+                StartStage::TransitioningFinalFence,
                 self.fence(epoch, Phase::Provisioned),
             )?;
             return Ok(observation(&snapshot, before));
@@ -1199,10 +1199,14 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     ) -> io::Result<Snapshot> {
         let mut last_busy = None;
         loop {
-            check()?;
+            observe_start(&self.state, StartStage::ObservationCallback, check())?;
             if let Some(error) = last_busy.take() {
                 if guard.remaining().is_err() {
-                    return Err(error);
+                    return observe_start(
+                        &self.state,
+                        StartStage::ObservationBudgetExhausted,
+                        Err(error),
+                    );
                 }
             }
             let result = self
@@ -1216,11 +1220,19 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             match result {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     let Ok(remaining) = guard.remaining() else {
-                        return Err(error);
+                        return observe_start(
+                            &self.state,
+                            StartStage::ObservationBudgetExhausted,
+                            Err(error),
+                        );
                     };
                     std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
                     if guard.remaining().is_err() {
-                        return Err(error);
+                        return observe_start(
+                            &self.state,
+                            StartStage::ObservationBudgetExhausted,
+                            Err(error),
+                        );
                     }
                     last_busy = Some(error);
                 }

@@ -3212,3 +3212,27 @@ See ADR-0025's host account launch defaults for bounded resolution and native
 validation limits. Validation impact: GUI:HOST-02/03; portable defaults, explicit
 launch choices, private-home startup/PATH and canonical fingerprint regressions.
 Managed native qualification on all three server platforms remains open.
+
+
+### Start-observation error-stage disambiguation
+
+Mac signed 0.17.21 first Enable reached Provisioned/Listening19, while the
+captured child error reported `final_fence`, Busy and no raw OS code. That
+existing label covers both the early already-Transitioning return and the later
+bounded observation helper. Within that helper, the Mac current-scope callback
+can itself refuse before the helper reads its lifecycle fence. The captured
+log does not establish which read contended or that a deadline expired.
+
+Error-only `host.start_observation` stages now distinguish
+`transitioning_final_fence`, `observation_callback`, and
+`observation_budget_exhausted`. The existing outer post-manager/final stage is
+retained for helper failures. Every event keeps the original error kind and raw
+OS code; no path, account, credential, source error string or terminal content
+is recorded. No successful observation event, read, retry, deadline, permission,
+manager command or credential action is added. Callback failure remains final.
+
+Validation impact: GUI:HOST-04 / ADR0084. Existing real lifecycle-lease fixtures
+cover an early Transitioning read (zero manager starts), a Mac-like scope
+callback after Running (one start, no callback retry), and the original deadline
+exhaustion. Native source-cause attribution still requires the narrower event;
+these diagnostic tests do not repair or requalify the first Enable warning.

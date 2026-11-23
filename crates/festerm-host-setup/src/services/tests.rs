@@ -3640,6 +3640,11 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
         || {
             if held.borrow().is_some() {
                 reads.set(reads.get() + 1);
+                if case == "callback_busy" {
+                    // Mac Desktop's callback itself reads the current protected
+                    // snapshot. Its Busy must not be mislabeled as wait expiry.
+                    return store.snapshot().map(|_| ());
+                }
                 if case == "expired" {
                     native::expire_operation_for_test();
                 } else if reads.get() == 2 {
@@ -3705,10 +3710,26 @@ fn start_observation_fence_contention(case: &str, after_manager: bool) {
     } else {
         let error = result.err().expect("unqualified final read must refuse");
         match case {
+            "callback_busy" => {
+                assert_eq!(
+                    reads.get(),
+                    1,
+                    "callback failure remains final, without retry"
+                );
+                assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+                assert_eq!(error.raw_os_error(), None);
+                assert_eq!(error.to_string(), "host.installation_busy");
+                let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+                assert!(log.contains("stage=observation_callback kind=busy os=none"));
+                assert!(!log.contains("stage=observation_budget_exhausted"));
+            }
             "expired" | "expired_retry" => {
                 assert_eq!(reads.get(), if case == "expired" { 1 } else { 2 });
                 assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
                 assert_eq!(error.to_string(), "host.installation_busy");
+                let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+                assert!(log.contains("stage=observation_budget_exhausted kind=busy os=none"));
+                assert!(!log.contains("stage=observation_callback"));
             }
             "cancelled" => {
                 assert_eq!(reads.get(), 2);
@@ -4073,4 +4094,75 @@ fn native_service_stopped_termination_projection_requires_review_and_preserves_o
         );
         assert_eq!(owners.snapshot().unwrap(), owner);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_scope_callback_busy_is_distinct_from_fence_budget_exhaustion() {
+    start_observation_fence_contention("callback_busy", false);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_transitioning_final_read_busy_is_distinct_without_manager_start() {
+    struct TransitioningRead {
+        native: FakeRunner,
+        held: RefCell<Option<Lease>>,
+    }
+    impl CommandRunner for TransitioningRead {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let output = self.native.execute(request)?;
+            if matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "show"))
+            {
+                let directory =
+                    storage::private_directory(self.native.receipt.parent().unwrap(), false)?;
+                *self.held.borrow_mut() = Some(Lease::exclusive(storage::open_private_file(
+                    &directory,
+                    Path::new("host-lifecycle.lock"),
+                    false,
+                )?)?);
+            }
+            Ok(output)
+        }
+    }
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let base = services(root.path(), &store, Platform::Linux);
+    base.install(&stage, snapshot.epoch).unwrap();
+    base.runner.state.borrow_mut().calls.clear();
+    base.runner.state.borrow_mut().pending_start = true;
+    let manager = Services {
+        store: &store,
+        state: base.state,
+        context: base.context,
+        runner: TransitioningRead {
+            native: base.runner,
+            held: RefCell::new(None),
+        },
+    };
+    let credentials = std::cell::Cell::new(0);
+    let error = manager
+        .start_with(&stage, snapshot.epoch, || {
+            credentials.set(credentials.get() + 1);
+            Ok(())
+        })
+        .err()
+        .expect("unqualified transition read");
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(error.raw_os_error(), None);
+    assert_eq!(error.to_string(), "host.installation_busy");
+    assert_eq!(credentials.get(), 1);
+    assert_eq!(manager.runner.native.state.borrow().calls.iter().filter(|request| matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "start"))).count(), 0);
+    let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+    assert!(log.contains("stage=transitioning_final_fence kind=busy os=none"));
+    assert!(
+        !log.contains("stage=observation_callback")
+            && !log.contains("stage=observation_budget_exhausted")
+    );
+    assert!(!log.contains(&state.display().to_string()));
+    manager.runner.held.borrow_mut().take();
+    assert_eq!(store.snapshot().unwrap(), snapshot);
 }
