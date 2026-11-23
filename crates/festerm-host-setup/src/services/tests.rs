@@ -2234,7 +2234,7 @@ fn native_service_dedicated_start_reuses_existing_expired_guard_without_reset() 
             snapshot.epoch,
             native::check_operation_for_test,
             || Ok(()),
-            guard,
+            &guard,
         )
         .err()
         .unwrap();
@@ -4165,4 +4165,108 @@ fn native_start_transitioning_final_read_busy_is_distinct_without_manager_start(
     assert!(!log.contains(&state.display().to_string()));
     manager.runner.held.borrow_mut().take();
     assert_eq!(store.snapshot().unwrap(), snapshot);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_completion_retains_operation_and_original_deadline_without_replay() {
+    struct DeadlineRunner {
+        native: FakeRunner,
+        expire: bool,
+    }
+    impl CommandRunner for DeadlineRunner {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            let result = self.native.execute(request)?;
+            if self.expire
+                && matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "start"))
+            {
+                // The native Start has already happened; completion may not mint
+                // a fresh allowance after observing its result.
+                native::expire_operation_for_test();
+            }
+            Ok(result)
+        }
+    }
+    for case in ["running", "expired", "transitioning"] {
+        let root = storage::private_test_directory();
+        let state = root.path().join("state");
+        let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+        let expected = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let base = services(root.path(), &store, Platform::Linux);
+        base.install(&stage, expected.epoch).unwrap();
+        base.runner.state.borrow_mut().calls.clear();
+        base.runner.state.borrow_mut().pending_start = case == "transitioning";
+        let manager = Services {
+            store: &store,
+            state: base.state,
+            context: base.context,
+            runner: DeadlineRunner {
+                native: base.runner,
+                expire: case == "expired",
+            },
+        };
+        let credentials = std::cell::Cell::new(0);
+        let completions = std::cell::Cell::new(0);
+        let result = manager
+            .start_checked_with_completion(
+                &stage,
+                expected.epoch,
+                || {
+                    credentials.set(credentials.get() + 1);
+                    Ok(())
+                },
+                || Ok(()),
+                |observation, until| {
+                    completions.set(completions.get() + 1);
+                    assert!(
+                        native::retain_operation().is_some(),
+                        "completion must retain native ownership"
+                    );
+                    assert_eq!(
+                        manager
+                            .lease()
+                            .err()
+                            .expect("same native lock remains held")
+                            .kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                    if case == "expired" {
+                        assert!(
+                            until < std::time::Instant::now(),
+                            "completion cannot reset an expired native deadline"
+                        );
+                    } else {
+                        assert!(until > std::time::Instant::now());
+                    }
+                    assert_eq!(store.snapshot().unwrap(), expected);
+                    observation.process
+                },
+            )
+            .unwrap();
+        assert_eq!(completions.get(), 1);
+        assert_eq!(
+            result,
+            if case == "transitioning" {
+                ProcessState::Transitioning
+            } else {
+                ProcessState::Running
+            }
+        );
+        assert_eq!(
+            credentials.get(),
+            if case == "transitioning" { 1 } else { 2 }
+        );
+        let calls = &manager.runner.native.state.borrow().calls;
+        assert_eq!(calls.iter().filter(|request| matches!(request, NativeRequest::Process { args, .. } if args.iter().any(|arg| arg == "start"))).count(), usize::from(case != "transitioning"));
+        assert!(
+            native::retain_operation().is_none(),
+            "completion restores caller context"
+        );
+        drop(
+            manager
+                .lease()
+                .expect("operation lock is released after completion"),
+        );
+    }
 }

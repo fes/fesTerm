@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "a8a6129f96d2e1c153f15f078d5c42a478f3870e70c0bf6fd59d0ec952969f6b"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "aa80889a1cb54778212e82255c3d06afa18fe1face4f26574a2dc748ee0fae89"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

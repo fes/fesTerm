@@ -1656,3 +1656,132 @@ fn desktop_remote_access_disable_error_observer_localizes_known_failure_without_
         assert!(!log.contains("host.runtime_"));
     }
 }
+
+#[test]
+fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot() {
+    for case in ["released", "changed"] {
+        let root = storage::private_test_directory();
+        let state = root.path().join("state");
+        let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+        let expected = store.snapshot().unwrap();
+        let directory = storage::private_directory(&state, false).unwrap();
+        let held = storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+            .unwrap();
+        fs2::FileExt::try_lock_exclusive(&held).unwrap();
+        let held = std::cell::RefCell::new(Some(held));
+        let reads = std::cell::Cell::new(0);
+        let busy_seen = std::cell::Cell::new(false);
+        let result = final_enable_scope(
+            &state,
+            &expected,
+            &CancellationToken::new(),
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            || {
+                reads.set(reads.get() + 1);
+                let result = store.snapshot();
+                if result
+                    .as_ref()
+                    .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
+                {
+                    assert_eq!(reads.get(), 1);
+                    busy_seen.set(true);
+                    drop(held.borrow_mut().take());
+                    if case == "changed" {
+                        let mut changed = expected.clone();
+                        changed.settings.friendly_name = "Different consent at same epoch".into();
+                        storage::replace_private(
+                            &directory,
+                            Path::new("host-lifecycle.json"),
+                            &serde_json::to_vec(&changed).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                }
+                result
+            },
+        );
+        assert!(
+            busy_seen.get(),
+            "real first read must contend before release"
+        );
+        assert_eq!(
+            reads.get(),
+            2,
+            "one actual Busy, then one freshly acquired read"
+        );
+        if case == "released" {
+            assert_eq!(result, Ok(()));
+        } else {
+            assert_eq!(result, Err(Failure::ScopeChanged));
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads() {
+    for case in [
+        "expired",
+        "cancel_before",
+        "cancel_after",
+        "fatal",
+        "read_exhausts",
+    ] {
+        let root = storage::private_test_directory();
+        let state = root.path().join("state");
+        let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+        let expected = store.snapshot().unwrap();
+        let directory = storage::private_directory(&state, false).unwrap();
+        let held = storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+            .unwrap();
+        fs2::FileExt::try_lock_exclusive(&held).unwrap();
+        let cancel = CancellationToken::new();
+        if case == "cancel_before" {
+            cancel.cancel();
+        }
+        let reads = std::cell::Cell::new(0);
+        let until = std::time::Instant::now()
+            + if case == "expired" {
+                std::time::Duration::ZERO
+            } else if case == "read_exhausts" {
+                std::time::Duration::from_millis(5)
+            } else {
+                std::time::Duration::from_secs(1)
+            };
+        let result = final_enable_scope(&state, &expected, &cancel, until, || {
+            reads.set(reads.get() + 1);
+            assert_eq!(
+                reads.get(),
+                1,
+                "refusal cannot reacquire or renew a deadline"
+            );
+            if case == "fatal" {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "PRIVATE"));
+            }
+            let result = store.snapshot();
+            assert!(result
+                .as_ref()
+                .is_err_and(|e| e.kind() == io::ErrorKind::WouldBlock));
+            if case == "cancel_after" {
+                cancel.cancel();
+            }
+            if case == "read_exhausts" {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result
+        });
+        assert_eq!(reads.get(), usize::from(case != "cancel_before"));
+        assert_eq!(
+            result,
+            Err(match case {
+                "cancel_before" | "cancel_after" => Failure::Cancelled,
+                "fatal" => Failure::PrivateStorage,
+                _ => Failure::Observation {
+                    boundary: ObservationBoundary::FinalScope,
+                    kind: io::ErrorKind::WouldBlock
+                },
+            })
+        );
+        drop(held);
+        assert_eq!(store.snapshot().unwrap(), expected);
+    }
+}

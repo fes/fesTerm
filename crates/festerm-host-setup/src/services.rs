@@ -888,6 +888,35 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         self.start_with(stage, epoch, || self.require_start_credentials())
     }
 
+    /// Completes a trusted caller's read-only observation while the original
+    /// native operation is still owned. The absolute deadline cannot renew it.
+    pub fn start_with_completion<T>(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        complete: impl FnOnce(Observation, std::time::Instant) -> T,
+    ) -> io::Result<T> {
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        {
+            let repeated = std::cell::Cell::new(false);
+            self.start_checked_with_completion(
+                stage,
+                epoch,
+                || self.require_start_credentials_observed(epoch, repeated.replace(true)),
+                || Ok(()),
+                complete,
+            )
+        }
+        #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
+        self.start_checked_with_completion(
+            stage,
+            epoch,
+            || self.require_start_credentials(),
+            || Ok(()),
+            complete,
+        )
+    }
+
     #[cfg(all(feature = "cloud", feature = "host-runtime"))]
     fn require_start_credentials_observed(&self, epoch: u64, repeated: bool) -> io::Result<()> {
         self.require_start_credentials_observed_with(epoch, repeated, || {
@@ -1028,7 +1057,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             epoch,
             || self.require_start_credentials_observed(epoch, repeated.replace(true)),
             check,
-            guard,
+            &guard,
         )
     }
 
@@ -1039,6 +1068,19 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         credentials: impl Fn() -> io::Result<()>,
         check: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
+        self.start_checked_with_completion(stage, epoch, credentials, check, |observation, _| {
+            observation
+        })
+    }
+
+    fn start_checked_with_completion<T>(
+        &self,
+        stage: &TrustedStage,
+        epoch: u64,
+        credentials: impl Fn() -> io::Result<()>,
+        check: impl Fn() -> io::Result<()>,
+        complete: impl FnOnce(Observation, std::time::Instant) -> T,
+    ) -> io::Result<T> {
         if self.context.platform == Platform::Windows
             && !cfg!(all(feature = "cloud", feature = "host-runtime"))
         {
@@ -1048,7 +1090,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         }
         check()?;
         let guard = observe_start(&self.state, StartStage::ServiceLease, self.lease())?;
-        self.start_admitted(stage, epoch, credentials, check, guard)
+        let observation = self.start_admitted(stage, epoch, credentials, check, &guard)?;
+        Ok(complete(observation, guard.deadline()?))
     }
 
     fn start_admitted(
@@ -1057,7 +1100,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
         check: impl Fn() -> io::Result<()>,
-        guard: native::OperationGuard,
+        guard: &native::OperationGuard,
     ) -> io::Result<Observation> {
         self.require_replacement_settled()?;
         let snapshot = observe_start(
@@ -1150,7 +1193,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         observe_start(
             &self.state,
             StartStage::AfterManagerFence,
-            self.start_observation_fence(&snapshot, &guard, &check),
+            self.start_observation_fence(&snapshot, guard, &check),
         )?;
         let mut process = observe_start(
             &self.state,
@@ -1164,7 +1207,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             observe_start(
                 &self.state,
                 StartStage::AfterManagerFence,
-                self.start_observation_fence(&snapshot, &guard, &check),
+                self.start_observation_fence(&snapshot, guard, &check),
             )?;
             std::thread::sleep(std::time::Duration::from_millis(25));
             process = observe_start(
@@ -1176,7 +1219,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         observe_start(
             &self.state,
             StartStage::FinalFence,
-            self.start_observation_fence(&snapshot, &guard, &check),
+            self.start_observation_fence(&snapshot, guard, &check),
         )?;
         if process == ProcessState::Transitioning {
             return Ok(observation(&snapshot, process));

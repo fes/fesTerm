@@ -188,7 +188,17 @@ fn completion_io<T>(
     operation: impl FnOnce() -> io::Result<T>,
 ) -> Result<T, Failure> {
     completion_event(root, epoch, boundary, CompletionOutcome::Begin, None);
-    match operation() {
+    completion_io_result(root, epoch, boundary, observation, operation())
+}
+
+fn completion_io_result<T>(
+    root: &Path,
+    epoch: u64,
+    boundary: CompletionBoundary,
+    observation: ObservationBoundary,
+    result: io::Result<T>,
+) -> Result<T, Failure> {
+    match result {
         Ok(value) => {
             completion_event(root, epoch, boundary, CompletionOutcome::Ok, None);
             Ok(value)
@@ -214,6 +224,68 @@ fn completion_io<T>(
         }
     }
 }
+// The initial read and full consent comparison are unchanged. Only contention
+// may wait, bounded by the still-owned native start operation's original cap.
+#[cfg(any(test, not(target_os = "macos")))]
+fn final_enable_scope(
+    root: &Path,
+    expected: &Snapshot,
+    cancel: &CancellationToken,
+    until: std::time::Instant,
+    mut read: impl FnMut() -> io::Result<Snapshot>,
+) -> Result<(), Failure> {
+    completion_event(
+        root,
+        expected.epoch,
+        CompletionBoundary::FinalScope,
+        CompletionOutcome::Begin,
+        None,
+    );
+    let mut last_busy = None;
+    let result = loop {
+        if cancel.is_cancelled() {
+            completion_event(
+                root,
+                expected.epoch,
+                CompletionBoundary::FinalScope,
+                CompletionOutcome::Error,
+                Some(CompletionError {
+                    kind: None,
+                    os: None,
+                    reason: None,
+                    failure: Failure::Cancelled,
+                }),
+            );
+            return Err(Failure::Cancelled);
+        }
+        if last_busy.is_some() && std::time::Instant::now() >= until {
+            break Err(last_busy.take().expect("retained contention error"));
+        }
+        match read() {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                last_busy = Some(error);
+                std::thread::sleep(
+                    until
+                        .saturating_duration_since(std::time::Instant::now())
+                        .min(std::time::Duration::from_millis(25)),
+                );
+            }
+            result => break result,
+        }
+    };
+    let current = completion_io_result(
+        root,
+        expected.epoch,
+        CompletionBoundary::FinalScope,
+        ObservationBoundary::FinalScope,
+        result,
+    )?;
+    if current != *expected {
+        return Err(Failure::ScopeChanged);
+    }
+    Ok(())
+}
+
 // Diagnostic only: preserve the controller's exact Result before its existing
 // failure mapping. No epoch/account/run IDs or free-form error values are logged.
 fn disable_completion_result<T>(root: &Path, result: io::Result<T>) -> io::Result<T> {
@@ -1006,14 +1078,14 @@ impl Native {
                                 ObservationBoundary::ServiceStage,
                                 || services.reopen_stage(snapshot.epoch),
                             )?;
-                            let observation = completion_io(
-                                &request.root,
-                                snapshot.epoch,
-                                CompletionBoundary::ServiceStart,
-                                ObservationBoundary::ServiceStart,
-                                || {
-                                    #[cfg(target_os = "macos")]
-                                    {
+                            #[cfg(target_os = "macos")]
+                            let observation = {
+                                let observation = completion_io(
+                                    &request.root,
+                                    snapshot.epoch,
+                                    CompletionBoundary::ServiceStart,
+                                    ObservationBoundary::ServiceStart,
+                                    || {
                                         festerm_host_setup::desktop_start::start(
                                             store,
                                             &request.root,
@@ -1021,23 +1093,60 @@ impl Native {
                                             snapshot.as_ref(),
                                             cancel,
                                         )
-                                    }
-                                    #[cfg(not(target_os = "macos"))]
-                                    {
-                                        services.start(&stage, snapshot.epoch)
-                                    }
-                                },
-                            )?;
-                            if completion_io(
-                                &request.root,
-                                snapshot.epoch,
-                                CompletionBoundary::FinalScope,
-                                ObservationBoundary::FinalScope,
-                                || store.snapshot(),
-                            )? != *snapshot
-                            {
-                                return Err(Failure::ScopeChanged);
-                            }
+                                    },
+                                )?;
+                                if completion_io(
+                                    &request.root,
+                                    snapshot.epoch,
+                                    CompletionBoundary::FinalScope,
+                                    ObservationBoundary::FinalScope,
+                                    || store.snapshot(),
+                                )? != *snapshot
+                                {
+                                    return Err(Failure::ScopeChanged);
+                                }
+                                observation
+                            };
+                            #[cfg(not(target_os = "macos"))]
+                            let observation = {
+                                completion_event(
+                                    &request.root,
+                                    snapshot.epoch,
+                                    CompletionBoundary::ServiceStart,
+                                    CompletionOutcome::Begin,
+                                    None,
+                                );
+                                match services.start_with_completion(
+                                    &stage,
+                                    snapshot.epoch,
+                                    |observation, until| {
+                                        completion_event(
+                                            &request.root,
+                                            snapshot.epoch,
+                                            CompletionBoundary::ServiceStart,
+                                            CompletionOutcome::Ok,
+                                            None,
+                                        );
+                                        final_enable_scope(
+                                            &request.root,
+                                            snapshot.as_ref(),
+                                            cancel,
+                                            until,
+                                            || store.snapshot(),
+                                        )
+                                        .map(|()| observation)
+                                    },
+                                ) {
+                                    Ok(result) => result?,
+                                    Err(error) => completion_io_result(
+                                        &request.root,
+                                        snapshot.epoch,
+                                        CompletionBoundary::ServiceStart,
+                                        ObservationBoundary::ServiceStart,
+                                        Err(error),
+                                    )?,
+                                }
+                            };
                             observation.process
                         } else {
                             setup.native_registration.process
