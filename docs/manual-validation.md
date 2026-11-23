@@ -6672,3 +6672,17 @@ reply: no automatic End, Create, replacement, input replay or success claim. An
 uncertain action retains its original operation for explicit reconciliation.
 Portable protected-state/control-channel and layout tests do not qualify native
 HOST process termination or physical iOS/Android behavior, and add no matrix case.
+
+
+### Native first-Enable observation: narrow error stages
+
+For HOST-04 / DIAG-01, retain the first GUI result before Refresh or any new
+operation. Mac signed 0.17.21's original `final_fence` Busy is ambiguous between
+the early already-Transitioning read and the later observation helper; actual
+Listening does not identify the failed read. Future finite logs distinguish
+`transitioning_final_fence`, `observation_callback`, and
+`observation_budget_exhausted`, retaining the outer helper boundary and original
+I/O kind/OS code. Use only these content-free fields. Do not infer deadline
+exhaustion from Busy or replay Start/Enable for diagnosis. Controlled real-lease
+fixtures verify these labels and unchanged effects/error behavior; actual
+native attribution and any causal correction remain pending separately.

@@ -2402,3 +2402,11 @@ only its generation; uncertain results retain the original operation without
 automatic retry. Stopped profiles and imported local-bound generations cannot be
 terminated through this ordinary flow. Close retains its separate local detach
 edge; retirement diagnostics do not appear as normal Profiles notices.
+
+
+HOST-04 / DIAG-01 first-Enable diagnostics distinguish an early Transitioning
+final-fence read, the observation scope callback, and exhaustion of the existing
+fence-read budget. These error-only stages preserve the first error and normal
+recovery edges; they add no read/retry, manager command, deadline or authority.
+An old `final_fence` Busy plus Listening remains ambiguous and is not a repaired
+first-result qualification.
