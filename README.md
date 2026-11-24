@@ -123,8 +123,12 @@ policy checks. The attributed Android→Linux [creation-OFF](validation/dev-tunn
 and [creation-ON](validation/dev-tunnels/android-client-linux-native-on.json) records add the first two
 mobile cases: genuine Gboard input, foreground/saved-profile reconnect, two
 matched-grid query/Copilot pairs and separately attributed SDK policy proof.
-There are fourteen accepted pinned cases (desktop 12/12, mobile 2/12), three
-partial cases and seven unstarted cases. Ten mobile cases remain; the full
+The [Android→Windows creation-ON record](validation/dev-tunnels/android-client-windows-native-on.json)
+adds one current HOST26 Cmd generation, normal foreground/saved AttachOnly
+reconnection, four SDK resumes and two matched local/query/Copilot pairs.
+Its Android26/HOST26 and genuine local GUI24 producers remain distinct.
+There are fifteen accepted pinned cases (desktop 12/12, mobile 3/12), four
+partial cases and five unstarted cases. Nine mobile cases remain; the full
 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit

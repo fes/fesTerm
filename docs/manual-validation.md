@@ -1162,9 +1162,9 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has fourteen accepted pinned functional cases (desktop12/12, mobile2/12),
-three partial cases and seven unstarted cases after the separately attributed
-Android→Linux OFF/ON pair below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has fifteen accepted pinned functional cases (desktop12/12, mobile3/12),
+four partial cases and five unstarted cases after the separately attributed
+Android→Linux pair and Android→Windows ON record below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7050,8 +7050,9 @@ Tall Android Copilot normal UI quit remains unqualified; separately authorized
 exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
-components bring the matrix to14/24 (desktop12/12, mobile2/12); the remaining ten
-mobile cases and current combined-release qualification are open.
+Linux components remain two accepted mobile cases. With the Android→Windows
+ON case below, current totals are15/24 (desktop12/12, mobile3/12), four partial
+and five unstarted; nine mobile cases and combined-release qualification remain open.
 
 
 ### Windows reviewed Files restoration after historical Task failure
@@ -7065,3 +7066,35 @@ lease/authority checks. It does not establish the exact native failure cause.
 A corrected GUI must still qualify one normal stopped review/first Enable with
 matching authenticated helpers, preserve Task history/catalog/actors, and drain
 normally. No Recovery, Refresh, replay or held-stream rerun is implied.
+
+
+### Android→Windows creation ON, current native ConPTY and matched local references
+
+The [accepted creation-ON record](../validation/dev-tunnels/android-client-windows-native-on.json)
+adds one complete pinned DT-02 / DT-05 / DT-07 / MOB-02 case. Corrected Android
+`e0d6b6c7`/runtime26 and signed HOST26 `edaceef4` create one named persistent
+Cmd `/Q` generation in HOME, using actual versioned26 sessiond and pinned
+Microsoft ConPTY/OpenConsole. Genuine Gboard echo, Home/foreground same-tab
+reconnection and a saved exact AttachOnly reopen pass. The supporting SDK adds
+only two shared and two new-generic same-generation Resume receipts. All old 27
+plus intended new 3 actors, six profiles, eleven sessions and 28 operations remain.
+
+Both actual 54×24/54×47 pairs match all ten single query replies and all six
+selected environment markers; every raw field matches except labels/timing.
+Fresh remote/local Copilot 1.0.112 initial screens have corresponding logical
+layout/colors. The local producer is genuine signed GUI24 `697daa9a`, not GUI26;
+local JetBrains Mono 10 pt at 192 dpi/2x follows ordinary in-tab font fitting. Android
+font point size/cell rectangle was not independently measured. No physical-pixel
+identity or combined-current-release pass follows.
+
+The first larger-font local ON pair and absent named profile tile are retained:
+standard Local Shell, with proven transient Cmd `/Q`, HOME and pinned runtime,
+produced the accepted references in an account-free isolated configuration.
+The final short nonce `aw74loff1` was reassigned ON before execution, not an OFF
+report. No reserved OFF local pair was captured. Tall Gboard Return initially
+did not commit the reviewed trust/quit control; one existing Extended Keys Return
+completed each, and both CLI processes exited normally. No input-failure cause
+or speculative fix is inferred. All owned local CLI/Cmd/GUI/Job/supervisor,
+mobile/emulator and SDK groups drained; original catalogs/fixtures and peers
+were preserved at acceptance. Counts are 15 accepted / 4 partial / 5 unstarted,
+desktop 12/12 and mobile 3/12, with nine mobile cases remaining.

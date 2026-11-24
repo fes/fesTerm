@@ -1,0 +1,332 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned Android-to-Windows native functional case",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "Android API37 emulator",
+    "server": "Windows ARM VM"
+  },
+  "creation_policy": "ON",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Android e0d6/runtime26 APKf00be; signed HOST26 edace and new versioned26 daemon/pinnedMicrosoft resources; reviewed policyGUI26/64dac; supportingSDKab29; genuine localGUI24/source697/actualVersion24. Mixed pinned case, not a combined-current-release or physicalpixel-identity claim.",
+  "sources": {
+    "Android": {
+      "source": "e0d6b6c783dce741b8176983868315ee5729dc92",
+      "runtime_version": "0.17.26",
+      "APK_bytes": 42926934,
+      "APK_sha256": "f00be09ffdf5767ec52d7e5b241729ab34d2deddea8429eb37024d69039f9ac4",
+      "signer_certificate_sha256": "7f84ada8dfc60ce7895967e0ae9076f370e7f554a0ebb6299838a6f947f87b9c",
+      "API": 37,
+      "abi": "arm64-v8a"
+    },
+    "Windows_HOST": {
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "version": "0.17.26",
+      "release_run": 45299124779,
+      "HOST_sha256": "d80608cc486fe13da654d96023a1d427d96981abc3d40ea0ad738f778d55723c",
+      "sessiond_sha256": "8affdf908575e48903ab09704c7c2bf82a196960951e8ac1f4b54cefee958e90",
+      "pinned_conpty_dll_sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+      "pinned_OpenConsole_sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+      "actual_new_generation_runtime": "Accepted native phase proves new daemon/OpenConsole exact versioned26 paths and pinnedresources; retainedshared SDK target is historical exactgeneration, not relabelled26."
+    },
+    "supporting_SDK": {
+      "candidate_head": "ab2904e80b86ef093c99adefeb6e6557ffb91d50",
+      "checkout_commit": "dc60cee10baec45ae54e1729531d7eff21f024aa",
+      "checkout_tree": "bcfc3eb7048c4fc79fa863fdb38c37c0c42d980d",
+      "run_id": "45322742157",
+      "run_attempt": "1",
+      "target": "aarch64-unknown-linux-gnu",
+      "bytes": 22353864,
+      "sha256": "656e96757433c7db42dd0ea7293373933bb648d964a6e2ca8c4d784ae4094dee"
+    },
+    "Copilot": {
+      "version": "1.0.112",
+      "argv": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "C:/Users/evidence/.ft-item8-win-copilot-reference-r1",
+      "state": "Fresh unauthenticated initial screen; no login/model/paid request.",
+      "sha256": "84aea2e4467049b8f828d0118225447c24846775926138d2477787bf6de55b62"
+    },
+    "local_reference_GUI": {
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "actual_version": "0.17.24",
+      "release_run": 45200242229,
+      "MAIN_sha256": "6de56b407bab846004929b8c962eca2ac9bfda81e34c5fdd1c1488013d983d30",
+      "role": "Accepted local transient Cmd/GUI24 reference; distinct from server policy GUI26 and HOST26."
+    },
+    "server_policy_GUI": {
+      "source": "64dac601d30b05857613049d83555c253324e688",
+      "version": "0.17.26",
+      "kind": "Reviewed unsigned development policy GUI, separate from signed publicHOST26 and genuine localGUI24",
+      "MAIN_sha256": "54b3c9720ee9a602fb1bb04e012f7221f840b3598631acaaba9546a2cca171bf"
+    }
+  },
+  "workflow": {
+    "discovery": "Normal saved-account Windows host and named generic Create & Connect. No policyflip or repeatedCreate in mobilephase.",
+    "creation": "One AndroidWindowsON26 generic shell plus savedlocal WindowsON26 AttachOnly shortcut; create-if-missing false on reopen.",
+    "target": {
+      "display_name": "AndroidWindowsON26",
+      "logical": "3c352c42-59bb-4c68-a809-fa815a8c3f35",
+      "generation": "1795522366383949082",
+      "daemon_pid": 3316,
+      "OpenConsole_pid": 9692,
+      "cmd_pid": 10928
+    },
+    "native_HOME_and_default_shell": "Actual cmd.exe /Q, initial C:/Users/evidence by native ledger and ordinary cd, restored after references.",
+    "input_reconnect": "Genuine Gboard echo lab/ok; Home detach writer3\u2192same-tab foreground reconnect writer4; savedAttachOnly reopen samegen writer6; finalidle writer7 withno pendingwriter.",
+    "reconnect_image_limit": "Selected image records reconnect-in-progress, not success by imagealone; native samegeneration ledger and subsequent input establish completed workflow.",
+    "server_policy": "Existing normal reviewed restoration74: creationON, terminationOFF, manual startup and original FilesRW/DeleteON policy retained. Selected server image is the pre-confirmation review; actual committedListening74 is separate protected native proof."
+  },
+  "service_proof": {
+    "elapsed_seconds": 23.897,
+    "result": "One ordinary ON SDK test passed and groupdrained; exactly2retainedshared+2newgeneric Resume receipts, no SDKCreate/Recreate. No stopped-profile-denial pass claimed by this ON test.",
+    "SDK_resume_receipts": {
+      "10eef977-30d5-435f-bf99-732bf2c3e9c1": {
+        "logical": "79464217-ce74-4fa4-a114-40acc8f5f75f",
+        "generation": "1795082827294162672",
+        "created": false,
+        "recreated": false
+      },
+      "722040be-485f-434e-98c6-b7a378919cb7": {
+        "logical": "3c352c42-59bb-4c68-a809-fa815a8c3f35",
+        "generation": "1795522366383949082",
+        "created": false,
+        "recreated": false
+      },
+      "b7841459-fd7d-433f-a837-5879eca6fd33": {
+        "logical": "79464217-ce74-4fa4-a114-40acc8f5f75f",
+        "generation": "1795082827294162672",
+        "created": false,
+        "recreated": false
+      },
+      "c7476a08-e6d9-4046-9590-3b1430754248": {
+        "logical": "3c352c42-59bb-4c68-a809-fa815a8c3f35",
+        "generation": "1795522366383949082",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "catalog_after": "28771eba523778a00f796009675f924d23243e11c7a8dead3750c5689d870579",
+    "counts_after": {
+      "profiles": 6,
+      "sessions": 11,
+      "operations": 28
+    },
+    "preserved_before_SDK": "Exact24prior operations/6profiles/11sessions, owner/issuance; no extra genericCreate.",
+    "UI_created_operation": [
+      {
+        "id": "7222b227-96e4-43e2-95cc-03c9f755ef96",
+        "created": true,
+        "recreated": false
+      }
+    ]
+  },
+  "comparisons": {
+    "pairs": [
+      {
+        "grid": [
+          54,
+          24
+        ],
+        "remote_report": "android-client-windows-native/on-android-54x24-queries.json",
+        "local_report": "android-client-windows-native/on-local-54x24-queries.json",
+        "remote_TUI": "android-client-windows-native/on-android-54x24.png",
+        "local_TUI": "android-client-windows-native/on-local-54x24.png",
+        "remote_case_label": "aw74r1",
+        "local_case_label": "aw74loff1",
+        "all_fields_equal_except_case_and_elapsed_ms": true,
+        "all_ten_single_replies": true,
+        "received_bytes_each": 203,
+        "DSR_row_column": [
+          24,
+          1
+        ],
+        "same_all_six_selected_environment_fields": true,
+        "stable_grid_and_both_probe_drains_complete": true,
+        "local_client_geometry_x_y_w_h_dpi": [
+          0,
+          1,
+          683,
+          807,
+          192
+        ]
+      },
+      {
+        "grid": [
+          54,
+          47
+        ],
+        "remote_report": "android-client-windows-native/on-android-54x47-queries.json",
+        "local_report": "android-client-windows-native/on-local-54x47-queries.json",
+        "remote_TUI": "android-client-windows-native/on-android-54x47.png",
+        "local_TUI": "android-client-windows-native/on-local-54x47.png",
+        "remote_case_label": "aw74r2",
+        "local_case_label": "aw74lon2",
+        "all_fields_equal_except_case_and_elapsed_ms": true,
+        "all_ten_single_replies": true,
+        "received_bytes_each": 203,
+        "DSR_row_column": [
+          24,
+          1
+        ],
+        "same_all_six_selected_environment_fields": true,
+        "stable_grid_and_both_probe_drains_complete": true,
+        "local_client_geometry_x_y_w_h_dpi": [
+          0,
+          1,
+          683,
+          1405,
+          192
+        ]
+      }
+    ],
+    "public_report_format": "Byte-original controller stdout JSON from native Windows application-visible-console collector, no environment/query normalization.",
+    "visual": "Both fresh initialCopilot1.0.112 screens match logical54x24/54x47 layout, selectedcolors, zeroMCPserver text, controlledCWD and prompt/footer placement; Root viewed allfouroriginals.",
+    "appearance": {
+      "local_font": "JetBrainsMono10pt after four ordinary1pt in-tab reductions from14pt",
+      "local_DPI": 192,
+      "local_scale": 2,
+      "local_physical_row_pitch_pixels": 26,
+      "local_cell_width_pixels_approx": 12,
+      "remote_original_capture_pixels": [
+        1080,
+        2400
+      ],
+      "remote_font_point_size_and_cell_rect": "Not independently measured",
+      "limits": "App/OS/Gboardchrome, physicalfontsize/scaling differ; no pixelidentity claim."
+    },
+    "nonce_scope": "aw74loff1 was expressly reassigned ON54x24 before execution after font fitting. It is not an OFF report. No reservedOFF pair was captured. Preliminary aw74lon1 is retained privately, not substituted for final acceptedpair."
+  },
+  "preservation": {
+    "Windows": "Current74/native69, original27 plus intendednew3 actors, all6profiles/11sessions/28ops and catalog28771eba523778a00f796009675f924d23243e11c7a8dead3750c5689d870579 preserved; newtarget idle writer11/nochild/pendingfalse, retainedshared writer25/detached.",
+    "peers": "Final Mac43all14 and Linux91all24/cataloge082/49ops healthy; no activeGUI/SDK/Android or resume/policyrecovery debt at acceptance.",
+    "normal_drain": "Preliminary and two fresh localCopilot processes ordinaryexit; same transientCmd exited; localGUIexit0/Jobempty/input+supervisor stopped/3ownedtasks removed. Mobileapp/emulator positive normaldrain and SDKgroup drained.",
+    "local_control_scope": "Account-free isolated localconfiguration serialized normally; exact initial isolatedconfig hash is not claimed preserved. Source profiletemplate tile missing; standardLocalShell used with exactCmd/Q/HOME+pinnedruntime proof. No shared productconfig/account mutation."
+  },
+  "first_results_and_limits": [
+    "Tall realGboardReturn initially left controlledpendingline/trust/exit unchanged. One witnessed existingExtendedKeysReturn per reviewedpendingcontrol completed normal trust and /exit; no repeated actualCLIlaunch or guessed cause. Both ownedCopilotprocesses exited normally; distinct from priorLinux tallquit gap.",
+    "Privateconfigs/vault/opaquecredentialreferenceIDs/privateSDKlogs/USBprompt excluded; only original appimages and finite publicqueryreports selected.",
+    "Local first larger-font ON reference aw74lon1 is retained; it could not fit tall target within reviewedbounds. Accepted bothpairs use settled10pt. aw74loff1 is the explicitly reassigned ON shortreport, no OFF qualification.",
+    "Named hand-authored profiletile was absent; ordinary standardLocalShell with proven Cmd/Q, HOME and pinnedConPTY was used in an account-free isolatedconfig. This is not named-profile launch acceptance.",
+    "First pre-effect SDK resource-literal refusal and read-only receipt-grouping refusal were retained; single actualSDKdispatch only. Drain observer initially misread a historical numericparentPID; finitebirth evidence distinguished it, no unrelatedprocess action.",
+    "No login/model/paidrequest. Rawqueries/environmentallfields match except labels/timing; physicalfont/DPI/chrome differ asattributed. No currentcombinedrelease/fullmatrix/pixelidentity claim."
+  ],
+  "private_evidence": [
+    {
+      "basename": "FINAL-ANDROID26-WINDOWS74-ON-PHASE-A-CURRENT-CONPTY-PASS-AND-ALL-DRAINS.json",
+      "sha256": "4686ed3e971664ab27a6de43f3ce236287d5cb9a3a9239dd2aeed58795649355",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "ON-05-SDK-ON-EXACT-DELTA-PASS.json",
+      "sha256": "a270fe295601b99577daa5876aa2190bfc2362d1e12eacc638acc9f137f5a211",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "ON-03-SECOND-SDK-STATUS.stdout",
+      "sha256": "5b778c6c474372a34b715963fc69dc345b073c98e2b6d2f3fee2587d355171a0",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "ROOT-FULL-ANDROID-WINDOWS-ON-CASE-ACCEPTANCE.json",
+      "sha256": "0d6dc3794b2ae3e5be938cbbf473492ad55f0dc84afe15963acb7a7d634c93fc",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "FINAL-WINDOWS74-ANDROID26-ON-SDK-AND-LOCAL-MATCHED-REFERENCES-PASS.json",
+      "sha256": "aa16bcd69f3d4c5669772f034497462ccada5fd1351160deaa7ac9a78255358a",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "ROOT-TWO-GRID-QUERY-AND-ENV-COMPARISON.json",
+      "sha256": "4a268ed55335fadc93ef18d784611f3f3a6815cfff541090858e59ff69f587fc",
+      "availability": "Private campaign artifact, not included in repository"
+    }
+  ],
+  "original_artifacts": {
+    "on-create-save-review.png": {
+      "path": "android-client-windows-native/on-create-save-review.png",
+      "bytes": 121779,
+      "sha256": "056bdfbd4aec664fd201984d7d6e186ae4479f8f6c95c54564effc0929ac813f"
+    },
+    "on-native-user-home.png": {
+      "path": "android-client-windows-native/on-native-user-home.png",
+      "bytes": 196031,
+      "sha256": "80e291c2a7d550fc5e42d618b7a7f9e98a1e72b5d0124c7820bef1b1928ae840"
+    },
+    "on-reconnect-progress.png": {
+      "path": "android-client-windows-native/on-reconnect-progress.png",
+      "bytes": 151983,
+      "sha256": "bb70307e4c3a80d3049a14de28df7c578a7d17ea8faefd3dc7586eaa36bda96a"
+    },
+    "on-android-54x24.png": {
+      "path": "android-client-windows-native/on-android-54x24.png",
+      "bytes": 226806,
+      "sha256": "0e846ccc32264d2cbb9398c459e42580e999d77db4d9c3cc15d80be12b61533b"
+    },
+    "on-android-54x47.png": {
+      "path": "android-client-windows-native/on-android-54x47.png",
+      "bytes": 148483,
+      "sha256": "33579669fafda920332c915283c3d7c172061ebab7d41bbf41e63bbc22beeca5"
+    },
+    "on-tall-cli-normal-exit.png": {
+      "path": "android-client-windows-native/on-tall-cli-normal-exit.png",
+      "bytes": 220935,
+      "sha256": "1381df5df47a841d82ce6aa0dd635d37361e3ee4dca75e0da030cef12682a030"
+    },
+    "on-saved-reopen-echo.png": {
+      "path": "android-client-windows-native/on-saved-reopen-echo.png",
+      "bytes": 325231,
+      "sha256": "30d63b159a79eb5bf900f497e4fa37e887712fde064ec281f7f56c27d34731e1"
+    },
+    "on-android-54x24-queries.json": {
+      "path": "android-client-windows-native/on-android-54x24-queries.json",
+      "bytes": 1172,
+      "sha256": "d176e68efc2eab87f33d721becb39fc1e731f6342c49964c7a1c36c62c9dfe23"
+    },
+    "on-android-54x47-queries.json": {
+      "path": "android-client-windows-native/on-android-54x47-queries.json",
+      "bytes": 1172,
+      "sha256": "eb36fad5bf64449264d216032c28adbf039762363f1e0b948d8331903c2748f8"
+    },
+    "on-local-54x24-queries.json": {
+      "path": "android-client-windows-native/on-local-54x24-queries.json",
+      "bytes": 1175,
+      "sha256": "19465ea8f318575cc2679ceef4e8404791a9c42f4ef07b1988e0ec0619443c00"
+    },
+    "on-local-54x24.png": {
+      "path": "android-client-windows-native/on-local-54x24.png",
+      "bytes": 3663182,
+      "sha256": "2f5ddc5fcf4ec9261158bbd01eb31de8b16ef2282e962a2451c4754888be624c"
+    },
+    "on-local-54x47-queries.json": {
+      "path": "android-client-windows-native/on-local-54x47-queries.json",
+      "bytes": 1174,
+      "sha256": "10464ccdc0e0371549e81f5d3dd70773ef7dd4b09f7381915db49797d5135c04"
+    },
+    "on-local-54x47.png": {
+      "path": "android-client-windows-native/on-local-54x47.png",
+      "bytes": 3058244,
+      "sha256": "1ab046dd65c2f68e883e1c0c042aacb807cd9adb57de14867de6d645dfc76132"
+    },
+    "on-server-policy-review.png": {
+      "path": "android-client-windows-native/on-server-policy-review.png",
+      "bytes": 2141877,
+      "sha256": "aa45f44c57c0b20db128a58d63ecfcd6c61b7b51bfd4cb25eef4d27088daaed1"
+    }
+  },
+  "matrix_status_after_root_acceptance": {
+    "accepted": 15,
+    "partial": 4,
+    "unstarted": 5,
+    "desktop_accepted": 12,
+    "desktop_total": 12,
+    "mobile_accepted": 3,
+    "mobile_total": 12,
+    "remaining_mobile": 9
+  },
+  "root_acceptance_sha256": "0d6dc3794b2ae3e5be938cbbf473492ad55f0dc84afe15963acb7a7d634c93fc"
+}
