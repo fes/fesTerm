@@ -3366,3 +3366,20 @@ cover release, changed consent at the same epoch, cancellation, fatal error,
 and expiry before a read or before its result can be accepted. The existing
 child cancel/drain regression still applies. A clean first Enable with the
 corrected signed Mac cohort remains a native gate.
+
+
+### Windows quiescent Task policy projection
+
+A Task Scheduler Ready observation with an old nonzero result remains `Failed`
+for status/history. Only explicit reviewed policy reconfiguration accepts that
+Windows state alongside `Stopped`, after the existing authenticated Task XML
+and security checks, current scope/owner/release checks and exclusive runtime
+lease. Native observation promotes live instances to Running; queued, running,
+unknown, foreign and absent Windows tasks still refuse. No Start, stop, Task
+repair, history rewrite or automatic Enable retry is added.
+
+Validation impact: GUI:HOST-04. The Task-runner regression reproduces the old
+pre-publication refusal and tests historical-result success plus running,
+queued, unknown, foreign XML/security, absent and held-runtime negatives. It
+proves a source-consistent explanation for #904, not the exact captured native
+error; corrected native first-result qualification remains required.

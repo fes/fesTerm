@@ -381,6 +381,57 @@ fn host_update_authenticated_stopped_transaction_preserves_identity_binding_gran
 }
 
 #[test]
+fn host_update_rejects_unprojected_files_policy_before_native_effects() {
+    let fixture = Fixture::new();
+    let services = fixture.services();
+    // Establish the same ordinary access before installing the old receipt;
+    // only Files policy will differ at the update boundary.
+    fixture.store.revoke().unwrap();
+    let stopped = fixture.store.snapshot().unwrap();
+    fixture
+        .store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    let mut ordinary = fixture.store.snapshot().unwrap().settings;
+    ordinary.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
+    fixture.store.configure(ordinary).unwrap();
+    let before = fixture.store.snapshot().unwrap();
+    let ticket = fixture
+        .store
+        .request_enable_if_current(&before, &before.settings)
+        .unwrap();
+    fixture
+        .store
+        .record_provisioned(&ticket, before.binding.unwrap())
+        .unwrap();
+    fixture.installed(&services);
+    let mut settings = fixture.store.snapshot().unwrap().settings;
+    settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        root: fixture.root.path().join("reviewed-root"),
+        write: true,
+        delete: true,
+    });
+    fixture.store.configure(settings).unwrap();
+    let before = fixture.store.snapshot().unwrap();
+    assert_eq!(before.phase, Phase::Disabled);
+    let registered = services.registration().unwrap().1.unwrap();
+    assert!(registered.settings.filesystem.is_none());
+    let receipt = std::fs::read(services.state.join(RECORD)).unwrap();
+    let preserved = fixture.preserved();
+    let calls = services.runner.calls.borrow().len();
+    assert_eq!(
+        fixture.update(&services).err().unwrap().to_string(),
+        "host.update_current_registration_required"
+    );
+    assert_eq!(services.runner.calls.borrow().len(), calls);
+    assert_eq!(fixture.store.snapshot().unwrap(), before);
+    assert_eq!(services.registration().unwrap().1.unwrap(), registered);
+    assert_eq!(std::fs::read(services.state.join(RECORD)).unwrap(), receipt);
+    assert!(!services.state.join(JOURNAL).exists());
+    assert_eq!(fixture.preserved(), preserved);
+}
+
+#[test]
 fn host_update_rejects_live_phase_runtime_lease_downgrade_and_changed_helper_before_native_effects()
 {
     let fixture = Fixture::new();
