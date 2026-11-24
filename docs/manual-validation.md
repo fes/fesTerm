@@ -1162,9 +1162,9 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has fifteen accepted pinned functional cases (desktop12/12, mobile3/12),
-four partial cases and five unstarted cases after the separately attributed
-Android→Linux pair and Android→Windows ON record below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has sixteen accepted pinned functional cases (desktop12/12, mobile4/12),
+three partial cases and five unstarted cases after the separately attributed
+Android→Linux and Android→Windows OFF/ON pairs below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7051,8 +7051,8 @@ exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 Linux components remain two accepted mobile cases. With the Android→Windows
-ON case below, current totals are15/24 (desktop12/12, mobile3/12), four partial
-and five unstarted; nine mobile cases and combined-release qualification remain open.
+OFF/ON cases below, current totals are16/24 (desktop12/12, mobile4/12), three partial
+and five unstarted; eight mobile cases and combined-release qualification remain open.
 
 
 ### Windows reviewed Files restoration after historical Task failure
@@ -7096,5 +7096,36 @@ did not commit the reviewed trust/quit control; one existing Extended Keys Retur
 completed each, and both CLI processes exited normally. No input-failure cause
 or speculative fix is inferred. All owned local CLI/Cmd/GUI/Job/supervisor,
 mobile/emulator and SDK groups drained; original catalogs/fixtures and peers
-were preserved at acceptance. Counts are 15 accepted / 4 partial / 5 unstarted,
-desktop 12/12 and mobile 3/12, with nine mobile cases remaining.
+were preserved at acceptance. At this case’s acceptance, counts were
+15 accepted / 4 partial / 5 unstarted,
+desktop 12/12 and mobile 3/12. The OFF case below advances the current totals.
+
+
+### Android→Windows creation OFF, attributed policy and current-runtime parity
+
+The [accepted creation-OFF record](../validation/dev-tunnels/android-client-windows-native-off.json)
+completes one pinned DT-02 / DT-05 / DT-07 / MOB-02 case through explicitly
+separate components. Windows72/shared `7946` mobile and SDK checks prove
+shared/private/stopped policy behavior, including exactly two same-generation
+Resume receipts and no Create/Recreate. Its legacy sessiond12/Inbox console
+first result remains incomplete: three replies counted, seven OSC observations
+absent. These are historical facts, not current26 capability results.
+
+Windows76 fresh parity uses the already-existing owner-authorized HOST-created
+`3c35` generic generation, created earlier under ON74. It is not a shared server
+profile. Genuine Gboard I/O, foreground reconnect and saved AttachOnly reopen
+pass under disabled creation with no Create/Ensure/End or SDK replay. Both
+fresh OFF 54×24/54×47 query pairs match all ten single replies and six
+environment fields, differing only in case/timing. Four distinct original OFF
+Copilot images show fresh initial logical layout and palette; no ON asset is
+reused. Genuine local GUI24 references remain separate from Android26/HOST26.
+
+The immediate Return/hide pending-line observation and effective later delivery
+gap/Extended Keys Return remain attributed without a cause claim. Local 10 pt at
+192 dpi/2x and Android backdrop measurements are distinct; Android point size/DPI
+remain unmeasured. No pixel identity or uniform-server-snapshot claim follows.
+Original creation-ON/RW/Delete policy is restored by FIRST Enable78, all prior
+actors/catalog/operations and peer fixtures preserved, and owned GUI/CLI/Cmd/
+Job/input/SDK/mobile/emulator groups drained in their respective phases.
+Current totals are 16/24 accepted (desktop 12/12, mobile 4/12), three partial and
+five unstarted; eight mobile cases and combined-release qualification remain open.
