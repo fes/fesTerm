@@ -270,6 +270,14 @@ impl OriginalStore {
         Self::recover_with(root, context, vault)
     }
 
+    /// Reopens originals under the exact index and vault retained by ordinary
+    /// discovery. A profile path cannot reconstruct native sandbox authority.
+    pub fn recover_ordinary(
+        context: &ordinary::OrdinaryContext,
+    ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        Self::recover_index(context.key_index().index.clone(), context, context.vault())
+    }
+
     /// Uses only the backend-selected native client namespace.
     #[cfg(feature = "relay")]
     pub fn recover_native<'a>(

@@ -650,6 +650,11 @@ An unmatched pending marker remains uncertainty, never empty state or a new ID.
 Check native backup/privacy policy: only opaque references/commit marker belong
 in the private index; no tickets/credentials belong in profiles/workspaces.
 Pre-checkpoint-version lost originals cannot be recovered retroactively.
+Ordinary mobile recovery must use the exact discovery-retained index/vault even
+when the profile path differs; cancellation and changed issuer still refuse.
+Portable production-composition fixtures preserve an unrelated profile root and
+original issuance across epoch changes. iOS native first-Create/reopen remains
+pending: its first generic checkpoint refusal does not identify an I/O cause.
 
 Native cold-start qualification must also cover the same authenticated
 provider/account after credential rotation, login rename and local account

@@ -71,10 +71,40 @@ async fn request(peer: &mut tokio::io::DuplexStream) -> Envelope<Request> {
         .unwrap()
 }
 
+#[test]
+fn ordinary_originals_context_recovery_refuses_cancelled_account_without_storage_write() {
+    let (root, context) = fixture();
+    let approval_root = root.path().join("host-client-approvals");
+    let snapshot = || {
+        let mut entries = std::fs::read_dir(&approval_root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (
+                    path.file_name().unwrap().to_owned(),
+                    std::fs::read(path).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries
+    };
+    let before = snapshot();
+    context.account_guard().cancel.cancel();
+    assert!(matches!(
+        OriginalStore::recover_ordinary(&context),
+        Err(Failure::BindingMismatch)
+    ));
+    assert!(
+        snapshot() == before,
+        "cancelled recovery must not reserve or rewrite an anchor"
+    );
+}
+
 #[tokio::test]
 async fn ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_change() {
-    let (root, context) = fixture();
-    let (store, originals) = OriginalStore::recover(root.path(), &context).unwrap();
+    let (_root, context) = fixture();
+    let (store, originals) = OriginalStore::recover_ordinary(&context).unwrap();
     assert!(originals.is_empty());
     let intent = Arc::new(CreationIntent::new(&context, CreationMode::Create, creation()).unwrap());
     intent
@@ -101,7 +131,7 @@ async fn ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_
     let mut info = context.host_info().clone();
     info.policy_epoch = Epoch::new(9).unwrap();
     let current = changed_info(&context, info);
-    let (reopened, mut originals) = OriginalStore::recover(root.path(), &current).unwrap();
+    let (reopened, mut originals) = OriginalStore::recover_ordinary(&current).unwrap();
     assert_eq!(originals.len(), 1);
     let RecoveredIntent::Creation(restored) = originals.remove(0).intent else {
         panic!("durable creation")
@@ -142,15 +172,12 @@ async fn ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_
     ));
     server.await.unwrap();
     assert_eq!(
-        OriginalStore::recover(root.path(), &current)
-            .unwrap()
-            .1
-            .len(),
+        OriginalStore::recover_ordinary(&current).unwrap().1.len(),
         1
     );
     let mut retarget = current.host_info().clone();
     retarget.principal = festerm_host_protocol::PrincipalId::new();
-    assert!(OriginalStore::recover(root.path(), &changed_info(&current, retarget)).is_err());
+    assert!(OriginalStore::recover_ordinary(&changed_info(&current, retarget)).is_err());
 }
 
 #[test]

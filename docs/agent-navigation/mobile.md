@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "2c236a970c8a30b97f49af6599e4c1a3a716ff07eed78b81cba385dba24e0e3c"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "86a2ba0938e0efedf46856f2c1df836b0cc170dd178ed5196d680e1cca991131"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -42,7 +42,7 @@ Evidence:
 - [`ordinary_key_diagnostics_keep_short_notice_and_never_expose_source_strings`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/key_diagnostics.rs)
 
 Caveats:
-- Ordinary discovery uses the provider-authorized route; manual owner pairing is advanced administration.
+- Ordinary discovery/recovery retain one trusted index/vault; manual owner pairing stays advanced.
 - Saving a local profile grants neither host creation authority nor filesystem or observation access.
 - Lock and suspension fence input while committed operations retain their original identity.
 

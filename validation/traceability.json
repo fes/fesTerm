@@ -6841,6 +6841,8 @@
         "ordinary_private_key_refuses_cross_connection_changed_route_and_missing_exporter",
         "ordinary_request_is_denied_without_legacy_owner_challenge_or_rpc_authority",
         "ordinary_durable_original_preserves_exact_issuance_across_policy_epoch_change",
+        "mobile_originals_recovery_uses_discovered_context_not_profile_path",
+        "ordinary_originals_context_recovery_refuses_cancelled_account_without_storage_write",
         "ordinary_context_never_becomes_admin_and_refuses_temporary_creation",
         "selected_host_sandbox_receipt_opens_policy_created_private_root",
         "ios_native_root_retains_existing_namespace_below_os_managed_ancestor",
