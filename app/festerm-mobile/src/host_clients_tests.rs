@@ -543,6 +543,104 @@ fn mobile_host_discovered_selection_starts_one_host_and_paint_keeps_discovery_ro
 }
 
 #[test]
+fn mobile_host_duplicate_discovery_labels_disambiguate_before_selection() {
+    use egui_kittest::kittest::{By, Queryable};
+
+    for width in [320.0, 390.0] {
+        for duplicate_description in [false, true] {
+            let profiles = crate::profiles::testing::profiles();
+            let store = profiles.store_handle();
+            let account = festerm_mobile_tunnels::testing::seed_account(&store, 7, "sample", false);
+            let mut app = app().with_profiles(profiles);
+            app.open_hosts();
+            app.hosts.account = account;
+            let locators = [
+                format!("host{}-one.test", "a".repeat(90)),
+                format!("host{}-two.test", "a".repeat(90)),
+            ];
+            for locator in &locators {
+                assert!(
+                    service::locator(locator).is_ok(),
+                    "long fixture must be a valid locator"
+                );
+            }
+            app.hosts.hosts = locators
+                .iter()
+                .enumerate()
+                .map(|(index, locator)| TunnelSummary {
+                    locator: locator.clone(),
+                    name: Some(if duplicate_description {
+                        format!("Machine {index}")
+                    } else {
+                        "Build host".into()
+                    }),
+                    description: duplicate_description.then(|| "Build host".into()),
+                    active: true,
+                })
+                .collect();
+            app.hosts.hosts.push(TunnelSummary {
+                locator: "unique.test".into(),
+                name: Some("Other host".into()),
+                description: None,
+                active: true,
+            });
+            app.hosts.discovered = true;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(width, 844.0))
+                .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+            harness.run();
+            assert!(harness.state().hosts.locator.is_empty());
+            assert!(!harness.state().hosts.ordinary_selected);
+            assert!(
+                harness.state().hosts.pending.is_none() && harness.state().hosts.worker.is_none()
+            );
+            let mut previous_bottom = 0.0;
+            for locator in &locators {
+                let disclosure = harness
+                    .get(By::new().label(&format!("Expand Build host · {locator}")))
+                    .rect();
+                let label = harness.get(By::new().label(locator)).rect();
+                assert!(disclosure.height() >= 44.0);
+                assert!(label.top() >= disclosure.bottom() && label.top() >= previous_bottom);
+                assert!(label.left() >= 0.0 && label.right() <= width && label.bottom() <= 844.0);
+                let text = harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == *locator => Some(text),
+                        _ => None,
+                    })
+                    .expect("complete locator must be painted");
+                assert!(
+                    text.galley.rows.len() > 1,
+                    "long locator must wrap, not elide"
+                );
+                assert!(!text.galley.elided);
+                previous_bottom = label.bottom();
+            }
+            assert!(
+                harness
+                    .get(By::new().label("Expand Other host"))
+                    .rect()
+                    .height()
+                    >= 44.0
+            );
+            assert!(harness.query_by_label("unique.test").is_none());
+            harness
+                .get(By::new().label(&format!("Expand Build host · {}", locators[1])))
+                .click();
+            harness.run_steps(2);
+            assert_eq!(harness.state().hosts.locator, locators[1]);
+            assert!(harness.state().hosts.ordinary_selected);
+            assert_eq!(harness.state().hosts.generation, 1);
+            assert!(harness.state().hosts.selected.is_none());
+            assert!(harness.state().hosts.originals.is_empty());
+        }
+    }
+}
+
+#[test]
 fn mobile_host_header_contains_done_and_title_at_phone_and_tablet_widths() {
     use egui_kittest::kittest::{By, Queryable};
     for width in [390.0, 834.0] {
@@ -598,7 +696,10 @@ fn mobile_host_disclosure_is_a_painted_triangle_inside_its_touch_target() {
                 )),
                 ..Default::default()
             },
-            |ui| target = Some(super::view::host_disclosure(ui, "Build host", expanded, true).rect),
+            |ui| {
+                target =
+                    Some(super::view::host_disclosure(ui, "Build host", None, expanded, true).rect)
+            },
         );
         let target = target.unwrap();
         let triangle = rendered

@@ -83,7 +83,10 @@ mobile field document and native edit bridge, including multiline paste. The CPU
 regression checks focused field identity and targeted edits; native keyboard,
 clipboard and first-connect approval still require Simulator/device validation.
 Host rows and saved display hints prefer a bounded public description, then name,
-then locator; these labels do not establish host identity or approval.
+then locator; these labels do not establish host identity or approval. When two
+discovered rows have the same display label, each card also shows its complete
+wrapped locator and includes it in the disclosure accessibility label. Rendering
+these hints does not connect, enroll or claim that the host is online.
 
 The actual installed mobile terminal adopts recovery before input/Running.
 Native lock/suspension cancels HOST work and transports directly, without

@@ -1976,7 +1976,10 @@ catalogs remain errors, without legacy fallback or automatic repair.
 
 HOST-01/02 use the approved account → host → sessions presentation: Desktop
 host/session panes and mobile host-detail navigation, with account-scoped
-Refresh hosts and host-scoped Refresh sessions/New host shell. Exact logical
+Refresh hosts and host-scoped Refresh sessions/New host shell. Duplicate mobile
+display names expose complete wrapped public locators and distinct disclosure
+accessibility labels before selection. These passive hints neither connect nor
+assert availability; unique-name rows keep their existing presentation. Exact logical
 identity deduplicates an advertised recipe and running session; names and Unknown
 inventory never prove sameness or absence. Per-session Save as profile pins the
 host/logical/generation and changes local metadata only. Named durable creation

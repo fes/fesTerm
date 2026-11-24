@@ -132,6 +132,7 @@ fn navigation(ui: &mut egui::Ui, title: &str, back: bool) -> bool {
 pub(super) fn host_disclosure(
     ui: &mut egui::Ui,
     name: &str,
+    locator: Option<&str>,
     expanded: bool,
     enabled: bool,
 ) -> egui::Response {
@@ -172,11 +173,12 @@ pub(super) fn host_disclosure(
         ui.visuals().text_color(),
         rect.width() - 40.0,
     );
-    labelled(
-        response,
-        &format!("{} {name}", if expanded { "Collapse" } else { "Expand" }),
-        enabled,
-    )
+    let action = if expanded { "Collapse" } else { "Expand" };
+    let label = match locator {
+        Some(locator) => format!("{action} {name} · {locator}"),
+        None => format!("{action} {name}"),
+    };
+    labelled(response, &label, enabled)
 }
 
 fn primary(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
@@ -436,16 +438,35 @@ impl MobileApp {
                                     }
                                     for (index, host) in self.hosts.hosts.clone().iter().enumerate()
                                     {
+                                        let name = host_display_name(host);
+                                        let locator = (self
+                                            .hosts
+                                            .hosts
+                                            .iter()
+                                            .filter(|other| host_display_name(other) == name)
+                                            .take(2)
+                                            .count()
+                                            == 2)
+                                            .then_some(host.locator.as_str());
                                         card(ui, |ui| {
                                             if host_disclosure(
                                                 ui,
-                                                host_display_name(host),
+                                                name,
+                                                locator,
                                                 false,
                                                 !self.hosts.busy(),
                                             )
                                             .clicked()
                                             {
                                                 action = Some(Action::SelectHost(index));
+                                            }
+                                            if let Some(locator) = locator {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(locator).small().weak(),
+                                                    )
+                                                    .wrap(),
+                                                );
                                             }
                                         });
                                         ui.add_space(12.0);
