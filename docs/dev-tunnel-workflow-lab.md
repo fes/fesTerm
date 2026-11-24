@@ -9,11 +9,11 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** fourteen pinned cases are accepted (desktop 12/12,
-mobile 2/12), three are partial and seven are unstarted. The first mobile pair is
+**Current coverage:** fifteen pinned cases are accepted (desktop 12/12,
+mobile 3/12), four are partial and five are unstarted. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Ten mobile cases, the full 24-case native matrix and combined-current-release
+Nine mobile cases, the full 24-case native matrix and combined-current-release
 qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
@@ -100,6 +100,7 @@ release. Historical local references and supporting SDK routes stay attributed.
 | macOS → Linux | [Accepted](../validation/dev-tunnels/mac-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-linux-native.json) |
 | Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
 | Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
+| Android → Windows | Partial · not accepted | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and
@@ -109,6 +110,19 @@ SDK resumes; original creation OFF is restored at HOST91. The tall Android
 Copilot normal UI quit is unqualified; separate exact-owned pidfd SIGINT cleanup
 is recorded. Locale/font/scale and zero-server wording differences remain. The
 later corrected 0.17.26 APK and PR902 are not the producer of these native passes.
+
+The Android→Windows ON case uses corrected APK `e0d6b6c7`/runtime26, signed
+HOST26 `edaceef4`, its newly created versioned26 daemon and pinned Microsoft
+ConPTY resources, SDK `ab2904e8`, and genuine local GUI24 `697daa9a`. One named
+Cmd shell starts in HOME, reconnects through the same tab and saved AttachOnly
+shortcut, and receives four SDK resumes without another Create. Actual 54×24
+and 54×47 pairs match every raw field except case labels and timing, including
+all ten single replies and six environment fields. Local 10 pt/192 dpi metrics and
+mobile physical font/cell uncertainty remain explicit. Both fresh CLI pairs and
+all owned app/shell/SDK processes drain normally. The tall Android trust/quit
+path uses the existing Extended Keys Return after the first Gboard attempt did
+not commit; no cause is inferred. `aw74loff1` is the explicitly reassigned ON
+short report; no reserved OFF local pair or Windows OFF acceptance is claimed.
 
 The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
 daemon and separately pinned local19 references. The genuine stopped HOST15→21
@@ -161,9 +175,11 @@ unauthenticated welcome/sign-in screen. Neither controlled GitHub account has
 Copilot enabled. No Copilot sign-in, plan activation, model selection or model
 request is required for this comparison; Dev Tunnels authentication remains
 required independently. Compare the same initial state on both sides.
-Use the approved shared profile when generic creation is off; do not enable
-creation or replace a durable generation merely to obtain a fresh application
-process. Record the exact server/client app and helper source/build identities,
+When generic creation is off, use an already-running opted-in shared profile
+or an existing account-authorized HOST-created shell. Do not enable creation,
+create, recreate or replace a durable generation merely to obtain a fresh
+Copilot process. Verify and attribute the shared, private and stopped-session
+workflow requirements independently; reuse is not a native acceptance waiver. Record the exact server/client app and helper source/build identities,
 host/session generation and attachment, Copilot version and executable hash,
 controlled working directory, shell and selected locale values. Pin the
 same Copilot version, initial state, theme, font and font size/scale for the
