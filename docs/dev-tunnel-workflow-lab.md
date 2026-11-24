@@ -9,10 +9,12 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** twelve pinned cases are accepted (desktop 12/12), five
-are partial and seven are unstarted. The final desktop case is the
-[Mac-client/Windows-server creation-OFF record](../validation/dev-tunnels/mac-client-windows-native-off.json). The full 24-case native matrix and
-combined-current-release qualification remain incomplete. The
+**Current coverage:** fourteen pinned cases are accepted (desktop 12/12,
+mobile 2/12), three are partial and seven are unstarted. The first mobile pair is
+Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
+and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
+Ten mobile cases, the full 24-case native matrix and combined-current-release
+qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
 fixture rejects the old manual-pairing fixture and uses a distinct completion
@@ -97,6 +99,16 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Linux → macOS | [Accepted](../validation/dev-tunnels/linux-client-mac-native.json) | [Accepted](../validation/dev-tunnels/linux-client-mac-native-on.json) |
 | macOS → Linux | [Accepted](../validation/dev-tunnels/mac-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-linux-native.json) |
 | Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
+| Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
+
+The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
+0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and
+54×47 pairs retain all ten matching query replies and original screenshots.
+Creation ON adds one named Bash login shell, a local AttachOnly shortcut and four
+SDK resumes; original creation OFF is restored at HOST91. The tall Android
+Copilot normal UI quit is unqualified; separate exact-owned pidfd SIGINT cleanup
+is recorded. Locale/font/scale and zero-server wording differences remain. The
+later corrected 0.17.26 APK and PR902 are not the producer of these native passes.
 
 The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
 daemon and separately pinned local19 references. The genuine stopped HOST15→21
