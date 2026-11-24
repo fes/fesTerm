@@ -9,11 +9,11 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** sixteen pinned cases are accepted (desktop 12/12,
-mobile 4/12), three are partial and five are unstarted. The first mobile pair is
+**Current coverage:** eighteen pinned functional cases are accepted (desktop
+12/12, mobile 6/12), three are partial and three are unstarted. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Eight mobile cases, the full 24-case native matrix and combined-current-release
+Six iOS cases, the full 24-case native matrix and combined-current-release
 qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
@@ -101,6 +101,7 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
 | Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
 | Android → Windows | [Accepted, attributed composite](../validation/dev-tunnels/android-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
+| Android → macOS | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-off.json) | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-on.json) |
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and
@@ -136,6 +137,23 @@ case/timing, and fresh initial Copilot screens match logical layout and palette.
 Original creation-ON policy is restored at78; owned processes drain normally.
 Legacy/input first results, mixed GUI24/Android26/HOST26 cohorts and physical
 metrics remain explicit. No uniform-snapshot or current-release claim follows.
+
+The Android→Mac pair is accepted for pinned functional workflow: one ON43
+creation with zsh login/HOME, genuine Gboard I/O, foreground/saved AttachOnly
+reconnect, independently attributed ON/OFF SDK policy checks and two fresh
+54×24/54×47 comparisons per case. OFF45 reuses the authorized existing generic;
+original ON47, actors/catalog and display mode are restored with normal drains.
+Android APK9796/sourceef0613d and genuine Mac HOST/localGUI26/edaceef4 remain
+attributed separately from the cached supporting SDK.
+
+Exact Copilot body text remains an open visual gate: the local CWD label omits
+`r22` and MCP wording differs, despite equal actual CWD, six environment fields,
+ten query replies and nonexported COLUMNS/LINES. The differences persist in
+OFF no-input captures five seconds later. Local11pt/1×/CUP and Android
+post-resize capture limits stay explicit; fd2 is unclassified, not proved
+non-TTY or misrouted. A fresh OFF local image can be byte-identical to ON;
+separate CLI/window/capture provenance is retained. Functional acceptance
+does not close exact body-text/pixel identity or combined-release qualification.
 
 The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
 daemon and separately pinned local19 references. The genuine stopped HOST15→21

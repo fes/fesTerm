@@ -1,0 +1,310 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional Android-to-Mac creation-OFF case18",
+  "acceptance_kind": "Functional; exact Copilot body-text/pixel identity remains open",
+  "creation_policy": "OFF",
+  "direction": {
+    "client": "Android API37 emulator",
+    "server": "macOS ARM VM"
+  },
+  "functional_case_accepted": true,
+  "global_TUI_identity_qualified": false,
+  "full_24_case_matrix_complete": false,
+  "sources": {
+    "Android": {
+      "version": "0.17.26",
+      "source": "ef0613d861d90133765a9c1be18a431092fc63a4",
+      "tree_prefix": "b555",
+      "APK_sha256": "9796cb24e0e9417e5db09f5a95721e97b2d443db32cc03aa6fef2a36b76308ae",
+      "same_data_UID": 10232,
+      "firstInstallTime_preserved": true
+    },
+    "Mac_HOST_and_local_GUI": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "kind": "Genuine signed public HOST/current sessiond and genuine signed local GUI"
+    },
+    "supporting_SDK": {
+      "candidate_head_prefix": "ab29",
+      "sha256": "656e96757433c7db42dd0ea7293373933bb648d964a6e2ca8c4d784ae4094dee",
+      "runs_on": "Linux91; independent of GUI"
+    },
+    "Copilot": {
+      "version": "1.0.112",
+      "initial_state": "Fresh unauthenticated initial screen; no login/model/paid request",
+      "actual_CWD": "/Users/evidence/.ft-copilot-reference-native19-r22"
+    }
+  },
+  "workflow": {
+    "policy_epoch": 45,
+    "target": "Existing account-authorized HOST-created generic5b711f52/gen1795532245084867789 fromON43; not shared-profile origin or creation underOFF.",
+    "normal": "Same saved Mac ON26 AttachOnly profile; genuineGboard echo, Home/foreground reconnect and savedreopen, writer12→17/finaldetached. No Create/Ensure/End/newallocation.",
+    "SDK": {
+      "elapsed_seconds": 18.454,
+      "two_shared_same_generation_resumes": true,
+      "private_generic_stopped_denied": true,
+      "no_new_shell": true
+    },
+    "catalog": "6d88a1a36887a171043614e4d6064d4a4da552bd6e51b56d6f4647a9f8d94232",
+    "operations": 26
+  },
+  "comparisons": {
+    "pairs": [
+      {
+        "grid": [
+          54,
+          24
+        ],
+        "DSR_actual_row_column": [
+          24,
+          1
+        ],
+        "ten_single_replies": true,
+        "six_environment_fields_equal": true,
+        "all_fields_equal_except_case_elapsed_ms": true,
+        "public_CLI_dimensions": {
+          "COLUMNS": 54,
+          "LINES": 24,
+          "exported": false
+        },
+        "local_font_pt_scale": [
+          11,
+          1
+        ],
+        "local_window_width_height": [
+          375,
+          439
+        ],
+        "local_CUP_ordinary_alignment": true,
+        "fresh_phase_capture": {
+          "grid": [
+            54,
+            24
+          ],
+          "phase": "OFF45",
+          "local_GUI_PID": 88544,
+          "local_window": 1345,
+          "local_CLI_PID": 90612,
+          "local_CLI_birth": "Tue Nov 24 09:07:17 2026",
+          "references": [
+            {
+              "sha256": "5f3cbe5b03b065878e687292a3d1e892afc0f5f4b8afd1e2bed6daca70e2d8b4",
+              "bytes": 820,
+              "basename": "LC-S-12-ACTUAL-FRESH-CLI-54X24-STANDARD-FDS.stdout",
+              "availability": "Private phase provenance artifact; not included in repository"
+            },
+            {
+              "sha256": "d1aa5d58431c138379457171cc246c0a0bdd03eba1cbcd1ecaa25da806d53cd6",
+              "bytes": 463,
+              "basename": "LC-S-03-EXACT-LAUNCHED-SEEDED-GEOMETRY.stdout",
+              "availability": "Private phase provenance artifact; not included in repository"
+            },
+            {
+              "sha256": "87004f92f156fd66aee5865c8f56074f290e3247c33f9aece23ce53d51a427c7",
+              "bytes": 985,
+              "basename": "CAPTURE-OWNED-NATIVE-MODE20.ACTIVE.py",
+              "availability": "Private phase provenance artifact; not included in repository"
+            }
+          ]
+        },
+        "remote_report": "android-client-mac-native/off-android-54x24-queries.json",
+        "local_report": "android-client-mac-native/off-local-54x24-queries.jsonl",
+        "remote_TUI": "android-client-mac-native/off-android-54x24.png",
+        "remote_TUI_later": "android-client-mac-native/off-android-54x24-later.png",
+        "local_TUI": "android-client-mac-native/off-local-54x24.png",
+        "local_TUI_later": "android-client-mac-native/off-local-54x24-later.png",
+        "remote_case_label": "am45r1",
+        "local_case_label": "lm45r1"
+      },
+      {
+        "grid": [
+          54,
+          47
+        ],
+        "DSR_actual_row_column": [
+          24,
+          1
+        ],
+        "ten_single_replies": true,
+        "six_environment_fields_equal": true,
+        "all_fields_equal_except_case_elapsed_ms": true,
+        "public_CLI_dimensions": {
+          "COLUMNS": 54,
+          "LINES": 47,
+          "exported": false
+        },
+        "local_font_pt_scale": [
+          11,
+          1
+        ],
+        "local_window_width_height": [
+          375,
+          797
+        ],
+        "local_CUP_ordinary_alignment": true,
+        "fresh_phase_capture": {
+          "grid": [
+            54,
+            47
+          ],
+          "phase": "OFF45",
+          "local_GUI_PID": 85332,
+          "local_window": 1335,
+          "local_CLI_PID": 87440,
+          "local_CLI_birth": "Tue Nov 24 09:03:39 2026",
+          "references": [
+            {
+              "sha256": "c531a37ad1ed9802413509b4acf443c93dc1667711e54eaaa60a1d744e0c7354",
+              "bytes": 584,
+              "basename": "LC-T-12-ACTUAL-FRESH-CLI-54X47.stdout",
+              "availability": "Private phase provenance artifact; not included in repository"
+            },
+            {
+              "sha256": "79783d107822c8626aa9b00c753e4b3dba960a84a38f9812d262f25a8603abdd",
+              "bytes": 462,
+              "basename": "LC-T-03-EXACT-LAUNCHED-SEEDED-GEOMETRY.stdout",
+              "availability": "Private phase provenance artifact; not included in repository"
+            },
+            {
+              "sha256": "56cb19e77f8458549bd24b7bae373ef9c205532f30ebba66bda3fbf989220b96",
+              "bytes": 985,
+              "basename": "CAPTURE-OWNED-NATIVE-MODE20.ACTIVE.py",
+              "availability": "Private phase provenance artifact; not included in repository"
+            }
+          ]
+        },
+        "remote_report": "android-client-mac-native/off-android-54x47-queries.json",
+        "local_report": "android-client-mac-native/off-local-54x47-queries.jsonl",
+        "remote_TUI": "android-client-mac-native/off-android-54x47.png",
+        "remote_TUI_later": "android-client-mac-native/off-android-54x47-later.png",
+        "local_TUI": "android-client-mac-native/off-local-54x47.png",
+        "local_TUI_later": "android-client-mac-native/off-local-54x47-later.png",
+        "remote_case_label": "am45r2",
+        "local_case_label": "lm45r2"
+      }
+    ],
+    "reports": "Byte-original remoteJSON/localJSONL; compare single schema1report, excludeonlycase/elapsed_ms. No rewrittenreplybytes.",
+    "local_recipe": "Explicit/bin/zsh-l/exactnativeCWD,11pt1x/temporarymode20, realordinaryCUPalignment; originalmode10 restored.",
+    "visual_body_text_variance_OPEN": "Local and Android both reach the same unauthenticated Copilot v1.0.112 interactive surface and all ten queries match. Local CWD suffix truncation and MCP wording differ at both grids and persist over the later no-input frames, with identical nonexported COLUMNS/LINES for the paired grids. No cause, identical body layout, or pixel identity is claimed.",
+    "time_separated_frames": "Four OFF initial/later pairs byte-identical; all8 original capturepaths retained.",
+    "cross_phase_static_output": {
+      "ON_short_local": "android-client-mac-native/on-local-54x24.png",
+      "OFF_short_local": "android-client-mac-native/off-local-54x24.png",
+      "sha256": "7c9bc91c3bf622bf738e0917260539ee33fecd2593198574908aa259f1b8eaf8",
+      "byte_identical": true,
+      "fresh_processes": {
+        "ON_CLI_PID": 77987,
+        "OFF_CLI_PID": 90612
+      },
+      "meaning": "Static output byteidentity does not imply capture reuse. Separate fresh original paths/CLI identities/window bindings/phase receipts retained."
+    },
+    "exact_visual_identity_qualified": false
+  },
+  "descriptor_observation": {
+    "status": "Unclassified/inconclusive forfd2, not provennonTTY. No pairedremote sample.",
+    "retained": "Local short PID90612: descriptors 0 and 1 both matched /dev/ttysNNN controlling PTY and reported24×54. fd2 did not match this strict regex; type/path/isatty/device identity were not retained. Inconclusive for fd2, no product wiring conclusion, no paired remote or tall sample, and no stream reads or relaunch.",
+    "source_contrary_evidence": "Both local and remote portable-pty0.9 initialspawn wire allthree streams to samePTYslave; no productmisrouting or visualcause established.",
+    "private_source_audit_sha256": "b6d1ff3ba3da3c7f2f8b993473ef58b8f092576b4f05fe90bacc1dcf7fc1c59e"
+  },
+  "first_results_and_limits": [
+    "Uncommitted bulk shortprobe draft cleared beforeexecution; orderedfragments supplied soleeffectiveprobe. Causeunproved.",
+    "Tall ExtendedReturn restoredkeyboard/transientgeometry; sameCLI capturedafterordinaryhide/verified54x47. No duplicateCLIlaunch.",
+    "FirstpostConfirm47 readDisabled46 whileboundedmutation ran, thennaturalListening47; no replay/recovery.",
+    "Historical rawobserver restore-debt:true label is stale; actualoriginalON47 restoration positivelyproved. Fullscreenexitchord didnotprovewindowedstate; normalGUIexit/mode10restore independentlyproved.",
+    "LocalCWDsuffix/MCPwording persistafter5s despite sameCOLUMNS/LINES(nonexported), actualCWD, sixenvironmentfields/tenqueries; cause/bodyidentityOPEN.",
+    "ON/OFFshortlocal images legitimatelybyteidentical despite freshCLI77987 vs90612; no blankethashdifference/reuse inference."
+  ],
+  "restoration_and_cleanup": {
+    "policy": "FIRST originalcreationON47/manual/terminationOFF/FilesRWDelete root retained; nativejob32/sameinstallationbinding.",
+    "catalog": "All16actors/catalog6d88/26ops/fixtures preserved.",
+    "normal_drain": "AllGUI/CLI/AVD/carriers/SDKgroups closed; originalmode10 restored; Windows78healthyresumed/Linux91originals preserved; no restorationdebt."
+  },
+  "private_evidence": [
+    {
+      "basename": "ROOT-CASE18-FUNCTIONAL-ACCEPTANCE.json",
+      "sha256": "40db4a4d42e2910f85462d19979298f7611491c7eea898f6659a8cc407c7b7eb",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "FINAL-ANDROID26-MAC45-OFF-CASE18-FUNCTIONAL-CANDIDATE.json",
+      "sha256": "6afe75caae3d982538539943b267e1a955209e05b694c31907e119d98aaa2aa7",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "CURRENT-MAC45-OFF-ANDROID-COMPONENT-PASS.json",
+      "sha256": "8a25e9a772f812d4909f2eb124a4a66ee10c32b21eac53dc38ca7ce597f2dd6b",
+      "availability": "Private campaign artifact, not included in repository"
+    }
+  ],
+  "original_artifacts": {
+    "off-android-54x24-queries.json": {
+      "path": "android-client-mac-native/off-android-54x24-queries.json",
+      "bytes": 1359,
+      "sha256": "54cfb7eeb1df5adae2961e812c80726c7bec32687d1ba7c967046e2788b81bb9"
+    },
+    "off-local-54x24-queries.jsonl": {
+      "path": "android-client-mac-native/off-local-54x24-queries.jsonl",
+      "bytes": 1681,
+      "sha256": "54bc84e8d1e05f844b63d311f5ff7e8c37c635aae475c3a80a4167f2bcac6a77"
+    },
+    "off-android-54x24.png": {
+      "path": "android-client-mac-native/off-android-54x24.png",
+      "bytes": 228960,
+      "sha256": "3e2b003327a2ca553051ea9f2510f45f670bc0af3d674c8227ee26ba58715bec"
+    },
+    "off-android-54x24-later.png": {
+      "path": "android-client-mac-native/off-android-54x24-later.png",
+      "bytes": 228960,
+      "sha256": "3e2b003327a2ca553051ea9f2510f45f670bc0af3d674c8227ee26ba58715bec"
+    },
+    "off-local-54x24.png": {
+      "path": "android-client-mac-native/off-local-54x24.png",
+      "bytes": 32923,
+      "sha256": "7c9bc91c3bf622bf738e0917260539ee33fecd2593198574908aa259f1b8eaf8"
+    },
+    "off-local-54x24-later.png": {
+      "path": "android-client-mac-native/off-local-54x24-later.png",
+      "bytes": 32923,
+      "sha256": "7c9bc91c3bf622bf738e0917260539ee33fecd2593198574908aa259f1b8eaf8"
+    },
+    "off-android-54x47-queries.json": {
+      "path": "android-client-mac-native/off-android-54x47-queries.json",
+      "bytes": 1359,
+      "sha256": "c1a67160989d7428eb027fbc80641e628a8bdf797171a7e2787c97e4e3364219"
+    },
+    "off-local-54x47-queries.jsonl": {
+      "path": "android-client-mac-native/off-local-54x47-queries.jsonl",
+      "bytes": 1681,
+      "sha256": "634e4bbfac8f9bfc9ed8ea062b50d5f963ade33bc4adf051708859649ba9f16d"
+    },
+    "off-android-54x47.png": {
+      "path": "android-client-mac-native/off-android-54x47.png",
+      "bytes": 151456,
+      "sha256": "8f1d8ba8e093a90d34245c88ab4eab76a76cc06b18be6dc193a3d7c6c6378380"
+    },
+    "off-android-54x47-later.png": {
+      "path": "android-client-mac-native/off-android-54x47-later.png",
+      "bytes": 151456,
+      "sha256": "8f1d8ba8e093a90d34245c88ab4eab76a76cc06b18be6dc193a3d7c6c6378380"
+    },
+    "off-local-54x47.png": {
+      "path": "android-client-mac-native/off-local-54x47.png",
+      "bytes": 34881,
+      "sha256": "0f73ea37833e98ecad6a2a08536a403522d84945a5c7af20fa36f2972517959c"
+    },
+    "off-local-54x47-later.png": {
+      "path": "android-client-mac-native/off-local-54x47-later.png",
+      "bytes": 34881,
+      "sha256": "0f73ea37833e98ecad6a2a08536a403522d84945a5c7af20fa36f2972517959c"
+    }
+  },
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 18,
+    "desktop_accepted": 12,
+    "mobile_accepted": 6,
+    "partial": 3,
+    "unstarted": 3,
+    "remaining_mobile": 6
+  },
+  "root_acceptance_sha256": "40db4a4d42e2910f85462d19979298f7611491c7eea898f6659a8cc407c7b7eb"
+}

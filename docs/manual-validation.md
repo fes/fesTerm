@@ -1167,9 +1167,10 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has sixteen accepted pinned functional cases (desktop12/12, mobile4/12),
-three partial cases and five unstarted cases after the separately attributed
-Android→Linux and Android→Windows OFF/ON pairs below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has eighteen accepted pinned functional cases (desktop12/12, mobile6/12),
+three partial cases and three unstarted cases after the separately attributed
+Android→Linux, Windows and Mac OFF/ON pairs below. The Mac exact visual-text
+variance remains open; these counts do not claim global TUI identity. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7056,8 +7057,9 @@ exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 Linux components remain two accepted mobile cases. With the Android→Windows
-OFF/ON cases below, current totals are16/24 (desktop12/12, mobile4/12), three partial
-and five unstarted; eight mobile cases and combined-release qualification remain open.
+and Android→Mac OFF/ON cases below, current totals are18/24 (desktop12/12,
+mobile6/12), three partial and three unstarted; six iOS cases, Mac exact
+visual-text variance and combined-release qualification remain open.
 
 
 ### Windows reviewed Files restoration after historical Task failure
@@ -7132,8 +7134,9 @@ remain unmeasured. No pixel identity or uniform-server-snapshot claim follows.
 Original creation-ON/RW/Delete policy is restored by FIRST Enable78, all prior
 actors/catalog/operations and peer fixtures preserved, and owned GUI/CLI/Cmd/
 Job/input/SDK/mobile/emulator groups drained in their respective phases.
-Current totals are 16/24 accepted (desktop 12/12, mobile 4/12), three partial and
-five unstarted; eight mobile cases and combined-release qualification remain open.
+At case16 acceptance, totals were16/24 (desktop12/mobile4), three partial and
+five unstarted. The Mac pair below advances the functional totals; exact visual
+text and combined-release qualification remain separate.
 
 
 ### Enable completion report freshness
@@ -7146,3 +7149,45 @@ changed observations preserve the committed startup result. This is not a wait
 for Listening or endpoint readiness. The portable regression covers journal
 publication during completion; corrected signed native UI evidence remains
 pending. No setup/Start replay is part of observation.
+
+
+### Android→Mac ON/OFF functional cases, exact visual text still open
+
+The [ON43 record](../validation/dev-tunnels/android-client-mac-native-on.json)
+and [OFF45 record](../validation/dev-tunnels/android-client-mac-native-off.json)
+add accepted pinned functional cases17/18. Android26 APK9796cb24/sourceef0613d
+retains UID10232/data; genuine Mac HOST/current sessiond and local GUI26 use
+edaceef4. Cached SDKab29/656e remains a separate producer. ON creates exactly
+one named current26 `/bin/zsh -l` generation in HOME; Gboard I/O, same-tab
+foreground reconnect and saved exact AttachOnly reopen pass. OFF reuses that
+existing account-authorized generic with no Create/Ensure/End. ON SDK adds
+four same-generation Resume receipts; OFF adds two shared Resume receipts and
+refuses private/generic/stopped negatives without allocation. Original14 plus
+new2 actors and catalog/fixtures survive; original ON47/manual/terminationOFF/
+FilesRWDelete and display mode10 are restored, with normal owned drains.
+
+All four fresh54×24/54×47 query pairs match every report field except case/time,
+including ten single replies and six environment fields. Local references use
+explicit zsh login/CWD, 11pt/1× and real ordinary CUP cursor alignment. Android
+ON tall initial screen was resized to verified54×47; its launch grid remains
+unqualified. Uncommitted Gboard Return drafts and effective Extended Return,
+first SDK account-confirmation refusal and later normal directory prerequisite
+change remain retained without cause or automatic credential-repair claims.
+
+Exact Copilot text remains open: local CWD label omits `r22` and MCP wording
+differs despite identical actual CWD, reported environment and nonexported
+COLUMNS/LINES. OFF initial/later frames remain byte-identical after five seconds.
+Main layout/palette are comparable; exact body text, physical pixel identity and
+combined-current-release qualification are not accepted. The fd2 observation
+is unclassified: a pathname-only observer did not retain its type/isatty/device
+identity. Both source spawn paths wire all three streams to one PTY slave; no
+product stderr defect or visual cause is demonstrated.
+
+All eight OFF initial/later capture paths are retained. The fresh OFF short
+local PNG equals ON bytes, but independent capture provenance distinguishes
+ON CLI77987 from OFF CLI90612, its GUI88544/window1345 and phase receipts.
+Byte equality is not evidence of capture reuse. All originals are unedited; no
+config/vault/credential-reference/private SDK logs are published.
+Current totals are18/24 pinned functional cases (desktop12/12, mobile6/12),
+three partial and three unstarted. All six Android functional cases are
+accepted; six iOS cases and the named Mac visual-text variance remain open.
