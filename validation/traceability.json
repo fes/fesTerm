@@ -3978,7 +3978,9 @@
         "replay_warp_ui_surfaces_shared_panels",
         "local_startup_snapshot_opens_only_its_failed_attempt_once",
         "startup_snapshot_restore_opens_only_the_initial_selected_failure",
-        "startup_diagnostics_disclosure_is_once_per_controller_attempt"
+        "startup_diagnostics_disclosure_is_once_per_controller_attempt",
+        "inspector_copies_only_current_typed_local_startup_diagnostics",
+        "startup_diagnostics_copy_refuses_sibling_closed_and_replacement_tabs"
       ],
       "manual_scenarios": [
         "TI-06"
@@ -4029,7 +4031,9 @@
         "local_startup_snapshot_opens_only_its_failed_attempt_once",
         "startup_snapshot_restore_opens_only_the_initial_selected_failure",
         "startup_snapshot_cannot_cross_connected_or_replacement_generation",
-        "startup_diagnostics_disclosure_is_once_per_controller_attempt"
+        "startup_diagnostics_disclosure_is_once_per_controller_attempt",
+        "inspector_copies_only_current_typed_local_startup_diagnostics",
+        "startup_diagnostics_copy_refuses_sibling_closed_and_replacement_tabs"
       ],
       "manual_scenarios": [
         "TI-06",

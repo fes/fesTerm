@@ -606,11 +606,14 @@ controller. Selecting that newly placed failed attempt opens the existing
 Inspector once, with Diagnostics initially expanded for that controller identity.
 Closing it and returning to the tab does not reopen it. New controller generations
 clear the snapshot; connected/sibling controllers cannot adopt it. This is a
-local-only presentation increment, not remote HOST wire delivery.
+local-only presentation increment, not remote HOST wire delivery. The explicit
+Inspector **Copy startup diagnostics** action uses the central tab-bound command
+and the existing typed formatter only; missing/replacement snapshots never fall
+back to generic error text or input recordings.
 
 Validation impact: GUI:LOCAL-04, GUI:INSP-02, GUI:DIAG-01; actual child/spawn,
 actor/generation, bounds, noncreating/refusal, redaction, original-error and
-failed-tab/generation isolation fixtures. CP-11 native rendering and actual
+failed-tab/generation isolation and rendered startup-copy routing fixtures. CP-11 native rendering and actual
 pre-Ready failure classification remain pending; portable tests do not establish
 a native failure cause or remote diagnostic coverage.
 

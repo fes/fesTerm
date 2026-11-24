@@ -438,6 +438,7 @@ fn inspector_variant(kind: u8) -> image::RgbaImage {
             trust_fingerprint: (kind == 2).then_some("SHA256:synthetic-review"),
             diagnostics: "queue_depth=0 last_outcome=Delivered",
             startup_attempt: None,
+            startup_diagnostics_available: false,
             input_recording: kind == 2, input_report: "fixture event: key=ArrowLeft outcome=Delivered bytes=3",
             reconnect_available: kind == 2, open_sftp_available: false,
             persistent_session: None,

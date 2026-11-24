@@ -2744,7 +2744,11 @@ an exception to hidden/collapsed defaults: it opens this Inspector once and
 initially expands Diagnostics for that controller attempt. Close/collapse is
 respected on return; replacement generations clear that snapshot. Only fixed
 parent phases and actually known numeric starter/OS/exit facts are added, with
-unavailable ring/daemon attribution explicit. No startup retry is implied.
+unavailable ring/daemon attribution explicit. **Copy startup diagnostics** copies
+only this retained typed snapshot through the central tab-bound command, separate
+from **Copy redacted routing report**. Missing or replaced snapshots produce no
+clipboard write; generic startup errors and input recordings are never included.
+No startup retry is implied.
 
 Only applicable sections appear. A normal SSH inspector may show destination,
 username, connected state, reliably known remote platform, actual grid, full
