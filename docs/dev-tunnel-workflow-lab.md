@@ -9,11 +9,11 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** twenty pinned functional cases are accepted (desktop
-12/12, mobile 8/12), one is partial and three are unstarted. The first mobile pair is
+**Current coverage:** twenty-one pinned functional cases are accepted (desktop
+12/12, mobile 9/12), one is partial and two are unstarted. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Four iOS cases, the full 24-case native matrix and combined-current-release
+Three iOS cases, the full 24-case native matrix and combined-current-release
 qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
@@ -103,7 +103,7 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Android → Windows | [Accepted, attributed composite](../validation/dev-tunnels/android-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
 | Android → macOS | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-off.json) | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-on.json) |
 | iOS → Linux | [Functional, attributed composite](../validation/dev-tunnels/ios-client-linux-native-off.json) | Partial |
-| iOS → Windows | Unstarted | [Functional, mixed cohorts](../validation/dev-tunnels/ios-client-windows-native-on.json) |
+| iOS → Windows | [Functional, attributed composite](../validation/dev-tunnels/ios-client-windows-native-off.json) | [Functional, mixed cohorts](../validation/dev-tunnels/ios-client-windows-native-on.json) |
 
 The first two iOS functional records are [Linux OFF](../validation/dev-tunnels/ios-client-linux-native-off.json)
 and [Windows ON](../validation/dev-tunnels/ios-client-windows-native-on.json). They
@@ -116,7 +116,13 @@ limits remain explicit. Windows full-background local originals stay private
 with hashes/sizes/provenance; public evidence contains two iOS screenshots and
 four byte-original reports. No image is cropped or recreated. Built-in UIKit
 keyboard display, pixel identity and a uniform combined-release cohort are
-not qualified. Four iOS cases remain: Linux ON, Windows OFF, Mac ON and Mac OFF.
+not qualified. The [Windows OFF case21](../validation/dev-tunnels/ios-client-windows-native-off.json)
+adds current80 existing generic-shell I/O/reopen and two fresh references,
+composing separately accepted Windows72 SDK policy negatives. Original ON82,
+all33 actors/catalog/29 operations and preferences were preserved/restored.
+Its two Windows background captures remain private with hashes/provenance;
+two original iOS screenshots/four raw reports are public. Three iOS cases
+remain: Linux ON, Mac ON and Mac OFF.
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and

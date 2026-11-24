@@ -1172,8 +1172,8 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has twenty accepted pinned functional cases (desktop12/12, mobile8/12),
-one partial case and three unstarted cases after the separately attributed
+has twenty-one accepted pinned functional cases (desktop12/12, mobile9/12),
+one partial case and two unstarted cases after the separately attributed
 Android OFF/ON pairs and iOS Linux OFF/Windows ON cases below. The Mac exact visual-text
 variance remains open; these counts do not claim global TUI identity. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
@@ -7067,8 +7067,8 @@ exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 Linux components remain two accepted mobile cases. With the Android→Windows
-and Android→Mac OFF/ON cases below, current totals are20/24 (desktop12/12,
-mobile8/12), one partial and three unstarted; four iOS cases, Mac exact
+and Android→Mac OFF/ON cases below, current totals are21/24 (desktop12/12,
+mobile9/12), one partial and two unstarted; three iOS cases, Mac exact
 visual-text variance and combined-release qualification remain open.
 
 
@@ -7198,9 +7198,9 @@ local PNG equals ON bytes, but independent capture provenance distinguishes
 ON CLI77987 from OFF CLI90612, its GUI88544/window1345 and phase receipts.
 Byte equality is not evidence of capture reuse. All originals are unedited; no
 config/vault/credential-reference/private SDK logs are published.
-Current totals are20/24 pinned functional cases (desktop12/12, mobile8/12),
-one partial and three unstarted. All six Android functional cases and iOS Linux
-OFF/Windows ON are accepted; four iOS cases and the named Mac visual-text variance remain open.
+Current totals are21/24 pinned functional cases (desktop12/12, mobile9/12),
+one partial and two unstarted. All six Android functional cases and iOS Linux
+OFF/Windows ON/OFF are accepted; three iOS cases and the named Mac visual-text variance remain open.
 
 
 ### iOS→Linux OFF pinned functional case19
@@ -7252,7 +7252,59 @@ public saved label remain explicit. The local transient Shell autosaved zero
 profiles; that is not loss of an original saved profile. No new SDK dispatch
 occurred in the local comparison phase. All33 actors/catalog/29 operations
 and original metadata/settings survived; app/CLI/Simulator/localGUI/CMD/Job/
-input/task groups drained normally. Current totals are20/24 functional cases
-(desktop12/mobile8: Android6/iOS2), one partial/three unstarted. Linux ON,
-Windows OFF, Mac ON and Mac OFF remain; no blanket combined-release or
+input/task groups drained normally. Current totals after the OFF case below are21/24 functional cases
+(desktop12/mobile9: Android6/iOS3), one partial/two unstarted. Linux ON,
+Mac ON and Mac OFF remain; no blanket combined-release or
 built-in UIKit keyboard-visibility acceptance follows.
+
+
+### Native test registry observations during local adoption/detach
+
+DT-02 / HOST-02 automated-fixture correction: local ordinary attachment
+adoption/detach observations share the existing takeover classifier. Only the
+exact native500ms registry-lock deadline plus the platform fs2 contention
+error is an unavailable observation, not empty inventory. The existing
+held-lock/release/corrupt-registry regression covers that shared classifier.
+The original eight-second eventual window and exact generation/attached-state
+predicates remain; unrelated errors panic immediately. Production lock bounds,
+creation/resume/adoption, ownership and protocol are unchanged. The first
+release27 validation failure is retained; lock-holder cause/duration and a
+native product defect remain unproved. The existing real held-lock/release/corrupt regression passed1/1, the actual
+ordinary-local fixture passed1/1 and full host_control passed30/30; the focused
+ordinary-local run overlaps that full suite. Sessiond all-feature/all-target
+strict and formatting checks passed. This is test-fixture qualification, not
+a newly observed native holder cause or a production lock-policy change.
+
+
+### iOS→Windows OFF pinned functional case21
+
+DT-02 / MOB-06 / HOST-02: the [case21 record](../validation/dev-tunnels/ios-client-windows-native-off.json)
+uses the exact existing generic8a generation from ON through saved AttachOnly
+under current OFF80. It is an owner-authorized HOST-created shell, not a shared
+profile origin or creation under OFF. Creation-disabled/private-exclusion/
+stopped-shared UI, System and actual app-owned-key echo, foreground/saved
+same-generation reopening, two fresh44×34/53×42 query/Copilot pairs, ordinary
+CLI exit and HOME/detach passed. Earlier Windows72 SDK shared-resume and
+private/generic/stopped/creation-policy negatives are separately composed;
+there was no SDK replay, Create/Ensure/End or new profile in this phase.
+
+Both raw pairs agree exceptcase/time, including ten singleton observations,
+202 bytes, DSR1,1 and all six actual environment fields. iOS8389/runtime26
+oldbase0e86/tree22dad, genuine signedHOST26 and signedlocalGUI24/source697
+remain distinct. Different fonts/scale/chrome do not qualify pixel identity.
+Two original iOS PNGs and four byte-original raw reports are public; the two
+full-background Windows originals remain private with exact hashes, sizes,
+CLI/phase provenance and local availability. No crop/re-recording is used.
+
+Original ON82/all33/catalogc265/29 operations and detached writer15 were
+restored; the separate Settings-only closure restored all seven iOS metadata
+files/preferences and left Simulators Shutdown. Local CMD/GUI/Job/input/task
+groups drained, with no VM resume debt. Initial transition observations,
+cleanup-reserve refusals and separately authorized conservative local disk
+booking (256MiB OS plus8MiB controls, no post-start rebase) remain recorded.
+No unknown timing/probe/I/O cause is inferred. The separate future-main
+registry-observation test correction is not relabeled as native product
+behavior or as the immutable release27 source. Totals are21/24 functional
+cases (desktop12/mobile9: Android6/iOS3), one partial/two unstarted; iOS Linux
+ON and Mac ON/OFF remain. Built-in UIKit keyboard visibility, combined-current-
+release acceptance and Mac CWD-label/MCP visual text variance remain open.

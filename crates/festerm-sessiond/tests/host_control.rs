@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+mod support;
+
 use festerm_host_protocol::{
     AttachmentId, Creation, DetachKind, GenerationId, IssuedOperation, Lifetime, LogicalSessionId,
     OperationId, PrincipalId, Recipe, Target,
@@ -2162,23 +2164,25 @@ fn persistent_host_shell_accepts_ordinary_local_unticketed_attachment() {
         .all(|entry| entry.attached_by.is_none()));
     local.acknowledge_recovery_adoption();
     eventually(|| {
-        list_running_sessions_in(&fixture.root)
-            .unwrap()
-            .iter()
-            .any(|entry| {
-                entry.session.created_at_unix_ms == running.target.generation.get()
-                    && entry.attached_by == Some(festerm_sessiond::AttachKind::Local)
-            })
+        support::registry_observation(list_running_sessions_in(&fixture.root)).is_some_and(
+            |entries| {
+                entries.iter().any(|entry| {
+                    entry.session.created_at_unix_ms == running.target.generation.get()
+                        && entry.attached_by == Some(festerm_sessiond::AttachKind::Local)
+                })
+            },
+        )
     });
     drop(local);
     eventually(|| {
-        list_running_sessions_in(&fixture.root)
-            .unwrap()
-            .iter()
-            .any(|entry| {
-                entry.session.created_at_unix_ms == running.target.generation.get()
-                    && entry.attached_by.is_none()
-            })
+        support::registry_observation(list_running_sessions_in(&fixture.root)).is_some_and(
+            |entries| {
+                entries.iter().any(|entry| {
+                    entry.session.created_at_unix_ms == running.target.generation.get()
+                        && entry.attached_by.is_none()
+                })
+            },
+        )
     });
     assert!(matches!(
         retry_busy(|| fixture.control().lookup(&fixture.owner, &running.target.logical, allow)),
