@@ -7360,6 +7360,11 @@
         "native_start_scope_callback_busy_is_distinct_from_fence_budget_exhaustion",
         "native_start_scope_callback_waits_for_same_scope_without_replaying_manager",
         "native_start_scope_callback_refuses_expired_cancelled_fatal_and_changed_scope",
+        "desktop_start_parent_current_recovers_after_real_lease_releases",
+        "desktop_start_parent_current_refuses_changed_consent_after_real_contention",
+        "desktop_start_parent_current_cancelled_during_real_contention_cannot_read_again",
+        "desktop_start_parent_current_preserves_original_deadline_and_busy",
+        "desktop_start_parent_current_does_not_retry_fatal_read",
         "native_start_completion_retains_operation_and_original_deadline_without_replay",
         "desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot",
         "desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads",
@@ -7463,6 +7468,7 @@
         "Fresh source-current signed HOST and Desktop/iOS/Android clients must complete the normal account flow and all 24 creation OFF/ON cases; historical manual pairing and unequal-grid Copilot images are not acceptance.",
         "OwnerOnly legacy installations require explicit reviewed policy migration while disabled; preserve existing catalog, durable processes and advanced owner authority.",
         "HOST-04/HOST-06 Desktop Update is explicit Disable\u2192reviewed exact old/current-build signed replacement\u2192Disabled\u2192separate Enable. Recorded bounded provenance version is display metadata only; old/new signatures, native publisher, origin/current-version launch and original pending intent remain enforced. Core/model/render tests are not actual signed Desktop old\u2192new native update or daemon survival acceptance.",
+        "HOST-04/DIAG-01 signed Mac25 reached Listening31 while the first GUI Enable reported service_start Busy at mac_parent_current after successful child observation. The parent can retry only the same protected full-scope read within the original child transport deadline. The competing lock holder remains unknown and corrected signed Mac first-result qualification remains pending.",
         "Mac HOST20 later first Disable15\u219216 and explicit manual authenticated Enable17 plus postcycle existing I/O are component evidence. The initial online acquisition refusal remains failed; no combined-release claim. Historical Mac\u2192Windows OFF prerequisite was blocked on Windows HOST20 verification after Disable39. A separately attributed genuine signed HOST15-to21 stopped update and Enable40 reached Listening, preserving all27; the first final-scope observation warning remains recorded. The full OFF case subsequently passed on that cohort; no clean first-Enable result or combined-release qualification is inferred."
       ]
     },

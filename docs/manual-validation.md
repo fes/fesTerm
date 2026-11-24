@@ -6915,6 +6915,19 @@ this native behavior, repair the old warnings or establish their contention
 actor. Use only existing finite stages/kinds; no raw environment, argv, paths,
 credentials or terminal content is needed.
 
+### Mac first-Enable parent snapshot contention
+
+HOST-04 / DIAG-01: signed25's first Enable reached Provisioned31/Listening31.
+The child recovered from its callback Busy. The parent's separate
+`mac_parent_current` Busy produced the first GUI warning. Keep that warning
+and the independently successful read-only SDK result as separate evidence.
+The corrected parent may wait for the exact scope only within the original
+child transport deadline. Retain the first completion result and finite
+parent/child stages from one authorized Enable with the corrected signed cohort.
+Verify the registered HOST, Files policy and preserved sessions. Portable
+lease tests cover the read boundary. Corrected native first-result evidence
+remains pending.
+
 
 ### Files protected-policy read contention
 

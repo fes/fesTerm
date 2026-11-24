@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "59e233bd87d97fed4050b655d58bdaa72f85bef91d108b79984aa7696dfd0790"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "e1435867d68c078c3c4395201116cb568364e077f5b9843880806ba91d3c7253"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -73,7 +73,7 @@ Caveats:
 
 Use for: Exact Desktop start through the registered helper.
 
-- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime.
+- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime. A Busy parent read keeps the child transport deadline.
 - [`StartStage`](../../crates/festerm-host-setup/src/services/start_diagnostics.rs)
 
 Evidence:

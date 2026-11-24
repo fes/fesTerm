@@ -3350,3 +3350,19 @@ callback-time expiry, cancellation, fatal I/O and changed scope/settings with
 one Start/two credential checks; existing early refusal/zero-Start cases remain.
 Native corrected first-result qualification remains required and does not
 retroactively change either captured Mac warning.
+
+### Mac parent start-scope snapshot contention
+
+After the child reply passes the existing identity and result checks, the GUI
+compares the same full captured scope. Only WouldBlock at this read can wait.
+The child transport and this read share the absolute deadline captured before
+launch. Cancellation, changed scope and other failures stop observation. A
+successful read after the deadline still refuses completion. The first Busy
+diagnostic survives recovery, and expiry retains Busy when a read encountered
+contention. The observation loop performs only the exact protected read.
+
+Validation impact: GUI:HOST-04 and GUI:DIAG-01. Owned lifecycle-lease fixtures
+cover release, changed consent at the same epoch, cancellation, fatal error,
+and expiry before a read or before its result can be accepted. The existing
+child cancel/drain regression still applies. A clean first Enable with the
+corrected signed Mac cohort remains a native gate.
