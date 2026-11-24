@@ -1988,6 +1988,12 @@ Desktop's New Session → Dev Tunnel entry already shows this split workspace:
 account and hosts on the left, sign-in/loading/empty/error guidance on the right
 until a host is selected. Back returns to New Session; the legacy single-session
 form remains a separate collapsed Advanced disclosure.
+When mobile discovery returns duplicate display names, show each complete public
+locator as wrapped secondary text and include it in the disclosure accessibility
+label. Keep the friendly-name disclosure touch target at least 44 points and
+unique-name rows unchanged. Provider metadata does not establish online status
+or trust; only explicit selection starts the existing single-host workflow.
+
 Account selection and **Refresh hosts** belong to the directory. The selected
 host owns **Refresh sessions** and the capability-gated **New host shell** action.
 Use consistent section padding and gaps between controls; narrow Desktop layouts

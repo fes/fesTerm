@@ -854,7 +854,12 @@ For the approved account → host → sessions browser, capture Desktop wide and
 narrow layouts and iOS/Android host list/detail navigation. Verify consistent
 padding, separated controls and one existing-session Connect row when the same
 logical session is also advertised by a shared recipe. Same-name sessions with
-different identities must stay distinct. Refresh hosts acts on the selected
+different identities must stay distinct. For duplicate discovered host display
+names, verify full wrapped locators are visible at phone widths and accessibility
+can choose each exact host. Rendering must not connect or imply online status;
+selecting one row must target only its locator. The rendered phone regression
+covers long common-prefix locators and duplicate descriptions; native Android/iOS
+selection and screen-reader qualification remain separate. Refresh hosts acts on the selected
 account; Refresh sessions and New host shell act on the selected host.
 Save as profile belongs to an exact session; a saved shortcut is labelled locally
 and does not rename or alter the remote shell. Exercise the new-shell form with

@@ -6657,6 +6657,7 @@
         "host_owner_permission_templates_require_runtime_projection_for_creation",
         "host_owner_policy_replacement_retains_issuance_high_water_mark",
         "host_owner_admission_requires_current_shared_exact_generation_and_absence",
+        "mobile_host_duplicate_discovery_labels_disambiguate_before_selection",
         "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
         "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes",
         "real_proof_framed_inventory_filters_private_foreign_and_unknown_lookup",
@@ -6969,6 +6970,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Mobile duplicate discovery display names expose complete wrapped public locators and locator-bearing disclosure accessibility labels before any explicit selection. Phone render/selection regression covers long common-prefix locators, duplicate descriptions and unchanged unique rows; it grants no identity/trust/online authority, and native Android/iOS accessibility remains unqualified.",
         "Ordinary remote termination is a separate default-off reviewed setting, independent of creation. Existing protected End originals retain exact account/host/principal/key/logical/generation/operation and no automatic retry; imported local-bound shells remain refused. Portable consent/control-channel/layout tests do not qualify native termination, physical mobile behavior or another matrix case.",
         "Native terminal heartbeat/intentional-detach maintenance and Detached receipt publication retry only typed Busy before effect eligibility within the existing15s admission budget, reacquiring exact generation and fresh protected policy. Successful mutation admission or invoked input/adoption/publication makes every later result final; no effect replay. Cancellation, revocation, storage/Unknown and other refusals are not retried. Unit guards and actual owned native SSH/PTY adoption/output/Detached/temporary-grace/policy tests remain required; pre-snapshot fixture Busy retries preserve target/ticket/request and never retry adoption, while fresh read-only List probes must resolve the complete exact target set without Unknown. No new capability or installed/native-vault/mobile/Windows qualification",
         "Owned framed ensure/create fixture holds the exact generation lease during Lookup and requires typed Busy with unchanged journal/lease checkpoints. After release the same Lookup operation ID, without a creation issuance epoch, retries only Busy within the existing eight-second deadline and must observe the original exact Running target; other results fail immediately with their actual response. Required Ubuntu CI at114015f9 failed the previous one-shot Running assertion without printing its result, so the deterministic contention case does not establish that failure's cause. No production retry, new authority or native-service acceptance is introduced",
