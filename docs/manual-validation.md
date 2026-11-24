@@ -6951,10 +6951,10 @@ feature and an exact private fixture; see
 [the boundary qualification contract](dev-tunnel-files-protocol.md#opt-in-deployed-boundary-qualification).
 Local real-service tests prove correlated remote refusals and unchanged owned
 files, plus account/cancellation/deadline and unexpected-acceptance fences.
-They do not qualify deployed HOST behavior. Linux/Mac/Windows provider runs,
-existing-ready-key admission and owned root/outside pre/post preservation remain
-pending. No live revocation, universal unlink, arbitrary request or new release
-acceptance is implied.
+They do not qualify deployed HOST behavior by themselves; separately pinned
+Linux/Mac/Windows provider results and their exact prerequisites appear below.
+No live revocation, universal unlink, arbitrary request or new release acceptance
+is implied.
 Link-upload escape under a write-enabled grant and direct server
 reviewed-Delete denial remain outside the read-only SDK slice. A separate
 ignored `controlled_github_files_write_server_boundaries` test now prepares
@@ -6996,3 +6996,18 @@ The same signed 0.17.24 record separately qualifies a rendered, read-only
 the GUI. Its subsequent partial-upload Cancel cleaned the test target but
 failed connection preservation (#893). That first failure remains explicit;
 source regressions and a later corrected-client run must not erase it.
+
+
+### Held Files stream during reviewed owner revocation
+
+DT-05 / DT-07 / DTFILES-03: the existing opt-in SDK now has one bounded native
+entrypoint retaining an ordinary Files connection and canary read handle across
+an operator's normal Disable→Files-OFF Enable cycle. Its offline strict-marker
+and read-bound tests do not execute a native policy change. See the
+[exact held-stream contract](dev-tunnel-files-protocol.md#opt-in-established-stream-owner-revocation).
+The previously accepted graphical policy checks were serial, with the client
+closed before owner changes, so they do not satisfy this live gate. Keep first
+refusal, native OFF scope, unchanged canaries/actors and original-permission
+restoration/drain separate. Native execution is pending; no isolated hot-policy,
+RemoteDenied, lost-Finish or atomic-publication rollback claim follows from a
+transport closed by supported Disable. No retry follows the first failed read.

@@ -431,7 +431,8 @@ existing bounded SDK runner, with `FESTERM_RUN_DEV_TUNNEL_FILES_BOUNDARY=1`,
 `FESTERM_SESSIOND_RUNTIME_ROOT`. Do not invoke the lab script's Cargo-building
 `--run` path inside a capacity-limited VM. Source/local filesystem tests do not
 qualify provider-authenticated boundaries on deployed Linux, Mac or Windows
-HOSTs; those native runs remain pending individually.
+HOSTs. The separately pinned [native component record](../validation/dev-tunnels/files-provider-native-components.json)
+records those exact builds and outcomes; it is not a blanket current-cohort pass.
 The read-only test covers link read/directory refusal only. The separate ignored
 `controlled_github_files_write_server_boundaries` test reuses the same V1
 fixture and normal connector, requiring a fresh write-enabled, Delete-off grant.
@@ -450,6 +451,70 @@ EOF, timeout and unexpected success never count as these boundaries.
 
 Local real-service/framed tests cover the write-enabled link refusal,
 reviewed-protocol Delete-off denial and existing account/cancellation/deadline
-fences. Provider-authenticated runs of this write slice remain pending on each
-native HOST. Read-only upload denial does not qualify link-upload escape or
+fences. Separately accepted provider runs are pinned in the native component
+record above. Read-only upload denial does not qualify link-upload escape or
 reviewed-Delete denial, and these tests make no Finish/publication claim.
+
+
+## Opt-in established-stream owner revocation
+
+The existing SDK has one separate ignored Linux-client test,
+`files_revocation::controlled_github_files_live_policy_revocation`. It uses the
+same native account/ready-key prerequisites and exact remote HOST/root fixture;
+the remote server need not be Linux. It never edits policy, reconnects, creates
+a shell or sends an upload, Finish or Delete. Native execution remains pending.
+Keep the SDK's closed client configuration immutable and let the owner GUI edit
+a separate clone: the existing native account guard compares the whole file.
+Reuse that server's qualified WRITE runtime/ready-key route, not another host's.
+
+Run the prebuilt SDK through the existing bounded process-group runner with
+`FESTERM_RUN_DEV_TUNNEL_FILES_REVOCATION=1`,
+`FESTERM_DEV_TUNNEL_FILES_REVOCATION_RECORD` and matching
+`FESTERM_SESSIOND_RUNTIME_ROOT`. The strict record contains `files` (the existing
+FilesBoundaryFixture), a fresh 32-character lowercase hexadecimal `nonce`, an
+absolute `deadline_unix_ms` at most 600 seconds ahead, and `off_scope`. The latter
+must preserve host/installation and use original epoch plus two for the normal
+Disable then Files-OFF Enable cycle. No owner scope is guessed by the SDK.
+
+The record's fresh private parent also holds four fixed control files. Ancestors
+and entries use existing nofollow/private-file primitives; writes are exclusive.
+All four must be absent before account access. The SDK writes `ready.json` only
+after authenticating the original RW/Delete-enabled scope and reading the exact
+31-byte public canary. It retains that connection and read handle. The operator
+must already have the ordinary named Disable review visible, then write
+`disable-submitted.json` immediately **before** explicitly confirming Disable.
+After authoritative Disabled/pending-null/old-HOST absence and the separately
+reviewed Files-OFF Enable settle, write `off-settled.json`. These two operator
+markers are attestations to independently recorded native UI/state, not policy
+commands or proof produced by the SDK itself.
+Publish each operator marker atomically from a complete private temporary file
+using the existing controller routine; never overwrite an earlier marker. Fully
+validate the SDK's completed `ready.json` before confirming Disable.
+
+Markers contain only `schema_version: 1`, the same `nonce`, `original_scope`,
+`off_scope`, the exact `stage` (`disable_submitted` or `off_settled`) and
+`unix_ms`. Reject stale/future timestamps, different nonce/scope, unknown fields
+or absent confirmation. The disable marker requires successful read liveness
+within five seconds. While awaiting transition the SDK reads only that canary
+every two seconds, with at most 300 reads/9,300 public bytes and one original
+absolute deadline. This avoids mistaking the server's 30-second request-idle
+limit for revocation. Canary bytes are compared in memory, never logged.
+
+The first failed read is retained as finite kind/time/count in
+`first-failure.json`, including whether the disable marker preceded the request.
+No subsequent Files request is made, even while waiting for the independently
+observed OFF marker. Only closed/connection-retirement transport errors or an
+actual remote Denied may qualify; timeout, malformed-protocol, local I/O,
+cancellation/account change, an early failure or an unconfirmed barrier cannot
+pass. Successful new reads begun after an observed
+OFF barrier fail. Only the final `FESTERM_FILES_REVOCATION_PASS` marker completes
+the SDK component. No message or metadata is a GUI restoration receipt.
+
+The native campaign must restore the exact original RW/Delete grant through
+normal reviewed Disable/Enable and drain the GUI/SDK within its original lease,
+even if the SDK fails. Restore takes priority over another attempt. Preserve
+original actor/catalog/binding/account/root and canary identities and hashes.
+Disable necessarily stops HOST and its transport: this qualifies retirement
+through the supported owner cycle, not isolated hot-policy enforcement, a
+particular remote error cause or rollback of already admitted work. Lost-Finish,
+opened-write-handle cutover and uncertain publication remain separate gates.

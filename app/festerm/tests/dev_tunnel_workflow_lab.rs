@@ -32,6 +32,10 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[cfg(unix)]
+#[path = "dev_tunnel_workflow_lab/files_revocation.rs"]
+mod files_revocation;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
