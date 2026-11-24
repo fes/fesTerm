@@ -130,8 +130,12 @@ Its Android26/HOST26 and genuine local GUI24 producers remain distinct.
 The [Android→Windows creation-OFF record](validation/dev-tunnels/android-client-windows-native-off.json)
 composes earlier shared/private/stopped policy proof with fresh existing-shell
 input, reconnect and matched-grid references under disabled creation.
-There are sixteen accepted pinned cases (desktop 12/12, mobile 4/12), three
-partial cases and five unstarted cases. Eight mobile cases remain; the full
+The Android→Mac [ON](validation/dev-tunnels/android-client-mac-native-on.json) and
+[OFF](validation/dev-tunnels/android-client-mac-native-off.json) records add two
+pinned functional cases. Their raw reports match; exact Copilot CWD-label/MCP
+text equality remains open despite comparable main layout and palette.
+There are eighteen accepted pinned functional cases (desktop 12/12, mobile 6/12),
+three partial cases and three unstarted cases. Six iOS cases remain; the full
 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit

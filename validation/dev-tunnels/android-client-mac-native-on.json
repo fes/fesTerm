@@ -1,0 +1,257 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional Android-to-Mac creation-ON case",
+  "acceptance_kind": "Pinned functional; exact Copilot body text/pixel identity remains an open separate visual variance",
+  "creation_policy": "ON",
+  "direction": {
+    "client": "Android API37 emulator",
+    "server": "macOS ARM VM"
+  },
+  "functional_case_accepted": true,
+  "full_24_case_matrix_complete": false,
+  "global_TUI_identity_qualified": false,
+  "sources": {
+    "Android": {
+      "version": "0.17.26",
+      "source": "ef0613d861d90133765a9c1be18a431092fc63a4",
+      "tree_prefix": "b555",
+      "APK_sha256": "9796cb24e0e9417e5db09f5a95721e97b2d443db32cc03aa6fef2a36b76308ae",
+      "same_data_UID": 10232,
+      "firstInstallTime_preserved": true
+    },
+    "Mac_HOST_and_local_GUI": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "kind": "Genuine signed public HOST/current sessiond and genuine signed local GUI"
+    },
+    "supporting_SDK": {
+      "candidate_head_prefix": "ab29",
+      "sha256": "656e96757433c7db42dd0ea7293373933bb648d964a6e2ca8c4d784ae4094dee",
+      "runs_on": "Linux91; independent of GUI"
+    },
+    "Copilot": {
+      "version": "1.0.112",
+      "initial_state": "Fresh unauthenticated initial screen; no login/model/paid request",
+      "actual_CWD": "/Users/evidence/.ft-copilot-reference-native19-r22"
+    }
+  },
+  "workflow": {
+    "host_policy": 43,
+    "one_named_creation": "AndroidMacON26",
+    "target": {
+      "logical": "5b711f52-e869-4ac4-99d3-6ac2290f22c5",
+      "generation": "1795532245084867789"
+    },
+    "default_recipe": {
+      "shell": "/bin/zsh",
+      "args": [
+        "-l"
+      ],
+      "cwd": "/Users/evidence"
+    },
+    "ordinary_input": "Genuine Gboard pwd, echo lab and echo ok; normal Home/foreground same-tab reconnect and exact saved AttachOnly reopen with create-if-missing false. Old four local profiles preserved.",
+    "mobile_catalog_after_one_create": "3d831bf5f6f00af8ef1f7ca96bbb055f7845d6ea8d10ac9ff318917ee236cb29",
+    "counts_after_mobile": [
+      5,
+      9,
+      20
+    ],
+    "preservation": "Original14 plus intended daemon/zsh2 preserved; historical stopped0f273 reconciled toAbsent3 during normal inventory, not relabelled running."
+  },
+  "supporting_SDK": {
+    "first_result": "Pre-discovery account-confirmation failure; no host operations and owned group drained. Cause unproved.",
+    "changed_prerequisite": "One normal saved-account directory Find without host selection; metadata retained same account/opaque reference, expected journal anchor added, no secret output.",
+    "one_actual_after_directory_result": {
+      "exit": 0,
+      "ordinary_pass": true,
+      "blocked": false,
+      "one_pass": true,
+      "stopped_marker": false,
+      "tail_sha256": "bb64f7d33a22fa8efbddd8e224c5373249c34fe191fbba16dfbbdd54da9ea30e",
+      "tail_bytes": 217,
+      "elapsed": 23.659,
+      "owned_SDK_group_drained": true
+    },
+    "same_generation_resume_receipts": {
+      "5f724c7d-24ca-461a-885b-ad4c2027573e": {
+        "logical": "5b711f52-e869-4ac4-99d3-6ac2290f22c5",
+        "generation": "1795532245084867789",
+        "created": false,
+        "recreated": false
+      },
+      "9e70b49e-ca9b-45f5-b15a-231dc62698bf": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false
+      },
+      "e5e0c3f2-afb3-457f-9245-ef67946f1993": {
+        "logical": "5b711f52-e869-4ac4-99d3-6ac2290f22c5",
+        "generation": "1795532245084867789",
+        "created": false,
+        "recreated": false
+      },
+      "fe6f77c8-0b4f-41fc-b72b-db036b65a7e2": {
+        "logical": "fcaa6f65-c562-4273-8b75-79f8e6bb9478",
+        "generation": "1795272479437293009",
+        "created": false,
+        "recreated": false
+      }
+    },
+    "preservation": "Old20operation leaves and all16actors exact; only four Resume receipts (two shared/two newgeneric), no SDKCreate/Recreate. Historical shared generation remains separately attributed.",
+    "catalog_after": "4e649a4efe2fb764601267a67eecd642b095dfc97a7cb88db76dface73f36137"
+  },
+  "comparisons": {
+    "pairs": [
+      {
+        "grid": [
+          54,
+          24
+        ],
+        "DSR_actual_row_column": [
+          18,
+          1
+        ],
+        "local_window_width_height": [
+          375,
+          439
+        ],
+        "local_font_pt_scale": [
+          11,
+          1
+        ],
+        "all_fields_equal_except_case_elapsed_ms": true,
+        "ten_single_replies": true,
+        "six_environment_fields_equal": true,
+        "local_CUP_ordinary_alignment": true,
+        "remote_report": "android-client-mac-native/on-android-54x24-queries.json",
+        "local_report": "android-client-mac-native/on-local-54x24-queries.jsonl",
+        "remote_TUI": "android-client-mac-native/on-android-54x24.png",
+        "local_TUI": "android-client-mac-native/on-local-54x24.png",
+        "remote_case_label": "am43r1",
+        "local_case_label": "lm43r1"
+      },
+      {
+        "grid": [
+          54,
+          47
+        ],
+        "DSR_actual_row_column": [
+          26,
+          1
+        ],
+        "local_window_width_height": [
+          375,
+          797
+        ],
+        "local_font_pt_scale": [
+          11,
+          1
+        ],
+        "all_fields_equal_except_case_elapsed_ms": true,
+        "ten_single_replies": true,
+        "six_environment_fields_equal": true,
+        "local_CUP_ordinary_alignment": true,
+        "remote_report": "android-client-mac-native/on-android-54x47-queries.json",
+        "local_report": "android-client-mac-native/on-local-54x47-queries.jsonl",
+        "remote_TUI": "android-client-mac-native/on-android-54x47.png",
+        "local_TUI": "android-client-mac-native/on-local-54x47.png",
+        "remote_case_label": "am43r2",
+        "local_case_label": "lm43r2"
+      }
+    ],
+    "report_bytes": "Original controller stdout. Remote JSON contains one report; local JSONL retains two nonsecret owned-process/PTY metadata lines then the report. Comparison selects the single schema1report and excludes only case/elapsed_ms. No rewritten query bytes.",
+    "local_recipe": "Explicit /bin/zsh -l and exact controlled CWD in isolated SHELL-unset launcher; local11pt/1x at native temporary mode20. Ordinary CUP aligned actual local cursor; no synthesized replies.",
+    "visual_review": {
+      "same_actual_grid_and_main_initial_layout": true,
+      "observed_distinctions": [
+        "Android MCP reload wording says 0 servers connected. Local Mac says 0 servers.",
+        "Local rendered CWD label stops at ~/.ft-copilot-reference-native19-. Android shows the path through -r22. Native exact CWD is the same on all processes. Why the label differs is unproved.",
+        "Android short image includes Gboard; the tall image is the first auth-idle view after settled native resize, launch-time grid unqualified. Mac uses 11pt local 1× terminal and desktop chrome. No pixel-equivalence claim."
+      ]
+    },
+    "open_visual_variance": "Local CWD label stops at ~/.ft-copilot-reference-native19- while Android includes r22; actual nativeCWD and all six reported environment fields match. MCP wording says0servers locally versus0serversconnected onAndroid. Exact body-text equality/cause remains open; functional acceptance is not globalTUI identity.",
+    "appearance_limits": "Android1080x2400 app captures; local375x439/375x797 owned-window captures at11pt1x. Tall Android auth-idle was resized to verified54x47; launch-time grid unqualified. Device/font/chrome/rasterization differ."
+  },
+  "first_results_and_limits": [
+    "Two genuine Gboard Returns left the same positively unexecuted tall CLI draft, one with keyboard visible; one existing Extended Keys Return committed. Cause unproved, no duplicate actual CLI launch.",
+    "Mode20 earlier posted drags did not change frame. Accepted local pairs use positively observed startup-seeded sizes; original mode10 restored after each normal CLI/zsh/GUI exit. No Accessibility grant/new helper used.",
+    "First SDK account-confirmation refusal and normal prerequisite change retained separately; neither failure cause nor automatic credential repair inferred.",
+    "Exact Copilot body-text/pixel identity is not closed; CWD label/MCP wording differences remain visible despite identical raw reports and comparable main layout."
+  ],
+  "normal_drain": {
+    "Android_APP_AVD_exit0_and_Windows78_exact_resume": true,
+    "both_local_CLI_zsh_GUI_display_carrier_exit0_and_each_exact_Mode10_restored": true,
+    "Mac43_original_creation_ON_termOFF_FilesRWDeleteON_no_OWNER_mutation": true,
+    "Linux91_all24_catalog_e08249_retained": true,
+    "both_local_control_allocation_4546560_under8MiB": true
+  },
+  "private_evidence": [
+    {
+      "basename": "ROOT-CASE17-FUNCTIONAL-ACCEPTANCE.json",
+      "sha256": "f14948e0c19751cf71c22645ab32f8f950ad2dadf7095f5104e5cbef2e4d102f",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "FINAL-ANDROID26-MAC43-ON-CASE17-CANDIDATE.json",
+      "sha256": "ae3a2a83f9f999d96713cabad77ae71c730b2da8def9cf7ac5049cb5533b0837",
+      "availability": "Private campaign artifact, not included in repository"
+    },
+    {
+      "basename": "FINAL-ANDROID26-MAC43-ON-MOBILE-TWO-GRIDS-AND-ALL-DRAINS.json",
+      "sha256": "e723f977f00ee9776b1e59ebd6f004f88a3606f6bff02c5ffaed0ed2a441aafe",
+      "availability": "Private campaign artifact, not included in repository"
+    }
+  ],
+  "original_artifacts": {
+    "on-android-54x24-queries.json": {
+      "path": "android-client-mac-native/on-android-54x24-queries.json",
+      "bytes": 1359,
+      "sha256": "2c2b08e38ccbcbb5b8836fe8c17cdd16d036c6fb3d7a7c75b3f6a99da1401d9d"
+    },
+    "on-local-54x24-queries.jsonl": {
+      "path": "android-client-mac-native/on-local-54x24-queries.jsonl",
+      "bytes": 1681,
+      "sha256": "475ed0ce38f206b0874bb8dfac9e55430107212cb16327f27e5cb42ec1557395"
+    },
+    "on-android-54x24.png": {
+      "path": "android-client-mac-native/on-android-54x24.png",
+      "bytes": 228277,
+      "sha256": "d9db8ca5c61fd5dfbb7ac395757e64e6f2d361dd8bea0d31f262f9588ffba8bd"
+    },
+    "on-local-54x24.png": {
+      "path": "android-client-mac-native/on-local-54x24.png",
+      "bytes": 32923,
+      "sha256": "7c9bc91c3bf622bf738e0917260539ee33fecd2593198574908aa259f1b8eaf8"
+    },
+    "on-android-54x47-queries.json": {
+      "path": "android-client-mac-native/on-android-54x47-queries.json",
+      "bytes": 1359,
+      "sha256": "b68fa6957d34d980ef335c6993f9f6d11e2c2375813f24cabe5b67c9e3eefe1a"
+    },
+    "on-local-54x47-queries.jsonl": {
+      "path": "android-client-mac-native/on-local-54x47-queries.jsonl",
+      "bytes": 1681,
+      "sha256": "b64d2d34cf6e2c689bb83788a1c0b78ec5c039b29596dcf6d9e9a80fb46471bb"
+    },
+    "on-android-54x47.png": {
+      "path": "android-client-mac-native/on-android-54x47.png",
+      "bytes": 150566,
+      "sha256": "8e410784f0909e4b09a0e00384f50b8cbd419288b5ab86dc3df6afaef73d45e1"
+    },
+    "on-local-54x47.png": {
+      "path": "android-client-mac-native/on-local-54x47.png",
+      "bytes": 34894,
+      "sha256": "9f84e9ac12bc072626c503974c4ad577f0da123527ffbc9a38279f2925ec49fb"
+    }
+  },
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 17,
+    "desktop_accepted": 12,
+    "mobile_accepted": 5,
+    "partial": 3,
+    "unstarted": 4,
+    "remaining_mobile": 7
+  },
+  "root_acceptance_sha256": "f14948e0c19751cf71c22645ab32f8f950ad2dadf7095f5104e5cbef2e4d102f"
+}
