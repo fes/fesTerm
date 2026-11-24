@@ -11,9 +11,8 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent},
+    event::{DeviceEvent, DeviceId, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::Key,
     window::WindowId,
 };
 
@@ -77,13 +76,12 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
             return;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = &event {
-            if key.state == ElementState::Pressed {
-                if let Key::Character(text) = &key.logical_key {
-                    if self.keys.push_text(text) {
-                        if let Some(context) = self.repaint.get() {
-                            context.request_repaint();
-                        }
-                    }
+            if self
+                .keys
+                .push_key(key.state, &key.logical_key, key.physical_key)
+            {
+                if let Some(context) = self.repaint.get() {
+                    context.request_repaint();
                 }
             }
         }

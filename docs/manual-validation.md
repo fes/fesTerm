@@ -7011,3 +7011,15 @@ refusal, native OFF scope, unchanged canaries/actors and original-permission
 restoration/drain separate. Native execution is pending; no isolated hot-policy,
 RemoteDenied, lost-Finish or atomic-publication rollback claim follows from a
 transport closed by supported Disable. No retry follows the first failed read.
+
+
+### Mobile character controls with matching physical keys
+
+MOB-02: deterministic regressions cover LF/CR plus physical Enter/NumpadEnter
+through the character fallback and actual mobile raw-input hook, retaining one
+adapter-mapped press and unchanged release/repeat/modifier events. Unknown
+physical LF/CR still uses one fallback. Character Tab with physical Tab also
+retains one adapter press, while unknown-physical Tab and nonmatching pairs
+retain their fallback. Native Android raw
+event provenance and a corrected-client native run remain pending. This does
+not establish the cause of the aborted Android collector input observation.

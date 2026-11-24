@@ -324,9 +324,9 @@ fn play_haptic_if_enabled(enabled: bool, play: impl FnOnce()) {
     }
 }
 
-/// winit on iOS reports Return and Tab (software or hardware keyboard) as
-/// `Key::Character("\n" / "\t")`, which egui-winit drops as non-printable. The
-/// event loop queues them here and the app replays them as named keys.
+/// Retain character-form Return/Tab fallback for controls not handled as text.
+/// The event loop avoids replay when egui-winit already maps the matching
+/// physical Enter or Tab key. Unknown physical keys retain the fallback.
 #[derive(Clone, Default)]
 pub struct HardwareKeys(Rc<RefCell<Vec<egui::Key>>>);
 
@@ -340,6 +340,37 @@ impl HardwareKeys {
         };
         self.0.borrow_mut().push(key);
         true
+    }
+
+    /// Queue only controls not already represented by the forwarded physical key.
+    pub(crate) fn push_key(
+        &self,
+        state: winit::event::ElementState,
+        logical: &winit::keyboard::Key,
+        physical: winit::keyboard::PhysicalKey,
+    ) -> bool {
+        use winit::{event::ElementState, keyboard::Key};
+        if state != ElementState::Pressed {
+            return false;
+        }
+        let Key::Character(text) = logical else {
+            return false;
+        };
+        // egui-winit already maps these physical keys, even when
+        // the logical key is a control character. Forward that event unchanged.
+        if (matches!(text.as_str(), "\n" | "\r")
+            && matches!(
+                physical,
+                winit::keyboard::PhysicalKey::Code(
+                    winit::keyboard::KeyCode::Enter | winit::keyboard::KeyCode::NumpadEnter
+                )
+            ))
+            || (text.as_str() == "\t"
+                && physical == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Tab))
+        {
+            return false;
+        }
+        self.push_text(text)
     }
 
     fn drain(&self) -> Vec<egui::Key> {
@@ -4091,6 +4122,215 @@ mod tests {
         assert!(!keys.push_text("a"));
         assert_eq!(keys.drain(), vec![egui::Key::Enter, egui::Key::Tab]);
         assert!(keys.drain().is_empty());
+    }
+
+    #[test]
+    fn physical_return_keeps_one_adapter_press_without_character_replay() {
+        use winit::{
+            event::ElementState,
+            keyboard::{Key, KeyCode, PhysicalKey},
+        };
+        for text in ["\n", "\r"] {
+            for physical in [KeyCode::Enter, KeyCode::NumpadEnter] {
+                let keys = HardwareKeys::default();
+                keys.push_key(
+                    ElementState::Pressed,
+                    &Key::Character(text.into()),
+                    PhysicalKey::Code(physical),
+                );
+                let event = egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: Some(egui::Key::Enter),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let mut raw = egui::RawInput {
+                    events: vec![event.clone()],
+                    ..Default::default()
+                };
+                let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+                    .with_hardware_keys(keys);
+                eframe::App::raw_input_hook(&mut app, &egui::Context::default(), &mut raw);
+                assert_eq!(
+                    raw.events
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            egui::Event::Key {
+                                key: egui::Key::Enter,
+                                pressed: true,
+                                ..
+                            }
+                        ))
+                        .count(),
+                    1
+                );
+                assert_eq!(raw.events, vec![event]);
+            }
+        }
+    }
+
+    #[test]
+    fn physical_tab_keeps_one_adapter_press_and_unknown_physical_fallback() {
+        use winit::{
+            event::ElementState,
+            keyboard::{Key, KeyCode, NativeKeyCode, PhysicalKey},
+        };
+        for physical in [
+            PhysicalKey::Code(KeyCode::Tab),
+            PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
+        ] {
+            let keys = HardwareKeys::default();
+            keys.push_key(
+                ElementState::Pressed,
+                &Key::Character("\t".into()),
+                physical,
+            );
+            assert!(!keys.push_key(
+                ElementState::Released,
+                &Key::Character("\t".into()),
+                physical
+            ));
+            let events = if physical == PhysicalKey::Code(KeyCode::Tab) {
+                vec![
+                    egui::Event::Key {
+                        key: egui::Key::Tab,
+                        physical_key: Some(egui::Key::Tab),
+                        pressed: true,
+                        repeat: true,
+                        modifiers: egui::Modifiers::SHIFT,
+                    },
+                    egui::Event::Key {
+                        key: egui::Key::Tab,
+                        physical_key: Some(egui::Key::Tab),
+                        pressed: false,
+                        repeat: false,
+                        modifiers: egui::Modifiers::SHIFT,
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+            let mut raw = egui::RawInput {
+                events: events.clone(),
+                ..Default::default()
+            };
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+                .with_hardware_keys(keys);
+            eframe::App::raw_input_hook(&mut app, &egui::Context::default(), &mut raw);
+            assert_eq!(
+                raw.events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Tab,
+                            pressed: true,
+                            ..
+                        }
+                    ))
+                    .count(),
+                1
+            );
+            if !events.is_empty() {
+                assert_eq!(raw.events, events);
+            }
+        }
+        let keys = HardwareKeys::default();
+        assert!(keys.push_key(
+            ElementState::Pressed,
+            &Key::Character("\t".into()),
+            PhysicalKey::Code(KeyCode::Enter)
+        ));
+        assert!(keys.push_key(
+            ElementState::Pressed,
+            &Key::Character("\n".into()),
+            PhysicalKey::Code(KeyCode::Tab)
+        ));
+        assert_eq!(keys.drain(), vec![egui::Key::Tab, egui::Key::Enter]);
+    }
+
+    #[test]
+    fn character_return_fallback_keeps_unknown_physical_and_forwarded_events() {
+        use winit::{
+            event::ElementState,
+            keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey},
+        };
+        for text in ["\n", "\r"] {
+            let keys = HardwareKeys::default();
+            assert!(keys.push_key(
+                ElementState::Pressed,
+                &Key::Character(text.into()),
+                PhysicalKey::Unidentified(NativeKeyCode::Unidentified)
+            ));
+            assert!(!keys.push_key(
+                ElementState::Released,
+                &Key::Character(text.into()),
+                PhysicalKey::Unidentified(NativeKeyCode::Unidentified)
+            ));
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+                .with_hardware_keys(keys);
+            let mut raw = egui::RawInput::default();
+            eframe::App::raw_input_hook(&mut app, &egui::Context::default(), &mut raw);
+            assert_eq!(
+                raw.events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Enter,
+                            pressed: true,
+                            ..
+                        }
+                    ))
+                    .count(),
+                1
+            );
+        }
+        let keys = HardwareKeys::default();
+        assert!(!keys.push_key(
+            ElementState::Pressed,
+            &Key::Named(NamedKey::Enter),
+            PhysicalKey::Code(KeyCode::Enter)
+        ));
+        assert!(!keys.push_key(
+            ElementState::Pressed,
+            &Key::Character("public".into()),
+            PhysicalKey::Code(KeyCode::KeyP)
+        ));
+        let events = vec![
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed: true,
+                repeat: true,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            },
+            egui::Event::Text("public".into()),
+        ];
+        let mut raw = egui::RawInput {
+            events: events.clone(),
+            ..Default::default()
+        };
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+            .with_hardware_keys(keys);
+        eframe::App::raw_input_hook(&mut app, &egui::Context::default(), &mut raw);
+        assert_eq!(raw.events, events);
+        let keys = HardwareKeys::default();
+        assert!(keys.push_key(
+            ElementState::Pressed,
+            &Key::Character("\t".into()),
+            PhysicalKey::Unidentified(NativeKeyCode::Unidentified)
+        ));
+        assert_eq!(keys.drain(), vec![egui::Key::Tab]);
     }
 
     use super::*;
