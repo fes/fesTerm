@@ -633,11 +633,26 @@ mod tests {
         )
         .unwrap();
         let installed = replacement.clone();
-        app.hosts.reconnect.as_mut().unwrap().job = Job::spawn(&ctx, move |_| {
+        let pending = app.hosts.reconnect.as_mut().unwrap();
+        // The discarded job can cancel its own session lifetime during cleanup.
+        // Give the injected result fresh tokens under the same privacy epoch.
+        let original_request = std::mem::replace(
+            &mut pending.request,
+            app.sink.live.host.token(pending.epoch),
+        );
+        let original_lifetime = std::mem::replace(
+            &mut pending.lifetime,
+            app.sink.live.host.token(pending.epoch),
+        );
+        pending.job = Job::spawn(&ctx, move |_| {
             Ok(Ready {
                 session: replacement,
             })
         });
+        original_request.cancel();
+        // Model the superseded worker cancelling its session after handoff.
+        original_lifetime.cancel();
+        assert!(app.reconnect_current(app.hosts.reconnect.as_ref().unwrap()));
         let until = Instant::now() + Duration::from_secs(2);
         while app.hosts.reconnect.is_some() && Instant::now() < until {
             app.poll_host_reconnect(&ctx);
@@ -654,7 +669,9 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .host_session_id(),
-            Some(installed.id())
+            Some(installed.id()),
+            "synthetic attach did not install: {:?}",
+            app.host_reconnect_notice()
         );
         assert!(app
             .terminal

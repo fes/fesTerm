@@ -45,6 +45,30 @@ pub struct KeyboardBridge {
     terminal_responder: Retained<TerminalResponder>,
     field_responder: Retained<FieldResponder>,
     repaint: Repaint,
+    #[cfg(all(debug_assertions, target_abi = "sim"))]
+    diagnostic_last: Cell<Option<KeyboardDiagnostic>>,
+    #[cfg(all(debug_assertions, target_abi = "sim"))]
+    diagnostic_become: Cell<Option<bool>>,
+}
+
+#[cfg(all(debug_assertions, target_abi = "sim"))]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct KeyboardDiagnostic {
+    mode: KeyboardMode,
+    before: [bool; 3],
+    after: [bool; 3],
+    become_result: Option<bool>,
+    custom: bool,
+    ok: bool,
+}
+
+#[cfg(all(debug_assertions, target_abi = "sim"))]
+fn keyboard_diagnostic_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("FESTERM_IOS_KEYBOARD_DIAGNOSTICS").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+    })
 }
 
 struct TerminalResponderIvars {
@@ -736,6 +760,10 @@ impl KeyboardBridge {
             terminal_responder,
             field_responder,
             repaint,
+            #[cfg(all(debug_assertions, target_abi = "sim"))]
+            diagnostic_last: Cell::new(None),
+            #[cfg(all(debug_assertions, target_abi = "sim"))]
+            diagnostic_become: Cell::new(None),
         })
     }
 
@@ -767,6 +795,75 @@ impl KeyboardBridge {
     }
 
     pub fn set_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
+        #[cfg(all(debug_assertions, target_abi = "sim"))]
+        if keyboard_diagnostic_enabled() {
+            return self.diagnose_keyboard_mode(mode);
+        }
+        self.apply_keyboard_mode(mode)
+    }
+
+    #[cfg(all(debug_assertions, target_abi = "sim"))]
+    fn diagnostic_responders(&self) -> [bool; 3] {
+        [
+            self.field_responder.isFirstResponder(),
+            self.view.isFirstResponder(),
+            self.terminal_responder.isFirstResponder(),
+        ]
+    }
+
+    #[cfg(all(debug_assertions, target_abi = "sim"))]
+    fn diagnose_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
+        static REMAINING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(6);
+        let before = self.diagnostic_responders();
+        self.diagnostic_become.set(None);
+        let result = self.apply_keyboard_mode(mode);
+        let state = KeyboardDiagnostic {
+            mode,
+            before,
+            after: self.diagnostic_responders(),
+            become_result: self.diagnostic_become.get(),
+            custom: self.field_responder.ivars().custom_input.get(),
+            ok: result.is_ok(),
+        };
+        // Hidden may still own a responder. Do not consume history until the
+        // first actual request; the original operation above still ran once.
+        if self.diagnostic_last.get().is_none() && mode == KeyboardMode::Hidden {
+            return result;
+        }
+        if self.diagnostic_last.get() != Some(state)
+            && REMAINING
+                .try_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |count| count.checked_sub(1),
+                )
+                .is_ok()
+        {
+            self.diagnostic_last.set(Some(state));
+            // Only finite modes and booleans. Never format the field model,
+            // an error, a native object, a selection or any input content.
+            use std::io::Write as _;
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "festerm-keyboard stage=native mode={:?} field_before={} view_before={} terminal_before={} field_after={} view_after={} terminal_after={} become={:?} custom={} ok={}",
+                state.mode, state.before[0], state.before[1], state.before[2],
+                state.after[0], state.after[1], state.after[2], state.become_result,
+                state.custom, state.ok,
+            );
+        }
+        result
+    }
+
+    fn observe_become(&self, attempt: impl FnOnce() -> bool) -> bool {
+        let accepted = attempt();
+        #[cfg(all(debug_assertions, target_abi = "sim"))]
+        if keyboard_diagnostic_enabled() {
+            self.diagnostic_become.set(Some(accepted));
+        }
+        accepted
+    }
+
+    fn apply_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
         let field_mode = matches!(mode, KeyboardMode::Field | KeyboardMode::FieldCustom);
         if !field_mode
             && self.field_responder.isFirstResponder()
@@ -780,7 +877,7 @@ impl KeyboardBridge {
                     return Err("The built-in keyboard could not be dismissed");
                 }
                 if !self.terminal_responder.isFirstResponder() {
-                    if !self.terminal_responder.becomeFirstResponder() {
+                    if !self.observe_become(|| self.terminal_responder.becomeFirstResponder()) {
                         return Err(
                             "Hardware keyboard input is unavailable; switch to the built-in keyboard",
                         );
@@ -796,7 +893,7 @@ impl KeyboardBridge {
                     .replace(mode == KeyboardMode::FieldCustom)
                     != (mode == KeyboardMode::FieldCustom);
                 if !self.field_responder.isFirstResponder()
-                    && !self.field_responder.becomeFirstResponder()
+                    && !self.observe_become(|| self.field_responder.becomeFirstResponder())
                 {
                     return Err("The built-in keyboard is unavailable");
                 }
@@ -811,7 +908,9 @@ impl KeyboardBridge {
                     return Err("The terminal keyboard could not release input");
                 }
                 if mode == KeyboardMode::System {
-                    if !self.view.isFirstResponder() && !self.view.becomeFirstResponder() {
+                    if !self.view.isFirstResponder()
+                        && !self.observe_become(|| self.view.becomeFirstResponder())
+                    {
                         return Err("The built-in keyboard is unavailable");
                     }
                 } else if self.view.isFirstResponder() && !self.view.resignFirstResponder() {

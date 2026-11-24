@@ -85,6 +85,185 @@ use std::{
     rc::Rc,
 };
 
+// Private Simulator diagnostics; neither the opt-in nor emission exists in a
+// shipping build. Six mobile and six native lines bound the whole process.
+#[cfg(any(test, all(debug_assertions, target_os = "ios", target_abi = "sim")))]
+mod keyboard_diagnostics {
+    use std::{cell::Cell, ffi::OsStr, sync::atomic::AtomicU8};
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) struct State {
+        pub mode: Option<festerm_ios_window::KeyboardMode>,
+        pub bridge: bool,
+        pub document: bool,
+        pub ime: bool,
+        pub focused: bool,
+        pub active: bool,
+        pub occluded: bool,
+    }
+
+    #[derive(Default)]
+    pub(super) struct Gate(Cell<Option<State>>);
+
+    pub(super) fn opted_in(value: Option<&OsStr>) -> bool {
+        value == Some(OsStr::new("1"))
+    }
+
+    impl Gate {
+        pub fn admit(&self, state: State, enabled: bool, remaining: &AtomicU8) -> bool {
+            if !enabled || self.0.get() == Some(state) {
+                return false;
+            }
+            // Do not spend the diagnostic budget on startup/chooser focus
+            // changes before any keyboard request, including a missing bridge.
+            // Once a request is seen, its release to Hidden is useful.
+            if self.0.get().is_none()
+                && !state.document
+                && !state.ime
+                && matches!(
+                    state.mode,
+                    None | Some(festerm_ios_window::KeyboardMode::Hidden)
+                )
+            {
+                return false;
+            }
+            if remaining
+                .try_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |count| count.checked_sub(1),
+                )
+                .is_err()
+            {
+                return false;
+            }
+            self.0.set(Some(state));
+            true
+        }
+
+        #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+        pub fn observe(&self, state: State) {
+            static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            static REMAINING: AtomicU8 = AtomicU8::new(6);
+            let enabled = *ENABLED.get_or_init(|| {
+                opted_in(std::env::var_os("FESTERM_IOS_KEYBOARD_DIAGNOSTICS").as_deref())
+            });
+            if self.admit(state, enabled, &REMAINING) {
+                // State can contain only the finite mode and booleans, never a
+                // field document, identifier, text, selection or native pointer.
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "festerm-keyboard stage=mobile mode={:?} bridge={} document={} ime={} focused={} active={} occluded={}",
+                    state.mode,
+                    state.bridge,
+                    state.document,
+                    state.ime,
+                    state.focused,
+                    state.active,
+                    state.occluded,
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::sync::atomic::Ordering;
+
+        fn state() -> State {
+            State {
+                mode: Some(festerm_ios_window::KeyboardMode::Field),
+                bridge: true,
+                document: true,
+                ime: true,
+                focused: true,
+                active: true,
+                occluded: false,
+            }
+        }
+
+        #[test]
+        fn keyboard_diagnostic_requires_exact_explicit_opt_in() {
+            for value in [None, Some(""), Some("0"), Some("true"), Some("1\n")] {
+                assert!(!opted_in(value.map(OsStr::new)));
+            }
+            assert!(opted_in(Some(OsStr::new("1"))));
+            let remaining = AtomicU8::new(6);
+            assert!(!Gate::default().admit(state(), false, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 6);
+        }
+
+        #[test]
+        fn keyboard_diagnostic_deduplicates_and_shares_six_line_budget() {
+            let remaining = AtomicU8::new(6);
+            let first = Gate::default();
+            assert!(first.admit(state(), true, &remaining));
+            assert!(!first.admit(state(), true, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 5);
+            // A replacement MobileApp cannot reset the process-wide budget.
+            for _ in 0..5 {
+                assert!(Gate::default().admit(state(), true, &remaining));
+            }
+            assert!(!Gate::default().admit(state(), true, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 0);
+        }
+
+        #[test]
+        fn keyboard_diagnostic_distinguishes_dispatch_and_visibility_transitions() {
+            let remaining = AtomicU8::new(6);
+            let gate = Gate::default();
+            let mut next = state();
+            assert!(gate.admit(next, true, &remaining));
+            next.occluded = true;
+            assert!(gate.admit(next, true, &remaining));
+            next.focused = false;
+            next.mode = Some(festerm_ios_window::KeyboardMode::Hidden);
+            assert!(gate.admit(next, true, &remaining));
+            next.bridge = false;
+            next.mode = None;
+            assert!(gate.admit(next, true, &remaining));
+            assert!(!gate.admit(next, true, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 2);
+        }
+
+        #[test]
+        fn keyboard_diagnostic_reserves_budget_through_missing_bridge_and_idle_churn() {
+            let remaining = AtomicU8::new(6);
+            let gate = Gate::default();
+            let mut idle = state();
+            idle.mode = Some(festerm_ios_window::KeyboardMode::Hidden);
+            idle.document = false;
+            idle.ime = false;
+            // Initial missing bridge must not open the history and let idle
+            // focus/lifecycle changes consume all six lines before a request.
+            idle.bridge = false;
+            idle.mode = None;
+            for turn in 0..16 {
+                idle.focused = turn % 2 == 0;
+                idle.active = turn % 3 == 0;
+                assert!(!gate.admit(idle, true, &remaining));
+            }
+            idle.bridge = true;
+            idle.mode = Some(festerm_ios_window::KeyboardMode::Hidden);
+            assert!(!gate.admit(idle, true, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 6);
+            // The actual field gets the full budget, then release is visible.
+            assert!(gate.admit(state(), true, &remaining));
+            assert_eq!(remaining.load(Ordering::Relaxed), 5);
+            assert!(gate.admit(idle, true, &remaining));
+            let missing = Gate::default();
+            idle.bridge = false;
+            idle.mode = None;
+            assert!(!missing.admit(idle, true, &remaining));
+            // A real request with no bridge is still reported.
+            idle.document = true;
+            assert!(missing.admit(idle, true, &remaining));
+        }
+    }
+}
+
 /// Writes `text` to the pasteboard and returns the confirmation to show; the
 /// non-iOS desktop harness has no pasteboard, so it reports honestly.
 fn clipboard_notice(text: &str, done: &'static str) -> Option<&'static str> {
@@ -947,6 +1126,8 @@ pub struct MobileApp {
     observed_memory_warnings: u64,
     observed_suspensions: u64,
     keyboard: Option<festerm_ios_window::KeyboardBridge>,
+    #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+    keyboard_diagnostic: keyboard_diagnostics::Gate,
     #[cfg(test)]
     keyboard_haptic_count: Cell<usize>,
     keys: HardwareKeys,
@@ -1047,6 +1228,8 @@ impl MobileApp {
             observed_memory_warnings: 0,
             observed_suspensions: 0,
             keyboard: None,
+            #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+            keyboard_diagnostic: keyboard_diagnostics::Gate::default(),
             #[cfg(test)]
             keyboard_haptic_count: Cell::new(0),
             keys: HardwareKeys::default(),
@@ -1635,6 +1818,13 @@ impl MobileApp {
         });
         let field = widgets::take_field_document(ui.ctx());
         self.keep_field_keyboard(ui.ctx());
+        #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+        let diagnostic_request = (
+            field.is_some(),
+            ui.ctx().output(|output| output.ime.is_some()),
+        );
+        #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+        let mut diagnostic_mode = None;
         if !self.lifecycle.get().active || !ui.input(|input| input.focused) {
             ui.ctx().output_mut(|output| output.ime = None);
         }
@@ -1665,6 +1855,10 @@ impl MobileApp {
                 field = None;
                 festerm_ios_window::KeyboardMode::Hidden
             };
+            #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+            {
+                diagnostic_mode = Some(mode);
+            }
             if mode != festerm_ios_window::KeyboardMode::System {
                 // winit's iOS IME request makes its own view first responder,
                 // replacing the bridge's chosen responder with the system keyboard.
@@ -1677,6 +1871,17 @@ impl MobileApp {
                 self.input_notice = Some(error);
             }
         }
+        #[cfg(all(debug_assertions, target_os = "ios", target_abi = "sim"))]
+        self.keyboard_diagnostic
+            .observe(keyboard_diagnostics::State {
+                mode: diagnostic_mode,
+                bridge: self.keyboard.is_some(),
+                document: diagnostic_request.0,
+                ime: diagnostic_request.1,
+                focused: ui.input(|input| input.focused),
+                active: self.lifecycle.get().active,
+                occluded: occlusion > 0.0,
+            });
     }
 
     /// egui only requests the keyboard for a text field it painted. When the
