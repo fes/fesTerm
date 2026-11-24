@@ -6494,8 +6494,13 @@ numeric OS/child-exit codes, and explicit unavailable lifecycle/daemon/endpoint
 attribution. Ordinary startup has no trusted caller-issued generation, so it must
 not guess one or display another actor's ring. Close the Inspector, visit another
 tab and return: it must stay closed and retain only that failed attempt's facts.
-A replacement/reconnect generation must not retain them. There is no automatic
-retry/restart or remote HOST diagnostic delivery. Portable tests cover privacy,
+A replacement/reconnect generation must not retain them. Use **Copy startup
+diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
+routing report**. Confirm no generic error, path, command, stderr or recording
+content is copied, and the control disappears without typed evidence. Rendered
+route/clipboard and absent/sibling/replacement fixtures are automated; native
+clipboard delivery remains pending. There is no automatic retry/restart or remote
+HOST diagnostic delivery. Portable tests cover privacy,
 bounded noncreating reads, actual controlled child failure and UI isolation;
 actual native pre-Ready classification/rendering remains pending.
 

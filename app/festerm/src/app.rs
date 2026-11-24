@@ -6965,6 +6965,7 @@ impl FesTermApp {
                     .controller
                     .startup_diagnostics()
                     .and(session.controller.automation_instance()),
+                startup_diagnostics_available: session.controller.startup_diagnostics().is_some(),
                 input_recording,
                 input_report: &input_report,
                 reconnect_available: session.reconnect_available(),
@@ -8527,6 +8528,9 @@ impl FesTermApp {
                 InspectorAction::CopyInputRecording => self
                     .state
                     .dispatch(AppCommand::CopyInputRecording(active_tab_id), &context),
+                InspectorAction::CopyStartupDiagnostics => self
+                    .state
+                    .dispatch(AppCommand::CopyStartupDiagnostics(active_tab_id), &context),
             }
         }
         if let Some(command) = screen_command {
@@ -21291,6 +21295,58 @@ mod tests {
             "festerm-session-chip-context-menu-actual",
             &SnapshotOptions::default().output_path(output_path),
         );
+    }
+
+    #[test]
+    fn inspector_copies_only_current_typed_local_startup_diagnostics() {
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let error = festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture();
+        let snapshot = error.startup_diagnostics().unwrap().clone();
+        let session = app.state.session_tab_mut(tab).unwrap();
+        session.controller =
+            crate::session_controller::SessionController::with_startup_error(error.to_string());
+        session
+            .controller
+            .retain_startup_diagnostics(Some(snapshot.clone()));
+        let context = egui::Context::default();
+        app.state
+            .dispatch(AppCommand::ToggleSessionInspector, &context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 960.0))
+            .with_max_steps(16)
+            .build_ui_state(
+                |ui, (app, copied): &mut (FesTermApp, Vec<String>)| {
+                    run_frame(ui, app);
+                    ui.ctx().output(|output| {
+                        copied.extend(output.commands.iter().filter_map(|command| match command {
+                            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                            _ => None,
+                        }));
+                    });
+                },
+                (app, Vec::new()),
+            );
+        harness.run();
+        harness.get_by_label("Copy startup diagnostics").click();
+        harness.run();
+        assert_eq!(harness.state().1, [snapshot.to_string()]);
+        assert!(transport.operations().is_empty(), "copy must not reconnect");
+        for private in ["secret", "stderr/path", "Input routing"] {
+            assert!(!harness.state().1[0].contains(private));
+        }
+        // A replacement/reconnect generation clears the retained snapshot and
+        // removes the action instead of copying the generic startup error.
+        harness
+            .state_mut()
+            .0
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .advance_lifecycle_generation();
+        harness.run();
+        assert!(harness.query_by_label("Copy startup diagnostics").is_none());
+        assert_eq!(harness.state().1.len(), 1);
     }
 
     #[test]

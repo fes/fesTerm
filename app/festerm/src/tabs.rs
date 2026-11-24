@@ -3628,6 +3628,7 @@ pub enum AppCommand {
     },
     ClearInputRecording(TabId),
     CopyInputRecording(TabId),
+    CopyStartupDiagnostics(TabId),
     /// Enables or disables eligible multi-cell shaping runs. Cell ownership
     /// remains authoritative regardless of the selected font.
     ToggleTerminalLigatures,
@@ -6131,6 +6132,16 @@ impl AppState {
                             .unwrap_or_else(|error| error.into_inner())
                             .report(),
                     );
+                }
+            }
+            AppCommand::CopyStartupDiagnostics(tab) => {
+                if let Some(snapshot) = self
+                    .session_tab(tab)
+                    .and_then(|session| session.controller.startup_diagnostics())
+                {
+                    // Copy only the retained content-free parent snapshot. The
+                    // generic diagnostics line may contain an untrusted error.
+                    context.copy_text(snapshot.to_string());
                 }
             }
             AppCommand::ToggleTerminalLigatures => {
@@ -15199,6 +15210,51 @@ mod tests {
         assert!(!state.inspector_open());
         state.dispatch(AppCommand::CloseTab(failed_id), &context);
         assert!(!state.inspector_open());
+    }
+
+    #[test]
+    fn startup_diagnostics_copy_refuses_sibling_closed_and_replacement_tabs() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let failed = SessionTab::from_local_persistent_session_result(
+            Err(festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture()),
+            Dimensions::new(80, 24).unwrap(),
+            "local",
+            None,
+            None,
+            None,
+        );
+        state.place_session(failed);
+        let failed_id = state.active();
+        state.dispatch(AppCommand::OpenSettings, &context);
+        let sibling_id = state.active();
+        state.dispatch(AppCommand::CopyStartupDiagnostics(sibling_id), &context);
+        state
+            .session_tab_mut(failed_id)
+            .unwrap()
+            .controller
+            .advance_lifecycle_generation();
+        state.dispatch(AppCommand::CopyStartupDiagnostics(failed_id), &context);
+        state.dispatch(AppCommand::CloseTab(failed_id), &context);
+        state.dispatch(AppCommand::CopyStartupDiagnostics(failed_id), &context);
+        assert!(context.output(|output| output
+            .commands
+            .iter()
+            .all(|command| !matches!(command, egui::OutputCommand::CopyText(_)))));
+        let session = SessionTab::from_local_session_result(
+            Err::<ApplicationSession, _>("raw secret error without typed evidence"),
+            Dimensions::new(80, 24).unwrap(),
+            "ordinary",
+            None,
+            None,
+            None,
+        );
+        state.place_session(session);
+        state.dispatch(AppCommand::CopyStartupDiagnostics(state.active()), &context);
+        assert!(context.output(|output| output
+            .commands
+            .iter()
+            .all(|command| !matches!(command, egui::OutputCommand::CopyText(_)))));
     }
 
     #[test]

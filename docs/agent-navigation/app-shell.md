@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "769f79fe1788bc966a44eb1d55d857dd483c67a9380f82075135f2d2c7d0a5e2"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "e0e51b68624c76eadaa56a50c5df157d4cd8c80af3596e366a1bcc8a8f35240a"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -80,7 +80,7 @@ Use for: Exit recovery and host failure history
 - [`init`](../../app/festerm/src/diagnostics.rs)
 - [`Failure`](../../app/festerm/src/desktop_remote_access.rs) — Native timeout recovery.
 - [`record_exit_intent`](../../app/festerm/src/diagnostics.rs)
-- [`from_local_persistent_session_result`](../../app/festerm/src/tabs.rs) — Local startup facts.
+- [`from_local_persistent_session_result`](../../app/festerm/src/tabs.rs) — Startup Copy via AppCommand.
 - [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs)
 
 Evidence:

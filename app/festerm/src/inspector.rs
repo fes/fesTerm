@@ -61,6 +61,7 @@ pub struct InspectorContent<'a> {
     pub trust_fingerprint: Option<&'a str>,
     pub diagnostics: &'a str,
     pub startup_attempt: Option<u64>,
+    pub startup_diagnostics_available: bool,
     pub input_recording: bool,
     pub input_report: &'a str,
     pub reconnect_available: bool,
@@ -86,6 +87,7 @@ pub enum InspectorAction {
     ToggleInputRecording,
     ClearInputRecording,
     CopyInputRecording,
+    CopyStartupDiagnostics,
 }
 
 /// Computes the overlay bounds within the content viewport. Kept pure so
@@ -319,6 +321,11 @@ pub fn show(
                                             action = Some(InspectorAction::CopyInputRecording);
                                         }
                                     });
+                                    if content.startup_diagnostics_available
+                                        && ui.button("Copy startup diagnostics").clicked()
+                                    {
+                                        action = Some(InspectorAction::CopyStartupDiagnostics);
+                                    }
                                     ui.add(Label::new(RichText::new(content.input_report).monospace().size(10.0)).wrap());
                                     ui.add(
                                         Label::new(
@@ -401,6 +408,7 @@ pub(crate) mod tests {
             trust_fingerprint: None,
             diagnostics: "",
             startup_attempt: None,
+            startup_diagnostics_available: false,
             input_recording: false,
             input_report: "",
             reconnect_available: true,
