@@ -1731,6 +1731,11 @@ and now exposes a separate foreground review path described below. Existing TUNN
 retain their current coverage until explicit migration. The single
 `host-protocol-owner-contracts` trace group combines these evidence sets.
 
+For `HOST-02`/`HOST-03`, ordinary mobile original recovery uses the trusted
+index/vault retained by discovery, never a profile-path reconstruction. Advanced
+iOS/Android recovery retains native-root/profile identity validation. Mismatched
+legacy/native indices and cancelled accounts still refuse without repair.
+
 For `HOST-02`/`HOST-03`, Android protected-original publication keeps a durable
 reservation marker while exclusively creating and syncing the complete native
 base. Marker-visible state refuses read/update/delete and cannot become absence;

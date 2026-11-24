@@ -59,6 +59,28 @@ fn native_host_approval_root(
     Ok(Arc::new(root))
 }
 
+// Called only by the existing foreground protected-original recovery job.
+fn recover_mobile_originals(
+    #[cfg(not(target_os = "android"))] profile: &std::path::Path,
+    context: &ClientContext,
+) -> Result<(Arc<OriginalStore>, Vec<RecoveredOriginal>), String> {
+    if let ClientContext::Ordinary(ordinary) = context {
+        return OriginalStore::recover_ordinary(ordinary)
+            .map_err(|error| error.message().to_owned());
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let result = OriginalStore::recover_in_native_app_sandbox(
+        native_host_approval_root(
+            #[cfg(target_os = "ios")]
+            profile,
+        )?,
+        context,
+    );
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let result = OriginalStore::recover(profile, context);
+    result.map_err(|error| error.message().to_owned())
+}
+
 #[cfg(all(test, unix))]
 #[derive(Default)]
 struct GalleryDisplay {
@@ -3365,21 +3387,12 @@ impl MobileApp {
                     let context = recovery_context
                         .as_ref()
                         .expect("explicit protected recovery");
-                    #[cfg(target_os = "android")]
-                    let result = {
-                        let root = festerm_secret_store::NativeAppPrivateRoot::current().map_err(
-                            |_| {
-                                "Native application storage unavailable; no path fallback."
-                                    .to_owned()
-                            },
-                        )?;
-                        OriginalStore::recover_in_native_app_sandbox(Arc::new(root), context)
-                    };
-                    #[cfg(not(target_os = "android"))]
-                    let result = OriginalStore::recover(&root, context);
-                    result
-                        .map(|(store, originals)| ResultEvent::Originals(store, originals))
-                        .map_err(|error| error.message().to_owned())
+                    recover_mobile_originals(
+                        #[cfg(not(target_os = "android"))]
+                        &root,
+                        context,
+                    )
+                    .map(|(store, originals)| ResultEvent::Originals(store, originals))
                 }
                 Action::Prepare => index()?
                     .prepare(reviewed.expect("reviewed"))

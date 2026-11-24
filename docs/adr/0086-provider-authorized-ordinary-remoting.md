@@ -377,6 +377,12 @@ typing, build-only results and simulated proofs do not qualify this normal
 workflow. Physical-device, publisher/platform and whole-matrix acceptance remain
 open until their actual evidence exists.
 
+Explicit ordinary protected-original recovery reuses the index and vault retained
+by authenticated discovery, including its native sandbox capability; it never
+reconstructs that authority from a profile directory. Advanced mobile recovery
+uses the same native-root/profile-identity check as approval. Legacy/native
+mismatch still refuses, and no missing payload is reset or migrated.
+
 iOS index validation also needs native evidence below OS-managed sandbox
 ancestors: automatic host expansion must reach the server without changing
 existing data or directory permissions. Portable fixtures cover native-root

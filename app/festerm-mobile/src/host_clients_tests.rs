@@ -3914,6 +3914,36 @@ pub(super) fn ordinary_fixture_context(
     (root, context)
 }
 
+#[cfg(not(target_os = "android"))]
+#[test]
+fn mobile_originals_recovery_uses_discovered_context_not_profile_path() {
+    let (_owner_root, context) = ordinary_fixture_context(7);
+    let unrelated_profile = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let canary = unrelated_profile.path().join("public-fixture-canary");
+    std::fs::write(&canary, b"unrelated profile preserved").unwrap();
+    let context = ClientContext::Ordinary(context);
+    let (_, originals) = recover_mobile_originals(unrelated_profile.path(), &context)
+        .expect("ordinary recovery must use the discovered protected index");
+    assert!(originals.is_empty());
+    let (_, reopened) = recover_mobile_originals(unrelated_profile.path(), &context).unwrap();
+    assert!(reopened.is_empty());
+    assert_eq!(
+        std::fs::read(&canary).unwrap(),
+        b"unrelated profile preserved"
+    );
+    assert!(!unrelated_profile
+        .path()
+        .join("host-client-approvals")
+        .exists());
+    assert!(
+        matches!(
+            OriginalStore::recover(unrelated_profile.path(), &context),
+            Err(host_client::Failure::BindingMismatch)
+        ),
+        "the explicit legacy/mixed-root API must remain fail closed"
+    );
+}
+
 pub(super) fn ordinary_mobile_ui_fixture(
     context: host_client::ordinary::OrdinaryContext,
     inventory: Inventory,
