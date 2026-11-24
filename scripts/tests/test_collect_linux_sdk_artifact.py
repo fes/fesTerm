@@ -1,5 +1,6 @@
 """Artifact admission and workflow contracts; no compilation or SDK execution."""
 import importlib.util
+import ast
 import json
 import os
 from pathlib import Path
@@ -171,12 +172,55 @@ class WorkflowTests(unittest.TestCase):
     def test_manual_arm_selection_preserves_default_five_platform_matrix(self):
         line = next(line for line in self.workflow.splitlines() if "matrix: ${{ fromJSON(" in line)
         matrices = [json.loads(value)["include"] for value in re.findall(r"'(\{\"include\".*?\})'", line)]
-        self.assertEqual(len(matrices), 2)
+        self.assertEqual(len(matrices), 3)
         self.assertEqual(matrices[0], [{"name": "linux-aarch64", "platform": "linux", "runner": "ubuntu-24.04-arm"}])
-        self.assertEqual([value["name"] for value in matrices[1]],
+        self.assertEqual([value["name"] for value in matrices[2]],
                          ["macos", "windows-x86_64", "windows-aarch64", "linux-x86_64", "linux-aarch64"])
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.platform == 'linux-aarch64'", line)
-        self.assertIn("default: all\n        options:\n          - all\n          - linux-aarch64", self.workflow)
+        self.assertIn("default: all\n        options:\n          - all\n          - linux-aarch64\n          - windows-aarch64", self.workflow)
+
+    def selected_matrix(self, event, platform):
+        # Evaluate the actual workflow's literal boolean selection, with only
+        # the AST nodes needed for this finite string/boolean expression.
+        line = next(line for line in self.workflow.splitlines() if "matrix: ${{ fromJSON(" in line)
+        expression = line.split("fromJSON(", 1)[1].rsplit(") }}", 1)[0]
+        expression = (expression.replace("github.event_name", "event")
+                      .replace("inputs.platform", "platform")
+                      .replace("&&", " and ").replace("||", " or "))
+        tree = ast.parse(expression, mode="eval")
+        legal = (ast.Expression, ast.BoolOp, ast.Compare, ast.Name, ast.Load,
+                 ast.Constant, ast.And, ast.Or, ast.Eq, ast.NotEq)
+        if any(not isinstance(node, legal) for node in ast.walk(tree)):
+            raise AssertionError("Unexpected package matrix expression")
+        # GitHub compares strings ignoring case. These selector/event literals
+        # are ASCII; JSON matrix literals must retain their original bytes.
+        value = eval(compile(tree, "package workflow matrix", "eval"),
+                     {"__builtins__": {}},
+                     {"event": event.lower(),
+                      "platform": platform.lower() if isinstance(platform, str) else platform})
+        return json.loads(value)["include"]
+
+    def test_manual_windows_arm_selects_only_existing_full_matrix_row(self):
+        full = self.selected_matrix("workflow_dispatch", "all")
+        selected = self.selected_matrix("workflow_dispatch", "windows-aarch64")
+        self.assertEqual(selected, [{"name": "windows-aarch64", "platform": "windows",
+                                    "runner": "windows-11-vs2026-arm",
+                                    "conpty_runtime": "win-arm64", "package_arch": "aarch64"}])
+        self.assertEqual(selected, [row for row in full if row["name"] == "windows-aarch64"])
+        self.assertEqual(self.selected_matrix("workflow_dispatch", "linux-aarch64"),
+                         [row for row in full if row["name"] == "linux-aarch64"])
+        self.assertEqual(self.selected_matrix("workflow_dispatch", "ALL"), full)
+        self.assertEqual(self.selected_matrix("workflow_dispatch", "WINDOWS-AARCH64"), selected)
+        for event in ("push", "pull_request"):
+            for value in (None, "", "all", "linux-aarch64", "windows-aarch64", "unknown"):
+                with self.subTest(event=event, value=value):
+                    self.assertEqual(self.selected_matrix(event, value), full)
+
+    def test_manual_unknown_or_empty_platform_refuses_matrix_before_jobs(self):
+        for value in (None, "", "unknown", "windows-arm64", "windows-aarch64 ", "ALL-other"):
+            with self.subTest(value=value):
+                with self.assertRaises(json.JSONDecodeError):
+                    self.selected_matrix("workflow_dispatch", value)
 
     def test_sdk_compile_only_export_is_separate_after_existing_core_export(self):
         compile_step = self.workflow.split("      - name: Compile and retain the Linux ARM64 controlled SDK test\n", 1)[1].split("      - name:", 1)[0]

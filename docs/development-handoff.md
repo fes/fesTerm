@@ -127,7 +127,11 @@ and the HOST verification-key hash. These short-lived development artifacts
 are not signed releases or authenticated HOST bundles.
 
 Manual package-smoke dispatch accepts `platform=all` (the existing default
-matrix) or `platform=linux-aarch64`. The Linux ARM64 lane also compiles the
+matrix), `platform=linux-aarch64`, or `platform=windows-aarch64`. A targeted
+dispatch selects only that existing lane; unknown or empty manual selections
+fail matrix validation before a runner is allocated. Selector comparisons follow
+GitHub's case-insensitive expression rules. Pull-request and main-push
+matrices remain unchanged. The Linux ARM64 lane also compiles the
 existing `dev_tunnel_workflow_lab` integration test in release mode without
 executing it, reusing the normal GUI dependencies on `ubuntu-24.04-arm`.
 A separate seven-day `development-linux-aarch64-sdk-RUN-ATTEMPT` artifact
