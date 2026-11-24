@@ -35,6 +35,7 @@ on:
         options:
           - all
           - linux-aarch64
+          - windows-aarch64
   pull_request:
     paths:
       - '.github/workflows/package-smoke.yml'
@@ -72,7 +73,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform == 'linux-aarch64' && '{"include":[{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}' || '{"include":[{"name":"macos","platform":"macos","runner":"macos-latest"},{"name":"windows-x86_64","platform":"windows","runner":"windows-latest","conpty_runtime":"win-x64","package_arch":"x86_64"},{"name":"windows-aarch64","platform":"windows","runner":"windows-11-vs2026-arm","conpty_runtime":"win-arm64","package_arch":"aarch64"},{"name":"linux-x86_64","platform":"linux","runner":"ubuntu-latest"},{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}') }}
+      matrix: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform == 'linux-aarch64' && '{"include":[{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}' || github.event_name == 'workflow_dispatch' && inputs.platform == 'windows-aarch64' && '{"include":[{"name":"windows-aarch64","platform":"windows","runner":"windows-11-vs2026-arm","conpty_runtime":"win-arm64","package_arch":"aarch64"}]}' || (github.event_name != 'workflow_dispatch' || inputs.platform == 'all') && '{"include":[{"name":"macos","platform":"macos","runner":"macos-latest"},{"name":"windows-x86_64","platform":"windows","runner":"windows-latest","conpty_runtime":"win-x64","package_arch":"x86_64"},{"name":"windows-aarch64","platform":"windows","runner":"windows-11-vs2026-arm","conpty_runtime":"win-arm64","package_arch":"aarch64"},{"name":"linux-x86_64","platform":"linux","runner":"ubuntu-latest"},{"name":"linux-aarch64","platform":"linux","runner":"ubuntu-24.04-arm"}]}' || 'unsupported-package-platform') }}
     env:
       FESTERM_UPDATE_PUBLIC_KEY: unsigned-package-smoke-key
     steps:
