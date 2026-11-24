@@ -9,11 +9,11 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** fifteen pinned cases are accepted (desktop 12/12,
-mobile 3/12), four are partial and five are unstarted. The first mobile pair is
+**Current coverage:** sixteen pinned cases are accepted (desktop 12/12,
+mobile 4/12), three are partial and five are unstarted. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Nine mobile cases, the full 24-case native matrix and combined-current-release
+Eight mobile cases, the full 24-case native matrix and combined-current-release
 qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
@@ -100,7 +100,7 @@ release. Historical local references and supporting SDK routes stay attributed.
 | macOS → Linux | [Accepted](../validation/dev-tunnels/mac-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/mac-client-linux-native.json) |
 | Windows → macOS | [Accepted, resource exception retained](../validation/dev-tunnels/windows-client-mac-native-off.json) | [Accepted](../validation/dev-tunnels/windows-client-mac-native-on.json) |
 | Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
-| Android → Windows | Partial · not accepted | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
+| Android → Windows | [Accepted, attributed composite](../validation/dev-tunnels/android-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and
@@ -122,7 +122,20 @@ mobile physical font/cell uncertainty remain explicit. Both fresh CLI pairs and
 all owned app/shell/SDK processes drain normally. The tall Android trust/quit
 path uses the existing Extended Keys Return after the first Gboard attempt did
 not commit; no cause is inferred. `aw74loff1` is the explicitly reassigned ON
-short report; no reserved OFF local pair or Windows OFF acceptance is claimed.
+short report; that ON record claims no reserved OFF local pair or OFF acceptance.
+
+The Android→Windows OFF record is an attributed composite. The earlier
+Windows72/shared `7946` workflow and SDK prove shared/private/stopped policy
+behavior; its retained sessiond12/Inbox console counted only three replies,
+with seven OSC observations absent. Fresh Windows76 parity instead uses the
+existing account-authorized HOST-created `3c35` generation with current26
+daemon/pinned resources. This generic shell is not a shared server profile.
+Genuine input, reconnect and saved AttachOnly reopen require no new shell or
+SDK replay. Fresh OFF 54×24/54×47 remote/local reports match every field except
+case/timing, and fresh initial Copilot screens match logical layout and palette.
+Original creation-ON policy is restored at78; owned processes drain normally.
+Legacy/input first results, mixed GUI24/Android26/HOST26 cohorts and physical
+metrics remain explicit. No uniform-snapshot or current-release claim follows.
 
 The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
 daemon and separately pinned local19 references. The genuine stopped HOST15→21

@@ -127,8 +127,11 @@ The [Android→Windows creation-ON record](validation/dev-tunnels/android-client
 adds one current HOST26 Cmd generation, normal foreground/saved AttachOnly
 reconnection, four SDK resumes and two matched local/query/Copilot pairs.
 Its Android26/HOST26 and genuine local GUI24 producers remain distinct.
-There are fifteen accepted pinned cases (desktop 12/12, mobile 3/12), four
-partial cases and five unstarted cases. Nine mobile cases remain; the full
+The [Android→Windows creation-OFF record](validation/dev-tunnels/android-client-windows-native-off.json)
+composes earlier shared/private/stopped policy proof with fresh existing-shell
+input, reconnect and matched-grid references under disabled creation.
+There are sixteen accepted pinned cases (desktop 12/12, mobile 4/12), three
+partial cases and five unstarted cases. Eight mobile cases remain; the full
 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
