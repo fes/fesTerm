@@ -1,0 +1,352 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned Android-to-Linux native functional case",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "direction": {
+    "client": "Android API37 emulator",
+    "server": "Linux VM"
+  },
+  "creation_policy": "OFF",
+  "case_complete": true,
+  "matrix_complete": false,
+  "cohort_boundary": "Android150c/runtime24, genuine LinuxGUI/HOST24 source697, controlled SDKab29 and pinnedCopilot1.0.112; separate retained generation where stated.",
+  "sources": {
+    "Android": {
+      "source": "150c83718f1d0b659ed1304bf13e0a06c5d082c8",
+      "runtime_version": "0.17.24",
+      "APK_bytes": 42914646,
+      "APK_sha256": "d254233af2f02c1307edde00191d4148ddc5d9e2fdd775682eb004dbe39d6662",
+      "signer_certificate_sha256": "7f84ada8dfc60ce7895967e0ae9076f370e7f554a0ebb6299838a6f947f87b9c",
+      "API": 37,
+      "abi": "arm64-v8a"
+    },
+    "Linux_GUI_and_HOST": {
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "version": "0.17.24",
+      "release_run": 45200242229,
+      "GUI_artifact": 14834386522,
+      "GUI_MAIN_sha256": "1d6147044c9b9618055b786458e76af769b6b41e2c90e5f55f6e37c24c435ce3",
+      "HOST_sha256": "142f3335523e9f3e70e41a084daf5602bf76679ce6f9f9cfdedc67be7fac650c"
+    },
+    "supporting_SDK": {
+      "candidate_head": "ab2904e80b86ef093c99adefeb6e6557ffb91d50",
+      "checkout_commit": "dc60cee10baec45ae54e1729531d7eff21f024aa",
+      "checkout_tree": "bcfc3eb7048c4fc79fa863fdb38c37c0c42d980d",
+      "run_id": "45322742157",
+      "run_attempt": "1",
+      "target": "aarch64-unknown-linux-gnu",
+      "bytes": 22353864,
+      "sha256": "656e96757433c7db42dd0ea7293373933bb648d964a6e2ca8c4d784ae4094dee"
+    },
+    "collector_sha256": "ebd7a8ae2f34b4bab260fceb2804d3659a9da90c51e8993d9dbc7ef1ed08154d",
+    "Copilot": {
+      "version": "1.0.112",
+      "sha256": "a7796ef0b42a247e77128d5e95375c78370d7e8a34af2d8395450ed956b91cf7",
+      "argv": [
+        "--no-auto-update",
+        "--banner"
+      ],
+      "cwd": "/home/evidence/.ftn-805c/copilot-reference",
+      "state": "Fresh unauthenticated initial screen; no login/model/paid request"
+    }
+  },
+  "workflow": {
+    "discovery": "Normal saved-account Find & Connect and exact authorized inventory; no manual pairing.",
+    "policy": "Creation OFF: New host shell unavailable, exact stopped-shared revision1 Start disabled, private profile excluded.",
+    "target": {
+      "logical": "75329e7a-6ed9-4095-8745-ac1daa5e382e",
+      "generation": "1794782126343876296",
+      "daemon_PID": 83307,
+      "shell_PID": 83308,
+      "shell": "/usr/bin/dash",
+      "cwd": "/home/evidence/.ftn-805c/copilot-reference",
+      "retained_daemon_image_sha256": "79a9ad2cf3bd93903617ec2832e3b83d7cc57b183f914a97cfc1a62a4258588d",
+      "retained_daemon_source": "Earlier installed retained daemon; not replaced by HOST24 update."
+    },
+    "input_reconnect": "Genuine Gboard echo lab/echo ok with output, normal OS Home and same-tab automatic foreground reattach; existing exact AttachOnly profile reopen and normal tab close/detach."
+  },
+  "service_proof": {
+    "elapsed_seconds": 20.571,
+    "result": "One full ordinary OFF SDK test passed; two same-generation Resume receipts only.",
+    "denials": "Private EnsureProfile refused in accepted {Denied,Stale} union (variant not exported); stopped-shared EnsureProfile Denied and generic Ensure Denied with post absence. No shell replacement.",
+    "new_operation_receipts": [
+      "0386572b-0120-47ba-be18-1c95539fb47b",
+      "f8a6a28c-8e38-4457-92ff-e07b5140b6e2"
+    ]
+  },
+  "comparisons": [
+    {
+      "grid_columns_rows": [
+        54,
+        24
+      ],
+      "all_ten_reply_values_equal": true,
+      "all_reply_counts_one": true,
+      "grids_stable_and_terminal_descriptor_flags_restored": true,
+      "raw_reports": {
+        "android": {
+          "path": "android-client-linux-native/off-android-54x24-capabilities.json",
+          "bytes": 1475,
+          "sha256": "f414e0b29ac4fcf20a5a7a3385f39866e8c108fca4342cb7505938b840f005ad"
+        },
+        "local": {
+          "path": "android-client-linux-native/off-local-54x24-capabilities.json",
+          "bytes": 1483,
+          "sha256": "a442c5fb8de794d936725427a6db0daeb160fcefd3d2cec36261b8a3971e00ce"
+        }
+      },
+      "raw_format": "OFF copies original controller wrappers containing record and raw-record SHA; ON copies original direct JSON stdout bytes. Neither is normalized.",
+      "screenshots": {
+        "android": {
+          "path": "android-client-linux-native/off-android-54x24.png",
+          "bytes": 223079,
+          "sha256": "6c21482c56e96bbb154319f58864a91abe4a022344d34ea16d43aed4e262cd50"
+        },
+        "local": {
+          "path": "android-client-linux-native/off-local-54x24.png",
+          "bytes": 32249,
+          "sha256": "69331c0e404dd1f90d61c1b3dd6201846ddfe47695f4128015d51655cf29fa9f"
+        }
+      },
+      "metrics": {
+        "actual_columns": 54,
+        "actual_rows": 24,
+        "local": {
+          "terminal_background_rect_xywh_px": [
+            0,
+            39,
+            375,
+            376
+          ],
+          "nominal_logical_rect_xywh_at_scale1": [
+            0,
+            39,
+            375,
+            376
+          ],
+          "estimated_cell_pitch_px": [
+            6.56,
+            15.0
+          ],
+          "point_size": 11,
+          "font_family_source": "fresh GUI configuration default JetBrains Mono, bundled renderer",
+          "display_dpi": 96,
+          "nominal_display_scale": 1.0
+        },
+        "android": {
+          "terminal_background_rect_xywh_px": [
+            21,
+            231,
+            1038,
+            1029
+          ],
+          "nominal_logical_rect_xywh_at_scale2_625": [
+            8.0,
+            88.0,
+            395.43,
+            392.0
+          ],
+          "estimated_cell_pitch_px": [
+            18.11,
+            40.0
+          ],
+          "estimated_cell_pitch_nominal_logical": [
+            6.9,
+            15.24
+          ],
+          "font_family_source": "terminal view installs bundled JetBrains Mono by default on 150c",
+          "source_default_point_size": 11.5,
+          "point_size_directly_sampled": false,
+          "native_emulator_display_dpi": 420,
+          "nominal_display_scale_using_android_dp160": 2.625
+        }
+      },
+      "visual": "Matching semantic layout, pinned fresh unauthenticated CLI; 0 servers versus 0 servers connected wording retained; no pixel identity."
+    },
+    {
+      "grid_columns_rows": [
+        54,
+        47
+      ],
+      "all_ten_reply_values_equal": true,
+      "all_reply_counts_one": true,
+      "grids_stable_and_terminal_descriptor_flags_restored": true,
+      "raw_reports": {
+        "android": {
+          "path": "android-client-linux-native/off-android-54x47-capabilities.json",
+          "bytes": 1476,
+          "sha256": "1367ef1e8d975d57c6cb559c07a4a2ab911ee72995d60cfee9b1b10a16e328b4"
+        },
+        "local": {
+          "path": "android-client-linux-native/off-local-54x47-capabilities.json",
+          "bytes": 1483,
+          "sha256": "9866909f2232373648c21266caf4fb1e754b0993808bccb9afac4baceedbdda4"
+        }
+      },
+      "raw_format": "OFF copies original controller wrappers containing record and raw-record SHA; ON copies original direct JSON stdout bytes. Neither is normalized.",
+      "screenshots": {
+        "android": {
+          "path": "android-client-linux-native/off-android-54x47.png",
+          "bytes": 146055,
+          "sha256": "1f280496d6ce34027b44780b872cf679a5ceb49438e6566f4b5224e07e4d7677"
+        },
+        "local": {
+          "path": "android-client-linux-native/off-local-54x47.png",
+          "bytes": 27309,
+          "sha256": "748fdb19e8bd777d77a3223870f573b94cc3ba4a24e5471c9ab84193aaeb1d0e"
+        }
+      },
+      "metrics": {
+        "actual_columns": 54,
+        "actual_rows": 47,
+        "local": {
+          "terminal_background_rect_xywh_px": [
+            0,
+            0,
+            375,
+            721
+          ],
+          "nominal_logical_rect_xywh_at_scale1": [
+            0,
+            0,
+            375,
+            721
+          ],
+          "estimated_cell_pitch_px": [
+            6.56,
+            15.0
+          ],
+          "point_size": 11,
+          "font_family_source": "fresh GUI configuration default JetBrains Mono, bundled renderer",
+          "display_dpi": 96,
+          "nominal_display_scale": 1.0
+        },
+        "android": {
+          "terminal_background_rect_xywh_px": [
+            21,
+            231,
+            1038,
+            1938
+          ],
+          "nominal_logical_rect_xywh_at_scale2_625": [
+            8.0,
+            88.0,
+            395.43,
+            738.29
+          ],
+          "estimated_cell_pitch_px": [
+            18.11,
+            40.0
+          ],
+          "estimated_cell_pitch_nominal_logical": [
+            6.9,
+            15.24
+          ],
+          "font_family_source": "terminal view installs bundled JetBrains Mono by default on 150c",
+          "source_default_point_size": 11.5,
+          "point_size_directly_sampled": false,
+          "native_emulator_display_dpi": 420,
+          "nominal_display_scale_using_android_dp160": 2.625
+        }
+      },
+      "visual": "Matching semantic layout, pinned fresh unauthenticated CLI; 0 servers versus 0 servers connected wording retained; no pixel identity."
+    }
+  ],
+  "preservation": {
+    "HOST_epoch": 87,
+    "all22_original_actors_preserved": true,
+    "catalog_sha256": "21bb9f7e5197ec78bdbdb34fe76418b843224f129b520df05f07c2830d540617",
+    "operations_before": 42,
+    "operations_after": 44,
+    "original_settings_binding_and_fixtures_preserved": true,
+    "normal_drain": "Android/emulator, SDK groups and local GUI/CLI/local dash drained; dedicated Mac39/Windows62 resumed and verified."
+  },
+  "first_results_and_limits": [
+    "Mixed attributed builds; no same-source combined-release, pixel identity or full24-case acceptance.",
+    "Raw LC_ALL is set to en_US.UTF-8 locally and unset remotely; LANG provides the same effective locale. No normalization of original reports. LC_CTYPE remains unset.",
+    "Local JetBrains Mono11pt/X11dpi96/scale1 and Android bundled default font/emulator420dpi/nominalscale2.625 differ; Android renderer point size was not measured. Zero-MCP-server wording differs.",
+    "Historical disabled private rev2 ledger and recorded numeric PID absence are preserved; this is not a currently live private-shell claim.",
+    "PR902/main e0d6 fixes separately proven physical Return/Tab fallback; its corrected0.17.26 APK was built later and was NOT used in either accepted case. Original native input causes remain unproved.",
+    "First hidden automated OS Enter produced duplicate/extra prompt then pending_input; aborted original retained. Fresh genuine Gboard Return completed a87r2b; no cause attribution.",
+    "First SDK account confirmation stopped before any HOST request. Same binding later passed after one normal desktop saved-account directory action; actual renewal and causal mechanism are unproved."
+  ],
+  "private_evidence": [
+    {
+      "basename": "FINAL-ANDROID-LINUX24-CREATION-OFF-NATIVE-CASE.json",
+      "sha256": "052a04e1149fed01e94acff3db69b06ee1283b7f5b67c54fcea7b7b7e174d414",
+      "availability": "Private campaign artifact, not included in this repository"
+    },
+    {
+      "basename": "ROOT-FULL-CASE-ACCEPTANCE.json",
+      "sha256": "dff5d217ad92b84f98581cb97b7de42884461da3c9ac23ab6612cd10956d17f3",
+      "availability": "Private campaign artifact, not included in this repository"
+    },
+    {
+      "basename": "PHASE-A-ANDROID-LINUX-OFF-NATIVE-PASS-AND-NORMAL-DRAIN.json",
+      "sha256": "d611787731216acee321504eccfee36b081f216976c946e2db5c422050e444af",
+      "availability": "Private campaign artifact, not included in this repository"
+    },
+    {
+      "basename": "PHASE-B-FIRST-SDK-BLOCKED-AND-NORMAL-DRAIN.json",
+      "sha256": "79442d666305ddad071123a295e44c3d4448168a332fd28f9f273c4830ddad5e",
+      "availability": "Private campaign artifact, not included in this repository"
+    },
+    {
+      "basename": "PHASE-B2-SDK-OFF-PASS-ONLY-TWO-RESUMES-AND-NORMAL-DRAIN.json",
+      "sha256": "f4b6501b1841932abd09e03266489a2b5af0c4aaa43489b70fa79fb3fd411a3d",
+      "availability": "Private campaign artifact, not included in this repository"
+    },
+    {
+      "basename": "PHASE-C-LINUX24-TWO-MATCHED-REFERENCES-AND-NORMAL-DRAIN.json",
+      "sha256": "e6e4ce4518ef7e7c46dfe20e4293fb8d720e2f3707e80eb841c2741d772c6b46",
+      "availability": "Private campaign artifact, not included in this repository"
+    }
+  ],
+  "original_artifacts": {
+    "off-android-54x24.png": {
+      "path": "android-client-linux-native/off-android-54x24.png",
+      "bytes": 223079,
+      "sha256": "6c21482c56e96bbb154319f58864a91abe4a022344d34ea16d43aed4e262cd50"
+    },
+    "off-local-54x24.png": {
+      "path": "android-client-linux-native/off-local-54x24.png",
+      "bytes": 32249,
+      "sha256": "69331c0e404dd1f90d61c1b3dd6201846ddfe47695f4128015d51655cf29fa9f"
+    },
+    "off-android-54x47.png": {
+      "path": "android-client-linux-native/off-android-54x47.png",
+      "bytes": 146055,
+      "sha256": "1f280496d6ce34027b44780b872cf679a5ceb49438e6566f4b5224e07e4d7677"
+    },
+    "off-local-54x47.png": {
+      "path": "android-client-linux-native/off-local-54x47.png",
+      "bytes": 27309,
+      "sha256": "748fdb19e8bd777d77a3223870f573b94cc3ba4a24e5471c9ab84193aaeb1d0e"
+    },
+    "off-stopped-disabled.png": {
+      "path": "android-client-linux-native/off-stopped-disabled.png",
+      "bytes": 206334,
+      "sha256": "19a250eee8b125745900dc2074744bf00fed78ce674117c05c986b0d5d8adf0a"
+    },
+    "off-android-54x24-capabilities.json": {
+      "path": "android-client-linux-native/off-android-54x24-capabilities.json",
+      "bytes": 1475,
+      "sha256": "f414e0b29ac4fcf20a5a7a3385f39866e8c108fca4342cb7505938b840f005ad"
+    },
+    "off-local-54x24-capabilities.json": {
+      "path": "android-client-linux-native/off-local-54x24-capabilities.json",
+      "bytes": 1483,
+      "sha256": "a442c5fb8de794d936725427a6db0daeb160fcefd3d2cec36261b8a3971e00ce"
+    },
+    "off-android-54x47-capabilities.json": {
+      "path": "android-client-linux-native/off-android-54x47-capabilities.json",
+      "bytes": 1476,
+      "sha256": "1367ef1e8d975d57c6cb559c07a4a2ab911ee72995d60cfee9b1b10a16e328b4"
+    },
+    "off-local-54x47-capabilities.json": {
+      "path": "android-client-linux-native/off-local-54x47-capabilities.json",
+      "bytes": 1483,
+      "sha256": "9866909f2232373648c21266caf4fb1e754b0993808bccb9afac4baceedbdda4"
+    }
+  }
+}

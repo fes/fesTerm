@@ -119,9 +119,13 @@ It uses a pinned development build and adds no Dev Tunnels matrix case.
 The [Mac-client/Windows-server creation-OFF record](validation/dev-tunnels/mac-client-windows-native-off.json)
 completes the desktop matrix with disabled creation, saved retained-session
 reconnection, two matched-grid Copilot/query pairs and independent service
-policy checks. There are twelve accepted pinned cases (desktop 12/12), five
-partial cases and seven unstarted cases. The remaining twelve cases are mobile;
-the full 24-case matrix and combined-release qualification remain incomplete. A separate
+policy checks. The attributed Android→Linux [creation-OFF](validation/dev-tunnels/android-client-linux-native-off.json)
+and [creation-ON](validation/dev-tunnels/android-client-linux-native-on.json) records add the first two
+mobile cases: genuine Gboard input, foreground/saved-profile reconnect, two
+matched-grid query/Copilot pairs and separately attributed SDK policy proof.
+There are fourteen accepted pinned cases (desktop 12/12, mobile 2/12), three
+partial cases and seven unstarted cases. Ten mobile cases remain; the full
+24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
 creation keeps its issued action after an uncertain result, with no replacement

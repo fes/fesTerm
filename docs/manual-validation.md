@@ -1162,8 +1162,9 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has twelve accepted pinned functional cases (desktop12/12), five partial cases
-and seven unstarted cases. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has fourteen accepted pinned functional cases (desktop12/12, mobile2/12),
+three partial cases and seven unstarted cases after the separately attributed
+Android→Linux OFF/ON pair below. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7023,3 +7024,31 @@ retains one adapter press, while unknown-physical Tab and nonmatching pairs
 retain their fallback. Native Android raw
 event provenance and a corrected-client native run remain pending. This does
 not establish the cause of the aborted Android collector input observation.
+
+
+### Android→Linux creation OFF and ON, attributed native cases
+
+The [creation-OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
+and [creation-ON](../validation/dev-tunnels/android-client-linux-native-on.json)
+records qualify two complete pinned cases for DT-02 / DT-05 / DT-07 / MOB-02.
+Android source `150c8371`/runtime24, signed Linux GUI/HOST24 `697daa9a`, supporting
+SDK `ab2904e8` and Copilot1.0.112 remain distinct. Normal saved-account discovery,
+genuine Gboard input, same-tab foreground reattachment and exact saved AttachOnly
+reopening passed. Two actual54×24/54×47 raw-query pairs retain ten single replies
+including cursor/palette and restored terminal/descriptor flags, with fresh
+local/remote TUI screenshots. OFF uses the old retained dash generation; ON
+verifies one new host-default Bash login shell starts in HOME. Raw LC_ALL,
+font/scale/chrome and zero-MCP-server wording differ; no normalization or pixel
+identity is claimed.
+
+OFF retains its first pending-input abort and pre-HOST SDK account-confirmation
+failure; later ordinary discovery precedes the separately accepted SDK pass,
+without proving renewal or either failure's cause. ON records one UI Created
+receipt and four SDK Resume receipts only, then clean original-OFF restoration91,
+all original22 plus new2 actors, full catalog/49operations and normal drain.
+Tall Android Copilot normal UI quit remains unqualified; separately authorized
+exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
+ledger is retained with its recorded PID absent, not a live private-shell proof.
+The later PR902 corrected26 APK was not used in either case. These accepted
+components bring the matrix to14/24 (desktop12/12, mobile2/12); the remaining ten
+mobile cases and current combined-release qualification are open.

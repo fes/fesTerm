@@ -64,3 +64,6 @@ validation/dev-tunnels/windows-client-mac-native-on/*.json -text whitespace=-bla
 validation/dev-tunnels/windows-client-mac-native-on/*.log -text whitespace=-blank-at-eof
 validation/dev-tunnels/windows-client-mac-native-off/*.json -text whitespace=-blank-at-eof
 validation/dev-tunnels/windows-client-mac-native-off/*.log -text whitespace=-blank-at-eof
+
+# Original Android/Linux query reports retain their captured bytes.
+validation/dev-tunnels/android-client-linux-native/*-capabilities.json -text whitespace=-blank-at-eof
