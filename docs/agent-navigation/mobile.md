@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "86a2ba0938e0efedf46856f2c1df836b0cc170dd178ed5196d680e1cca991131"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "39d8a71d41658e3d538843fdf1bb271eaf427dcd3e10d262b6afd5e34e7a6aed"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

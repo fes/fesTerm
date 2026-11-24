@@ -9,11 +9,11 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** eighteen pinned functional cases are accepted (desktop
-12/12, mobile 6/12), three are partial and three are unstarted. The first mobile pair is
+**Current coverage:** twenty pinned functional cases are accepted (desktop
+12/12, mobile 8/12), one is partial and three are unstarted. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Six iOS cases, the full 24-case native matrix and combined-current-release
+Four iOS cases, the full 24-case native matrix and combined-current-release
 qualification remain incomplete. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
@@ -102,6 +102,21 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
 | Android → Windows | [Accepted, attributed composite](../validation/dev-tunnels/android-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
 | Android → macOS | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-off.json) | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-on.json) |
+| iOS → Linux | [Functional, attributed composite](../validation/dev-tunnels/ios-client-linux-native-off.json) | Partial |
+| iOS → Windows | Unstarted | [Functional, mixed cohorts](../validation/dev-tunnels/ios-client-windows-native-on.json) |
+
+The first two iOS functional records are [Linux OFF](../validation/dev-tunnels/ios-client-linux-native-off.json)
+and [Windows ON](../validation/dev-tunnels/ios-client-windows-native-on.json). They
+retain System input, visible app-owned keys, foreground/saved exact-generation
+reopening and fresh44×34/53×42 query/Copilot counterparts. Linux87 SDK policy
+and Linux91 current client proof are separate. d570/8389 pre-rebase iOS26,
+signed HOST24/26 and localGUI24 producers are not relabeled as metadata27.
+Linux LC_ALL differs; fonts/physical scale and first refusal/unknown-cause
+limits remain explicit. Windows full-background local originals stay private
+with hashes/sizes/provenance; public evidence contains two iOS screenshots and
+four byte-original reports. No image is cropped or recreated. Built-in UIKit
+keyboard display, pixel identity and a uniform combined-release cohort are
+not qualified. Four iOS cases remain: Linux ON, Windows OFF, Mac ON and Mac OFF.
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and

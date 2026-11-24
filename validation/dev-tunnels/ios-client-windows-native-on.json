@@ -1,0 +1,219 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Windows creation-ON case20",
+  "case_number": 20,
+  "direction": {
+    "client": "iOS Simulator",
+    "server": "Windows ARM VM"
+  },
+  "creation_policy": "ON",
+  "functional_case_accepted": true,
+  "full_24_case_matrix_complete": false,
+  "global_TUI_identity_qualified": false,
+  "sources": {
+    "iOS": {
+      "binary_sha256": "8389c03c5c94200f88a4d09fc02148d7d1523f29bafb6a52bcc17698500312e1",
+      "producer_base": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+      "producer_tree": "22dad36b212d66e3de24781f8c60677e6724d829",
+      "attribution": "Pre-rebase corrected-originals build, runtime26; not metadata27 build or current combined-release qualification."
+    },
+    "Windows_HOST": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "cohort": "Genuine signed HOST/current versioned26 daemon and pinned MS resource runtime"
+    },
+    "local_GUI": {
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "cohort": "Genuine signed WindowsARM GUI24 with actual pinned ConPTY/OpenConsole byte cohort matching remote"
+    },
+    "CLI": "Copilot1.0.112 unauthenticated initial screen; no paid/model request"
+  },
+  "workflow": {
+    "policy_epoch": 78,
+    "existing_target": "Same persistent generic created in prior corrected-original checkpoint phase; two-grid remote probes/CLI and saved same-generation AttachOnly reopen in current continuation; no new creation in continuation.",
+    "normal_profile_result": "Actual saved name contains the public base name twice after ordinary Copy/paste; no rename or hidden normalization claimed.",
+    "public_name_base": "fesTerm VM lab generic",
+    "final_actors": 33,
+    "catalog_sha256": "c26536448a6d0f815d07fa60f533bc8d84407b503d52a6458f39b20f7cc4abfd",
+    "profiles_sessions_operations": {
+      "profiles": 6,
+      "sessions": 12,
+      "operations": 29
+    },
+    "cleanup": "Normal CLI/app/runner/Simulator/localGUI/CMD/Job/input/task drain, detached writer9 and original data/settings preserved."
+  },
+  "comparisons": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "ios_font_preset": "Large 14pt",
+      "local_font": "10pt after four14pt decrements;192dpi unchanged",
+      "local_client_rect_xywh_dpi": [
+        0,
+        1,
+        570,
+        1067,
+        192
+      ],
+      "reports": [
+        {
+          "path": "ios-client-windows-native/ios-windows-on-44x34-remote-query.json",
+          "bytes": 1184,
+          "sha256": "d9ca90ac135b59d119830d3952a426beda8eaf988cf906dec56207d71d422a7e"
+        },
+        {
+          "path": "ios-client-windows-native/ios-windows-on-44x34-local-query.json",
+          "bytes": 1171,
+          "sha256": "f50d29964d941ef3d672173e911a8dc02a9897ee67e7eac6b79d4de2c2e78650"
+        }
+      ],
+      "ios_original_TUI": {
+        "path": "ios-client-windows-native/ios-windows-on-44x34-remote-copilot.png",
+        "bytes": 234326,
+        "sha256": "9dee34215ae5f9dfa54e92c90477f30200d92d682ceda182953f998dca0e2b6b"
+      },
+      "local_original_TUI": {
+        "width": 1920,
+        "height": 1512,
+        "bytes": 3580732,
+        "sha256": "462bd073c11b3429d2c0557154c2b362bbcc9185254a67b9d60fd886e777e81f",
+        "basename": "L-23-PRIMARY-SESSION-ONLY-TRUST.png",
+        "availability": "Private original retained locally with phase provenance; not included in repository because full VM background/taskbar are irrelevant. No crop or replacement capture.",
+        "provenance": {
+          "phase": "Windows78 one genuineGUI24 local-reference run",
+          "local_CLI_PID": 4904,
+          "local_CLI_birth_ms": 1795550910459,
+          "local_CMD_parent": 11040,
+          "final_phase_receipt_sha256": "a9a2f1dd1534c0213e6f93bfcb986782bf9e34953f82a471d585d829067374c1"
+        }
+      },
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "ios_font_preset": "Normal 11.5pt",
+      "local_font": "10pt after four14pt decrements;192dpi unchanged",
+      "local_client_rect_xywh_dpi": [
+        0,
+        1,
+        672,
+        1275,
+        192
+      ],
+      "reports": [
+        {
+          "path": "ios-client-windows-native/ios-windows-on-53x42-remote-query.json",
+          "bytes": 1184,
+          "sha256": "cb2a8e72f4d8c59eed81f8baa1bb3352c2f6722777d2f5dd027661293f51e24a"
+        },
+        {
+          "path": "ios-client-windows-native/ios-windows-on-53x42-local-query.json",
+          "bytes": 1171,
+          "sha256": "7c52aad9b1a9345d5f4aeea2b87d74969d8286fb66bf74f0244fd9afad6f7721"
+        }
+      ],
+      "ios_original_TUI": {
+        "path": "ios-client-windows-native/ios-windows-on-53x42-remote-copilot.png",
+        "bytes": 214313,
+        "sha256": "8e3fdd2c5928ad757556d3784e82585c9962344d99a5ad91476b0e10ea67ab43"
+      },
+      "local_original_TUI": {
+        "width": 1920,
+        "height": 1512,
+        "bytes": 3211262,
+        "sha256": "9e0e2f5621deb6b2e925dc1fd7919c26aaa7c10edf87b7b42832086166c7b672",
+        "basename": "L-35-SECONDARY-SESSION-ONLY-TRUST.png",
+        "availability": "Private original retained locally with phase provenance; not included in repository because full VM background/taskbar are irrelevant. No crop or replacement capture.",
+        "provenance": {
+          "phase": "Windows78 one genuineGUI24 local-reference run",
+          "local_CLI_PID": 5608,
+          "local_CLI_birth_ms": 1795551101264,
+          "local_CMD_parent": 11040,
+          "final_phase_receipt_sha256": "a9a2f1dd1534c0213e6f93bfcb986782bf9e34953f82a471d585d829067374c1"
+        }
+      },
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true
+    }
+  ],
+  "assets": {
+    "ios-windows-on-44x34-remote-query.json": {
+      "path": "ios-client-windows-native/ios-windows-on-44x34-remote-query.json",
+      "bytes": 1184,
+      "sha256": "d9ca90ac135b59d119830d3952a426beda8eaf988cf906dec56207d71d422a7e"
+    },
+    "ios-windows-on-44x34-local-query.json": {
+      "path": "ios-client-windows-native/ios-windows-on-44x34-local-query.json",
+      "bytes": 1171,
+      "sha256": "f50d29964d941ef3d672173e911a8dc02a9897ee67e7eac6b79d4de2c2e78650"
+    },
+    "ios-windows-on-44x34-remote-copilot.png": {
+      "path": "ios-client-windows-native/ios-windows-on-44x34-remote-copilot.png",
+      "bytes": 234326,
+      "sha256": "9dee34215ae5f9dfa54e92c90477f30200d92d682ceda182953f998dca0e2b6b"
+    },
+    "ios-windows-on-53x42-remote-query.json": {
+      "path": "ios-client-windows-native/ios-windows-on-53x42-remote-query.json",
+      "bytes": 1184,
+      "sha256": "cb2a8e72f4d8c59eed81f8baa1bb3352c2f6722777d2f5dd027661293f51e24a"
+    },
+    "ios-windows-on-53x42-local-query.json": {
+      "path": "ios-client-windows-native/ios-windows-on-53x42-local-query.json",
+      "bytes": 1171,
+      "sha256": "7c52aad9b1a9345d5f4aeea2b87d74969d8286fb66bf74f0244fd9afad6f7721"
+    },
+    "ios-windows-on-53x42-remote-copilot.png": {
+      "path": "ios-client-windows-native/ios-windows-on-53x42-remote-copilot.png",
+      "bytes": 214313,
+      "sha256": "8e3fdd2c5928ad757556d3784e82585c9962344d99a5ad91476b0e10ea67ab43"
+    }
+  },
+  "limits": [
+    "Actual report-parent ACL prerequisite corrected once on empty owned public report parent using same existing user FullControl; no broader permission change. Prior failed probe exit cause remains unobserved.",
+    "First generic original-checkpoint I/O cause is not identified by the source composition fix or this case. Native corrected context now passed; no migration/reset/repair.",
+    "Actual built-in UIKit keyboard visibility remains unqualified; real System input and visible app-owned keys are independently attributed.",
+    "Different fonts, physical scale/chrome/rasterization; matched visible CLI content/layout does not imply pixel identity.",
+    "Two full-background Windows captures remain private with hashes/sizes/provenance; four raw reports and two iOS originals are public.",
+    "Pre-effect control/version/array/stalehash/parent guards retained, with no product retry claim. Transient local Shell autosaved zero profiles; no original saved profile lost.",
+    "No new SDK dispatch in local reference phase; separately composed service evidence is not relabeled as a single snapshot.",
+    "Prepared metadata27 has not been built, installed, signed, tagged or released by this change."
+  ],
+  "root_acceptance_sha256": "7adedbba29aae6b18fc950b9a2e6df25ecc0811492207c89cf46c25f618196d6",
+  "final_candidate_sha256": "a9a2f1dd1534c0213e6f93bfcb986782bf9e34953f82a471d585d829067374c1",
+  "remote_component_sha256": "6b5b7ae1fba7cbf8b4d8a816256273a101db24e4848ec177659bc0240d0f7858",
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 20,
+    "desktop_accepted": 12,
+    "mobile_accepted": 8,
+    "Android_accepted": 6,
+    "iOS_accepted": 2,
+    "partial": 1,
+    "unstarted": 3,
+    "remaining_iOS": 4
+  }
+}
