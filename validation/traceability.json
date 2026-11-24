@@ -7266,6 +7266,8 @@
         "native_service_macos_observation_rejects_wrong_identity_and_malformed_nesting",
         "native_service_macos_observation_preserves_flat_fixture_format",
         "native_service_stopped_creation_projection_preserves_registration_and_durable_state",
+        "native_service_windows_ready_historical_failure_projects_only_reviewed_stopped_files",
+        "host_update_rejects_unprojected_files_policy_before_native_effects",
         "native_service_stopped_creation_projection_rejects_scope_policy_and_native_races",
         "native_service_stopped_creation_projection_rechecks_after_qualification",
         "stopped_creation_projection_preserves_committed_binary_replacement_history",

@@ -563,6 +563,155 @@ fn reconfigure_files_lifecycle(
 
 #[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
 #[test]
+fn native_service_windows_ready_historical_failure_projects_only_reviewed_stopped_files() {
+    use crate::enrollment::OwnerStorage;
+    use festerm_tunnel_bridge::file_protocol::Policy;
+    for case in [
+        "historical_failure",
+        "clean",
+        "running",
+        "queued",
+        "unknown",
+        "foreign_xml",
+        "foreign_security",
+        "absent",
+        "runtime",
+    ] {
+        let historical_failure = case != "clean";
+        let (root, store, _vault) = crate::enrollment::tests::setup_origin(Origin::Headless);
+        let owners = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        owners
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        let mut manager = services(root.path(), &store, Platform::Windows);
+        manager.state = root.path().join("installation");
+        manager.runner.receipt = manager.state.join(RECORD);
+        let stage = trusted::fixture(root.path());
+        manager
+            .install_with_recovery(&stage, store.snapshot().unwrap().epoch)
+            .unwrap();
+        let original = manager.registration().unwrap().1.unwrap();
+        let receipt = std::fs::read(&manager.runner.receipt).unwrap();
+        let expected = reconfigure_files_lifecycle(
+            &store,
+            Some(Policy {
+                root: root.path().join("reviewed-root"),
+                write: true,
+                delete: true,
+            }),
+        );
+        let owner = owners.snapshot().unwrap();
+        {
+            let mut native = manager.runner.state.borrow_mut();
+            // No running or pending instance: only the previous Task result differs.
+            native.running = false;
+            native.pending_start = false;
+            native.failed = historical_failure;
+        }
+        let task = manager.task(&original, TaskAction::Query).unwrap();
+        assert_eq!(task.state, 3, "the registered Task is Ready");
+        assert_eq!(task.last_exit, if historical_failure { 1 } else { 0 });
+        assert_eq!(
+            manager.observe(&original).unwrap(),
+            if historical_failure {
+                ProcessState::Failed
+            } else {
+                ProcessState::Stopped
+            }
+        );
+        let mut held_runtime = None;
+        {
+            let mut native = manager.runner.state.borrow_mut();
+            match case {
+                "running" => native.running = true,
+                "queued" => native.pending_start = true,
+                "unknown" => native.observation_error = true,
+                "foreign_xml" => native.native_xml = Some("foreign definition".into()),
+                "foreign_security" => native.native_security = Some("foreign security".into()),
+                "absent" => native.native_xml = None,
+                "runtime" => {
+                    let directory = storage::private_directory(&manager.state, false).unwrap();
+                    held_runtime = Some(
+                        Lease::exclusive(
+                            storage::open_private_file(
+                                &directory,
+                                Path::new("host-runtime.lock"),
+                                true,
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let calls_before = manager.runner.state.borrow().calls.len();
+        let result = manager.complete_setup_with(
+            &stage,
+            &expected,
+            &owner,
+            &owners,
+            &tokio_util::sync::CancellationToken::new(),
+            |_| Ok(trusted::fixture(root.path())),
+        );
+        if matches!(case, "historical_failure" | "clean") {
+            assert_eq!(
+                result.unwrap().process,
+                if historical_failure {
+                    ProcessState::Failed
+                } else {
+                    ProcessState::Stopped
+                }
+            );
+            let mut wanted = original.clone();
+            wanted.settings = expected.settings.clone();
+            assert_eq!(manager.registration().unwrap().1.unwrap(), wanted);
+        } else {
+            let error = result.err().unwrap();
+            if matches!(case, "running" | "queued" | "absent") {
+                assert_eq!(error.to_string(), "host.service_confirmed_stop_required");
+            }
+            if case == "runtime" {
+                assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            }
+            assert_eq!(std::fs::read(&manager.runner.receipt).unwrap(), receipt);
+            assert_eq!(manager.registration().unwrap().1.unwrap(), original);
+        }
+        drop(held_runtime);
+        assert_eq!(store.snapshot().unwrap(), expected);
+        assert_eq!(owners.snapshot().unwrap(), owner);
+        let native = manager.runner.state.borrow();
+        assert_eq!(native.running, case == "running");
+        assert_eq!(native.pending_start, case == "queued");
+        assert_eq!(
+            native.failed, historical_failure,
+            "do not rewrite Task history"
+        );
+        assert!(
+            native.calls[calls_before..].iter().all(|call| matches!(
+                call,
+                NativeRequest::Task {
+                    action: TaskAction::Query,
+                    ..
+                }
+            )),
+            "setup completion must not start, stop, register or repair the Task"
+        );
+        assert!(!std::fs::read_dir(&manager.state).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".checkpoint-")
+        }));
+    }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime", unix))]
+#[test]
 fn native_service_stopped_files_projection_preserves_registration_and_durable_state() {
     use crate::enrollment::OwnerStorage;
     use festerm_tunnel_bridge::file_protocol::Policy;

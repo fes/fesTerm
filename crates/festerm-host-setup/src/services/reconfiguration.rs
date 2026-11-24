@@ -101,9 +101,14 @@ impl<R: CommandRunner> Services<'_, R> {
             }
         })?;
         let process = self.observe(&old)?;
+        // Windows Failed is an authenticated Ready Task with a historical
+        // nonzero result, not a live instance: native Query promotes instances
+        // to Running (or retains Queued). Keep that history and shared status;
+        // only this lease-fenced policy projection accepts the quiescent Task.
         if (self.context.platform != Platform::Windows
             && !definitions::check_file(&self.context, &old)?)
             || (process != ProcessState::Stopped
+                && !(self.context.platform == Platform::Windows && process == ProcessState::Failed)
                 && !(self.context.platform == Platform::Macos && process == ProcessState::Absent))
         {
             return Err(refused("host.service_confirmed_stop_required"));

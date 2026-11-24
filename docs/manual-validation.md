@@ -7052,3 +7052,16 @@ ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 components bring the matrix to14/24 (desktop12/12, mobile2/12); the remaining ten
 mobile cases and current combined-release qualification are open.
+
+
+### Windows reviewed Files restoration after historical Task failure
+
+HOST-04 / DTFILES-03: #904 records an original Files policy committed while
+native registration retained Files OFF and setup failed before worker start.
+The Task's old nonzero result is historical, not a new worker crash. Portable
+Task-runner coverage now permits reviewed policy projection for an authenticated
+Ready Task without live instances while retaining Failed status/history and all
+lease/authority checks. It does not establish the exact native failure cause.
+A corrected GUI must still qualify one normal stopped review/first Enable with
+matching authenticated helpers, preserve Task history/catalog/actors, and drain
+normally. No Recovery, Refresh, replay or held-stream rerun is implied.
