@@ -2429,8 +2429,14 @@ authorization or policy mutation follows without explicit confirmation.
 HOST-04 non-Mac ordinary Enable retains the existing service-operation ownership
 and absolute deadline through the final protected-scope read. Only WouldBlock
 may wait for a fresh full-Snapshot match; cancel, fatal errors or changed scope
-refuse without another Start or credential action. The original Mac path and
-all explicit recovery/retry edges remain unchanged; native acceptance is pending.
+refuse without another Start or credential action. Native acceptance is pending.
+
+HOST-04 / DIAG-01 Mac Enable checks the original protected scope after an
+authenticated Start reply. Only a contended parent snapshot may wait, within
+the same absolute deadline used by the child transport. The first Busy remains
+diagnostic evidence. Successful completion requires current full scope before
+the deadline and an active operation. The read loop has no Start or setup
+action. Corrected signed Mac first-result qualification remains pending.
 
 
 HOST-03 / MOB-06 Terminate confirmation keeps one stop mutation and the original

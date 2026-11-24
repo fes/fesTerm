@@ -168,6 +168,47 @@ pub fn execute(
     Ok(format!("{bytes}\n"))
 }
 
+fn parent_current(
+    state: &Path,
+    until: Instant,
+    cancel: &CancellationToken,
+    mut read: impl FnMut() -> io::Result<()>,
+) -> io::Result<()> {
+    let mut last_busy = None;
+    loop {
+        if cancel.is_cancelled() {
+            return Err(io::Error::other("host.cloud_cancelled"));
+        }
+        if Instant::now() >= until {
+            break;
+        }
+        let read_result = read();
+        let read_result = match &read_result {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && last_busy.is_some() => {
+                read_result
+            }
+            // Keep evidence of the first Busy, even when a later read succeeds.
+            _ => observe_start(state, StartStage::MacParentCurrent, read_result),
+        };
+        if cancel.is_cancelled() {
+            return Err(io::Error::other("host.cloud_cancelled"));
+        }
+        match read_result {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                last_busy = Some(error);
+                std::thread::sleep(
+                    until
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(25)),
+                );
+            }
+            Ok(()) if Instant::now() >= until => break,
+            result => return result,
+        }
+    }
+    Err(last_busy.unwrap_or_else(|| io::Error::other("host.service_native_timeout")))
+}
+
 /// The GUI holds no service-operation lease while waiting. The authenticated
 /// child acquires the existing lease and its unchanged native deadline itself.
 pub fn start(
@@ -199,7 +240,8 @@ pub fn start(
         "--consent".into(),
         "start".into(),
     ];
-    let output = child(stage.path(), args, cancel.clone())?;
+    let until = Instant::now() + DEADLINE;
+    let output = child(stage.path(), args, cancel.clone(), until)?;
     stage.revalidate_for_desktop_start()?;
     let reply: Reply = serde_json::from_slice(&output).map_err(|_| refused())?;
     if reply.schema != 1 || reply.nonce != nonce || reply.scope != scope {
@@ -215,11 +257,11 @@ pub fn start(
         return Err(failure.error());
     }
     let process = reply.process.ok_or_else(refused)?;
-    observe_start(
-        state,
-        StartStage::MacParentCurrent,
-        current(store, &expected.installation, expected.epoch, &scope),
-    )?;
+    // After the one child has exited, only the exact protected read may wait.
+    // The parent and child transport share the deadline captured above.
+    parent_current(state, until, cancel, || {
+        current(store, &expected.installation, expected.epoch, &scope).map(drop)
+    })?;
     Ok(Observation {
         process,
         installation: expected.installation.clone(),
@@ -232,10 +274,10 @@ fn child(
     tool: &Path,
     args: Vec<std::ffi::OsString>,
     cancel: CancellationToken,
+    until: Instant,
 ) -> io::Result<Vec<u8>> {
     let tool = tool.to_owned();
     let home = festerm_unix_security::current_user_home()?;
-    let until = Instant::now() + DEADLINE;
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("host-desktop-start".into())
@@ -301,6 +343,221 @@ fn child(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lifecycle::{Binding, Settings, Startup};
+    use crate::protected_state::Lease;
+    use festerm_sessiond::private_storage as storage;
+    use std::path::PathBuf;
+
+    fn provisioned_parent() -> (storage::PrivateTestDirectory, PathBuf, Store, Snapshot) {
+        let root = storage::private_test_directory();
+        let state = root.path().join("state");
+        let settings = Settings {
+            filesystem: None,
+            ordinary_access: Default::default(),
+            friendly_name: "fixture".into(),
+            allow_creation: false,
+            allow_session_termination: false,
+            startup: Startup::Manual,
+        };
+        let store = Store::create(&state, Origin::Desktop, settings.clone()).unwrap();
+        let ticket = store.request_enable(&settings).unwrap();
+        store
+            .record_provisioned(
+                &ticket,
+                Binding {
+                    host_id: uuid::Uuid::new_v4().to_string(),
+                    account: "fixture-account".into(),
+                    qualified_tunnel: "fixture.region".into(),
+                    cloud_incarnation: "fixture-incarnation".into(),
+                    host_key_fingerprint: "SHA256:fixture".into(),
+                },
+            )
+            .unwrap();
+        let expected = store.snapshot().unwrap();
+        (root, state, store, expected)
+    }
+
+    fn hold_lifecycle_lease(state: &Path) -> Lease {
+        let directory = storage::private_directory(state, false).unwrap();
+        Lease::exclusive(
+            storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn desktop_start_parent_current_recovers_after_real_lease_releases() {
+        let (_root, state, store, expected) = provisioned_parent();
+        let scope = scope_digest(&expected).unwrap();
+        let mut lease = Some(hold_lifecycle_lease(&state));
+        let mut reads = 0;
+        parent_current(
+            &state,
+            Instant::now() + DEADLINE,
+            &CancellationToken::new(),
+            || {
+                reads += 1;
+                let result = current(&store, &expected.installation, expected.epoch, &scope);
+                if reads == 1 {
+                    assert_eq!(
+                        result.as_ref().unwrap_err().kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                    drop(lease.take());
+                }
+                result.map(drop)
+            },
+        )
+        .expect("the post-child parent read should recover from a released lifecycle lease");
+        assert_eq!(reads, 2);
+        assert_eq!(store.snapshot().unwrap(), expected);
+        let log = std::fs::read_to_string(state.join("worker.log")).unwrap();
+        assert!(log.contains("host.start_observation stage=mac_parent_current kind=busy os=none"));
+    }
+
+    #[test]
+    fn desktop_start_parent_current_refuses_changed_consent_after_real_contention() {
+        let (_root, state, store, expected) = provisioned_parent();
+        let scope = scope_digest(&expected).unwrap();
+        let mut lease = Some(hold_lifecycle_lease(&state));
+        let mut changed = expected.clone();
+        changed.settings.allow_creation = true;
+        let mut reads = 0;
+        let error = parent_current(
+            &state,
+            Instant::now() + DEADLINE,
+            &CancellationToken::new(),
+            || {
+                reads += 1;
+                let result = current(&store, &expected.installation, expected.epoch, &scope);
+                if let Some(lease) = lease.take() {
+                    assert_eq!(
+                        result.as_ref().unwrap_err().kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                    // Change only the approved settings while the competing lease is held.
+                    let directory = storage::private_directory(&state, false).unwrap();
+                    storage::replace_private(
+                        &directory,
+                        Path::new("host-lifecycle.json"),
+                        &serde_json::to_vec(&changed).unwrap(),
+                    )
+                    .unwrap();
+                    drop(lease);
+                }
+                result.map(drop)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "host.runtime_consent_changed");
+        assert_eq!(reads, 2);
+        assert_eq!(store.snapshot().unwrap(), changed);
+    }
+
+    #[test]
+    fn desktop_start_parent_current_cancelled_during_real_contention_cannot_read_again() {
+        let (_root, state, store, expected) = provisioned_parent();
+        let scope = scope_digest(&expected).unwrap();
+        let _lease = hold_lifecycle_lease(&state);
+        let cancel = CancellationToken::new();
+        let mut reads = 0;
+        let error = parent_current(&state, Instant::now() + DEADLINE, &cancel, || {
+            reads += 1;
+            let result = current(&store, &expected.installation, expected.epoch, &scope);
+            assert_eq!(
+                result.as_ref().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            cancel.cancel();
+            result.map(drop)
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "host.cloud_cancelled");
+        assert_eq!(reads, 1);
+
+        let error = parent_current(&state, Instant::now() + DEADLINE, &cancel, || {
+            panic!("cancelled parent must not read protected state")
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "host.cloud_cancelled");
+    }
+
+    #[test]
+    fn desktop_start_parent_current_preserves_original_deadline_and_busy() {
+        let (_root, state, store, expected) = provisioned_parent();
+        let scope = scope_digest(&expected).unwrap();
+        let cancel = CancellationToken::new();
+        let error = parent_current(&state, Instant::now(), &cancel, || {
+            panic!("the child already consumed the original observation budget")
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "host.service_native_timeout");
+
+        for release_lease in [false, true] {
+            let mut lease = Some(hold_lifecycle_lease(&state));
+            let mut reads = 0;
+            let until = Instant::now() + Duration::from_millis(500);
+            let error = parent_current(&state, until, &cancel, || {
+                reads += 1;
+                let result = current(&store, &expected.installation, expected.epoch, &scope);
+                if reads == 1 {
+                    assert_eq!(
+                        result.as_ref().unwrap_err().kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                } else {
+                    assert_eq!(result.as_ref().unwrap(), &expected);
+                }
+                if release_lease && reads == 1 {
+                    drop(lease.take());
+                } else {
+                    // A Busy or matched result returned after the original deadline
+                    // cannot authorize another read or successful completion.
+                    std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                }
+                result.map(drop)
+            })
+            .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert_eq!(error.to_string(), "host.installation_busy");
+            assert_eq!(reads, if release_lease { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn desktop_start_parent_current_does_not_retry_fatal_read() {
+        let (_root, state, store, expected) = provisioned_parent();
+        let scope = scope_digest(&expected).unwrap();
+        let mut lease = Some(hold_lifecycle_lease(&state));
+        let mut reads = 0;
+        let error = parent_current(
+            &state,
+            Instant::now() + DEADLINE,
+            &CancellationToken::new(),
+            || {
+                reads += 1;
+                if let Some(lease) = lease.take() {
+                    let result = current(&store, &expected.installation, expected.epoch, &scope);
+                    assert_eq!(
+                        result.as_ref().unwrap_err().kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                    drop(lease);
+                    return result.map(drop);
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "fixture denied",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "fixture denied");
+        assert_eq!(reads, 2);
+    }
+
     #[test]
     fn desktop_start_reply_is_closed_bounded_and_never_claims_readiness() {
         let reply = Reply {
@@ -362,6 +619,7 @@ mod tests {
                 finished.as_os_str().to_owned(),
             ],
             cancel,
+            Instant::now() + DEADLINE,
         )
         .unwrap_err();
         assert_eq!(error.to_string(), "host.cloud_cancelled");
