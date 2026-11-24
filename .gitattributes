@@ -74,3 +74,9 @@ validation/dev-tunnels/android-client-windows-native/*-queries.json -text whites
 # Original Android/macOS reports retain their captured JSON and JSONL bytes.
 validation/dev-tunnels/android-client-mac-native/*-queries.json -text whitespace=-blank-at-eof
 validation/dev-tunnels/android-client-mac-native/*-queries.jsonl -text whitespace=-blank-at-eof
+
+# Original iOS/Linux capability reports retain their captured JSON bytes.
+validation/dev-tunnels/ios-client-linux-native/*-query.json -text whitespace=-blank-at-eof
+
+# Original iOS/Windows query reports retain captured bytes.
+validation/dev-tunnels/ios-client-windows-native/*-query.json -text whitespace=-blank-at-eof

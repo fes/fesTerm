@@ -41,7 +41,7 @@ script. See MOB-06 for the separate controlled-host/device demo acceptance.
 
 Manual, local and macOS-only; **CI does not build, sign or upload iOS builds.**
 `scripts/build-ios-testflight.py` builds the release `festerm-mobile` binary
-(`--release --locked --features live-ssh`, iOS 15.0 floor), assembles the app
+(`--release --locked --features host-clients`, iOS 15.0 floor), assembles the app
 (`com.feslabs.fesTerm`, workspace version, integer build number, `AppIcon`
 catalog compiled from `assets/app-icon/app-icon-1024.png` flattened to remove
 alpha, `ITSAppUsesNonExemptEncryption=false`), wraps it in an `.xcarchive` and

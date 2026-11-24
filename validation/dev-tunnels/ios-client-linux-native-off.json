@@ -1,0 +1,173 @@
+{
+  "case_number": 19,
+  "direction": "iOS -> Linux",
+  "creation": "OFF",
+  "acceptance_sha256": "02853124e8625d8e060826259375b3f40a15d3c8cbbbcffd1d621cf9a00c464d",
+  "candidate_sha256": "8ad5c2d9b75ba616ab532fd0bef7d06f4aa26c21ad06dd2a04276bcd48e76418",
+  "producer_cohorts": {
+    "iOS_binary_sha256": "d5706d56eb808d95b985ae9cc2f59803202c66c1b1c09223d76237bfbb3194d2",
+    "server": "signed Linux HOST24/native64, SDK policy at87; current iOS route91",
+    "local_reference": "genuine signed LinuxGUI24/source697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+    "CLI": "Copilot1.0.112"
+  },
+  "workflow": "System input, same-generation foreground and saved AttachOnly reopen; actual visible app-owned keyboard echo+Return. Prior OFF SDK service/policy component separately attributed, not rerun in current iOS phases.",
+  "pairs": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "font_points_remote_local": [
+        14,
+        14
+      ],
+      "reports": [
+        {
+          "path": "ios-client-linux-native/ios-linux-off-44x34-remote-query.json",
+          "bytes": 1375,
+          "sha256": "40afdb6984fcbfa91b02e273c3697ad74caa49b406ed25d88f6734735a49e28b"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-off-44x34-local-query.json",
+          "bytes": 1389,
+          "sha256": "2031ed35d731048be346b76186c67222753e855cf48ec4b3d5d9098f167ca72b"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-linux-native/ios-linux-off-44x34-remote-copilot.png",
+          "bytes": 231883,
+          "sha256": "9514dc4ad097d03631daeb59a346318819b248965f4e1d96766a1381b42d53b0"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-off-44x34-local-copilot.png",
+          "bytes": 41890,
+          "sha256": "7aefc97712d4f4346e653c27d76869fceb6fb8c444ad11abd90ac2c971f047ff"
+        }
+      ]
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "font_points_remote_local": [
+        11.5,
+        14
+      ],
+      "reports": [
+        {
+          "path": "ios-client-linux-native/ios-linux-off-53x42-remote-query.json",
+          "bytes": 1375,
+          "sha256": "06271ba67a97cb74f632428c01651bfbe28b1fb8d01e7b6806bcc94f30b4e78d"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-off-53x42-local-query.json",
+          "bytes": 1390,
+          "sha256": "a85d6d7d3ccb46da33d3d212de5ffcadaf9b396960599f28df545b154c7bc7a9"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-linux-native/ios-linux-off-53x42-remote-copilot.png",
+          "bytes": 211202,
+          "sha256": "f2ff17bfbe9704df4953586e136c1428992bd1c2d9ab2b0220cfcd2fea5916d7"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-off-53x42-local-copilot.png",
+          "bytes": 45821,
+          "sha256": "ad39112392064d7caba74c88a7774f3cd8984f9e047984c24eb382dea2226533"
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "observations_per_grid": 10,
+    "singleton_reply_bytes": 202,
+    "DSR_row_col": [
+      1,
+      1
+    ],
+    "raw_differences": [
+      "case",
+      "elapsed_ms",
+      "environment.LC_ALL"
+    ],
+    "LC_ALL": {
+      "remote": "unset",
+      "local": "en_US.UTF-8"
+    },
+    "normalization": false
+  },
+  "limits": [
+    "Built-in UIKit keyboard was not visible. Physical tap criterion came from actually visible fesTerm Terminal: Hold symbols keys; no XCTest typing succeeded in that custom mode. Initial custom R8 focus failure retained.",
+    "Two 11pt local phases showed incomplete visible draft spans; both held Return and made no probe/CLI at those grids. Default14 with a 466\u00d7849 window held the same logical dimensions and showed the complete draft, but mode/font/pixel geometry differ and no cause or source fix is established.",
+    "Local controls cap exceeded by 229376 bytes in first local phase; that refusal remains retained. Final new booking actual2347008 of4194304 bytes and immutable free-space floor passed.",
+    "First 1280\u00d7960 controller inspect and resume refused historical 1024\u00d7768 expectation with no frontend/unit effect. One staged display predicate corrected before actual GUI. No font zoom or native window resize occurred in successful default14 phase.",
+    "Current catalog hash and all24/49 preserved, writer117 detached; exact original Linux display and restore timer drained. App/runners/all13 simulators previously closed and no VM resume debt."
+  ],
+  "cleanup": "Original preferences/account metadata preserved; all native closed/all SimulatorsShutdown/all VMsRunning/Linux1024x768 restored/timerdrained.",
+  "not_claimed": [
+    "Pixel identity",
+    "Built-in UIKit keyboard visibility",
+    "Unknown font11 missing-span cause/sourcefix",
+    "A single current combined-release qualification"
+  ],
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Linux creation-OFF case19",
+  "functional_case_accepted": true,
+  "global_TUI_identity_qualified": false,
+  "full_24_case_matrix_complete": false,
+  "assets": {
+    "ios-linux-off-44x34-remote-query.json": {
+      "path": "ios-client-linux-native/ios-linux-off-44x34-remote-query.json",
+      "bytes": 1375,
+      "sha256": "40afdb6984fcbfa91b02e273c3697ad74caa49b406ed25d88f6734735a49e28b"
+    },
+    "ios-linux-off-44x34-local-query.json": {
+      "path": "ios-client-linux-native/ios-linux-off-44x34-local-query.json",
+      "bytes": 1389,
+      "sha256": "2031ed35d731048be346b76186c67222753e855cf48ec4b3d5d9098f167ca72b"
+    },
+    "ios-linux-off-44x34-remote-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-off-44x34-remote-copilot.png",
+      "bytes": 231883,
+      "sha256": "9514dc4ad097d03631daeb59a346318819b248965f4e1d96766a1381b42d53b0"
+    },
+    "ios-linux-off-44x34-local-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-off-44x34-local-copilot.png",
+      "bytes": 41890,
+      "sha256": "7aefc97712d4f4346e653c27d76869fceb6fb8c444ad11abd90ac2c971f047ff"
+    },
+    "ios-linux-off-53x42-remote-query.json": {
+      "path": "ios-client-linux-native/ios-linux-off-53x42-remote-query.json",
+      "bytes": 1375,
+      "sha256": "06271ba67a97cb74f632428c01651bfbe28b1fb8d01e7b6806bcc94f30b4e78d"
+    },
+    "ios-linux-off-53x42-local-query.json": {
+      "path": "ios-client-linux-native/ios-linux-off-53x42-local-query.json",
+      "bytes": 1390,
+      "sha256": "a85d6d7d3ccb46da33d3d212de5ffcadaf9b396960599f28df545b154c7bc7a9"
+    },
+    "ios-linux-off-53x42-remote-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-off-53x42-remote-copilot.png",
+      "bytes": 211202,
+      "sha256": "f2ff17bfbe9704df4953586e136c1428992bd1c2d9ab2b0220cfcd2fea5916d7"
+    },
+    "ios-linux-off-53x42-local-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-off-53x42-local-copilot.png",
+      "bytes": 45821,
+      "sha256": "ad39112392064d7caba74c88a7774f3cd8984f9e047984c24eb382dea2226533"
+    }
+  },
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 19,
+    "desktop_accepted": 12,
+    "mobile_accepted": 7,
+    "Android_accepted": 6,
+    "iOS_accepted": 1,
+    "partial": 2,
+    "unstarted": 3,
+    "remaining_iOS": 5
+  }
+}

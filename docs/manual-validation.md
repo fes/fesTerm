@@ -1172,9 +1172,9 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has eighteen accepted pinned functional cases (desktop12/12, mobile6/12),
-three partial cases and three unstarted cases after the separately attributed
-Android→Linux, Windows and Mac OFF/ON pairs below. The Mac exact visual-text
+has twenty accepted pinned functional cases (desktop12/12, mobile8/12),
+one partial case and three unstarted cases after the separately attributed
+Android OFF/ON pairs and iOS Linux OFF/Windows ON cases below. The Mac exact visual-text
 variance remains open; these counts do not claim global TUI identity. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
@@ -7067,8 +7067,8 @@ exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 Linux components remain two accepted mobile cases. With the Android→Windows
-and Android→Mac OFF/ON cases below, current totals are18/24 (desktop12/12,
-mobile6/12), three partial and three unstarted; six iOS cases, Mac exact
+and Android→Mac OFF/ON cases below, current totals are20/24 (desktop12/12,
+mobile8/12), one partial and three unstarted; four iOS cases, Mac exact
 visual-text variance and combined-release qualification remain open.
 
 
@@ -7198,6 +7198,61 @@ local PNG equals ON bytes, but independent capture provenance distinguishes
 ON CLI77987 from OFF CLI90612, its GUI88544/window1345 and phase receipts.
 Byte equality is not evidence of capture reuse. All originals are unedited; no
 config/vault/credential-reference/private SDK logs are published.
-Current totals are18/24 pinned functional cases (desktop12/12, mobile6/12),
-three partial and three unstarted. All six Android functional cases are
-accepted; six iOS cases and the named Mac visual-text variance remain open.
+Current totals are20/24 pinned functional cases (desktop12/12, mobile8/12),
+one partial and three unstarted. All six Android functional cases and iOS Linux
+OFF/Windows ON are accepted; four iOS cases and the named Mac visual-text variance remain open.
+
+
+### iOS→Linux OFF pinned functional case19
+
+DT-02 / MOB-06 / HOST-02: the [case19 record](../validation/dev-tunnels/ios-client-linux-native-off.json)
+composes Linux87 SDK OFF service/policy proof with current Linux91/native64
+iOS System input, same-generation foreground and saved AttachOnly reopening.
+Actual visible app-owned keys and Return produced echo; the built-in UIKit
+keyboard was not visible and XCTest custom-mode typing is not qualified.
+The d570 iOS binary, genuine signed HOST24 and localGUI24/source697 producers
+remain distinct; none is relabeled as the prepared metadata27 build.
+
+Fresh44×34/53×42 query/Copilot pairs have all ten singleton observations,
+202 bytes and DSR1,1 equal. Actual LC_ALL is unset remotely and en_US.UTF-8
+locally; fonts14/14 and11.5/14, physical dimensions, chrome and rasterization
+remain attributed, with no normalization or pixel-identity claim. Four original
+CLI captures and four raw reports are included. Two font11 pending-draft
+missing-span observations have unknown cause; the initial custom-focus refusal
+and first local control-budget refusal remain preserved, without a source-fix
+or original I/O-cause claim. Preferences/data, all24 actors/catalog/49 operations,
+Linux1024×768 and normal app/CLI/runner/timer drains were preserved/restored.
+The case counts as19/24 functional cases, not complete mobile or combined-release
+qualification; Mac CWD-label/MCP visual text variance remains open.
+
+
+### iOS→Windows ON pinned functional case20
+
+DT-02 / MOB-06 / HOST-02: the [case20 record](../validation/dev-tunnels/ios-client-windows-native-on.json)
+adds ordinary creation with the corrected protected-original context, actual
+System input/foreground reconnect, saved same-generation AttachOnly reopening
+and two fresh44×34/53×42 query/Copilot references. The iOS8389 binary was
+built from oldbase0e86/tree22dad (runtime26), distinct from signed HOST26/edace
+and genuine localGUI24/source697. Prepared metadata27 is not a built or
+native-qualified producer. Native original-checkpoint success does not identify
+the first generic I/O failure's precise cause or authorize reset/migration.
+
+Root compared every raw field: only case/time differ; all ten singleton
+observations,202 bytes, DSR1,1 and six environment fields agree. iOS presets
+Large14pt/Normal11.5pt and local10pt at192dpi remain attributed, with corresponding
+CLI layout and no pixel-identity claim. Two original iOS PNGs and four original
+raw reports are included; the two full-background Windows PNGs remain private
+with exact hashes, sizes, phase provenance and local availability. No crop,
+re-recording or background screenshot publication is used.
+
+The report-parent ACL prerequisite was corrected once in an empty task-owned
+parent using the same existing user FullControl, without access broadening.
+Prior probe-exit cause, first control/version/parent refusals and actual doubled
+public saved label remain explicit. The local transient Shell autosaved zero
+profiles; that is not loss of an original saved profile. No new SDK dispatch
+occurred in the local comparison phase. All33 actors/catalog/29 operations
+and original metadata/settings survived; app/CLI/Simulator/localGUI/CMD/Job/
+input/task groups drained normally. Current totals are20/24 functional cases
+(desktop12/mobile8: Android6/iOS2), one partial/three unstarted. Linux ON,
+Windows OFF, Mac ON and Mac OFF remain; no blanket combined-release or
+built-in UIKit keyboard-visibility acceptance follows.

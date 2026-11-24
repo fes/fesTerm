@@ -134,11 +134,19 @@ The Android→Mac [ON](validation/dev-tunnels/android-client-mac-native-on.json)
 [OFF](validation/dev-tunnels/android-client-mac-native-off.json) records add two
 pinned functional cases. Their raw reports match; exact Copilot CWD-label/MCP
 text equality remains open despite comparable main layout and palette.
-There are eighteen accepted pinned functional cases (desktop 12/12, mobile 6/12),
-three partial cases and three unstarted cases. Six iOS cases remain; the full
+The [iOS→Linux creation-OFF record](validation/dev-tunnels/ios-client-linux-native-off.json)
+adds the first iOS functional case, with System input, saved same-generation reopen,
+visible app-owned keys and two matched-grid query/Copilot pairs.
+The [iOS→Windows creation-ON record](validation/dev-tunnels/ios-client-windows-native-on.json)
+adds corrected-original checkpoint recovery, same-generation saved reopen and
+two matched-grid references. Its two full-background local screenshots remain
+private with hashes and provenance; two iOS originals and four raw reports are public.
+There are twenty accepted pinned functional cases (desktop 12/12, mobile 8/12),
+one partial case and three unstarted cases. Four iOS cases remain; the full
 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
-qualifies one matched Copilot/query pair; its full workflow case remains open. Explicit
+qualifies one historical matched pair; it does not establish the current full
+workflow case by itself. Explicit
 creation keeps its issued action after an uncertain result, with no replacement
 create, automatic enrollment or legacy fallback. This is not stage-6 completion.
 The opt-in mobile client has a protected native-vault original-action checkpoint:
