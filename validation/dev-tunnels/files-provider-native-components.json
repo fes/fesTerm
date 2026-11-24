@@ -1,0 +1,151 @@
+{
+  "record_version": 1,
+  "status": "six pinned provider-boundary components passed; original permissions restored",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "dates_utc": [
+    "2026-11-23",
+    "2026-11-24"
+  ],
+  "not_a_new_matrix_case": true,
+  "combined_release_qualified": false,
+  "sdk_builds": {
+    "RO897": {
+      "pull_request": "https://github.com/fes/fesTerm/pull/897",
+      "source": "9fa4fc208cbff8bab942a06c3fbbec27ddf9b52e",
+      "tree": "064fb2dca8b7a7234e64c812893ae9f75f3d74c2",
+      "run": 45271676264,
+      "attempt": 1,
+      "artifact": 14866466500,
+      "bytes": 22180536,
+      "sha256": "6f025775d3e47a5fb17b76ec293cbd1774c6f3ba91c6354aa6c19d21714cc6ac",
+      "producer_checkout": "4e5f03779fd3543cad7e788129d27e7e6bcf3648"
+    },
+    "RO_WRITE898": {
+      "pull_request": "https://github.com/fes/fesTerm/pull/898",
+      "source": "75147f27dadc8172c54fd19bd57b47b35e72175c",
+      "tree": "a725dc62b98531a2c86bee7a0179ec6304b993d9",
+      "run": 45284373999,
+      "attempt": 1,
+      "artifact": 14871581811,
+      "bytes": 22254952,
+      "sha256": "67eb3951e121c9be5d8dbd9401ab9bef3dbf340d4ae16643f0139f23b4bc3d94",
+      "producer_checkout": "3a00475c4326c5250a3c1e130edc6bc111713ee9"
+    }
+  },
+  "host_gui_builds": {
+    "signed24": {
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "tree": "10c77e80f5512c669e1529147ec6354a6760274e",
+      "run": 45200242229,
+      "attempt": 1
+    },
+    "signed26": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "tree": "f6fdb02c6bb5b8fc51e6edc0bc90c50bd50c9589",
+      "run": 45299124779,
+      "attempt": 1
+    }
+  },
+  "common_results": {
+    "RO": {
+      "ParentTraversal": "RemoteInvalid",
+      "Backslash": "RemoteInvalid",
+      "DrivePath": "RemoteInvalid",
+      "ReservedName": "RemoteInvalid",
+      "ReadOnlyMkdir": "RemoteDenied",
+      "ReadOnlyUpload": "RemoteDenied",
+      "link_read": "RemoteIo",
+      "link_directory": "RemoteIo",
+      "positive_canary_read_reread_and_Ping": true
+    },
+    "WRITE_DeleteOFF": {
+      "link_BeginUpload": "RemoteIo",
+      "canary_ReviewEntry_Delete": "RemoteDenied",
+      "positive_canary_read_reread_and_Ping": true,
+      "no_chunk_Finish_or_Delete_confirmation_sent": true
+    }
+  },
+  "components": [
+    {
+      "server_OS": "Linux",
+      "owner_GUI_and_HOST_build": "signed24",
+      "SDK_client_OS": "Linux",
+      "escape_fixture_kind": "symlink",
+      "RO": {
+        "epoch": 77,
+        "sdk_build": "RO897",
+        "exit_code": 0,
+        "elapsed_seconds": 6.865,
+        "private_receipt_sha256": "a8aea334565f0440eafbb54bcc2fb4ad79d3c3b073bf20cbd5840b51ba601249",
+        "original_RW_DeleteON_restored_epoch": 79
+      },
+      "WRITE_DeleteOFF": {
+        "epoch": 81,
+        "sdk_build": "RO_WRITE898",
+        "exit_code": 0,
+        "elapsed_seconds": 6.334,
+        "private_receipt_sha256": "e0ff4db759d7e8d58b3c09bb0b461c9e274e79f1dda91e0669a5481386caac36"
+      },
+      "final_original_RW_DeleteON_epoch": 83,
+      "normal_GUI_exit_and_owned_helper_SDK_group_drain": true
+    },
+    {
+      "server_OS": "Windows",
+      "owner_GUI_and_HOST_build": "signed24",
+      "SDK_client_OS": "Linux",
+      "escape_fixture_kind": "junction",
+      "RO": {
+        "epoch": 56,
+        "sdk_build": "RO897",
+        "exit_code": 0,
+        "elapsed_seconds": 6.54,
+        "private_receipt_sha256": "4c72c4924446ef43986dd22412c9c1a556639d9054172d9d599456986cb7e9bd",
+        "original_RW_DeleteON_restored_epoch": 58
+      },
+      "WRITE_DeleteOFF": {
+        "epoch": 60,
+        "sdk_build": "RO_WRITE898",
+        "exit_code": 0,
+        "elapsed_seconds": 6.389,
+        "private_receipt_sha256": "4740907ba1dbfb4394f8c8e116a0a9f493eb7440da1b1110535fa6235c92245a"
+      },
+      "final_original_RW_DeleteON_epoch": 62,
+      "normal_GUI_exit_and_owned_helper_SDK_group_drain": true
+    },
+    {
+      "server_OS": "macOS",
+      "owner_GUI_and_HOST_build": "signed26",
+      "SDK_client_OS": "Linux",
+      "escape_fixture_kind": "symlink",
+      "RO": {
+        "epoch": 33,
+        "sdk_build": "RO_WRITE898",
+        "exit_code": 0,
+        "elapsed_seconds": 6.175,
+        "private_receipt_sha256": "eaebb57140d64b11cd9b5c5c786bc63a7098a3125133857e41a32be76ddf52a0",
+        "original_RW_DeleteON_restored_epoch": null
+      },
+      "WRITE_DeleteOFF": {
+        "epoch": 37,
+        "sdk_build": "RO_WRITE898",
+        "exit_code": 0,
+        "elapsed_seconds": 5.178,
+        "private_receipt_sha256": "bab074c6937727791a027cf6ea4b38ba44af3b5fcfacab3f35ee174245b3a176"
+      },
+      "final_original_RW_DeleteON_epoch": 39,
+      "normal_GUI_exit_and_owned_helper_SDK_group_drain": true,
+      "retained_partial": "The earlier Mac phase passed RO33 but closed at Disabled36 without WRITE or original restoration. The separate fresh phase passed WRITE37 and restored original39; it does not retroactively complete the old phase. Earlier HOST25/RO31 parent-status warning remains a separate retained first failure.",
+      "acquisition": "Stopped HOST25-to26 update used supported authenticated manual source before publication. Fresh WRITE/restoration reused the identical public26 cache with default official26 source; no second update."
+    }
+  ],
+  "limits": [
+    "Each row binds its own HOST, GUI and SDK builds; these are mixed-source components, not a current-release three-platform or full-matrix claim.",
+    "RemoteIo proves refusal for the tested link/junction operations, not an inferred OS or transport cause. No accepted upload handle, chunk, Finish, publication or Delete effect follows from the denied probes.",
+    "Existing-ready metadata was checked before the unchanged normal provider/native-vault connector. This is operator admission, not a source-enforced noncreating authentication API; no new sign-in or credential export was authorized.",
+    "No shell creation, attachment, End or session-inventory request was issued by these Files SDK tests. Original actors, catalogs, bindings and owned canaries were preserved; expected normal policy/control changes are separately attributed.",
+    "Live revocation during admitted work, lost-Finish replies, interruption/recovery, recursive/replacement behavior and wider usability remain separate evidence.",
+    "Private receipts and full desktop screenshots remain private; only receipt hashes and finite public outcomes are recorded here."
+  ]
+}

@@ -42,7 +42,11 @@ an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/li
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
 with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)
 adds a 16 MiB Linux upload and Linux-to-Mac download, mkdir, upload and reviewed
-file/empty-directory deletion, including Delete Cancel preservation. Wider
+file/empty-directory deletion, including Delete Cancel preservation. It also records
+the accepted Linux-to-Windows 97-byte download, 1 MiB upload, mkdir and reviewed
+Delete Cancel/Confirm component. Separate [provider-boundary components](validation/dev-tunnels/files-provider-native-components.json)
+record pinned Linux/Windows HOST24 and Mac HOST26 RO/WRITE refusals and original
+permission restoration; these use distinct SDK builds. Wider
 native/provider Desktop qualification remains pending.
 
 An independent [read-only observation protocol](docs/remote-observation-protocol.md)

@@ -6964,8 +6964,17 @@ refused without chunk/Finish, and a fixed owned-canary Stat/ReviewEntry must
 receive remote Denied without Delete/confirmation. Re-read the canary and Ping;
 compare all owned root/outside identities and contents before/after. Local
 real-service tests cover the wire denials and cancellation/deadline fences;
-actual provider-authenticated Linux/Mac/Windows write-slice runs remain pending.
-No new runner, credential authority, shipping capability or native pass is implied.
+actual provider-authenticated results are now pinned separately in the
+[RO/WRITE component record](../validation/dev-tunnels/files-provider-native-components.json).
+It records Linux RO77/WRITE81→original83, Windows RO56/WRITE60→original62 and
+Mac RO33/WRITE37→original39, with distinct HOST/GUI/SDK sources. The six fixed
+RO probes returned Invalid/Denied, link read/directory/upload returned Io, and
+Delete-off ReviewEntry returned Denied without Delete or Finish. Each scoped
+run preserved the original actors/canaries and drained its owned GUI/SDK group.
+The earlier Mac phase closed at Disabled36; a separate fresh phase completed
+WRITE37 and original39 restoration. No old incomplete phase is relabeled.
+Existing-ready metadata remains operator admission to the normal connector,
+not a noncreating authentication API or broad current-release acceptance.
 
 The [23 November component record](../validation/dev-tunnels/files-native-0.17.24.json)
 qualifies ordinary account discovery and a completed 16 MiB Linux upload, plus
@@ -6975,10 +6984,12 @@ a fresh Confirm removed it. Both apps drained normally and original actors,
 catalogs, policy and canaries remained intact. These are scoped components,
 not new shell matrix cases or blanket current-release acceptance. Selecting a
 `.txt` row did not open a preview and is explicitly unqualified. Intentional
-transfer cancellation, Windows Files, native typed denials and live revocation
-remain separate checks; the successful transfers do not establish the cause
-of the original upload failures.
-
+transfer cancellation and live revocation remain separate checks; the successful
+transfers do not establish the cause of the original upload failures. The same record also includes the accepted
+Linux GUI24→Windows HOST24/48 browse, 97-byte download, 1 MiB upload, mkdir
+and file/empty-directory Delete Cancel/Confirm run (private receipt `f2bf2007…`,
+175 verified references). Later Windows policy epochs do not require repeating
+that accepted graphical component or turn it into a newer-cohort test.
 
 The same signed 0.17.24 record separately qualifies a rendered, read-only
 83-byte Markdown snapshot placed as an owned OS fixture, not uploaded through
