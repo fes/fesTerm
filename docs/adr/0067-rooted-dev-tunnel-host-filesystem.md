@@ -450,3 +450,20 @@ fixtures do not qualify provider-authenticated native boundaries; each deployed
 HOST write-slice run, exact ready-key admission and owned root/outside
 preservation remain separate gates. No protocol, permission or Finish semantics
 change, new credential authority or shipping test API is introduced.
+
+
+### Native held-stream revocation evidence entrypoint
+
+One ignored test in the existing controlled SDK retains only an authenticated
+Files connection and public-canary read handle during an independently operated
+normal Disable/Files-OFF Enable cycle. Private nonce/scope/deadline markers
+coordinate evidence; they confer no host authority. Fixed periodic reads avoid
+the request-idle timeout, stop at the first error and never reconnect or send
+Finish/Delete. Local account/cancel fences remain distinct from owner retirement.
+The campaign must restore original permissions and drain within its lease.
+
+Validation impact: GUI:DTFILES-03 / DT-05 / DT-07; offline malformed/stale control,
+scope/deadline, content-free canary mismatch and first-failure/count fencing
+tests. Native held-stream proof
+is pending. Supported Disable also stops transport, so this does not isolate
+hot-policy revocation, infer a remote error cause or resolve unknown publication.

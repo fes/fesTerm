@@ -15,7 +15,8 @@
     "public_release_run": 45200242229,
     "Linux_GUI_MAIN_sha256": "1d6147044c9b9618055b786458e76af769b6b41e2c90e5f55f6e37c24c435ce3",
     "Linux_HOST_sha256": "142f3335523e9f3e70e41a084daf5602bf76679ce6f9f9cfdedc67be7fac650c",
-    "Mac_HOST_sha256": "878a27505370356e14ab0ae6445f0c06adeba2449fdd90bd8e89ac8a274f7626"
+    "Mac_HOST_sha256": "878a27505370356e14ab0ae6445f0c06adeba2449fdd90bd8e89ac8a274f7626",
+    "Windows_HOST_worker_sha256": "8a7919839ccf307f761dda745333deb91e87e837fe54b64e99b1155513797312"
   },
   "components": [
     {
@@ -65,6 +66,37 @@
     },
     {
       "client": "Linux VM",
+      "server": "Windows VM",
+      "scope": "normal browse, 97-byte download, mkdir, 1 MiB upload and reviewed file/empty-directory Delete Cancel then Confirm",
+      "HOST_epoch": 48,
+      "native_registration_epoch": 45,
+      "source": "same signed24 GUI/HOST build in sources",
+      "connect_once": true,
+      "download": {
+        "bytes": 97,
+        "sha256": "d8156c8fb65a2d49d258ea575eedab60527b2933dda053da06e23aab27e8d980"
+      },
+      "upload": {
+        "bytes": 1048576,
+        "sha256": "0ac5677746ce8704aa21cdf8716d544e0a959fb32526f988d4f1e929a3dc2a63",
+        "submissions": 1,
+        "UI": "Completed100%"
+      },
+      "new_directory_created_once": true,
+      "file_Delete_Cancel_preserved_inode_hash_then_fresh_Confirm_removed_target": true,
+      "empty_directory_Delete_Cancel_preserved_inode_then_fresh_Confirm_removed_target": true,
+      "original_188B_canaries_actors_catalogs_policy_and_configs_preserved": true,
+      "normal_GUI_exit": 0,
+      "owned_helpers_drained": true,
+      "private_receipt_sha256": "f2bf2007cabdcc8b6770407555ea70573750458c11c1e44fc5589e2346c422d1",
+      "verified_artifact_references": 175,
+      "limits": [
+        "No Markdown preview or complete remote metadata UI claim.",
+        "No transfer cancellation, provider-boundary SDK or later policy-epoch retest claim."
+      ]
+    },
+    {
+      "client": "Linux VM",
       "server": "Linux VM",
       "scope": "native read-only Markdown preview; independent of subsequent failed Cancel",
       "preview_bytes": 83,
@@ -77,7 +109,7 @@
   ],
   "limits": [
     "These component results do not add full shell matrix cases or qualify every client/server pair on a combined release.",
-    "Explicit mid-transfer cancellation, Windows Files, direct typed refusal, root escape/reparse, grant revocation and broader recursive/replacement behavior are not qualified by these two runs.",
+    "Explicit mid-transfer cancellation, live revocation and broader recursive/replacement behavior are not qualified by these graphical runs. Separate pinned provider-boundary SDK results are recorded in files-provider-native-components.json.",
     "Successful new runs do not establish the cause of the original upload failures tracked in #883.",
     "Original full-desktop captures remain private because their background includes unrelated browser pages. No cropped or generated replacement images are committed."
   ],
@@ -97,5 +129,6 @@
       "private_receipt_sha256": "9c16ac696e036207461fc38750c48b24cacce2c6f5e68ea02cd28e5b64681b2e",
       "verified_artifact_references": 113
     }
-  ]
+  ],
+  "provider_boundary_components": "files-provider-native-components.json"
 }
