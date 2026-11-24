@@ -10,6 +10,11 @@ use festerm_core::{MouseTrackingMode, Terminal};
 use fs2::FileExt;
 
 #[cfg(unix)]
+mod support;
+#[cfg(unix)]
+use support::registry_observation as takeover_registry_observation;
+
+#[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 
 const FRAME_MAGIC: &[u8; 4] = b"FSD1";
@@ -1701,27 +1706,6 @@ fn deliberate_takeover_alternates_between_remote_and_local_repeatedly() {
     }
     drop(current);
     bounded_poll(|| holder() == Some(None), "released after the last detach");
-}
-
-// Registry reads have their own 500 ms lock deadline. Only that exact native
-// contention result is an unavailable observation, never an empty inventory.
-#[cfg(unix)]
-fn takeover_registry_observation<T>(
-    result: Result<T, festerm_sessiond::PersistentSessionError>,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error)
-            if error.to_string()
-                == format!(
-                    "session registry unavailable (lock deadline 500 ms): {}",
-                    fs2::lock_contended_error()
-                ) =>
-        {
-            None
-        }
-        Err(error) => panic!("takeover registry observation failed: {error}"),
-    }
 }
 
 #[cfg(unix)]

@@ -1,0 +1,203 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Windows creation-OFF case21",
+  "case_number": 21,
+  "direction": {
+    "client": "iOS Simulator",
+    "server": "WindowsARM VM"
+  },
+  "creation_policy": "OFF",
+  "functional_case_accepted": true,
+  "full_24_case_matrix_complete": false,
+  "global_TUI_identity_qualified": false,
+  "sources": {
+    "iOS": {
+      "runtime_version": "0.17.26",
+      "binary_sha256": "8389c03c5c94200f88a4d09fc02148d7d1523f29bafb6a52bcc17698500312e1",
+      "producer_base": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+      "producer_tree": "22dad36b212d66e3de24781f8c60677e6724d829"
+    },
+    "Windows_HOST": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "cohort": "genuine signedHOST26/current versioned26 CMD/ConPTY generation fromON case20"
+    },
+    "local_GUI": {
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "kind": "genuine signed GUI24/CMD Q; pinned MS ARM64 sidecars same controlledCWD; local-only references afterON82 restore"
+    },
+    "supporting_SDK": "Previously accepted Windows72 shared-resume/private/generic/stopped/creation-policy negatives; not rerun or one uniform snapshot.",
+    "CLI": "Copilot1.0.112 fresh unauthenticated initial screen, no login/model request"
+  },
+  "workflow": {
+    "policy_epoch": 80,
+    "target": "Existing owner-authorized HOST-created generic8a fromON case20; exact retained generation via saved AttachOnly, not a shared-profile-origin shell and not created underOFF.",
+    "normal": "Creation disabled UI/private exclusion/stopped shared unavailable; System echo and actual app-owned key echo; foreground+saved same-generation reopen; two probes/CLI ordinaryexit/HOME/detach. No Create/Ensure/End/new profile.",
+    "separately_attributed_service_policy": "Compose separately accepted Windows72 SDK same-generation shared resumes and controlled private/generic/stopped/creation-policy negatives. No SDK replay or fresh operation in this phase.",
+    "restoration": {
+      "windows_original_on_listening_epoch": 82,
+      "pid": 10600,
+      "birth_ms": 1795555312929,
+      "run": "90f6a8cd-82b1-4935-ab81-f918ad878eba",
+      "all33_catalog": "c26536448a6d0f815d07fa60f533bc8d84407b503d52a6458f39b20f7cc4abfd",
+      "operations": 29,
+      "existing_writer_detached": 15,
+      "original_other_policies_files_fixtures_preserved": true,
+      "all7_ios_public_metadata_restored": true,
+      "all_simulators_shutdown": true,
+      "local_cmd_openconsole_gui_job_input_and_tasks_drained": true,
+      "vm_resume_debt": false
+    }
+  },
+  "comparisons": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "reports": [
+        {
+          "path": "ios-client-windows-native/ios-windows-off-44x34-remote-query.json",
+          "bytes": 1185,
+          "sha256": "b0d74d6fcccbae8f4080b4afad8a7d0994998b4eb6a770849e002f339f60adf0"
+        },
+        {
+          "path": "ios-client-windows-native/ios-windows-off-44x34-local-query.json",
+          "bytes": 1171,
+          "sha256": "e6f4d35c2865d9f341054e25b2033d87947452aff81b1f2361f48ba6b2e9357e"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "remote_original_TUI": {
+        "path": "ios-client-windows-native/ios-windows-off-44x34-remote-copilot.png",
+        "bytes": 234193,
+        "sha256": "3641cfa1b3b9591f4f3bdea4d5323c011cdcfe573a80f41dd3867983120df4cb"
+      },
+      "local_original_TUI": {
+        "basename": "L-23B-WINDOWS-OFF-LOCAL-44X34-INITIAL-AUTH.png",
+        "sha256": "5e0f0a6daeb070d00043ceafbadd15d829fc695637243805ba6aedf5061f7e0f",
+        "bytes": 3580729,
+        "availability": "Private original retained locally, not included in repository: full VM background/taskbar are irrelevant. No crop, image edit or replacement recording.",
+        "provenance": {
+          "phase": "WindowsOFF80 paired local references captured after originalON82 restoration",
+          "local_CLI_PID": 6716,
+          "local_CLI_birth_ms": 1795555959130,
+          "local_CMD_parent": 2304,
+          "final_phase_receipt_sha256": "cb0ee19d813a138acaf61d12f45676b8ff8ada4500b1726b6179456310fb4eb6"
+        }
+      }
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "reports": [
+        {
+          "path": "ios-client-windows-native/ios-windows-off-53x42-remote-query.json",
+          "bytes": 1185,
+          "sha256": "33e1cfb1bc8835c739113b4a941d95dafed3e7048b8bb3f475d0e6126855b3d0"
+        },
+        {
+          "path": "ios-client-windows-native/ios-windows-off-53x42-local-query.json",
+          "bytes": 1171,
+          "sha256": "8893b53b2b503795280a330c02d5277677a81876fc7c3a27f44dd22a9d179e5d"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "remote_original_TUI": {
+        "path": "ios-client-windows-native/ios-windows-off-53x42-remote-copilot.png",
+        "bytes": 215148,
+        "sha256": "e806d579335b18a45411a54f9bcb52c92d9f21f0ed56fd78f0782a880bfd69d5"
+      },
+      "local_original_TUI": {
+        "basename": "L-35B-WINDOWS-OFF-LOCAL-53X42-INITIAL-AUTH.png",
+        "sha256": "59696f319c6c1ca10ef88da613cd75378b6c87691b24b660a742da592abcb1c8",
+        "bytes": 3211296,
+        "availability": "Private original retained locally, not included in repository: full VM background/taskbar are irrelevant. No crop, image edit or replacement recording.",
+        "provenance": {
+          "phase": "WindowsOFF80 paired local references captured after originalON82 restoration",
+          "local_CLI_PID": 10668,
+          "local_CLI_birth_ms": 1795556084067,
+          "local_CMD_parent": 2304,
+          "final_phase_receipt_sha256": "cb0ee19d813a138acaf61d12f45676b8ff8ada4500b1726b6179456310fb4eb6"
+        }
+      }
+    }
+  ],
+  "assets": {
+    "ios-windows-off-44x34-remote-query.json": {
+      "path": "ios-client-windows-native/ios-windows-off-44x34-remote-query.json",
+      "bytes": 1185,
+      "sha256": "b0d74d6fcccbae8f4080b4afad8a7d0994998b4eb6a770849e002f339f60adf0"
+    },
+    "ios-windows-off-44x34-local-query.json": {
+      "path": "ios-client-windows-native/ios-windows-off-44x34-local-query.json",
+      "bytes": 1171,
+      "sha256": "e6f4d35c2865d9f341054e25b2033d87947452aff81b1f2361f48ba6b2e9357e"
+    },
+    "ios-windows-off-44x34-remote-copilot.png": {
+      "path": "ios-client-windows-native/ios-windows-off-44x34-remote-copilot.png",
+      "bytes": 234193,
+      "sha256": "3641cfa1b3b9591f4f3bdea4d5323c011cdcfe573a80f41dd3867983120df4cb"
+    },
+    "ios-windows-off-53x42-remote-query.json": {
+      "path": "ios-client-windows-native/ios-windows-off-53x42-remote-query.json",
+      "bytes": 1185,
+      "sha256": "33e1cfb1bc8835c739113b4a941d95dafed3e7048b8bb3f475d0e6126855b3d0"
+    },
+    "ios-windows-off-53x42-local-query.json": {
+      "path": "ios-client-windows-native/ios-windows-off-53x42-local-query.json",
+      "bytes": 1171,
+      "sha256": "8893b53b2b503795280a330c02d5277677a81876fc7c3a27f44dd22a9d179e5d"
+    },
+    "ios-windows-off-53x42-remote-copilot.png": {
+      "path": "ios-client-windows-native/ios-windows-off-53x42-remote-copilot.png",
+      "bytes": 215148,
+      "sha256": "e806d579335b18a45411a54f9bcb52c92d9f21f0ed56fd78f0782a880bfd69d5"
+    }
+  },
+  "limits": [
+    "Both first confirms were single native actions; initial transitional observations are preserved before naturally settled Listening.",
+    "Mobile cleanup reserve refused twice before respective inputs. Approved bounded cd.. restored HOME; preference debt was separately cleared by one later Settings-only boot after original ON82 owner drain, with all seven public metadata exact.",
+    "Old combined local entry guard refused before effects on dynamic Windows free space. Separately authorized conservative entry and 256 MiB OS plus 8 MiB controls passed; no post-start rebase.",
+    "System XCTest and actual app-owned keyboard touch were qualified. OS software keyboard visibility, login/model and pixel-level equivalence remain outside these observations.",
+    "Both local rawpairs agree exceptcase/time, including six actualenvironmentvalues; no normalization.",
+    "Different fonts/scale/chrome and actual terminal measurement limits remain; no pixel identity/currentcombinedrelease/built-inUIKitkeyboardvisibility claim.",
+    "Windows full-background local originals remain PRIVATE with exacthash/size/phase/CLI provenance and localavailability; only2iOSPNG+4raw public.",
+    "NativeOFF acceptance is independent of the concurrent future-main test-observation correction; no claim that helper changed production behavior or original release failure cause."
+  ],
+  "root_acceptance_sha256": "21b0537d4f3216f3da6df7c08baa7823fdd4390656f2847ef299f8b853bf89ca",
+  "final_candidate_sha256": "cb0ee19d813a138acaf61d12f45676b8ff8ada4500b1726b6179456310fb4eb6",
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 21,
+    "desktop_accepted": 12,
+    "mobile_accepted": 9,
+    "Android_accepted": 6,
+    "iOS_accepted": 3,
+    "partial": 1,
+    "unstarted": 2,
+    "remaining_iOS": 3
+  }
+}

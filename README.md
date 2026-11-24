@@ -141,8 +141,11 @@ The [iOS→Windows creation-ON record](validation/dev-tunnels/ios-client-windows
 adds corrected-original checkpoint recovery, same-generation saved reopen and
 two matched-grid references. Its two full-background local screenshots remain
 private with hashes and provenance; two iOS originals and four raw reports are public.
-There are twenty accepted pinned functional cases (desktop 12/12, mobile 8/12),
-one partial case and three unstarted cases. Four iOS cases remain; the full
+The [iOS→Windows creation-OFF record](validation/dev-tunnels/ios-client-windows-native-off.json)
+adds same-generation System/app-key input, foreground/saved reopen and two fresh
+matched-grid references, with the Windows72 SDK policy evidence attributed separately.
+There are twenty-one accepted pinned functional cases (desktop 12/12, mobile 9/12),
+one partial case and two unstarted cases. Three iOS cases remain; the full
 24-case matrix and combined-release qualification remain incomplete. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one historical matched pair; it does not establish the current full
