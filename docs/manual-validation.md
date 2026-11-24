@@ -7134,3 +7134,15 @@ actors/catalog/operations and peer fixtures preserved, and owned GUI/CLI/Cmd/
 Job/input/SDK/mobile/emulator groups drained in their respective phases.
 Current totals are 16/24 accepted (desktop 12/12, mobile 4/12), three partial and
 five unstarted; eight mobile cases and combined-release qualification remain open.
+
+
+### Enable completion report freshness
+
+HOST-04 / DIAG-01: after one ordinary Enable, retain its first process result
+and reported runtime status without Refresh. Completion makes one best-effort
+protected status read after setup/start guards are released; only matching full
+scope and uncancelled history may enrich the display. Missing, contended or
+changed observations preserve the committed startup result. This is not a wait
+for Listening or endpoint readiness. The portable regression covers journal
+publication during completion; corrected signed native UI evidence remains
+pending. No setup/Start replay is part of observation.

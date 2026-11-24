@@ -2447,3 +2447,10 @@ request deadline through exact-generation completion observation. Ended requires
 observed absence plus fresh permission; pending/Busy may wait, while cancellation,
 revocation, replacement or fatal observation remains uncertain without replay.
 Close/Cancel and the separate default-off termination grant are unchanged.
+
+
+HOST-04 / DIAG-01 successful Enable → one best-effort current report observation
+after operation guards drop → existing completion presentation. Only same full
+scope and uncancelled observations update runtime history; unavailable reads
+preserve process/setup success. No Refresh, readiness polling or Start replay is
+added, and the existing cancellation fence still runs after completion.

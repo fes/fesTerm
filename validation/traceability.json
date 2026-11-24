@@ -7411,6 +7411,8 @@
         "desktop_remote_access_observation_warning_does_not_downgrade_final_fences",
         "desktop_remote_access_enable_completion_preserves_boundary_failures_and_redacts",
         "desktop_remote_access_enable_completion_report_and_log_failure_preserve_results",
+        "desktop_remote_access_enable_completion_reads_history_after_operation_once",
+        "desktop_remote_access_enable_completion_history_enrichment_preserves_committed_result",
         "desktop_remote_access_enable_completion_actual_io_retains_existing_log_bounds",
         "desktop_remote_access_enable_completion_reason_allowlist_and_numeric_os_are_bounded",
         "desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup",
