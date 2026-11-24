@@ -1785,3 +1785,156 @@ fn desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads() {
         assert_eq!(store.snapshot().unwrap(), expected);
     }
 }
+
+#[test]
+fn desktop_remote_access_enable_completion_reads_history_after_operation_once() {
+    use std::cell::Cell;
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            festerm_host_setup::lifecycle::Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                cloud_incarnation: "synthetic-incarnation".into(),
+                host_key_fingerprint: "synthetic-public-pin".into(),
+            },
+        )
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    let request = request(
+        &path,
+        Operation::Enable,
+        Scope::Present(snapshot.clone().into()),
+    );
+    let calls = Cell::new(0);
+    let result = complete_operation_report(&store, &request, &CancellationToken::new(), || {
+        calls.set(calls.get() + 1);
+        let mut before = report(Some(&store), &path)?;
+        assert!(before.last_run.is_none());
+        // The operation owns the real installation lease while publishing its
+        // runtime journal. The completion read must occur after this drops.
+        let directory = storage::private_directory(&path, false).unwrap();
+        let lease = storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+            .unwrap();
+        fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version":1,"installation":snapshot.installation,"epoch":snapshot.epoch,
+            "run_id":"11111111-1111-4111-8111-111111111111","state":"listening","failure":null
+        }))
+        .unwrap();
+        storage::replace_private(&directory, Path::new("host-runtime.json"), &bytes).unwrap();
+        before.process = Some("Running".into());
+        before.setup_complete = true;
+        Ok(before)
+    })
+    .unwrap();
+    assert_eq!(calls.get(), 1);
+    assert_eq!(result.last_run, Some(controller::RunState::Listening));
+    assert_eq!(result.process.as_deref(), Some("Running"));
+    assert!(result.setup_complete && result.failure.is_none());
+    assert_eq!(result.scope, Scope::Present(snapshot.into()));
+}
+
+#[test]
+fn desktop_remote_access_enable_completion_history_enrichment_preserves_committed_result() {
+    use std::cell::{Cell, RefCell};
+    for case in [
+        "busy", "cancel", "scope", "old", "future", "foreign", "warning", "refresh", "error",
+    ] {
+        let root = storage::private_test_directory();
+        let path = root.path().join("desktop");
+        let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+        let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+        store
+            .record_provisioned(
+                &ticket,
+                festerm_host_setup::lifecycle::Binding {
+                    host_id: "11111111-1111-4111-8111-111111111111".into(),
+                    account: "github:42".into(),
+                    qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                    cloud_incarnation: "synthetic-incarnation".into(),
+                    host_key_fingerprint: "synthetic-public-pin".into(),
+                },
+            )
+            .unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let operation = if case == "refresh" {
+            Operation::Refresh
+        } else {
+            Operation::Enable
+        };
+        let request = request(&path, operation, Scope::Present(snapshot.clone().into()));
+        let cancel = CancellationToken::new();
+        let held = RefCell::new(None);
+        let calls = Cell::new(0);
+        let result = complete_operation_report(&store, &request, &cancel, || {
+            calls.set(calls.get() + 1);
+            if case == "error" {
+                return Err(Failure::PrivateStorage);
+            }
+            let mut before = report(Some(&store), &path)?;
+            before.process = Some("Running".into());
+            before.setup_complete = true;
+            if case == "warning" {
+                before.failure = Some(Failure::OwnerApproval);
+            }
+            let directory = storage::private_directory(&path, false).unwrap();
+            let epoch = if case == "old" {
+                snapshot.epoch - 1
+            } else if case == "future" {
+                snapshot.epoch + 1
+            } else {
+                snapshot.epoch
+            };
+            let installation = if case == "foreign" {
+                "22222222-2222-4222-8222-222222222222"
+            } else {
+                &snapshot.installation
+            };
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "version":1,"installation":installation,"epoch":epoch,
+                "run_id":"11111111-1111-4111-8111-111111111111","state":"listening","failure":null
+            }))
+            .unwrap();
+            storage::replace_private(&directory, Path::new("host-runtime.json"), &bytes).unwrap();
+            if case == "busy" {
+                let lease =
+                    storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
+                        .unwrap();
+                fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+                *held.borrow_mut() = Some(lease);
+            }
+            if case == "cancel" {
+                cancel.cancel();
+            }
+            if case == "scope" {
+                store.revoke().unwrap();
+            }
+            Ok(before)
+        });
+        assert_eq!(calls.get(), 1, "{case}");
+        if case == "error" {
+            assert!(matches!(result, Err(Failure::PrivateStorage)));
+            continue;
+        }
+        let result = result.unwrap();
+        assert_eq!(result.process.as_deref(), Some("Running"), "{case}");
+        assert!(result.setup_complete, "{case}");
+        assert_eq!(result.scope, Scope::Present(snapshot.into()), "{case}");
+        assert!(result.last_run.is_none(), "{case}");
+        assert_eq!(
+            result.failure,
+            if case == "warning" {
+                Some(Failure::OwnerApproval)
+            } else {
+                None
+            },
+            "{case}"
+        );
+    }
+}

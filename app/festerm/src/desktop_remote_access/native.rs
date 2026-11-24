@@ -790,6 +790,38 @@ fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
         .map_err(|_| Failure::Busy)
 }
 
+// Runs the operation exactly once; ancillary report observation happens only
+// after its setup, native-service and trusted-stage guards have been dropped.
+fn complete_operation_report(
+    store: &Store,
+    request: &Request,
+    cancel: &CancellationToken,
+    operation: impl FnOnce() -> Result<Report, Failure>,
+) -> Result<Report, Failure> {
+    let mut result = operation()?;
+    if request.operation == Operation::Enable
+        && result.setup_complete
+        && result.failure.is_none()
+        && !cancel.is_cancelled()
+    {
+        // Diagnostic enrichment only. No readiness wait and no setup/start
+        // replay; every unavailable or changed observation preserves success.
+        if let Ok(current) = report(Some(store), &request.root) {
+            if current.failure.is_none()
+                && current.scope == result.scope
+                && !cancel.is_cancelled()
+                && matches!(&result.scope, Scope::Present(expected)
+                    if store.snapshot().is_ok_and(|now| now == **expected))
+                && !cancel.is_cancelled()
+            {
+                result.last_run = current.last_run;
+                result.runtime_history = current.runtime_history;
+            }
+        }
+    }
+    Ok(result)
+}
+
 impl Backend for Native {
     fn execute(
         &self,
@@ -853,7 +885,7 @@ impl Native {
             *request.owned.lock().map_err(|_| Failure::ScopeChanged)? = Some(scope);
         }
         let mut diagnostic = None;
-        let result = (|| {
+        let result = complete_operation_report(&store, &request, cancel, || {
             if cancel.is_cancelled() {
                 return Err(Failure::Cancelled);
             }
@@ -882,7 +914,7 @@ impl Native {
                 stage.as_ref(),
                 &mut diagnostic,
             )
-        })();
+        });
         if cancel.is_cancelled() && request.operation.needs_cancel_fence() {
             let deadline_expired = matches!(result, Err(Failure::Timeout));
             // A blocked native call may outlive cancellation. Fence once it

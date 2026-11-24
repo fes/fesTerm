@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "3e3c4988a1bce507b62a8aff7669fbc92897484de0d76d9ba4f359ff94f23963"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "codex-source-verified", "sources": "adc14739485069438864389c435d5d40d33a9a03e3311e23fdfa198aa6540de0"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -102,3 +102,6 @@ Caveats:
 ## Disable diagnostics
 
 - [`disable_completion_result`](../../app/festerm/src/desktop_remote_access/native.rs) — Finite errors; original result retained. Native capture pending.
+
+
+- [`complete_operation_report`](../../app/festerm/src/desktop_remote_access/native.rs) — Enable history; unavailable reads preserve success.
