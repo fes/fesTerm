@@ -1,0 +1,35 @@
+{
+  "record_version": 1,
+  "status": "accepted bounded API37 Back/IME and same-process launcher-return evidence",
+  "source_commit": "d136872eb02f3d55422fde653fe9b041a20799d4",
+  "source_tree": "51d5ebe5d79baaa0cc4c5c890933ffa83e046423",
+  "apk_sha256": "007e0e03a50b6e2ac449db0e38f98e1fa2104396e899d09424c1ace5087adb03",
+  "runtime_api": 37,
+  "target_sdk": 36,
+  "abi": "arm64-v8a",
+  "build_kind": "development debug host-clients",
+  "java_sha256": "1477f8cee2317780ac1856e854bbee5b2b566683f55c54d2471f5707a4a2cf03",
+  "manifest_sha256": "28c61ed0f45576304123c31c96a69884aa51f34a148b05dc3113ab95f58de061",
+  "accepted": [
+    "Real system Back with visible Gboard hid the keyboard and preserved the named Files form; subsequent input foreground/PID/birth guard passed.",
+    "Root Back reached the Android launcher; tapping the application icon returned to rendered Profiles with the same app PID, birth and emulator boot.",
+    "A fresh Sessions click after return rendered the Sessions page, establishing subsequent UI responsiveness."
+  ],
+  "proof_records": {
+    "M04-NATIVE-IME-BACK-PASS.json": "cffa814b286d6975ad06198ad2c9608b6c7a3e1454605ef9081ec2a5c876478f",
+    "B06-NATIVE-BACK-RETURN-PASS.json": "1d128a72cf3844803a6f1e3138b4bb505ac075713997be6adf57cf62786bff3f"
+  },
+  "screenshots": {
+    "M03-NAMED.png": "18837b4e744df716f2ccb755477f55b90f2ba300b8e8f83531f7ed6c2f198d7c",
+    "M04-BACK-IME.png": "ccfe98ce212f235b0d20f594754684279aec2b0001884798f4812fbee9a4d363",
+    "B02-LAUNCHER.png": "c87f7ea02e8670a88bbc68fede84b5fec44f30b86b4e1a6d3a168da22e009b8c",
+    "B04-RETURN-SETTLED.png": "7c1cf956ee626c72c56988d5f5d7da6ab1f440d57e8cf8e102c5483dd08ae997",
+    "B05-RESPONSIVE.png": "fa8846b4c1dd7ef4a58087c1b0b80324ae7293d8678300a9d14fc0f70c1aedd1"
+  },
+  "evidence_locator": "mobile-files-native-d136872e/android-mac-r1 retained native campaign",
+  "limits": [
+    "Does not prove the cause or permanent cure of the earlier W06 persistent splash.",
+    "Does not test terminal exactly-once Escape, active-transfer interruption, API33\u201334 runtime or API29\u201332 legacy Back.",
+    "Native execution is attributed only to d136872e; rebasing unchanged Java/manifest onto newer main is source composition, not execution of the whole rebased application."
+  ]
+}
