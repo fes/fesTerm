@@ -64,6 +64,7 @@ public final class FestermActivity extends NativeActivity {
     private long speechGeneration;
     private boolean speechPermission, finishing;
     private Runnable speechDeadline, finishDeadline;
+    private Runnable unregisterBackCallback;
     private final BroadcastReceiver screenOff = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction()) && ready) {
@@ -111,6 +112,20 @@ public final class FestermActivity extends NativeActivity {
             registerReceiver(screenOff, new IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(screenOff, new IntentFilter(Intent.ACTION_SCREEN_OFF));
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            unregisterBackCallback = ModernBack.register(this, this::handleBack);
+        }
+    }
+
+    // Keep API 33 types out of the API 29 activity's fields and method signatures.
+    private static final class ModernBack {
+        static Runnable register(FestermActivity activity, Runnable action) {
+            android.window.OnBackInvokedDispatcher dispatcher = activity.getOnBackInvokedDispatcher();
+            android.window.OnBackInvokedCallback callback = action::run;
+            dispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+            return () -> dispatcher.unregisterOnBackInvokedCallback(callback);
         }
     }
 
@@ -563,6 +578,10 @@ public final class FestermActivity extends NativeActivity {
 
     @Override protected void onDestroy() {
         destroyed = true;
+        if (unregisterBackCallback != null) {
+            unregisterBackCallback.run();
+            unregisterBackCallback = null;
+        }
         cancelSpeech();
         if (authPending) {
             long token = authToken;
@@ -585,6 +604,10 @@ public final class FestermActivity extends NativeActivity {
     }
 
     @Override public void onBackPressed() {
+        handleBack();
+    }
+
+    private void handleBack() {
         // Never silently close a terminal or discard a dirty editor.
         if (input != null && input.keyboardMode != 0) {
             input.emit(6, "", KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_ESCAPE);

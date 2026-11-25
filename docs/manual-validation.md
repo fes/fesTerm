@@ -2156,6 +2156,20 @@ saved. These remain native/manual checks.
 
 ## Android shared mobile port (ADR 0073)
 
+MOB-02/MOB-06 modern Back explicitly enables application callbacks on API 33+
+(including default-disabled API 33–34), registers at default priority, and shares
+the existing Escape-or-background policy with the API 29–32 legacy override.
+At exact `d136872e`, the development APK passed bounded API37 native checks:
+real Back hid visible Gboard while preserving the named Files form; root Back
+reached the launcher; tapping the icon returned to rendered Profiles with the
+same PID/birth/boot, and a fresh Sessions click rendered a responsive page.
+The [attributed native record](../validation/android/modern-back-api37.json)
+retains the APK/source identity and proof/screenshot digests. Terminal
+exactly-once Escape, active-transfer interruption, API 33–34 runtime and API
+29–32 legacy Back remain untested. The earlier W06 splash cause and permanent
+cure remain unknown. Rebasing unchanged Java/manifest preserves source review;
+it does not establish execution of the whole rebased application.
+
 The owner-requested Android host reuses the implemented iOS application.
 The existing MOB action IDs apply to both hosts; **iOS evidence never qualifies
 Android**. Build/setup instructions and intentional differences are in

@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "1f0fd230b7303496dc8f3b3738438a459dabf9a73b714362073d76315e93ee46"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "2267ba2cd7cfae24d593bba7d60eb58e44eb1be836efc63c4955f1173a8f3466"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -82,7 +82,7 @@ Caveats:
 Use for: How does Android wire geometry, input, secrets, and callbacks into Rust?
 
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
-- [Android editor ownership](../../app/festerm-android/java/io/github/fes/festerm/FestermActivity.java) — Pre-IME plain-key routing and context epochs keep redundant editor wrappers from retiring served input.
+- [Android editor ownership and Back](../../app/festerm-android/java/io/github/fes/festerm/FestermActivity.java) — Owns editor epochs; modern and legacy Back share Escape-or-background policy.
 
 Caveats:
 - Java forwards platform input and services; shared Rust retains UI and session policy.
